@@ -2,10 +2,10 @@
 독자적 클래스와 공용 변수 정의
 """
 
+from dataclasses import dataclass, field
 import logging
 import logging.config
 import logging.handlers
-from dataclasses import dataclass, field
 import os
 import sys
 import json
@@ -267,72 +267,357 @@ class FilePath:
     API_PATH = "C:/OpenAPI/data"
 
     CONFIG_FILE = 'config.json'
-    DECASETS_FILE = 'deca_sets.json'
-    STRATEGY_FILE = 'strategy_sets.json'
+    DEFINE_SETS_FILE = 'define_sets.json'
+    STRATEGY_SETS_FILE = 'strategy_sets.json'
     HODINGS_FILE = 'holdings.json'
     COUNTER_TICKERS_FILE = 'counter_tickers.json'
     COUNTER_STRATEGY_FILE = 'counter_strategy.json'
     CHARTS_FILE = 'charts.json'
 
     config_file = os.path.join(get_path(CONFIG_PATH), CONFIG_FILE)
-    decaset_file = os.path.join(get_path(CONFIG_PATH), DECASETS_FILE)
-    strategy_file = os.path.join(get_path(CONFIG_PATH), STRATEGY_FILE)
+    define_sets_file = os.path.join(get_path(CONFIG_PATH), DEFINE_SETS_FILE)
+    strategy_sets_file = os.path.join(get_path(CONFIG_PATH), STRATEGY_SETS_FILE)
     holdings_file = os.path.join(get_path(DB_PATH), HODINGS_FILE)
     counter_tickers_file = os.path.join(get_path(DB_PATH), COUNTER_TICKERS_FILE)
     counter_strategy_file = os.path.join(get_path(DB_PATH), COUNTER_STRATEGY_FILE)
     charts_file = os.path.join(get_path(DB_PATH), CHARTS_FILE)
 
 @dataclass
+class Constants:
+    tax_rate = 0.0015
+    fee_real = 0.0015
+    fee_sim = 0.0035
+
+    NON_STRATEGY = '000 : 선택없음'
+    BASIC_STRATEGY = '기본전략'
+    WIDGET_MAP = {
+        # 기본 설정
+        '전략명칭': 'ledStrategyName',
+        '매수적용': 'chkConditionBuy',
+        '매수전략': 'ledConditionBuy',
+        '매도적용': 'chkConditionSell',
+        '매도전략': 'ledConditionSell',
+
+        '체결횟수': 'spbTrade',
+        '종목제한': 'spbStock',
+        '보유제한': 'spbHold',
+        '운영시간': 'rbUseTime',
+        '설정시간': 'rbPeriod',
+        '시작시간': 'tedStart',
+        '종료시간': 'tedStop',
+        '매도도같이적용': 'chkSellSame',
+        '로스컷': 'chkLossCut',
+        '로스컷율': 'dsbLossCut',
+        '로스컷시장가': 'rbLossCutMarket',
+        '로스컷지정가': 'rbLossCutLimit',
+        '로스컷지정가율': 'dsbLossCutLimit',
+        '로스컷상하': 'cbLossCutUpDown',
+        '당일청산': 'chkClear',
+        '청산시간': 'tedClear',
+        '청산시장가': 'rbClearMarket',
+        '청산지정가': 'rbClearLimit',
+        '청산호가': 'spbClearHoga',
+
+        # 매수/매도 제한
+        '중복매수금지': 'chkNoDup',
+        '매수취소': 'chkBuyCancel',
+        '매수지연초': 'spbBuyCancel',
+        '매도취소': 'chkSellCancel',
+        '매도지연초': 'spbSellCancel',
+
+        # 매수 설정
+        '매수시장가': 'rbBuyMarket',
+        '매수지정가': 'rbBuyLimit',
+        '매수호가': 'spbBuyHoga',
+        '투자금': 'rbMoney',
+        '투자금액': 'spbMoney',
+        '예수금': 'rbDeposit',
+        '예수금율': 'dsbDeposit',
+
+        # 매도 설정
+        '매도시장가': 'rbSellMarket',
+        '매도지정가': 'rbSellLimit',
+        '매도호가': 'spbSellHoga',
+        '이익실현': 'chkProfit',
+        '이익실현율': 'dsbProfit',
+        '이익보존': 'chkKeep',
+        '이익보존율': 'dsbKeep',
+        '감시적용': 'chkWatchOn',
+        '감시시작율': 'dsbTrailingStart',
+        '스탑주문율': 'dsbTrailingStop',
+        '손실제한': 'chkLossLimit',
+        '손실제한율': 'dsbLossLimit',
+
+        '남은횟수': 'xxremain',
+    }
+    DEFAULT_STRATEGY_SETS = {
+        '전략명칭': BASIC_STRATEGY,
+        '매수적용': False,
+        '매수전략': '',
+        '매도적용': False,
+        '매도전략': '',
+
+        '체결횟수': 1000,
+        '종목제한': 10,
+        '보유제한': 10,
+        '운영시간': True,
+        '설정시간': False,
+        '시작시간': '09:00',
+        '종료시간': '15:00',
+        '매도도같이적용': False,
+        '로스컷': False,
+        '로스컷율': 0.0,
+        '로스컷시장가': True,
+        '로스컷지정가': False,
+        '로스컷지정가율': 0.0,
+        '로스컷상하': '이상',
+        '당일청산': False,
+        '청산시간': '15:18',
+        '청산시장가': True,
+        '청산지정가': False,
+        '청산호가': 0,
+        '중복매수금지': True,
+        '매수취소': False,
+        '매수지연초': 0,
+        '매도취소': False,
+        '매도지연초': 0,
+
+        '매수시장가': True,
+        '매수지정가': False,
+        '매수호가': 0,
+        '투자금': True,
+        '투자금액': 100000,
+        '예수금': False,
+        '예수금율': 0.0,
+
+        '매도시장가': True,
+        '매도지정가': False,
+        '매도호가': 0,
+        '이익실현': True,
+        '이익실현율': 3.0,
+        '이익보존': False,
+        '이익보존율': 0.0,
+        '감시적용': False,
+        '감시시작율': 0.0,
+        '스탑주문율': 0.0,
+        '손실제한': True,
+        '손실제한율': 3.0,
+
+        '남은횟수': 1000,
+    }
+    DEFAULT_DEFINE_SETS = [
+        {'전략':'전략00', '전략적용': False, '전략명칭': BASIC_STRATEGY},
+        *[{'전략':f'전략{seq:02d}', '전략적용': False, '전략명칭': ''}
+          for seq in range(1,11)]
+    ]
+
+    # 색상정의
+    list전일가대비 = ['현재가', '시가', '고가', '저가', '등락율']
+    list양음가대비 = ['평가손익', '수익률(%)', '전일대비', '손익율', '당일매도손익', '손익금액', '수익률']
+
+log_config = {
+    'version': 1,
+    'formatters': {
+        'detailed': {
+            'format': '%(asctime)s.%(msecs)03d-%(levelname)s-[%(filename)s(%(lineno)d) / %(funcName)s] %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S'
+        }
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'detailed',
+            'level': 'DEBUG'
+        },
+        'file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': "log_yyyymmdd_00.log",
+            'formatter': 'detailed',
+            'maxBytes': 1024 * 1024 * 5,
+            'backupCount': 10,
+            'encoding': 'utf-8',
+            'level': 'DEBUG'
+        }
+    },
+    'root': {
+        'handlers': ['console', 'file'],
+        'level': 'DEBUG'
+    }
+}
+
+@dataclass
 class DefineConstants:
+    const = Constants()
     fid = FIDs()
     td = TimeDefinition()
     scr = ScreenNumber()
     fp = FilePath()
-    log_config = {
-        'version': 1,
-        'formatters': {
-            'detailed': {
-                'format': '%(asctime)s.%(msecs)03d-%(levelname)s-[%(filename)s(%(lineno)d) / %(funcName)s] %(message)s',
-                'datefmt': '%Y-%m-%d %H:%M:%S'
-            }
-        },
-        'handlers': {
-            'console': {
-                'class': 'logging.StreamHandler',
-                'formatter': 'detailed',
-                'level': 'DEBUG'
-            },
-            'file': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': "log_yyyymmdd_00.log",
-                'formatter': 'detailed',
-                'maxBytes': 1024 * 1024 * 5,
-                'backupCount': 10,
-                'encoding': 'utf-8',
-                'level': 'DEBUG'
-            }
-        },
-        'root': {
-            'handlers': ['console', 'file'],
-            'level': 'DEBUG'
-        }
-    }
+    log_config = log_config
 dc = DefineConstants()
+
+class DefineTbl:
+    hd잔고합산 = {
+        '키': '순번',
+        '정수': ['순번','총매입금액', '총평가금액', '추정예탁자산', '총평가손익금액'],
+        '실수': ['총수익률(%)'],
+    }
+    hd잔고합산.update({
+        '컬럼': hd잔고합산['정수'] + hd잔고합산['실수'] # l2잔고합산
+    })
+
+    hd잔고목록 = {
+        '키': '종목번호',
+        '정수': ["보유수량", "매입가", "매입금액", "현재가", "평가금액", "평가손익", '시가', '고가', '저가', '전일대비', \
+                        '누적거래량', '거래량', '매도가능수량', '최고가', '감시', '보존', '상태', '매수수량', '매수가', '매수금액'],
+        '실수': ["수익률(%)", "등락율", '이익보존율', '감시시작율'],
+        '컬럼': ["종목번호", "종목명", "보유수량", "매입가", "매입금액", "현재가", "평가금액", "평가손익", "수익률(%)"],
+        '추가': ['시가', '고가', '저가', '전일대비', "등락율", '누적거래량', '거래량', '최고가', '매수수량', '매수가', '매수금액',\
+                        '보존', '이익보존율', '감시', '감시시작율', '상태', '전략', '매수전략', '전략명칭', '매수일자', '매수시간', '매수번호'], # 상태: 0-일반, 1-매수, 2-매도
+    }
+    hd잔고목록.update({
+        '헤더': ["전략"] + hd잔고목록['컬럼'] + ["매수일자", "매수시간", '등락율', '전일대비', '누적거래량'],
+        '확장': ['전략'] + hd잔고목록['컬럼'] + hd잔고목록['추가'],
+    })
+
+    hd조건목록 = {
+        '키': '종목코드',
+        '정수': ['현재가', '누적거래량', '시가', '고가', '저가', '전략번호', '주문수량', '체결량', '미체결수량'],
+        '실수': ['등락율'],
+        '추가': ['전송번호', '주문번호', '주문유형', '전략명칭', '주문수량', '체결량', '미체결수량', '원주문번호'],
+    }
+    hd조건목록.update({
+        '컬럼': ['종목코드', '종목명'] + hd조건목록['실수'] + hd조건목록['정수'][:1],
+    })
+    hd조건목록.update({
+        '확장': ['전략', '전략번호'] + hd조건목록['컬럼'] + hd조건목록['추가'],
+        '헤더': ['전략', '종목코드', '종목명' ],
+    })
+
+    hd손익목록 = {
+        '키': '종목코드',
+        '정수': ['체결량', '매입단가', '체결가', '당일매도손익', '당일매매수수료', '당일매매세금'],
+        '실수': ['손익율'],
+    }
+    hd손익목록.update({
+        '컬럼': ['종목코드', '종목명'] + hd손익목록['정수'][:4] + hd손익목록['실수'] + hd손익목록['정수'][4:], # l2손익목록
+    })
+
+    hd접수목록 = hd조건목록.copy()
+    hd접수목록.update({'키': '주문번호'})
+
+    hd예수금 = {
+        '키': '순번',
+        '정수': ['순번', 'd+1추정예수금', 'd+1매도매수정산금', 'd+1미수변제소요금', 'd+1출금가능금액',\
+                      'd+2추정예수금', 'd+2매도매수정산금', 'd+2미수변제소요금', 'd+2출금가능금액',\
+                      '예수금', '주식증거금현금', '미수확보금', '권리대용금',\
+                      '20%종목주문가능금액', '30%종목주문가능금액', '40%종목주문가능금액', '100%종목주문가능금액',\
+                      '주문가능금액', '출금가능금액', '현금미수금'],
+        '실수': [],
+    }
+    hd예수금.update({
+        '컬럼': hd예수금['정수'],
+    })
+
+    hd일지합산 = {
+        '키': '순번',
+        '정수': ['순번', '총매수금액', '총매도금액', '총수수료_세금', '총정산금액', '총손익금액'],
+        '실수': ['총수익률'],
+    }
+    hd일지합산.update({
+        '컬럼': hd일지합산['정수'] + hd일지합산['실수'],
+    })
+
+    hd일지목록 = {
+        '키': '종목코드',
+        '정수': ['매수금액','매도금액', '손익금액', '매수수량', '매수평균가', '매도수량',  '매도평균가', '수수료_제세금'],
+        '실수': ['수익률'],
+    }
+    hd일지목록.update({
+        '컬럼': ['종목코드', '종목명'] + hd일지목록['정수'][:3] + hd일지목록['실수'] + hd일지목록['정수'][3:],
+    })
+
+    hd체결목록 = {
+        '키': '종목번호',
+        '정수': ['매수수량', '매수가', '매수금액', '매도수량', '매도가', '매도금액', '손익금액', '제비용'],
+        '실수': ['손익율'],
+        '컬럼': ['전략', '매수일자', '매수시간', '종목번호', '종목명', '손익금액', '손익율', '매수수량', '매수금액', '매도수량', '매도금액', \
+                        '매수가', '매도가', '제비용', '매도일자', '매도시간', '매수번호', '매도번호', '매수전략', '전략명칭'],
+    }
+
+    hd전략정의 = {
+            '키': '전략명칭',
+            '정수': ['체결횟수', '종목제한', '보유제한', '청산호가', '매수지연초', '매도지연초', '매수호가', '투자금액', '매도호가', '남은횟수'],
+            '실수': ['예수금율', '이익실현율', '이익보존율', '감시시작율','스탑주문율', '손실제한율'],
+            '컬럼': dc.const.WIDGET_MAP.keys(), # 컬럼명
+            '헤더': ['전략명칭', '투자금액', '매수적용', '매수전략', '매도적용', '매도전략', '이익실현율', '이익보존율', '손실제한율', '감시적용', '감시시작율', '스탑주문율'],
+        }
+
+@dataclass
+class GlobalConfig:
+    sim_on = True
+    gui_on = False
+    ready = False
+    log_level = logging.DEBUG
+    server = '1'
+    account = ''
+    ready = False
+    toast = None
+    fee_rate = 0.0
+    tax_rate = 0.0
+
+@dataclass
+class GuiConfig:
+    list계좌콤보 = []
+    list전략콤보 = []
+    list전략튜플 = []
+
+@dataclass
+class Processes:
+    main = None
+    gui = None
+    api = None
+    admin = None
+
+@dataclass
+class QDict:
+    qdict: dict = field(default_factory=lambda: {
+        'aaa': Message(),
+        's00': Message(),
+        's01': Message(),
+        's02': Message(),
+        's03': Message(),
+        's04': Message(),
+        's05': Message(),
+        'dbm': Message(),
+    })
 
 @dataclass
 class GlobalMemory:
-    config = {
-        'gui_on': False,
-        'ready': False,
-        'log_level': logging.DEBUG,
-    }
-    proc = {
-        'main': None,
-        'gui': None,
-        'msg': None,
-    }
-    qdict = {}
-
+    toast = None
+    json_config = {'level': logging.DEBUG, }
+    config = GlobalConfig()
+    gui = GuiConfig()
+    pro = Processes()
+    qdict = QDict().qdict
+    tbl = DefineTbl()
+    잔고합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고합산))
+    잔고목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고목록))
+    조건목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
+    손익목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd손익목록))
+    접수목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd접수목록))
+    예수금 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd예수금))
+    일지합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd일지합산))
+    일지목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd일지목록))
+    체결목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd체결목록))
+    전략정의 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd전략정의))
+    잔고합산_copy = None
+    strategy_row = None
+    전략설정 = None # json
+    전략쓰레드 = None
+    # 서버 호출 제한 체크
+    req = None # 요청 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (CommRqData + CommKwRqData + SendCondition 포함) - 1 초마다 리셋 됨
+    ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨
+    dict잔고종목감시 = {}
 gm = GlobalMemory()
 
 def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE, max_bytes=dc.fp.LOG_MAX_BYTES):
