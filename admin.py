@@ -1,8 +1,13 @@
-from public import gm, dc, load_json, save_json, get_path
+from public import gm, dc, Work,load_json, save_json, get_path, Answer
 from classes import ModelThread, TableManager, DataTables as dt, request_time_check, TimeLimiter
 from strategy import Strategy
+from tabulate import tabulate
+from datetime import datetime
+from PyQt5.QtCore import QTimer
 import logging
 import os
+import pandas as pd
+import time
 
 class Admin:
     def __init__(self):
@@ -10,8 +15,8 @@ class Admin:
 
     def init(self):
         logging.debug(f'{self.name} init')
-        self.aaa = ModelThread(name='aaa', qdict=gm.qdict, cls=self)
-        self.aaa.start()
+        gm.pro.aaa = ModelThread(name='aaa', qdict=gm.qdict, cls=self)
+        gm.pro.aaa.start()
 
         gm.req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
         gm.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
@@ -21,7 +26,7 @@ class Admin:
         self.get_strategy_info()
         self.set_real_remove_all()
         self.get_holdings()
-        self.set_strategies()
+        self.json_load_define_sets()
 
     # 준비 작업 -------------------------------------------------------------------------------------------
     def get_login_info(self):
@@ -31,14 +36,15 @@ class Admin:
         gm.config.account = accounts[0]
 
         gm.config.server = gm.pro.api.GetLoginInfo('GetServerGubun')
-        gm.config.fee_rate = dc.const.fee_sim if gm.config.server == '1' else dc.const.fee_real # 모의투자 0.35%, 실전투자 0.15% 매수, 매도 각각
-        gm.config.tax_rate = dc.const.tax_rate # 코스피 거래세 0.03 + 농어촌 특별세 0.12%, 코스닥 거래세 0.15 매도시적용
-        logging.debug(f"서버:{gm.config.server}, 수수료율:{gm.config.fee_rate}, 세금율:{gm.config.tax_rate}, 계좌:{gm.config.account}")
+        gm.수수료율 = dc.const.fee_sim if gm.config.server == '1' else dc.const.fee_real # 모의투자 0.35%, 실전투자 0.15% 매수, 매도 각각
+        gm.세금율 = dc.const.tax_rate # 코스피 거래세 0.03 + 농어촌 특별세 0.12%, 코스닥 거래세 0.15 매도시적용
+        logging.debug(f"서버:{gm.config.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.config.account}")
 
     def set_tables(self):
         gm.잔고합산 = TableManager(gm.tbl.hd잔고합산)
         gm.잔고목록 = TableManager(gm.tbl.hd잔고목록)
-        gm.조건목록 = TableManager(gm.tbl.hd조건목록)
+        gm.매수조건목록 = TableManager(gm.tbl.hd조건목록)
+        gm.매도조건목록 = TableManager(gm.tbl.hd조건목록)
         gm.손익목록 = TableManager(gm.tbl.hd손익목록)
         gm.접수목록 = TableManager(gm.tbl.hd접수목록)
         gm.예수금 = TableManager(gm.tbl.hd예수금)
@@ -46,7 +52,11 @@ class Admin:
         gm.일지목록 = TableManager(gm.tbl.hd일지목록)
         gm.체결목록 = TableManager(gm.tbl.hd체결목록)
         gm.전략정의 = TableManager(gm.tbl.hd전략정의)
-        
+        gm.매수대기목록 = TableManager(gm.tbl.hd조건목록)
+        gm.매도대기목록 = TableManager(gm.tbl.hd조건목록)
+        gm.전송목록 = TableManager(gm.tbl.hd조건목록)
+        gm.접수목록 = TableManager(gm.tbl.hd접수목록)
+
     def get_conditions(self):
         try:
             loaded = gm.pro.api.GetConditionLoad()
@@ -61,16 +71,7 @@ class Admin:
             logging.error(f'전략 로드 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def get_strategy_info(self):
-        try:
-            success, data = load_json(dc.fp.strategy_sets_file, [dc.const.DEFAULT_STRATEGY_SETS])
-            logging.debug(f'전략정의 JSON 파일을 로드했습니다. data count={len(data)}')
-            gm.전략정의.set(data=data)
-            gm.basic_strategy = next((item for item in data if item['전략명칭'] == dc.const.BASIC_STRATEGY), None)
-            gm.strategy_row = data[0]
-            return True
-        except Exception as e:
-            logging.error(f'전략정의 JSON 파일 읽기 에러: {type(e).__name__} - {e}', exc_info=True)
-            return False
+        self.json_load_strategy_sets()
 
     def set_real_remove_all(self):
         logging.debug('set_real_remove_all')
@@ -84,12 +85,13 @@ class Admin:
         self.pri_fx얻기_잔고목록()
         self.pri_fx등록_종목감시()
 
-    def set_strategies(self):
-        self.cdn_fx준비_전략매매()
-
     # 매매 개시 -------------------------------------------------------------------------------------------
     def trade_start(self):
-        pass
+        self.cdn_fx실행_전략매매()
+        #for i in range(6):
+        #    if not gm.전략설정[i].get('전략적용', False): continue
+        #    gm.전략쓰레드[i].start()
+        gm.config.ready = True
 
     # 공용 함수 -------------------------------------------------------------------------------------------
     def com_SendRequest(self, rqname, trcode, input, output, next='0', screen=None, form='dict_list', timeout=5):
@@ -102,7 +104,7 @@ class Admin:
                 'input': input,
                 'output': output,
                 'next': next if next else '0',
-                'screen': screen if screen else dc.화면[rqname],
+                'screen': screen if screen else dc.scr.화면[rqname],
                 'form': form if form else 'dict_list',
                 'timeout': timeout if timeout else 5
             }
@@ -113,6 +115,286 @@ class Admin:
         except Exception as e:
             logging.error(f'com_SendRequest 오류: {e}')
             return [], False
+
+    def com_SendCondition(self, screen, cond_name, cond_index, search=1): # search=0: 조건검색만, 1: 조건검색 + 실시간 조건검색
+        cond_text = f'{cond_index:03d} : {cond_name.strip()}'
+        if not request_time_check(kind='request', cond_text=cond_text):
+            logging.warning(f'조건 검색 시간 초과: {cond_text}')
+            return [], False
+
+        condition_list = gm.pro.api.SendCondition(screen=screen, cond_name=cond_name, cond_index=cond_index, search=search)
+        if not isinstance(condition_list, list):
+            logging.warning(f'조건 검색 실패: {cond_text} result={condition_list}')
+            return [], False
+
+        logging.debug(f'조건 검색 결과: {condition_list}')
+        return condition_list, True
+
+    def com_create_request_no(self, rqname, code):
+        """임시 주문번호 생성"""
+        gm.temp_order_count += 1
+        screen = dc.scr.화면[rqname]
+        kind = '매도' if screen.endswith('12') else '매수'
+        return f"{kind}_{code}_{datetime.now().strftime('%H%M%S')}_{gm.temp_order_count:05d}_{rqname}"
+
+    def com_SendOrder(self, idx, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno, msg=None):
+        if not request_time_check(kind='order'): return -308 # 5회 제한 초과
+
+        전략 = f'전략{idx:02d}'
+        name = gm.pro.api.GetMasterCodeName(code)
+        rqname = self.com_create_request_no(rqname, code)
+        주문유형 = dc.fid.주문유형FID[f'{ordtype:01d}']
+        kind = msg if msg else 주문유형
+        msg = f"{kind} : {전략} {code} {name} 주문수량:{quantity}주 / 주문가:{price}원"
+
+        if ordtype == 1:
+            logging.debug(f'매수요청목록 삭제 전: 매수요청목록={gm.dict매수요청목록}')
+            if gm.dict매수요청목록.pop(code, None):
+                logging.debug(f'매수요청목록 삭제 후: 매수요청목록={gm.dict매수요청목록} {code} {name}')
+            else:
+                logging.warning(f'매수요청목록 삭제 실패: code={code} {name}')
+        elif ordtype == 2:
+            logging.debug(f'매도요청목록 삭제 전: 매도요청목록={gm.dict매도요청목록}')
+            if gm.dict매도요청목록.pop(code, None):
+                logging.debug(f'매도요청목록 삭제 후: 매도요청목록={gm.dict매도요청목록} {code} {name}')
+            else:
+                logging.warning(f'매도요청목록 삭제 실패: code={code} {name}')
+
+        gm.전송목록.set(key=code, data={'전략': 전략, '전략번호': idx, '종목코드': code, '종목명': name, '주문수량': quantity, '주문유형': 주문유형, '전송번호': rqname})
+        logging.debug(f'전송목록 추가 : \n전송목록 =\n{tabulate(gm.전송목록.get(), headers="keys", showindex=True, numalign="right")}')
+        cmd = {
+            'rqname': rqname,
+            'screen': screen,
+            'accno': accno,
+            'ordtype': ordtype,
+            'code': code,
+            'hoga': hoga,
+            'quantity': quantity,
+            'price': price,
+            'ordno': ordno
+        }
+        success = gm.pro.api.SendOrder(**cmd)
+        if gm.config.gui_on: gm.qdict['msg'].request.put(Work('주문내용', {'msg': msg}))
+
+        #self.dbm_order_upsert(idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno)
+        return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
+
+    def com_market_status(self):
+        now = datetime.now()
+        time = int(now.strftime("%H%M%S"))
+        if time < 83000: return dc.ms.장종료
+        elif time < 84000: return dc.ms.장전시간외종가
+        elif time < 90000: return dc.ms.장전동시호가
+        elif time < 152000: return dc.ms.장운영중
+        elif time < 153000: return dc.ms.장마감동시호가
+        elif time < 154000: return dc.ms.장마감
+        elif time < 160000: return dc.ms.장후시간외종가
+        elif time < 180000: return dc.ms.시간외단일가
+        else: return dc.ms.장종료
+
+    # json 파일 사용 메소드 -----------------------------------------------------------------------------------------
+
+    def json_load_counter_tickers(self) -> dict:
+        result, data = load_json(dc.fp.counter_tickers_file, {'today': dc.td.ToDay})
+        if result:
+            logging.debug(f'보유 종목 매수횟수 설정 JSON 파일을 로드 했습니다. data count={len(data)}')
+        if data.get('today', '') != dc.td.ToDay:
+            data = {'today': dc.td.ToDay}
+        return data
+
+    def json_save_counter_tickers(self, tickers) -> bool:
+        result, data = save_json(dc.fp.counter_tickers_file, tickers)
+        if result:
+            logging.debug(f'보유 종목 매수횟수 설정 파일을 저장 했습니다. data count={len(data)}')
+        return result
+
+    def json_load_counter_strategy(self) -> dict:
+        result, data = load_json(dc.fp.counter_strategy_file, {'today': dc.td.ToDay})
+        if result:
+            logging.debug(f'전략 매수횟수 설정 JSON 파일을 로드 했습니다. data count={len(data)}')
+        if data.get('today', '') != dc.td.ToDay:
+            data = {'today': dc.td.ToDay}
+        gm.json_counter_strategy_file = data
+        return data
+
+    def json_save_counter_strategy(self, strategy) -> bool:
+        result, data = save_json(dc.fp.counter_strategy_file, strategy)
+        if result:
+            logging.debug(f'전략 매수횟수 설정 파일을 저장 했습니다. data count={len(data)}')
+        return result
+
+    def json_load_define_sets(self):
+        try:
+            result, data = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
+            gm.전략설정 = data
+            if result:
+                logging.debug(f'전략설정 JSON 파일을 로드했습니다.\n{tabulate(pd.DataFrame(gm.전략설정).loc[lambda x: x["전략명칭"]!=""].reset_index(), headers="keys", showindex=False, numalign="right")}')
+            return result
+        except Exception as e:
+            logging.error(f'전략설정 적용 오류: {type(e).__name__} - {e}', exc_info=True)
+            return False
+
+    def json_save_define_sets(self):
+        result, data = save_json(dc.fp.define_sets_file, gm.전략설정)
+        if result:
+            logging.debug(f'전략설정 JSON 파일을 저장했습니다.\n{tabulate(pd.DataFrame(data).loc[lambda x: x["전략명칭"]!=""].reset_index(), headers="keys", showindex=False, numalign="right")}')
+        return result
+
+    def json_load_strategy_sets(self):
+        try:
+            result, data = load_json(dc.fp.strategy_sets_file, [dc.const.DEFAULT_STRATEGY_SETS])
+            if result:
+                logging.debug(f'전략정의 JSON 파일을 로드했습니다. data count={len(data)}')
+            gm.전략정의.set(data=data)
+            gm.basic_strategy = gm.전략정의.get(key=dc.const.BASIC_STRATEGY)
+            gm.strategy_row = gm.전략정의.get(key=data[0]['전략명칭'])
+            return True
+        except Exception as e:
+            logging.error(f'전략정의 적용 오류: {type(e).__name__} - {e}', exc_info=True)
+            return False
+
+    def json_save_strategy_sets(self):
+        try:
+            result, data = save_json(dc.fp.strategy_sets_file, gm.전략정의.get())
+            if result:
+                logging.debug(f'전략정의 JSON 파일을 저장했습니다. data count={len(data)}')
+            gm.basic_strategy = gm.전략정의.get(key=dc.const.BASIC_STRATEGY)
+            return result
+        except Exception as e:
+            logging.error(f'전략정의 쓰기 오류: {type(e).__name__} - {e}', exc_info=True)
+            return False
+
+    # api 처리 메소드 -----------------------------------------------------------------------------------------------
+    def on_fx수신_주문결과TR(self, code, name, order_no, screen, rqname): # 주문관련 TR 수신
+        try:
+            if rqname in gm.전송목록.get(key=code, column='전송번호'):
+                if order_no:
+                    주문수량 = gm.전송목록.get(key=code, column='주문수량')
+                    전략 = gm.전송목록.get(key=code, column='전략')
+                    전략번호 = int(전략[-2:])
+                    전략명칭 = gm.전략설정[전략번호]['전략명칭']
+                    주문유형 = '신규매수' if screen=='8811' or screen.startswith('4') else dc.scr.화면번호[screen]
+                    row = {'전략': 전략, '전략번호': 전략번호, '종목코드': code, '종목명': name, '주문번호': order_no,\
+                            '주문수량': 주문수량, '주문유형': 주문유형, '전략명칭': 전략명칭, '전송번호': 'TR에서생성'}
+                    gm.접수목록.set(key=order_no, data=row)
+                    logging.info(f'TR 수신: 주문유형={주문유형} order_no={order_no} ')
+                    logging.debug(f'TR 수신: \n접수목록=\n{tabulate(gm.접수목록.get(), headers="keys", showindex=True, numalign="right")}')
+
+                    # 매매처리 디비 저장
+                    주문구분 = 주문유형[2:] if '신규' in 주문유형 else 주문유형
+                    매도수구분 = '2' if '매수' in 주문유형 else '1'
+                    query = "INSERT OR REPLACE INTO trades (전략번호, 매도수구분, 주문구분, 주문상태, 주문번호, 종목코드, 종목명) VALUES (?,?,?,?,?,?,?)"
+                    params = (전략번호, 매도수구분, 주문구분, '요청', order_no, code, name,)
+                    #gm.pro.aaa.put('dbm', Work('execute_query', {'sql': query, 'db': 'daily', 'params': params}))
+                else:
+                    logging.warning(f'TR 수신:주문번호 받지 못 함: rqname={rqname} 주문번호={order_no}')
+
+                logging.debug(f'TR 전송목록 삭제 전\n전송목록=\n{tabulate(gm.전송목록.get(), headers="keys", showindex=True, numalign="right")}')
+                if not gm.전송목록.delete(key=code):
+                    logging.error(f'전송목록 삭제 실패: code={code}')
+            else:
+                logging.warning(f'TR 수신:주문전송대장에 없음: order_no={order_no} rqname={rqname}')
+
+        except Exception as e:
+            logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def on_fx실시간_조건검색(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
+        try:
+            condition = f'{int(cond_index):03d} : {cond_name.strip()}'
+            if condition in gm.매수문자열들:
+                idx = gm.매수문자열들.index(condition)
+                kind = '매수'
+            elif condition in gm.매도문자열들:
+                idx = gm.매도문자열들.index(condition)
+                kind = '매도'
+            else:
+                logging.warning(f"조건식 서버 해제 안 됨 : type={type}, condition={condition}")
+                return
+            #if kind == '매수': logging.debug(f'{code} {kind}{"편입" if type=="I" else "이탈"} {cond_name} {cond_index}')
+            if type == 'I':
+                gm.전략쓰레드[idx].cdn_fx편입_실시간조건감시(kind, code, type, cond_name, cond_index)
+            elif type == 'D':
+                gm.전략쓰레드[idx].cdn_fx이탈_실시간조건감시(kind, code, type, cond_name, cond_index)
+        except Exception as e:
+            logging.error(f"쓰레드 찾기오류 {code} {type} {cond_name} {cond_index}: {type(e).__name__} - {e}", exc_info=True)
+
+    def on_fx실시간_장운영감시(self, code, rtype, dictFID): # 장 운영 상황 감시
+        fid215 = dictFID['장운영구분']
+        fid20 = dictFID['체결시간']
+        fid214 = dictFID['장시작예상잔여시간']
+        분 = f' {int(fid214[2:4])} 분' if int(fid214[2:4]) else ''
+        초 = f' {int(fid214[4:])} 초' if int(fid214[4:]) else ''
+        msg=''
+        if fid215 == '0': msg = f'장 시작{분}{초} 전'
+        if fid215 == '0': msg = f'장 시작{분}{초} 전'
+        elif fid215 == '2': msg = f'장 마감{분}{초} 전'
+        elif fid215 == '3': msg = f'장이 시작 되었습니다.'
+        elif fid215 == '4': msg = f'장이 마감 되었습니다.'
+        if msg:
+            if gm.config.gui_on: gm.qdict['msg'].request.put(Work('상태바', {'msg': msg}))
+            logging.debug(f'{rtype} {code} : {fid215}, {fid20}, {fid214} {msg}')
+
+    def on_fx실시간_주식체결(self, code, rtype, dictFID): # 실시간 시세 감시, 시장 체결데이타 분석 재료, 종목의 누적 거래향
+        if not gm.config.ready: return
+        if code in gm.dict종목정보:
+            gm.dict종목정보[code].update({'현재가': abs(int(dictFID['현재가']))})
+            #logging.debug(f'***************종목정보:{code} {gm.dict종목정보[code]}')
+
+        goto_sell = False
+        def check_buy_condition():
+            codes = gm.매수대기목록.get(column='종목코드')
+            #logging.debug(f'***************매수대기목록:{codes}')
+            if not codes: return
+            for code in codes:
+                현재가 = gm.dict종목정보[code]['현재가']
+                idx = int(gm.매수대기목록.get(key=code, column='전략번호'))
+                if gm.전략쓰레드[idx].매수지정가 and 현재가 == 0: continue
+                gm.dict매수요청목록[code] = 현재가
+                gm.전략쓰레드[idx].order_buy(code, f'전략{idx:02d}', 현재가)
+                gm.매수대기목록.delete(key=code)
+
+        def check_sell_condition():
+            codes = gm.매도대기목록.get(column='종목코드')
+            #logging.debug(f'***************매도대기목록:{codes}')
+            if not codes: return
+            for code in codes:
+                현재가 = gm.dict종목정보[code]['현재가']
+                idx = int(gm.매도대기목록.get(key=code, column='전략번호'))
+                if gm.전략쓰레드[idx].매도지정가 and 현재가 == 0: continue
+                row = gm.잔고목록.get(key=code)
+                if not row:
+                    if gm.매도대기목록.delete(key=code):
+                        logging.debug(f'잔고목록에 없음 매도대기목록 삭제:' +
+                                    f'매도대기목록=\n{tabulate(gm.매도대기목록.get(), headers="keys", showindex=True, numalign="right")}')
+                    return
+                gm.dict매도요청목록[code] = 현재가
+                row.update({ 'rqname': '신규매도', 'account': gm.config.account, '현재가': 현재가})  # 매도 조건 만족 매도 이므로 수익율등 필요 없음
+                gm.전략쓰레드[idx].order_sell(row, sell_condition=True) # 매도조건 만족 매도 sell_condition=True
+                gm.매도대기목록.delete(key=code)
+                goto_sell = True
+        try:
+            gm.pro.aaa.put('dbm', Work('receive_current_price', {'code': code, 'dictFID': dictFID}))
+            if gm.매수대기목록.len() > 0: check_buy_condition()
+            if gm.매도대기목록.len() > 0: check_sell_condition()
+            if goto_sell: return
+
+            if gm.잔고목록.in_key(code):
+                row = gm.잔고목록.get(key=code)
+                if not row: return
+                전략 =  row['전략'] or '전략00'   # 전략이 None, 0, '', [], {} False 면 '전략00'
+                idx = int(전략[-2:])
+                self.pri_fx처리_잔고데이터(idx, code, row, dictFID)
+                self.pri_fx검사_매도요건(idx, code)
+            #if dfm.in_code_map('매수조건목록', code):
+            #    dfm.set('매수조건목록', values=dictFID, key=code)
+            #if dfm.in_code_map('매도조건목록', code):
+            #    dfm.set('매도조건목록', values=dictFID, key=code)
+        except Exception as e:
+            logging.error(f'실시간 주식체결 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def on_fx실시간_주문체결(self, code, rtype, dictFID): # 자신의 주문상태 추적, 체결정보, 미체결 잔량 확인
+        if not gm.config.ready: return
+        pass
 
     # 업데이트  -------------------------------------------------------------------------------------------
     def pri_fx얻기_잔고합산(self):
@@ -129,10 +411,10 @@ class Admin:
             dict_list.extend(data)
             if dict_list:
                 for i, item in enumerate(dict_list):
-                    item.update({'순번':i+1})
+                    item.update({'순번':i})
                 gm.잔고합산.set(data=dict_list)
                 logging.info(f"잔고합산 얻기 완료: data=\n{gm.잔고합산.get(type='df')}")
-                gm.잔고합산_copy = gm.잔고합산.get() # copy
+                gm.l2잔고합산_copy = gm.잔고합산.get(key=0) # dict
 
             logging.info(f"잔고합산 얻기 완료: data count={gm.잔고합산.len()}")
 
@@ -157,10 +439,73 @@ class Admin:
                 data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
                 logging.debug(f'잔고목록 얻기 2: data count={len(data)}, remain={remain}')
                 dict_list.extend(data)
+
+            def get_preview_data(dict_list):
+                # 홀딩스 데이터 로드 (미리 로드)
+                success, gm.holdings = load_json(dc.fp.holdings_file, {})
+                if not success:
+                    logging.error(f'홀딩스 데이터 로드 실패: {dc.fp.holdings_file}')
+
+                dict_list = [{
+                    **item,
+                    '종목번호': item['종목번호'].lstrip('A'),
+                    '상태': 0,
+                    '감시': 0,
+                    '보존': 0,
+                    '전략': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('전략', item.get('전략', '전략00')),
+                    '매수전략': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수전략', item.get('매수전략', dc.const.NON_STRATEGY)),
+                    '전략명칭': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('전략명칭', item.get('전략명칭', dc.const.BASIC_STRATEGY)),
+                    '감시시작율': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('감시시작율', item.get('감시시작율', gm.basic_strategy.get('감시시작율', 0.0))),
+                    '이익보존율': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('이익보존율', item.get('이익보존율', gm.basic_strategy.get('이익보존율', 0.0))),
+                    '감시': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('감시', item.get('감시', 0)),
+                    '보존': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('보존', item.get('보존', 0)),
+                    '매수일자': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수일자', item.get('매수일자', '')),
+                    '매수시간': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수시간', item.get('매수시간', '')),
+                    '매수번호': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수번호', item.get('매수번호', '')),
+                    '매수수량': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수수량', item.get('보유수량', 0)),
+                    '매수가': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수가', item.get('매입가', 0)),
+                    '매수금액': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수금액', item.get('매입금액', 0)),
+                } for item in dict_list]
+                return dict_list
+
+            def save_holdings(dict_list):
+                dict_list = gm.잔고목록.get()
+                gm.holdings = {item['종목번호']:
+                            {'종목명': item['종목명'], '전략': item['전략'], '매수전략': item['매수전략'], '전략명칭': item['전략명칭'],\
+                            '감시시작율': item['감시시작율'], '이익보존율': item['이익보존율'], '감시': item['감시'], '보존': item['보존'],\
+                            '매수일자': item['매수일자'], '매수시간': item['매수시간'],\
+                            '매수번호': item['매수번호'], '매수수량': item['매수수량'], '매수가': item['매수가'], '매수금액': item['매수금액']} \
+                    for item in dict_list}
+                save_json(dc.fp.holdings_file, gm.holdings)
+
+            def save_counter(dict_list):
+                for item in dict_list:
+                    전일가 = gm.pro.api.GetMasterLastPrice(item['종목번호'])
+                    gm.dict종목정보[item['종목번호']] = {'종목명': item['종목명'], '전일가': 전일가, '현재가': 0}
+                    전략정의 = gm.전략정의.get(key=item['전략명칭'])
+                    if not 전략정의:
+                        # strategy_set.json 에 전략명칭이 없으면 기본전략 적용 (인위적으로 삭제시 발생)
+                        logging.warning(f'전략정의 없음: 전략명칭={item["전략명칭"]} 기본전략 적용')
+                        item['전략'] = "전략00"
+                        item['매수전략'] = ""
+                        item['전략명칭'] = "기본전략"
+                        gm.잔고목록.set(key=item['종목번호'], data=item)
+                        전략정의 = gm.전략정의.get(key="기본전략")
+
+                    종목제한 = 전략정의.get('종목제한', 0)
+                    gm.json_counter_tickers.setdefault(item['전략'], {})
+
+                    gm.json_counter_tickers[item['전략']].setdefault(item['종목번호'], {'종목명': item['종목명'], '종목제한': 종목제한, '종목잔회': 종목제한})
+                save_json(dc.fp.counter_tickers_file, gm.json_counter_tickers)
+
+            logging.debug(f'dict_list ={dict_list}')
             if dict_list:
-                dict_list =[{**item, '종목번호':item['종목번호'].lstrip('A')} for item in dict_list]
+                dict_list = get_preview_data(dict_list)
                 gm.잔고목록.set(data=dict_list)
-                logging.info(f"잔고목록 얻기 완료: data=\n{gm.잔고목록.get(type='df')}")
+                save_holdings(dict_list)
+                save_counter(dict_list)
+
+            logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
         except Exception as e:
             logging.error(f'pri_fx얻기_잔고목록 오류: {e}', exc_info=True)
@@ -174,20 +519,530 @@ class Admin:
         except Exception as e:
             logging.error(f'실시간 시세 요청 오류: {type(e).__name__} - {e}', exc_info=True)
 
+    def pri_fx얻기_매매일지(self, date_text):
+        try:
+            gm.일지합산.delete()
+            gm.일지목록.delete()
+            data = []
+            input = {'계좌번호':gm.config.account, '비밀번호': '', '기준일자': date_text, '단주구분': 2, '현금신용구분': 0}
+            rqname = '일지합산'
+            trcode = 'opt10170'
+            output = gm.tbl.hd일지합산['컬럼']
+            next = '0'
+            screen = dc.scr.화면['일지합산']
+            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+            if data:
+                for i, item in enumerate(data):
+                    item.update({'순번':i})
+                gm.일지합산.set(data=data)
+                logging.info(f'매매일지 합산 얻기 완료: date:{date_text}, data:\n{data}')
+            else:
+                logging.warning(f'매매일지 합산 얻기 실패: date:{date_text}, data:{data}')
+
+            dict_list = []
+            input = {'계좌번호':gm.config.account, '비밀번호': '', '기준일자': date_text, '단주구분': 2, '현금신용구분': 0} # 단주구분:2=당일매도전체. 1=당일매수에대한매도
+            rqname = '일지목록'
+            trcode = 'opt10170'
+            output = gm.tbl.hd일지목록['컬럼']
+            next = '0'
+            screen = dc.scr.화면['일지목록']
+            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+            dict_list.extend(data)
+            while remain:
+                next = '2'
+                data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+                dict_list.extend(data)
+            if not data:
+                logging.warning(f'매매일지 목록 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+                return
+
+            dict_list = [{**item, '종목코드': item['종목코드'][1:]} for item in dict_list]
+            gm.일지목록.set(data=dict_list)
+            logging.info(f"일지목록 얻기 완료: date:{date_text}, data count={gm.일지목록.len()}")
+
+        except Exception as e:
+            logging.error(f'매매일지 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def pri_fx얻기_예수금(self):
+        try:
+            dict_list = []
+            rqname = '예수금'
+            trcode = 'opw00001'
+            input = {'계좌번호':gm.config.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '3'}
+            output = gm.tbl.hd예수금['컬럼']
+            next = '0'
+            screen = dc.scr.화면['예수금']
+            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+            if data:
+                for i, item in enumerate(data):
+                    item.update({'순번':i})
+                gm.예수금.set(data=data)
+                row = gm.예수금.get(key=0)
+                logging.info(f'예수금 얻기 완료: 예수금={row["예수금"]:,}원 출금가능금액={row["출금가능금액"]:,}원 주문가능금액={row["주문가능금액"]:,}원')
+            else:
+                logging.warning(f'예수금 얻기 실패: dict_list={dict_list}')
+
+        except Exception as e:
+            logging.error(f'예수금 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def pri_fx얻기_손익목록(self):
+        try:
+            gm.손익목록.delete()
+            dict_list = []
+            rqname = '손익목록'
+            trcode = 'opt10077'
+            input = {'계좌번호':gm.config.account, '비밀번호': '', '종목코드': ''}
+            output = gm.tbl.hd손익목록['컬럼']
+            next = '0'
+            screen = dc.scr.화면['손익목록']
+            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+            dict_list.extend(data)
+            while remain:
+                next = '2'
+                data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+                dict_list.extend(data)
+            dict_list = [{**item, '종목코드': item['종목코드'][1:]} for item in dict_list]
+            gm.손익목록.set(data=dict_list)
+            gm.l2손익합산 = gm.손익목록.sum(column='당일매도손익')[0]
+            logging.info(f"손익목록 얻기 완료: data count={gm.손익목록.len()}, 당일매도손익={gm.l2손익합산:,}원")
+        except Exception as e:
+            logging.error(f'손익목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def pri_fx얻기_체결목록(self, date_text):
+        try:
+            gm.체결목록.delete()
+            dict_list = gm.pro.aaa.get('dbm', Answer('aaa', 'execute_query', {'sql': dc.ddb.CONC_SELECT_DATE, 'db': 'db', 'params': (date_text,)}))
+            logging.debug(f'체결목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)} len:{len(dict_list)}')
+            if dict_list is not None and len(dict_list) > 0:
+                gm.체결목록.set(data=dict_list)
+                손익금액, 매수금액 = gm.체결목록.sum(column=['손익금액', '매수금액'], filter={'매도수량': ('==', '@매수수량')})
+                손익율 = round(손익금액 / 매수금액 * 100, 2) if 매수금액 else 0
+                logging.info(f"체결목록 얻기 완료: data count={gm.체결목록.len()}, 손익금액={손익금액:,}원, 손익율={손익율:,.2f}%")
+            else:
+                logging.warning(f'체결목록 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+
+        except Exception as e:
+            logging.error(f'체결목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def pri_fx처리_잔고데이터(self, idx, code, row, dictFID):
+        try:
+            # 잔고목록 업데이트
+            현재가 = abs(int(dictFID['현재가']))
+            최고가 = row.get('최고가', 0)
+            감시율 = row.get('감시시작율', 0.0) / 100
+            보존율 = row.get('이익보존율', 0.0) / 100
+            감시 = row.get('감시', 0)
+            보존 = row.get('보존', 0)
+            새감시 = 감시 or ((1 if 현재가 > row['매입가'] * (1 + 감시율) else 0) if 감시율 else 0)
+            새보존 = 보존 or ((1 if 현재가 > row['매입가'] * (1 + 보존율) else 0) if 보존율 else 0)
+
+            if 새감시 != 감시 or 새보존 != 보존:
+                gm.holdings[code]['감시'] = 새감시
+                gm.holdings[code]['보존'] = 새보존
+                save_json(dc.fp.holdings_file, gm.holdings)
+
+            보유수량 = int(row['보유수량'])
+            매입금액 = int(row['매입금액'])
+
+            매수수수료 = int(매입금액 * gm.수수료율 / 10) * 10            # 매수시 10원 미만 절사
+            매도수수료 = int(보유수량 * 현재가 * gm.수수료율 / 10) * 10   # 매도시 10원 미만 절사
+            거래세 = int(보유수량 * 현재가 * gm.세금율)                   # 매도시 거래세 0.18% 원미만 절사
+
+            평가금액 = 현재가 * 보유수량 - 매수수수료 - 매도수수료 - 거래세
+            평가손익 = 평가금액 - 매입금액
+            수익률 = (평가손익 / 매입금액) * 100 if 매입금액 > 0 else 0
+
+            dictFID.update({
+                '현재가': 현재가,
+                '평가금액': 평가금액,
+                '평가손익': 평가손익,
+                '수익률(%)': round(수익률, 2),
+                '최고가': 현재가 if 현재가 > 최고가 else 최고가,
+                '보존': 새보존,
+                '감시': 새감시,
+                '상태': 1
+            })
+            gm.잔고목록.set(key=code, data=dictFID)
+
+            # 잔고합산 업데이트
+            총매입금액, 총평가금액 = gm.잔고목록.sum(column=['매입금액', '평가금액'])
+            총평가손익금액 = 총평가금액 - 총매입금액
+            총수익률 = (총평가손익금액 / 총매입금액 * 100) if 총매입금액 else 0
+
+            # 추정예탁자산 = 이전추정예탁자산 + (현재총평가금액 - 이전총평가금액)
+            이전총평가금액 = gm.l2잔고합산_copy['총평가금액'] or 0
+            이전추정예탁자산 = gm.l2잔고합산_copy['추정예탁자산'] or 0
+            추정예탁자산 = 이전추정예탁자산 + 총평가금액 - 이전총평가금액
+
+            gm.잔고합산.set(data={
+                '총매입금액': 총매입금액,
+                '총평가금액': 총평가금액,
+                '추정예탁자산': 추정예탁자산,
+                '총평가손익금액': 총평가손익금액,
+                '총수익률(%)': round(총수익률, 2),
+            }, key=0)
+            gm.l2잔고합산_copy = gm.잔고합산.get(key=0)
+
+        except Exception as e:
+            logging.error(f'실시간 배치 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def pri_fx검사_매도요건(self, idx, code):
+        msg = ''
+        row = gm.잔고목록.get(key=code)
+        if not row: msg = f'잔고목록에 없는 종목'
+        elif gm.전송목록.in_key(code): msg = f'이미 매도 요청된 종목'
+        #elif row['상태'] == 0: msg = f'매도 요건 미 충족'
+        if msg:
+            if msg != '이미 매도 요청된 종목': logging.error(f'{msg} : {code} {row.get("종목명", "종목명 없음")}')
+            return
+        row.update({ 'rqname': '신규매도', 'account': gm.config.account })
+        if gm.전략쓰레드[idx]: gm.전략쓰레드[idx].order_sell(row)
+
     # 전략 매매  -------------------------------------------------------------------------------------------
     def cdn_fx준비_전략매매(self):
         try:
-            success, gm.전략설정 = load_json(dc.fp.define_sets_file, [dc.const.DEFAULT_DEFINE_SETS])
-            gm.전략쓰레드 = [None] * 6
+            success, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
+            gm.전략쓰레드 = [None] * 11
             gm.전략쓰레드[0] = Strategy(name='전략00', qdict=gm.qdict, cls=self, 전략정의=gm.basic_strategy)
-            for i in range(1, 6):
-                if not gm.전략설정[i].get('전략적용', False): continue
+            for i in range(1, 11):
                 전략 = f'전략{i:02d}'
                 전략정의 = gm.전략정의.get(key=gm.전략설정[i]['전략명칭'])
                 gm.전략쓰레드[i] = Strategy(name=전략, qdict=gm.qdict, cls=self, 전략정의=전략정의)
         except Exception as e:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
+    def cdn_fx실행_전략매매(self):
+        try:
+            self.cdn_fx준비_전략매매()
+            gm.매수조건목록.delete()
+            gm.매도조건목록.delete()
+            gm.dict조건종목감시 = {}  # {'종목번호': [fid1, fid2, fid3, ...]}
+            gm.매수문자열들 = [""] * 11     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
+            gm.매도문자열들 = [""] * 11     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
+            msgs = ''
+            for i in range(1, 11):
+                if not gm.전략설정[i]['전략적용']: continue
+                msg = gm.전략쓰레드[i].cdn_fx실행_전략초기화()
+                if not msg:
+                    gm.전략쓰레드[i].start()
+                else:
+                    msgs += f'\n{msg}' if msgs else msg
+            if msgs: gm.toast.toast(msgs, duration=3000) #dc.TOAST_TIME
+            #logging.debug(f'전략매매 쓰레드 설정: {gm.전략쓰레드}')
+
+        except Exception as e:
+            logging.error(f'전략매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def cdn_fx중지_전략매매(self):
+        try:
+            for i in range(1, 11):
+                gm.전략쓰레드[i].cdn_fx실행_전략마무리()
+            gm.매수조건목록.delete()
+            gm.매도조건목록.delete()
+            gm.매수대기목록.delete()
+            gm.매도대기목록.delete()
+            gm.전송목록.delete()
+            gm.접수목록.delete()
+        except Exception as e:
+            logging.error(f'전략매매 중지 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    # 주문 처리 프로세스 ----------------------------------------------------------------------------------------------
+
+    def odr_fx처리_주문타임아웃(self, kind, row, strategy):
+        if gm.접수목록.len() == 0: return
+        try:
+            order_no = row['주문번호']
+            if not gm.접수목록.in_key(order_no): return
+            code = row['종목코드']
+            name = row['종목명']
+            주문수량 = row['주문수량']
+            미체결수량 = row['미체결수량']
+            if 미체결수량 > 0:
+                logging.info(f'{kind}\n주문 타임아웃: {gm.접수목록.get(key=order_no, column="전략")} {code} {name} 주문번호={order_no} 주문수량={주문수량} 미체결수량={미체결수량} 전략명칭={strategy.전략명칭}')
+                strategy.order_cancel(kind, order_no, code)
+            return
+        except KeyError:
+            logging.warning(f'주문 타임아웃 KeyError: order_no={order_no} code={code} name={name}')
+        except Exception as e:
+            logging.error(f"주문 타임아웃 오류: code={code} name={name} {type(e).__name__} - {e}", exc_info=True)
+
+    def odr_fx처리_접수체결(self, dictFID):
+        if not gm.config.ready: return
+        try:
+            code = dictFID['종목코드'].lstrip('A')
+            dictFID['종목코드'] = code
+            order_no = dictFID['주문번호']
+            row = gm.접수목록.get(key=order_no)
+            dictFID['종목명'] = dictFID['종목명'].strip()
+            dictFID['주문구분'] = dictFID['주문구분'].lstrip('+-')
+            전략 = row.get('전략', '전략00') if row else '전략00'
+            전략번호 = int(전략[-2:]) if 전략 else 0
+            dictFID['전략번호'] = 전략번호
+            dictFID['전략'] = 전략
+            전략명칭 = gm.전략설정[전략번호]['전략명칭']
+            dictFID['전략명칭'] = 전략명칭
+            전략정의 = gm.전략정의.get(key=전략명칭)
+            dictFID['매수전략'] = 전략정의.get('매수전략', '')
+            dictFID['전략정의'] = 전략정의
+            logging.debug(f'체결잔고 : 주문상태={dictFID.get("주문상태", "")} order_no={order_no} ' +
+                            f'\n접수목록=\n{tabulate(gm.접수목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+
+            self.dbm_trade_upsert(dictFID)
+            if '접수' in dictFID.get('주문상태', ''):
+                self.odr_fx처리_접수(dictFID)
+            elif '체결' in dictFID.get('주문상태', ''):
+                self.odr_fx처리_체결(dictFID)
+            elif '확인' in dictFID.get('주문상태', ''):
+                rows = gm.접수목록.get(filter={'전송번호': '취소중'})
+                if rows:
+                    row = rows[0]
+                    row.update({'전송번호': '취소완료'})
+                    gm.접수목록.set(key=order_no, data=row)
+                    logging.debug(f'주문체결 취소확인: order_no = {row["주문번호"]} \n접수목록=\n{tabulate(gm.접수목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                    gm.접수목록.delete(key=order_no)
+                # 매매처리 디비 저장
+                주문구분 = dictFID['주문구분']
+                매도수구분 = dictFID['매도수구분']
+                name = dictFID['종목명']
+                query = "INSERT OR REPLACE INTO trades (전략번호, 매도수구분, 주문구분, 주문상태, 주문번호, 종목코드, 종목명) VALUES (?,?,?,?,?,?,?)"
+                params = (전략번호, 매도수구분, 주문구분, '확인', order_no, code, name,)
+                gm.pro.aaa.put('dbm', Work('execute_query', {'sql': query, 'db': 'daily', 'params': params}))
+
+        except Exception as e:
+            logging.error(f"접수체결 오류: {type(e).__name__} - {e}", exc_info=True)
+
+    def odr_fx처리_접수(self, dictFID):
+        try:
+            kind = '매수' if dictFID['매도수구분']=='2' else '매도'
+            order_no = dictFID['주문번호']
+            origin_no = dictFID['원주문번호']
+            전략번호 = dictFID.get('전략번호', 0)
+            code = dictFID['종목코드']
+            종목명 = dictFID['종목명']
+            if gm.접수목록.in_key(order_no): # 취소주문인지 원주문인지 확인
+                if int(dictFID['미체결수량']) != 0:
+                    # 정상 접수
+                    row = gm.접수목록.get(key=order_no)
+                    if row['주문유형'][2:] == '취소':
+                        row.update({'전송번호': '취소접수'})
+                        logging.debug(f'{kind}주문 취소 정상 접수: order_no={order_no} \n접수목록=\n{row}')
+                        return
+                    row.update({'전략': f'전략{전략번호:02d}', '종목코드': code, '종목명': 종목명, '전략번호': 전략번호, '주문번호': order_no, '전송번호': '정상접수'})
+                    logging.debug(f'{kind}주문 정상 접수: order_no={order_no} \n접수목록=\n{row}')
+                    gm.접수목록.set(key=order_no, data=row)
+                else:
+                    # 취소주문후 원 주문 접수가 다시발생되며 이 경우 미체결 수량이 0으로 온다.
+                    logging.debug(f'주문취소 완료후 접수 시 원 접수목록 삭제 전: 주문번호={order_no} \n접수목록=\n' +\
+                                  f'{tabulate(gm.접수목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                    gm.접수목록.delete(key=order_no)
+                    gm.접수목록.delete(filter={'원주문번호':order_no})
+                    logging.debug(f'주문취소 완료후 접수 시 원 접수목록 삭제 후: 원주문번호={origin_no} \n접수목록=\n' +\
+                                  f'{tabulate(gm.접수목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                    return
+            else:
+                if gm.접수목록.in_key(origin_no):
+                    # 접수목록에 주문번호 키는 없고 원주문번호 키만 있는 경우
+                    old_dict = gm.접수목록.get(key=origin_no)
+                    if gm.전송목록.delete(key=code):
+                        logging.debug(f'전송목록 삭제 성공: \n전송목록=\n{tabulate(gm.전송목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                    else:
+                        logging.error(f'전송목록 삭제 실패: order_no={order_no} \n전송목록=\n{tabulate(gm.전송목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+
+                    gm.접수목록.set(key=origin_no, data={'전송번호': '취소중'})
+                    old_dict.update({'주문번호': order_no, '주문유형': f'{old_dict["주문유형"][2:]}취소', '원주문번호': origin_no, '전송번호': '취소작성'})
+                    logging.debug(f'주문 취소 정상 접수: 접수 추가 전 order_no={order_no} \n접수목록=\n{tabulate(gm.접수목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                    gm.접수목록.set(key=order_no, data=old_dict)
+                    logging.debug(f'주문 취소 정상 접수: 접수 추가 후 order_no={order_no} \n접수목록=\n{tabulate(gm.접수목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                    return
+
+                else:
+                    logging.warning(f'{kind}에러 - 주문접수대장에 없음: order_no={order_no} {code} {종목명}')
+                    name = gm.pro.api.GetMasterCodeName(code)
+                    row = {'전략': '전략00', '전략번호': 0, '종목코드': code, '종목명': name, '주문번호': order_no,\
+                            '주문유형': dictFID['주문구분'], '전략명칭': dc.BASIC_STRATEGY, '전송번호': '외부주문'}
+                    gm.접수목록.set(key=order_no, data=row)
+                    if kind == '매수': gm.pro.api.SetRealReg(screen= dc.scr.화면['실시간감시'], code_list= code, fid_list= '10', opt_type= 1 )
+
+            주문가격 = int(dictFID['주문가격'] if dictFID['주문가격'] else 0)
+            주문수량 = int(dictFID['주문수량'] if dictFID['주문수량'] else 0)
+            체결량 = int(dictFID['체결량'] if dictFID['체결량'] else 0)
+            미체결수량 = int(dictFID['미체결수량'] if dictFID['미체결수량'] else 0)
+            gm.접수목록.set(key=order_no, data={'주문수량': 주문수량, '미체결수량': 미체결수량, '체결량': 체결량})
+
+            strategy = gm.전략쓰레드[전략번호]
+            sec = 0
+            if kind == '매수':
+                if strategy.매수취소: sec = strategy.매수지연초
+            elif kind == '매도':
+                if strategy.매도취소: sec = strategy.매도지연초
+
+            if sec > 0:
+                row = gm.접수목록.get(key=order_no)
+                if row['주문유형'] in ['신규매수', '신규매도']:
+                    row['주문유형'] = f'{row["주문유형"][2:]}취소'
+                    QTimer.singleShot(sec * 1000, lambda kind=kind, row=row, cls= strategy: self.odr_fx처리_주문타임아웃(kind, row, cls))
+            msg = f"{dictFID['주문구분']}접수 : {f'전략{전략번호:02d}'} {code} {종목명} 주문수량:{주문수량}주 / 주문가:{주문가격}원 주문번호:{order_no} "
+
+            logging.info(msg)
+        except Exception as e:
+            logging.error(f'접수 오류: {dictFID}')
+            logging.error(f"접수 오류: {type(e).__name__} - {e}", exc_info=True)
+
+    def odr_fx처리_체결(self, dictFID):
+        try:
+            order_no = dictFID['주문번호']
+            code = dictFID['종목코드']
+            name = dictFID['종목명']
+            qty = int(dictFID.get('체결량',0) or 0)
+            price = int(dictFID.get('체결가',0) or 0) # unit_price
+            amount = int(dictFID.get('체결누계금액',0) or 0) # total_amount
+            remain_qty = int(dictFID.get('미체결수량', 0) or 0)
+            전략번호 = dictFID.get('전략번호', 0)
+            전략 = dictFID.get('전략', f'전략{전략번호:02d}')
+            gm.접수목록.set(key=order_no, data={'체결량': qty, '미체결수량': remain_qty, '전송번호': '체결처리'})
+
+            # 주문 취소시 일부 체결이 있을 경우의 처리
+            origin_no = gm.접수목록.get(filter={'원주문번호': order_no}, column='원주문번호')[0]
+            #logging.debug(f'***********원주문번호 검사 : origin_no={origin_no} type={type(origin_no)}')
+            if origin_no:
+                gm.접수목록.delete(key=order_no)
+                gm.접수목록.delete(filter={'원주문번호':order_no})
+                logging.debug(f'주문취소 완료후 체결 시 원 접수목록 삭제 후: 원주문번호={origin_no} \n접수목록=\n' +\
+                                f'{tabulate(gm.접수목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                return
+
+            kind = '매수' if dictFID['매도수구분']=='2' else '매도'
+            매매시간 = datetime.now().strftime('%H:%M:%S')
+            if kind == '매수':
+                #--------------------------------
+                전략정의 = dictFID.get('전략정의', gm.basic_strategy)
+                row = {'종목번호': code, '종목명': name, '보유수량': qty, '매입가': price, '매입금액': amount, '전략': 전략,\
+                        '매수전략': 전략정의['매수전략'], '전략명칭': 전략정의['전략명칭'], '감시시작율': 전략정의['감시시작율'], '이익보존율': 전략정의['이익보존율'],\
+                        '감시': 0, '보존': 0, '매수일자': dc.td.ToDay, '매수시간': 매매시간, '매수번호': order_no, '매수수량': qty, '매수가': price, '매수금액': amount}
+                #--------------------------------
+                #logging.debug(f'***********잔고목록 키 검사 : in_key={gm.잔고목록.in_key(code)}')
+                if not gm.잔고목록.in_key(code):
+                    gm.잔고목록.set(key=code, data=row)
+                    logging.info(f'체결/잔고목록 추가: code={code} name={name} qty={qty} price={price} amount={amount} remain_qty={remain_qty}')
+                    logging.debug(f'잔고목록추가: \n{tabulate(gm.잔고목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                    # logging.debug(f'잔고목록추가: \n{row}')
+                    #--------------------------------
+                    gm.holdings[code] = {'종목명': name, '전략': 전략, '매수전략': 전략정의['매수전략'], '전략명칭': 전략정의['전략명칭'], \
+                                          '감시시작율': 전략정의['감시시작율'], '이익보존율': 전략정의['이익보존율'], '매수일자': dc.td.ToDay, '매수시간': 매매시간, \
+                                            '감시': 0, '보존': 0, '매수번호': order_no, '매수수량': qty, '매수가': price, '매수금액': amount}
+
+                    # 보유 목록 저장
+                    save_json(dc.fp.holdings_file, gm.holdings)
+
+                    # 종목 매수제한 기록
+                    set_dict = gm.json_counter_tickers.setdefault(전략, {전략: {}}).setdefault(code, {'종목명': name, '종목제한': 전략정의['종목제한'], '종목잔회': 전략정의['종목제한']})
+                    set_dict['종목잔회'] -= 1
+                    gm.json_counter_tickers[전략][code].update(set_dict)
+                    self.json_save_counter_tickers(gm.json_counter_tickers)
+                    # 전략 체결횟수 기록
+                    set_dict = gm.json_counter_strategy.setdefault(전략, {'전략명칭': 전략정의['전략명칭'], '체결횟수': 전략정의['체결횟수'], '남은횟수': 전략정의['체결횟수']})
+                    set_dict['남은횟수'] -= 1
+                    gm.json_counter_strategy[전략].update(set_dict)
+                    self.json_save_counter_strategy(gm.json_counter_strategy)
+                else:
+                    gm.잔고목록.set(key=code, data=row)
+                conclusion_row = {'전략': 전략, '종목번호': code, '종목명': name, '매수수량': qty, '매수가': price, '매수금액': amount, '매수일자': dc.td.ToDay, '매수시간': 매매시간, \
+                          '매수번호': order_no, '매수전략': 전략정의['매수전략'], '전략명칭': 전략정의['전략명칭']}
+                gm.pro.aaa.put('dbm', Work('conclusion_upsert_buy', {'row': conclusion_row}))
+
+            else: # 매도
+                row = gm.잔고목록.get(key=code)
+                단위체결량 = int(dictFID.setdefault('단위체결량', 0) or 0)
+                단위체결가 = int(dictFID.setdefault('단위체결가', 0) or 0)
+                conclusion_row = { k: row[k] for k in gm.tbl.hd체결목록['컬럼'] if k in row }
+                conclusion_row.update({'매도일자': dc.td.ToDay, '매도시간': 매매시간, '매도번호': order_no, '체결가': price, '체결량': qty, '체결누계금액': amount, \
+                                       '단위체결량': 단위체결량, '단위체결가': 단위체결가, '수수료율': gm.수수료율, '거래세율': gm.세금율})
+                gm.pro.aaa.put('dbm', Work('conclusion_upsert_sell', {'row': conclusion_row}))
+                if remain_qty == 0:
+                    if gm.잔고목록.in_key(code):
+                        if not gm.잔고목록.delete(key=code):
+                            logging.error(f'잔고목록 삭제 실패: code={code}')
+                        else:
+                            logging.info(f'잔고목록 삭제 성공: code={code}')
+                            logging.debug(f'잔고목록 삭제 후: \n{tabulate(gm.잔고목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                    gm.holdings.pop(code, None)
+                    save_json(dc.fp.holdings_file, gm.holdings)
+                else:
+                    pass # 잔고 업데이트는 잔고변경에서 처리
+
+            if remain_qty == 0:
+                logging.debug(f'접수목록 삭제 시도: order_no={order_no} \n접수목록=\n{tabulate(gm.접수목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                if not gm.접수목록.delete(key=order_no):
+                    logging.error(f'접수목록 삭제 실패: order_no={order_no} \n접수목록=\n{tabulate(gm.접수목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                else:
+                    logging.debug(f'접수목록 삭제 성공: ')
+
+            msg = f"{kind}체결 : {전략} {code} {dictFID['종목명']} 체결수량:{qty}주 / 체결가:{dictFID['체결가']}원 주문번호:{order_no} "
+            if gm.config.gui_on: gm.qdict['msg'].request.put(Work('주문내용', {'msg': msg}))
+
+            logging.info(msg)
+        except Exception as e:
+            logging.error(f'체결 오류: {dictFID}')
+            logging.error(f"체결 오류: {type(e).__name__} - {e}", exc_info=True)
+
+    def odr_fx처리_잔고변경(self, dictFID):
+        if not gm.config.ready: return
+        try:
+            code = dictFID['종목코드'].lstrip('A')
+            보유수량 = int(dictFID.get('보유수량', 0) or 0)
+            매입단가 = int(dictFID.get('매입단가', 0) or 0)
+            주문가능수량 = int(dictFID.get('주문가능수량', 0) or 0)
+            if gm.잔고목록.in_key(code):
+                gm.잔고목록.set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량})
+            msg = f"잔고변경 : {code} {dictFID['종목명']} 보유수량:{보유수량}주 매입단가:{매입단가}원 매입금액:{보유수량 * 매입단가}원 주문가능수량:{주문가능수량}주"
+            logging.info(msg)
+        except Exception as e:
+            logging.error(f"잔고 변경 오류: {type(e).__name__} - {e}", exc_info=True)
+
+    # dbm 처리 메소드 -----------------------------------------------------------------------------------------------
+
+    def dbm_first_job(self):
+        logging.debug('dbm_first_job')
+        gm.pro.aaa.put('dbm', Work('init_db', {}))
+
+    def dbm_stop(self):
+        gm.pro.aaa.put('dbm', Work('stop', {}))
+        time.sleep(0.1)  # 마지막 메시지 처리를 위한 대기
+
+    def dbm_order_upsert(self, idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno):
+        try:
+            dict_data = {
+                '전략번호': idx,
+                '종목코드': code,
+                '종목명': name,
+                '주문수량': quantity,
+                '주문가격': price,
+                '주문유형': ordtype,
+                '호가구분': hoga,
+                '화면번호': screen,
+                '요청명': rqname,
+                '계좌번호': accno,
+                '주문번호': ordno
+            }
+            gm.pro.aaa.put('dbm', Work('table_upsert', {'db': 'daily', 'table': 'orders', 'dict_data': dict_data}))
+        except Exception as e:
+            logging.error(f"dbm_order_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
+            logging.info(f'dbm_order_upsert: {dc.주문유형FID[f"{ordtype:01d}"]} 주문번호={ordno} {code} {name} 수량:{quantity} 주문가격:{price} {"시장가" if hoga == "03" else "지정가"}')
+
+    def dbm_trade_upsert(self, dictFID):
+        try:
+            dict_data = {key: dictFID[key] for key in dc.ddb.TRD_COLUMN_NAMES if key in dictFID}
+            gm.pro.aaa.put('dbm', Work('table_upsert', {'db': 'daily', 'table': 'trades', 'dict_data': dict_data}))
+        except Exception as e:
+            logging.error(f"dbm_trade_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
+
+    def dbm_query_result(self, result, error=None):
+        if error is not None:
+            logging.debug(f'디비 요청 결과: result={result} error={error}')
+
+    def dbm_fx실시간_수신데이타(self, data):
+        # 디비에서 작업결과를 실시간으로 내보내는걸 수신 (예: 차트 분석 후 매매 신호)
+        pass
 
 
 

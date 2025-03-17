@@ -7,15 +7,13 @@ from typing import Any
 import logging
 import threading
 
-
-
 class Strategy(ModelThread):
     def __init__(self, name, qdict, cls=None, 전략정의=None):
         super().__init__(name, qdict, cls)
         self.name = name
         self.전략 = name
         self.전략번호 = int(name[-2:])
-        self.전략정의 = 전략정의 if 전략정의 else dc.const.DEFAULT_STRATEGY
+        self.전략정의 = 전략정의 if 전략정의 else dc.const.DEFAULT_STRATEGY_SETS
         self.buy_cond_idx = 0
         self.buy_cond_name = ''
         self.sell_cond_idx = 0
@@ -122,7 +120,6 @@ class Strategy(ModelThread):
                 dict종목['종목제한'] = self.종목제한
                 dict종목['종목잔회'] = self.종목제한
                 gm.json_counter_tickers[self.전략][code].update({'종목제한': self.종목제한, '종목잔회': self.종목제한})
-                gm.com.json_save_counter_tickers(fp.json_counter_tickers)
             return dict종목.get('종목잔회', 0)
 
         except Exception as e:
@@ -135,7 +132,6 @@ class Strategy(ModelThread):
             체결횟수 = dict전략.get('체결횟수', 0)
             if self.체결횟수 != 체결횟수 or self.전략명칭 != dict전략.get('전략명칭', ''):
                 gm.json_counter_strategy[self.전략].update({'전략명칭': self.전략명칭, '체결횟수': self.체결횟수, '남은횟수': self.체결횟수})
-                gm.com.json_save_counter_strategy(fp.json_counter_strategy)
             return gm.json_counter_strategy.get(self.전략, {}).get('남은횟수', 0)
         except Exception as e:
             logging.error(f'남은횟수 조회 오류: {self.전략} - {type(e).__name__} - {e}', exc_info=True)
@@ -143,9 +139,9 @@ class Strategy(ModelThread):
 
     def is_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         """매수 조건 충족 여부를 확인하는 메소드"""
-        if not gm.simulation_on:
-            status_market = gm.com.com_market_status()
-            if status_market not in dc.장운영시간: return False, {}, "장 운영시간이 아님"
+        if not gm.config.sim_on:
+            status_market = gm.pro.admin.com_market_status()
+            if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
         if not code:
             logging.warning(f'종목코드가 없습니다. 매수 조건 검사 실패: {self.전략} - {rqname}')
@@ -166,7 +162,7 @@ class Strategy(ModelThread):
             return False, {}, f"보유 종목수 제한 {code} {name} \
             보유종목={gm.잔고목록.len(filter={'전략': self.전략})}종목/보유제한={self.보유제한} 종목 초과" # 전략별 보유로 계산
 
-        if not gm.simulation_on:
+        if not gm.config.sim_on:
             now = datetime.now().time()
             if self.운영시간:
                 start_time = datetime.strptime('09:00', '%H:%M').time()
@@ -183,8 +179,8 @@ class Strategy(ModelThread):
         try:
             send_data = {
                 'rqname': rqname,
-                'screen': dc.화면[rqname],
-                'accno': gm.account,
+                'screen': dc.scr.화면[rqname],
+                'accno': gm.config.account,
                 'ordtype': 1,  # 매수
                 'code': code,
                 'quantity': 0,
@@ -202,9 +198,10 @@ class Strategy(ModelThread):
                 if self.투자금액 > 0 and price > 0:
                     send_data['quantity'] = int((self.투자금액 + price)/ price) # 최소 1주 매수
             elif self.예수금:
-                예수금액 = gm.com.예수금 * (self.예수금율 / 100)
-                if 예수금액 > 0 and price > 0:
-                    send_data['quantity'] = int(예수금액 / price)
+                pass
+                #예수금액 = self.예수금 * (self.예수금율 / 100)
+                #if 예수금액 > 0 and price > 0:
+                #    send_data['quantity'] = int(예수금액 / price)
 
             if send_data['quantity'] > 0:
                 return True, send_data, f"매수신호 : {code} {name} quantity={send_data['quantity']} price={send_data['price']}"
@@ -219,15 +216,15 @@ class Strategy(ModelThread):
         is_ok, send_data, reason = self.is_buy(code, rqname, price) # rqname : 전략
         logging.info(f'매수: {self.전략} - {reason}\nsend_data={send_data}')
         if is_ok:
-            gm.com.com_SendOrder(self.전략번호, **send_data)
+            gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
         return is_ok, send_data, reason
 
     def is_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
         """매도 조건 충족 여부를 확인하는 메소드"""
         try:
-            if not gm.simulation_on:
-                status_market = gm.com.com_market_status()
-                if status_market not in dc.장운영시간: return False, {}, "장 운영시간이 아님"
+            if not gm.config.sim_on:
+                status_market = gm.pro.admin.com_market_status()
+                if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
             code = row.get('종목번호', '')          # 종목번호 ='999999' 일 때 당일청산 매도
             rqname = row.get('rqname', '신규매도')  # 매도 조건 검사 신호 이름
@@ -243,8 +240,8 @@ class Strategy(ModelThread):
 
             send_data = {
                 'rqname': rqname,
-                'screen': dc.화면[rqname],
-                'accno': gm.account,
+                'screen': dc.scr.화면[rqname],
+                'accno': gm.config.account,
                 'ordtype': 2,  # 매도
                 'code': code,
                 'quantity': row.get('보유수량', 0), #row.get('매도가능수량', row.get('보유수량', 0)),
@@ -262,7 +259,7 @@ class Strategy(ModelThread):
                 send_data['msg'] = '매도수식'
                 return True, send_data,  f"매도수식:  {code} {종목명}"
 
-            if gm.simulation_on and (수익률 > 30 or 수익률 < -30):
+            if gm.config.sim_on and (수익률 > 30 or 수익률 < -30):
                 return False, {}, f"시뮬레이션 비정상 수익률: {code} {종목명} 매입가={매입가} 현재가={현재가} 수익률={수익률}"
 
             if self.로스컷 and self.로스컷율 + gm.잔고목록.sum(filter={'전략': self.전략}, columns='수익률(%)') <= 0:
@@ -281,7 +278,7 @@ class Strategy(ModelThread):
 
                 return True, send_data, f"로스컷 : {code} {종목명}"
 
-            if not gm.simulation_on:
+            if not gm.config.sim_on:
                 if self.당일청산 and datetime.now().strftime('%H:%M') >= self.청산시간:
                     send_list = []
                     rows = gm.잔고목록.get(filter={'전략': self.전략})
@@ -335,9 +332,9 @@ class Strategy(ModelThread):
         if is_ok:
             if isinstance(send_data, list):
                 for data in send_data:
-                    gm.com.com_SendOrder(self.전략번호, **data)
+                    gm.pro.admin.com_SendOrder(self.전략번호, **data)
             else:
-                gm.com.com_SendOrder(self.전략번호, **send_data)
+                gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
         return is_ok, send_data, reason
 
     def order_cancel(self, kind, order_no, code):
@@ -346,8 +343,8 @@ class Strategy(ModelThread):
 
             send_data = {
                 'rqname': rqname,
-                'screen': dc.화면[rqname],
-                'accno': gm.account,
+                'screen': dc.scr.화면[rqname],
+                'accno': gm.config.account,
                 'ordtype': 3 if rqname == '매수취소' else 4,
                 'code': code,
                 'quantity': 0,
@@ -356,7 +353,7 @@ class Strategy(ModelThread):
                 'ordno': order_no
             }
             logging.debug(f'주문취소: {self.전략} - {order_no} {send_data}')
-            gm.com.com_SendOrder(self.전략번호, **send_data)
+            gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
         except Exception as e:
             logging.error(f'주문취소 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -377,25 +374,15 @@ class Strategy(ModelThread):
 
     def cdn_fx실행_전략초기화(self):
         try:
-            gm.전략클래스들[self.전략번호] = None # cdn_fx실행_전략매매 에서 정의 됨
-            if not gm.전략설정들[self.전략번호]['전략적용']: return
-
-            전략명칭 = gm.전략설정들[self.전략번호].setdefault('전략명칭', dc.BASIC_STRATEGY)
-            전략정의 = dfm.get('전략정의', key=전략명칭)
-            logging.debug(f'전략 초기화 전략명칭: {전략명칭}')
-            logging.debug(f'전략 초기화 전략정의: {전략정의}')
-            self.전략Class.set_dict(전략정의)
-
             msg = self.cdn_fx체크_전략매매()
             if msg: return msg
             self.cdn_fx실행_전략매매()
+            gm.json_counter_strategy.setdefault(self.전략, {'전략명칭': self.전략명칭, '체결횟수': self.체결횟수, '남은횟수': self.체결횟수})
+            if gm.json_counter_strategy[self.전략]['전략명칭'] == self.전략명칭:
+                gm.json_counter_strategy[self.전략] = {'전략명칭': self.전략명칭, '체결횟수': self.체결횟수, '남은횟수': self.체결횟수}
 
-            체결횟수 = 전략정의.get('체결횟수', 0)
-            gm.json_counter_strategy.setdefault(self.전략, {'전략명칭': 전략명칭, '체결횟수': 체결횟수, '남은횟수': 체결횟수})
-            if gm.json_counter_strategy[self.전략]['전략명칭'] == 전략명칭:
-                gm.json_counter_strategy[self.전략] = {'전략명칭': 전략명칭, '체결횟수': 체결횟수, '남은횟수': 체결횟수}
-
-            if gm.gui_on: gm.bus.send('gui', Work('set_strategy_toggle', {'run': any(gm.매수문자열들) or any(gm.매도문자열들)}))
+            if gm.config.gui_on: 
+                self.put('gui', Work('set_strategy_toggle', {'run': any(gm.매수문자열들) or any(gm.매도문자열들)}))
 
         except Exception as e:
             logging.error(f'전략 초기화 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -406,7 +393,6 @@ class Strategy(ModelThread):
                 condition = f'{int(cond_idx):03d} : {cond_name.strip()}'
                 condition_list, bool_ok = self.cdn_fx등록_조건검색(cond_name, cond_idx) #-------------------- 조건 검색 실행
                 if bool_ok:
-                    gm.전략클래스들[self.전략번호] = self.전략Class
                     if trade_type == '매수':
                         self.cdn_fx등록_종목감시(condition_list, 0) # ------------------------------- 조건 만족 종목 실시간 감시
                         gm.매수문자열들[self.전략번호] = condition
@@ -414,12 +400,12 @@ class Strategy(ModelThread):
                     elif trade_type == '매도':
                         gm.매도문자열들[self.전략번호] = condition
                         self.cdn_fx매도_검색종목(condition_list) # ----------------------------------------- 조건 만족 종목 매도
-                    logging.info(f'전략 실행 - {self.전략} : {self.전략Class.전략명칭} {trade_type}전략={condition}')
+                    logging.info(f'전략 실행 - {self.전략} : {self.전략명칭} {trade_type}전략={condition}')
                 else:
-                    logging.warning(f'전략 실행 실패 - 전략={self.전략} 전략명칭={self.전략Class.전략명칭} {trade_type}전략={condition}') # 같은 조건 1분 제한 조건 위반
+                    logging.warning(f'전략 실행 실패 - 전략={self.전략} 전략명칭={self.전략명칭} {trade_type}전략={condition}') # 같은 조건 1분 제한 조건 위반
 
-            if self.전략Class.매수적용: run_trade(self.전략Class.buy_cond_idx, self.전략Class.buy_cond_name, '매수')
-            if self.전략Class.매도적용: run_trade(self.전략Class.sell_cond_idx, self.전략Class.sell_cond_name, '매도')
+            if self.매수적용: run_trade(self.buy_cond_idx, self.buy_cond_name, '매수')
+            if self.매도적용: run_trade(self.sell_cond_idx, self.sell_cond_name, '매도')
 
         except Exception as e:
             logging.error(f'전략 매매 실행 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -441,7 +427,7 @@ class Strategy(ModelThread):
                 gm.매도문자열들[self.전략번호] = None
 
             if buy_stop and sell_stop:
-                gm.전략클래스들[self.전략번호] = None
+                gm.전략쓰레드[self.전략번호] = None
                 self.stop()
 
             if buy_stop and not sell_stop:
@@ -455,22 +441,22 @@ class Strategy(ModelThread):
         try:
             def stop_trade(cond_idx, cond_name, trade_type):
                 if cond_name:
-                    gm.bus.send('api', Work('SendConditionStop', {'screen': dc.화면[self.전략], 'cond_name': cond_name, 'index': cond_idx}))
+                    gm.pro.api.SendConditionStop(screen=dc.scr.화면[self.전략], cond_name=cond_name, index=cond_idx)
                 else:
                     raise Exception(f'{trade_type} 조건이 없습니다.')
                 logging.info(f'{trade_type} 전략 중지 - {self.전략} : {cond_idx:03d} : {cond_name}')
-            if buy_stop and self.전략Class.매수적용: stop_trade(self.전략Class.buy_cond_idx, self.전략Class.buy_cond_name, '매수')
-            if sell_stop and self.전략Class.매도적용: stop_trade(self.전략Class.sell_cond_idx, self.전략Class.sell_cond_name, '매도')
+            if buy_stop and self.매수적용: stop_trade(self.buy_cond_idx, self.buy_cond_name, '매수')
+            if sell_stop and self.매도적용: stop_trade(self.sell_cond_idx, self.sell_cond_name, '매도')
 
         except Exception as e:
             logging.error(f'전략 중지 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
     def cdn_fx등록_조건검색(self, cond_name, cond_idx):
-        screen = dc.화면[self.전략]
+        screen = dc.scr.화면[self.전략]
         logging.debug(f'조건 검색 요청: 전략={self.전략} 화면={screen} 인덱스={cond_idx:03d} 수식명={cond_name}')
         condition_list = []
         try:
-            condition_list, bool_ok = gm.com.com_SendCondition(screen, cond_name, cond_idx, 1) # +++++++ SendCondition
+            condition_list, bool_ok = gm.pro.admin.com_SendCondition(screen, cond_name, cond_idx, 1) # +++++++ SendCondition
             return condition_list, bool_ok
         except Exception as e:
             logging.error(f'조건 검색 요청 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -479,92 +465,92 @@ class Strategy(ModelThread):
     def cdn_fx매수_검색종목(self, condition_list):
         try:
             for code in condition_list:
-                if dfm.in_code_map('잔고목록', code): continue # 기 보유종목
-                if dfm.in_code_map('매수대기목록', code) or dfm.in_code_map('전송목록', code) or dfm.in_code_map('접수목록', code): continue # 매수중
+                if gm.잔고목록.in_key(code): continue # 기 보유종목
+                if gm.매수대기목록.in_key(code) or gm.전송목록.in_key(code) or gm.접수목록.in_column('종목코드', code): continue # 매수중
 
-                종목명 = gm.aaa.get('api', Answer('aaa', 'GetMasterCodeName', {'code': code}))
+                종목명 = gm.pro.api.GetMasterCodeName(code=code)
                 if code not in gm.dict종목정보:
-                    전일가 = gm.aaa.get('api', Answer('aaa', 'GetMasterLastPrice', {'code': code}))
+                    전일가 = gm.pro.api.GetMasterLastPrice(code=code)
                     gm.dict종목정보[code] = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
 
                 # DataFrame에 새로운 행 추가
-                dfm.set('매수대기목록', values={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명}, key=code)
-                dfm.set('매수조건목록', values={'전략': self.전략, '종목명': 종목명}, key=code)
+                gm.매수대기목록.set(key=code, data={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명})
+                gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
 
             logging.info(f'매수 종목 검색 결과: {self.전략} result count={len(condition_list)}')
-            logging.debug(f'매수 대기 목록 =\n{dfm.get("매수대기목록", columns=["전략", "종목코드","종목명"])}')
+            logging.debug(f'매수 대기 목록 =\n{gm.매수대기목록.get(column=["전략", "종목코드","종목명"])}')
         except Exception as e:
             logging.error(f'매수 종목 검색 요청 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
     def cdn_fx매도_검색종목(self, condition_list):
         try:
             for code in condition_list:
-                if not dfm.in_code_map('잔고목록', code): continue # 매도 할 종목 없음
-                if dfm.in_code_map('매도대기목록', code) or dfm.in_code_map('전송목록', code) or dfm.in_code_map('접수목록', code): continue # 매도중
-                if self.전략 != dfm.get('잔고목록', key=code, columns='전략'): continue # 전략 다름
+                if not gm.잔고목록.in_key(code): continue # 매도 할 종목 없음
+                if gm.매도대기목록.in_key(code) or gm.전송목록.in_key(code) or gm.접수목록.in_column('종목코드', code): continue # 매도중
+                if self.전략 != gm.잔고목록.get(key=code, column='전략'): continue # 전략 다름
 
-                종목명 = gm.aaa.get('api', Answer('aaa', 'GetMasterCodeName', {'code': code}))
+                종목명 = gm.pro.api.GetMasterCodeName(code=code)
                 if code not in gm.dict종목정보:
-                    전일가 = gm.aaa.get('api', Answer('aaa', 'GetMasterLastPrice', {'code': code}))
+                    전일가 = gm.pro.api.GetMasterLastPrice(code=code)
                     gm.dict종목정보[code] = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
 
                 # DataFrame에 새로운 행 추가
-                dfm.set('매도대기목록', values={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명}, key=code)
+                gm.매도대기목록.set(key=code, data={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명})
 
             logging.info(f'매도 종목 검색 결과: {self.전략} result count={len(condition_list)}')
-            logging.debug(f'매도 대기 목록 =\n{dfm.get("매도대기목록", columns=["전략", "종목코드","종목명"])}')
+            logging.debug(f'매도 대기 목록 =\n{gm.매도대기목록.get(column=["전략", "종목코드","종목명"])}')
         except Exception as e:
             logging.error(f'매도 종목 검색 요청 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
     def cdn_fx편입_실시간조건감시(self, kind, code, id_type, cond_name, cond_idx):
         try:
-            종목명 = gm.aaa.get('api', Answer('aaa', 'GetMasterCodeName', {'code': code}))
+            종목명 = gm.pro.api.GetMasterCodeName(code=code)
             if code not in gm.dict종목정보:
-                전일가 = gm.aaa.get('api', Answer('aaa', 'GetMasterLastPrice', {'code': code}))
+                전일가 = gm.pro.api.GetMasterLastPrice(code=code)
                 gm.dict종목정보[code] = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
 
             if kind == '매도':
-                dfm.set('매도조건목록', values={'전략': self.전략, '종목명': 종목명}, key=code)
-                if not dfm.in_code_map('잔고목록', code): return # 매도 할 종목 없음
-                if dfm.in_code_map('매도대기목록', code) or code in gm.dict매도요청목록 or dfm.in_code_map('전송목록', code) or dfm.in_code_map('접수목록', code): return # 매도중
-                if self.전략 != dfm.get('잔고목록', key=code, columns='전략'): return
-                dfm.set('매도대기목록', values={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명}, key=code)
-                logging.debug(f'매도 대기 목록 =\n{dfm.get("매도대기목록", columns=["전략", "종목코드", "종목명"])}')
+                gm.매도조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
+                if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음
+                if gm.매도대기목록.in_key(code) or code in gm.dict매도요청목록 or gm.전송목록.in_key(code) or gm.접수목록.in_key(code): return # 매도중
+                if self.전략 != gm.잔고목록.get(key=code, column='전략'): return
+                gm.매도대기목록.set(key=code, data={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명})
+                logging.debug(f'매도 대기 목록 =\n{gm.매도대기목록.get(column=["전략", "종목코드", "종목명"])}')
                 return
 
-            if not dfm.in_code_map('매수조건목록', code):
-                if dfm.in_code_map('매수대기목록', code) or code in gm.dict매수요청목록 or dfm.in_code_map('전송목록', code) or dfm.in_code_map('접수목록', code): return # 매수중
-                if dfm.in_code_map('잔고목록', code): return # 기 보유종목
+            if not gm.매수조건목록.in_key(code):
+                if gm.매수대기목록.in_key(code) or code in gm.dict매수요청목록 or gm.전송목록.in_key(code) or gm.접수목록.in_key(code): return # 매수중
+                if gm.잔고목록.in_key(code): return # 기 보유종목
                 if code not in gm.dict조건종목감시:
                     self.cdn_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
 
-                dfm.set('매수조건목록', values={'전략': self.전략, '종목명': 종목명}, key=code)
-                dfm.set('매수대기목록', values={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명}, key=code)
-                logging.debug(f'매수 대기 목록 =\n{dfm.get("매수대기목록", columns=["전략", "종목코드","종목명"])}')
-                if gm.gui_on: gm.bus.send('msg', Work('검색내용', {'msg': f'{kind}편입 : {self.전략} {code} {종목명}'}))
-                logging.info(f'{kind}편입 : {self.전략} {self.전략Class.전략명칭} {code} {종목명}')
+                gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
+                gm.매수대기목록.set(key=code, data={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명})
+                logging.debug(f'매수 대기 목록 =\n{gm.매수대기목록.get(column=["전략", "종목코드","종목명"])}')
+                if gm.config.gui_on: gm.qdict['msg'].request.put(Work('검색내용', {'msg': f'{kind}편입 : {self.전략} {code} {종목명}'}))
+                logging.info(f'{kind}편입 : {self.전략} {self.전략명칭} {code} {종목명}')
 
         except Exception as e:
             logging.error(f'{kind}조건 편입 처리 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
     def cdn_fx이탈_실시간조건감시(self, kind, code, id_type, cond_name, cond_idx):
         try:
-            name = gm.aaa.get('api', Answer('aaa', 'GetMasterCodeName', {'code': code}))
+            name = gm.pro.api.GetMasterCodeName(code)
             if kind == '매도':
-                if dfm.in_code_map('매도조건목록', code):
-                    dfm.delete('매도조건목록', key=code)
+                if gm.매도조건목록.in_key(code):
+                    gm.매도조건목록.delete(key=code)
                 return
 
-            if dfm.in_code_map('매수조건목록', code):
-                dfm.delete('매수조건목록', key=code)
+            if gm.매수조건목록.in_key(code):
+                logging.info(f'{kind} 이탈: {self.전략} {self.전략명칭} {code} {name}')
+                if gm.config.gui_on: gm.qdict['msg'].request.put(Work('검색내용', {'msg': f'{kind}이탈 : {self.전략} {code} {name}'}))
+                gm.매수조건목록.delete(key=code)
 
             # 실시간 감시 해지하지 않는다.
             if len(gm.dict조건종목감시) > 90:  # 최대 100개 종목 실시간 감시
-                gm.bus.send('api', Work('SetRealRemove', {'screen': dc.화면[self.전략], 'del_code': code}))
+                gm.pro.api.SetRealRemove(screen=dc.scr.화면[self.전략], del_code=code)
                 del gm.dict조건종목감시[code]
 
-            if gm.gui_on: gm.bus.send('msg', Work('검색내용', {'msg': f'{kind}이탈 : {self.전략} {code} {name}'}))
-            logging.info(f'{kind} 이탈: {self.전략} {self.전략Class.전략명칭} {code} {name}')
 
         except Exception as e:
             logging.error(f'{kind}조건 이탈 처리 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -577,7 +563,7 @@ class Strategy(ModelThread):
 
             codes = ",".join(condition_list)
             fids = "10"  # 현재가
-            gm.bus.send('api', Work('SetRealReg', {'screen': dc.화면[self.전략], 'code_list': codes, 'fid_list': fids, 'opt_type': search_flag}))
+            gm.pro.api.SetRealReg(screen=dc.scr.화면[self.전략], code_list=codes, fid_list=fids, opt_type=search_flag)
             gm.dict조건종목감시.update({code: fids for code in condition_list})
             logging.debug(f'실시간 감시 요청: {gm.dict조건종목감시.keys()}')
         except Exception as e:
@@ -585,42 +571,36 @@ class Strategy(ModelThread):
 
     def cdn_fx체크_전략매매(self):
         try:
-            if not gm.전략설정들[self.전략번호]['전략적용']: return ''
-
-            전략정의 = self.전략Class.get_dict()
-
-            if 전략정의 is None:
-                return f'{self.전략} 전략정의가 없습니다.'
-            if 전략정의.get('매수적용', False):
-                매수전략 = 전략정의.get('매수전략', '').strip()
-                if 매수전략 == '' or 매수전략 == dc.NON_STRATEGY:
-                    return f'{self.전략} 매수전략이 "{dc.NON_STRATEGY}" 이거나 없습니다.'
-            if 전략정의.get('매도적용', False):
-                매도전략 = 전략정의.get('매도전략', '').strip()
-                if 매도전략 == '' or 매도전략 == dc.NON_STRATEGY:
-                    return f'{self.전략} 매도전략이 "{dc.NON_STRATEGY}" 이거나 없습니다.'
-            if 전략정의['투자금']:
-                if 전략정의['투자금액'] == 0:
+            if self.매수적용:
+                매수전략 = self.매수전략.strip()
+                if 매수전략 == '' or 매수전략 == dc.const.NON_STRATEGY:
+                    return f'{self.전략} 매수전략이 "{dc.const.NON_STRATEGY}" 이거나 없습니다.'
+            if self.매도적용:
+                매도전략 = self.매도전략.strip()
+                if 매도전략 == '' or 매도전략 == dc.const.NON_STRATEGY:
+                    return f'{self.전략} 매도전략이 "{dc.const.NON_STRATEGY}" 이거나 없습니다.'
+            if self.투자금:
+                if self.투자금액 == 0:
                     return f'{self.전략} 투자금액이 0 입니다.'
-            if 전략정의['예수금']:
-                if 전략정의['예수금율'] == 0.0:
+            if self.예수금:
+                if self.예수금율 == 0.0:
                     return f'{self.전략} 예수금율이 0.0 입니다.'
-            if 전략정의['이익실현']:
-                if 전략정의['이익실현율'] == 0.0:
+            if self.이익실현:
+                if self.이익실현율 == 0.0:
                     return f'{self.전략} 이익실현율이 0.0 입니다.'
-            if 전략정의['이익보존']:
-                if 전략정의['이익보존율'] == 0.0:
+            if self.이익보존:
+                if self.이익보존율 == 0.0:
                     return f'{self.전략} 이익보존율이 0.0 입니다.'
-            if 전략정의['손실제한']:
-                if 전략정의['손실제한율'] == 0.0:
+            if self.손실제한:
+                if self.손실제한율 == 0.0:
                     return f'{self.전략} 손실제한율이 0.0 입니다.'
-            if 전략정의['감시적용']:
-                if 전략정의['감시시작율'] == 0.0 and 전략정의['스탑주문율'] == 0.0:
+            if self.감시적용:
+                if self.감시시작율 == 0.0 and self.스탑주문율 == 0.0:
                     return f'{self.전략} 감시시작율과 스탑주문율이 둘 다 0.0 입니다.'
 
-            if 전략정의.get('설정시간', False):
-                self.start_time = 전략정의.get('시작시간', '').strip()
-                self.stop_time = 전략정의.get('종료시간', '').strip()
+            if self.설정시간:
+                self.start_time = self.시작시간.strip()
+                self.stop_time = self.종료시간.strip()
 
             now = datetime.now()
             current = now.strftime('%H:%M')
@@ -631,7 +611,7 @@ class Strategy(ModelThread):
                 end_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.stop_time}", '%Y-%m-%d %H:%M')
                 remain_ms = int((end_time - now).total_seconds() * 1000)
                 self.end_timer = QTimer()
-                self.end_timer.timeout.connect(lambda: self.cdn_fx실행_전략마무리(sell_stop=self.전략Class.매도도같이적용))
+                self.end_timer.timeout.connect(lambda: self.cdn_fx실행_전략마무리(sell_stop=self.매도도같이적용))
                 self.end_timer.setSingleShot(True)
                 self.end_timer.start(remain_ms)
 

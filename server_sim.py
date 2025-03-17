@@ -462,8 +462,8 @@ class SIMServer:
         self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
 
     def put(self, target, work):
-        if hasattr(gm.admin, work.order):
-            getattr(gm.admin, work.order)(**work.job)
+        if hasattr(gm.pro.admin, work.order):
+            getattr(gm.pro.admin, work.order)(**work.job)
 
     def stop(self):
         for thread in real_thread.values():

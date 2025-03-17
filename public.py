@@ -107,6 +107,97 @@ class Message:
     reply: mp.Queue = field(default_factory=mp.Queue)
 
 @dataclass
+class Field:
+    name: str
+    type: str
+    default: any = None
+    primary: bool = False
+    autoincrement: bool = False
+    unique: bool = False
+    not_null: bool = False
+    index: any = False
+    foreign_key: dict = None
+    check: str = None
+
+@dataclass
+class DefFields:
+    id = Field(name='id', type='INTEGER', primary=True, autoincrement=True)
+    전략 = Field(name='전략', type='TEXT', not_null=True, default="''")
+    전략번호 = Field(name='전략번호', type='INTEGER', not_null=True, default=0)
+    전략명칭 = Field(name='전략명칭', type='TEXT', not_null=True, default="''")
+    종목코드 = Field(name='종목코드', type='TEXT', not_null=True, default="''")
+    종목번호 = Field(name='종목번호', type='TEXT', not_null=True, default="''")
+    종목명 = Field(name='종목명', type='TEXT', not_null=True, default="''")
+    현재가 = Field(name='현재가', type='INTEGER', not_null=True, default=0)
+    보유수량 = Field(name='보유수량', type='INTEGER', not_null=True, default=0)
+    매입단가 = Field(name='매입단가', type='INTEGER', not_null=True, default=0)
+    총매입가 = Field(name='총매입가', type='INTEGER', not_null=True, default=0)
+    주문가능수량 = Field(name='주문가능수량', type='INTEGER', not_null=True, default=0)
+    주문수량 = Field(name='주문수량', type='INTEGER', not_null=True, default=0)
+    주문가격 = Field(name='주문가격', type='INTEGER', not_null=True, default=0)
+    주문유형 = Field(name='주문유형', type='TEXT', not_null=True, default="''")
+    호가구분 = Field(name='호가구분', type='TEXT', not_null=True, default="''")
+    화면번호 = Field(name='화면번호', type='TEXT', not_null=True, default="''")
+    요청명 = Field(name='요청명', type='TEXT', not_null=True, default="''")
+    계좌번호 = Field(name='계좌번호', type='TEXT', not_null=True, default="''")
+    주문번호 = Field(name='주문번호', type='TEXT', not_null=True, default="''")
+    매도수구분 = Field(name='매도수구분', type='TEXT', not_null=True, default="''")
+    주문구분 = Field(name='주문구분', type='TEXT', not_null=True, default="''")
+    주문상태 = Field(name='주문상태', type='TEXT', not_null=True, default="''")
+    미체결수량 = Field(name='미체결수량', type='INTEGER', not_null=True, default=0)
+    매매구분 = Field(name='매매구분', type='TEXT', not_null=True, default="''")
+    체결량 = Field(name='체결량', type='INTEGER', not_null=True, default=0)
+    체결가 = Field(name='체결가', type='INTEGER', not_null=True, default=0)
+    체결누계금액 = Field(name='체결누계금액', type='INTEGER', not_null=True, default=0)
+    체결번호 = Field(name='체결번호', type='TEXT', not_null=True, default="''")
+    체결시간 = Field(name='체결시간', type='TEXT', not_null=True, default="''")
+    단위체결가 = Field(name='단위체결가', type='INTEGER', not_null=True, default=0)
+    단위체결량 = Field(name='단위체결량', type='INTEGER', not_null=True, default=0)
+    당일매매수수료 = Field(name='당일매매수수료', type='INTEGER', not_null=True, default=0)
+    당일매매세금 = Field(name='당일매매세금', type='INTEGER', not_null=True, default=0)
+    원주문번호 = Field(name='원주문번호', type='TEXT', not_null=True, default="''")
+    손익금액 = Field(name='손익금액', type='INTEGER', not_null=True, default=0)
+    손익율 = Field(name='손익율', type='REAL', not_null=True, default=0.0)
+    처리일시 = Field(name='처리일시', type='TEXT', not_null=True, default="(strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime'))")
+    매수일자 = Field(name='매수일자', type='TEXT', not_null=True, default="(strftime('%Y%m%d', 'now', 'localtime'))")
+    매수시간 = Field(name='매수시간', type='TEXT', not_null=True, default="(strftime('%H:%M:%S', 'now', 'localtime'))")
+    매도일자 = Field(name='매도일자', type='TEXT', not_null=True, default="(strftime('%Y%m%d', 'now', 'localtime'))")
+    매도시간 = Field(name='매도시간', type='TEXT', not_null=True, default="(strftime('%H:%M:%S', 'now', 'localtime'))")
+    매수수량 = Field(name='매수수량', type='INTEGER', not_null=True, default=0)
+    매수가 = Field(name='매수가', type='INTEGER', not_null=True, default=0)
+    매수금액 = Field(name='매수금액', type='INTEGER', not_null=True, default=0)
+    매수번호 = Field(name='매수번호', type='TEXT', not_null=True, default="''")
+    매도수량 = Field(name='매도수량', type='INTEGER', not_null=True, default=0)
+    매도가 = Field(name='매도가', type='INTEGER', not_null=True, default=0)
+    매도금액 = Field(name='매도금액', type='INTEGER', not_null=True, default=0)
+    매도번호 = Field(name='매도번호', type='TEXT', not_null=True, default="''")
+    제비용 = Field(name='제비용', type='INTEGER', not_null=True, default=0)
+    매수전략 = Field(name='매수전략', type='TEXT', not_null=True, default="''")
+fd = DefFields()
+
+class DefineDB:
+    ORD_COLUMNS = [fd.id, fd.전략번호, fd.종목코드, fd.종목명, fd.주문수량, fd.주문가격, fd.주문유형, fd.호가구분, fd.화면번호, fd.요청명, fd.계좌번호, fd.주문번호]
+    ORD_COLUMN_NAMES = [col.name for col in ORD_COLUMNS]
+    ORD_INDEX_STRATEGY = "CREATE INDEX IF NOT EXISTS idx_strategy ON orders(전략번호)"
+    ORD_INDEX_RQNAME = "CREATE UNIQUE INDEX IF NOT EXISTS idx_rqname ON orders(요청명)"
+
+    TRD_COLUMNS = [fd.id, fd.전략번호, fd.매도수구분, fd.주문구분, fd.주문상태, fd.주문번호, fd.종목코드, fd.종목명, fd.현재가, fd.주문수량, fd.주문가격, \
+                    fd.미체결수량, fd.매매구분, fd.체결량, fd.체결가, fd.체결누계금액, fd.체결번호, fd.체결시간, fd.단위체결가, fd.단위체결량, fd.당일매매수수료, \
+                        fd.당일매매세금, fd.원주문번호, fd.처리일시]
+    TRD_COLUMN_NAMES = [col.name for col in TRD_COLUMNS]
+    TRD_INDEX_ORDNO = "CREATE INDEX IF NOT EXISTS idx_ordno ON trades(주문번호)"
+    TRD_INDEX_STRATEGY = "CREATE INDEX IF NOT EXISTS idx_strategy ON trades(전략번호)"
+    TRD_INDEX_KIND_CODE = "CREATE INDEX IF NOT EXISTS idx_kind_code ON trades(매도수구분, 종목코드)"
+
+    CONC_SELECT_DATE = f"SELECT * FROM conclusion WHERE 매도일자 = ? AND 매수수량 = 매도수량 ORDER BY 매수일자, 매수시간 ASC"
+    CONC_COLUMNS = [fd.id, fd.전략, fd.종목번호, fd.종목명, fd.손익금액, fd.손익율, fd.매수일자, fd.매수시간,\
+                    fd.매수수량, fd.매수가, fd.매수금액, fd.매수번호, fd.매도일자, fd.매도시간, fd.매도수량,\
+                    fd.매도가, fd.매도금액, fd.매도번호, fd.제비용, fd.매수전략, fd.전략명칭]
+    CONC_COLUMN_NAMES = [col.name for col in CONC_COLUMNS]
+    CONC_INDEX_DATENO = "CREATE UNIQUE INDEX IF NOT EXISTS idx_dateorder ON conclusion(매수일자, 매수번호)"
+    CONC_INDEX_CODEDATE = "CREATE UNIQUE INDEX IF NOT EXISTS idx_datetimecode ON conclusion(매수일자, 매수시간, 종목번호)"
+
+@dataclass
 class FIDs:
     거래구분: dict = field(default_factory=lambda: {
         '지정가': '00',
@@ -132,6 +223,15 @@ class FIDs:
         '매도취소': 4,
         '매수정정': 5,
         '매도정정': 6,
+    })
+
+    주문유형FID: dict = field(default_factory=lambda: {
+        '1': '신규매수',
+        '2': '신규매도',
+        '3': '매수취소',
+        '4': '매도취소',
+        '5': '매수정정',
+        '6': '매도정정'
     })
 
     주식체결: dict = field(default_factory=lambda: {
@@ -252,6 +352,19 @@ class ScreenNumber:
     화면번호: dict = field(default_factory=lambda: {
         '8811': '신규매수', '8812': '신규매도', '5511': '매수취소', '5512': '매도취소', '6611': '매수정정', '6612': '매도정정'
     })
+
+@dataclass
+class MarketStatus:
+    장종료 = '장 종료'
+    장전시간외종가 = '장전 시간외 종가'
+    장전동시호가 = '장전 동시호가'
+    장운영중 = '장 운영 중'
+    장마감동시호가 = '장마감 동시호가'
+    장마감 = '장 마감'
+    장후시간외종가 = '장후 시간외 종가'
+    시간외단일가 = '시간외 단일가'
+    장운영시간 = [장운영중, 장마감동시호가]
+    주문가능시간 = [장전동시호가, 장운영중, 장마감동시호가]
 
 class FilePath:
     path = get_path()
@@ -452,7 +565,9 @@ class DefineConstants:
     td = TimeDefinition()
     scr = ScreenNumber()
     fp = FilePath()
+    ms = MarketStatus()
     log_config = log_config
+    ddb = DefineDB()
 dc = DefineConstants()
 
 class DefineTbl:
@@ -561,9 +676,6 @@ class GlobalConfig:
     server = '1'
     account = ''
     ready = False
-    toast = None
-    fee_rate = 0.0
-    tax_rate = 0.0
 
 @dataclass
 class GuiConfig:
@@ -576,19 +688,28 @@ class Processes:
     main = None
     gui = None
     api = None
+    dbm = None
     admin = None
+    aaa = None
 
 @dataclass
 class QDict:
     qdict: dict = field(default_factory=lambda: {
         'aaa': Message(),
-        's00': Message(),
-        's01': Message(),
-        's02': Message(),
-        's03': Message(),
-        's04': Message(),
-        's05': Message(),
         'dbm': Message(),
+        'gui': Message(),
+        'msg': Message(),
+        '전략00': Message(),
+        '전략01': Message(),
+        '전략02': Message(),
+        '전략03': Message(),
+        '전략04': Message(),
+        '전략05': Message(),
+        '전략06': Message(),
+        '전략07': Message(),
+        '전략08': Message(),
+        '전략09': Message(),
+        '전략10': Message(),
     })
 
 @dataclass
@@ -602,7 +723,8 @@ class GlobalMemory:
     tbl = DefineTbl()
     잔고합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고합산))
     잔고목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고목록))
-    조건목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
+    매수조건목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
+    매도조건목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
     손익목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd손익목록))
     접수목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd접수목록))
     예수금 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd예수금))
@@ -610,14 +732,32 @@ class GlobalMemory:
     일지목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd일지목록))
     체결목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd체결목록))
     전략정의 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd전략정의))
-    잔고합산_copy = None
+    매수대기목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd매수대기목록))
+    매도대기목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd매도대기목록))
+    전송목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd전송목록))
+    접수목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd접수목록))
+    l2잔고합산_copy = None
+    l2손익합산 = 0
     strategy_row = None
+    basic_strategy = None
     전략설정 = None # json
     전략쓰레드 = None
     # 서버 호출 제한 체크
     req = None # 요청 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (CommRqData + CommKwRqData + SendCondition 포함) - 1 초마다 리셋 됨
     ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨
+    매수문자열들 = [''] * 11                # ['000 : 전략01', '', ...] # SendConditionStop 에서 사용, OnReceiveRealCondition 에서 쓰레드 분기
+    매도문자열들 = [''] * 11                # ['000 : 전략01', '', ...] # SendConditionStop 에서 사용, OnReceiveRealCondition 에서 쓰레드 분기
+    dict매수요청목록 = {}
+    dict매도요청목록 = {}
     dict잔고종목감시 = {}
+    dict조건종목감시 = {}
+    dict종목정보 = {}
+    json_counter_tickers = {}
+    json_counter_strategy = {}
+    수수료율 = 0.0
+    세금율 = 0.0
+    temp_order_count = 0
+    holdings = {}
 gm = GlobalMemory()
 
 def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE, max_bytes=dc.fp.LOG_MAX_BYTES):

@@ -35,8 +35,8 @@ class APIServer:
         self.api_init()  # 초기화 바로 실행
 
     def put(self, target, work):
-        if hasattr(gm.admin, work.order):
-            getattr(gm.admin, work.order)(**work.job)
+        if hasattr(gm.pro.admin, work.order):
+            getattr(gm.pro.admin, work.order)(**work.job)
 
     def api_init(self):
         logging.debug(f'{self.name} api_init start')

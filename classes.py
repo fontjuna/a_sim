@@ -270,35 +270,6 @@ class ModelProcess(Model, mp.Process):
         return self
 
 class TableManager:
-    """
-    1. `get()` 메서드:
-    - `get()`: 전체 데이터 사전 리스트 복사본 반환
-    - `get(key='key')`: 특정 키에 해당하는 행 복사본 반환
-    - `get(key='key', column='column')`: 특정 키의 'column'을 값으로 반환
-    - `get(key='key', column=['col1', 'col2', ....])`: 특정 키의 'col1', 'col2', .... 을 튜플로 반환
-    - `get(column='column')`: 전체 데이터의 'column'을 리스트로 반환
-    - `get(column=['col1', 'col2', ....])`: 전체 데이터의 'col1', 'col2', .... 을 사전 리스트로 반환
-    - `get(filter={})`: 필터 조건에 맞는 행들의 복사본 반환
-    - `get(type='df')`: 전체 데이터를 DataFrame으로 반환
-
-    2. `set()` 메서드:
-    - `set(key='key', data={})`: 특정 키의 행 추가 또는 업데이트
-    - `set(filter={}, data={})`: 필터 조건에 맞는 행만 업데이트
-    - `set(data={})`: 모든 행의 해당 열 업데이트
-    - `set(data=[{}, {}, ...])`: 테이블 초기화 후 데이터 추가
-
-    3. `delete()` 메서드:
-    - `delete()`: 모든 데이터 삭제 (clear_data 대체)
-    - `delete(key='key')`: 특정 키의 행 삭제
-    - `delete(filter={})`: 필터 조건에 맞는 행 삭제
-
-    4. 유틸리티 메서드:
-    - `len(filter=None)`: 전체 행 수 또는 필터링된 행 수 반환
-    - `in_key(key)`: 특정 키가 존재하는지 확인
-    - `in_column(name='column', value)`: 특정 컬럼에 특정 값이 존재하는지 확인
-
-    이 설계는 직관적이고 범용적이며, 데이터 관리에 필요한 대부분의 작업을 간결하게 수행할 수 있게 해줍니다. 구현도 어렵지 않을 것으로 보입니다.
-    """
     def __init__(self, config):
         """
         쓰레드 안전한 데이터 관리 클래스 초기화
@@ -339,47 +310,57 @@ class TableManager:
         self.color_zero = QColor(0, 0, 0)        # 검정색 (손익 0)
         
         # 손익 관련 컬럼
-        self.profit_columns = ["손익금액", "손익률"]
+        self.profit_columns = ["평가손익", "수익률(%)", "당일매도손익", "손익율", "손익금액", "수익률" ]
 
         # 리사이즈
         self._resize =  True
     
     def _convert_value(self, column, value):
-        """값을 적절한 타입으로 변환"""
-        # 문자열이면 공백 제거
+        """
+        값을 적절한 타입으로 변환
+        
+        Parameters:
+        column (str): 컬럼명
+        value: 변환할 값
+        
+        Returns:
+        변환된 값
+        """
+        # 기본값 정의
+        default_values = {
+            'int': 0,
+            'float': 0.0,
+            'str': ""
+        }
+        
+        # 문자열 처리
         if isinstance(value, str):
             value = value.strip()
-            
-            # 쉼표가 포함된 문자열 처리
+            # 쉼표가 포함된 숫자 문자열 처리
             if any(c.isdigit() for c in value):
                 value = value.replace(',', '')
         
         # None이나 빈 문자열은 기본값으로
         if value is None or value == "":
-            if column in self.int_columns:
-                return 0
-            elif column in self.float_columns:
-                return 0.0
-            else:
-                return ""
+            return default_values['int'] if column in self.int_columns else \
+                default_values['float'] if column in self.float_columns else \
+                default_values['str']
         
-        # 타입별 변환        
+        # 타입별 변환
         try:
             if column in self.int_columns:
-                return int(float(value))  # float으로 변환 후 int로 변환해 소수점이 있어도 처리
+                return int(float(value))
             elif column in self.float_columns:
                 return float(value)
             else:
-                return str(value)
+                # 불리언 및 기타 타입은 그대로 유지
+                return value
         except (ValueError, TypeError):
             # 변환 실패 시 기본값 반환
-            if column in self.int_columns:
-                return 0
-            elif column in self.float_columns:
-                return 0.0
-            else:
-                return str(value)
-    
+            return default_values['int'] if column in self.int_columns else \
+                default_values['float'] if column in self.float_columns else \
+                str(value)
+            
     def _process_item(self, item):
         """
         항목의 각 값을 적절한 타입으로 변환
@@ -407,28 +388,26 @@ class TableManager:
         
         return processed_item
     
-    # 통합 API 메서드
     def get(self, key=None, filter=None, type=None, column=None):
         """
-        데이터 조회
-        
-        Parameters:
-        key: 조회할 항목의 키 값
-        filter (dict): 필터링 조건
-        type (str): 반환 타입 ('df'는 DataFrame 반환)
-        column: 조회할 컬럼 (str 또는 list)
-          - key와 함께 사용 시: 해당 컬럼 값(들)을 반환
-          - key 없이 사용 시: 해당 컬럼만 포함된 데이터 반환
-        
-        Returns:
-        조회 결과에 따라 다양한 형태로 반환:
-        - 특정 키 + 특정 컬럼: 컬럼 값 또는 튜플
-        - 특정 키 없이 특정 컬럼: 해당 컬럼 값의 리스트
-        - 특정 키: 해당 행 데이터
-        - 필터: 필터링된 데이터
-        - 없음: 전체 데이터
+        get() -> [{}]                     # 전체 데이터 사전 리스트 반환
+        get(type='df') -> DataFrame       # DataFrame으로 반환
+        get(key='key') -> {}              # 'key'로 찾은 행 반환
+        get(key=숫자) -> {}               # 인덱스로 행 반환
+        get(filter={}) -> [{}]            # 조건에 맞는 행들 반환
+        get(filter={}, column='col') -> []  # 조건에 맞는 행들의 특정 컬럼 값들 리스트 반환
+        get(column='col') -> []           # 특정 컬럼 값들 리스트 반환
+        get(column=['c1','c2']) -> [{}]   # 지정 컬럼만 포함한 사전 리스트 반환
+        get(key='key', column='col') -> 값  # 특정 행의 특정 컬럼 값 반환
+        get(key='key', column=['c1','c2']) -> (값1, 값2, ...)  # 특정 행의 여러 컬럼 값 튜플 반환
         """
         with self.lock:
+            # 0. 키가 정수형인 경우
+            if isinstance(key, int):
+                if 0 <= key < len(self.data):
+                    return self.data[key]
+                return  None
+            
             # 1. 특정 키 + 특정 컬럼 조회
             if key is not None and column is not None:
                 item = self._find_item_by_key(key)
@@ -487,17 +466,10 @@ class TableManager:
     
     def set(self, key=None, filter=None, data=None):
         """
-        데이터 추가 또는 업데이트
-        
-        Parameters:
-        key: 추가/업데이트할 항목의 키 값
-        filter (dict): 업데이트할 항목 필터링 조건
-        data (dict or list): 추가/업데이트할 데이터
-          - dict: 해당 컬럼 업데이트
-          - list: 기존 데이터 대체
-        
-        Returns:
-        bool: 작업 성공 여부
+        set(key='key', data={}) -> bool   # 특정 키 행 추가/업데이트
+        set(filter={}, data={}) -> bool   # 조건 만족 행들 업데이트
+        set(data={}) -> bool              # 모든 행의 지정 컬럼 업데이트
+        set(data=[{}, {}]) -> bool        # 전체 데이터 대체
         """
         if data is None:
             return False
@@ -597,14 +569,9 @@ class TableManager:
     
     def delete(self, key=None, filter=None):
         """
-        데이터 삭제
-        
-        Parameters:
-        key: 삭제할 항목의 키 값
-        filter (dict): 삭제할 항목 필터링 조건
-        
-        Returns:
-        bool: 작업 성공 여부
+        delete() -> bool                  # 모든 데이터 삭제
+        delete(key='key') -> bool         # 특정 키 행 삭제
+        delete(filter={}) -> bool         # 조건 만족 행들 삭제
         """
         with self.lock:
             # 1. 특정 키 삭제
@@ -635,13 +602,8 @@ class TableManager:
     
     def len(self, filter=None):
         """
-        데이터 행 수 반환
-        
-        Parameters:
-        filter (dict): 필터링 조건
-        
-        Returns:
-        int: 행 수
+        len() -> int                      # 전체 행 수 반환
+        len(filter={}) -> int             # 조건 만족 행 수 반환
         """
         with self.lock:
             if filter is not None:
@@ -650,27 +612,14 @@ class TableManager:
     
     def in_key(self, key):
         """
-        키 존재 여부 확인
-        
-        Parameters:
-        key: 확인할 키 값
-        
-        Returns:
-        bool: 존재 여부
+        in_key('key') -> bool             # 키 존재 여부
         """
         with self.lock:
             return self._find_index_by_key(key) is not None
     
     def in_column(self, name, value):
         """
-        컬럼에 특정 값 존재 여부 확인
-        
-        Parameters:
-        name (str): 검색할 컬럼명
-        value: 검색할 값
-        
-        Returns:
-        bool: 존재 여부
+        in_column('col', 값) -> bool      # 컬럼에 값 존재 여부
         """
         with self.lock:
             if name not in self.all_columns:
@@ -686,14 +635,8 @@ class TableManager:
     
     def sum(self, column=None, filter=None):
         """
-        지정한 컬럼의 합계 계산
-        
-        Parameters:
-        column (list): 합계를 계산할 컬럼 리스트
-        filter (dict): 필터링 조건
-        
-        Returns:
-        tuple: 각 컬럼의 합계
+        sum(column=['c1', 'c2']) -> (합1, 합2, ...)  # 지정 컬럼 합계 튜플 반환
+        sum(column=[], filter={}) -> (합1, 합2, ...)  # 조건 만족 행들의 합계 반환
         """
         with self.lock:
             if not column:
@@ -706,6 +649,8 @@ class TableManager:
             
             # 각 컬럼별 합계 계산
             result = []
+            if isinstance(column, str):
+                column = [column]
             for col in column:
                 if col in self.int_columns or col in self.float_columns:
                     total = sum(item.get(col, 0) for item in data_to_sum)
@@ -731,7 +676,18 @@ class TableManager:
         return None
     
     def _filter_data(self, conditions):
-        """조건에 맞는 데이터만 필터링"""
+        """
+        # conditions : {컬럼: 값} 컬럼과 값 비교
+        {'col': 값}
+        # conditions : {컬럼: (연산자, 값)}
+        {'col': ('>', 값)}                # col > 값
+        {'col': ('<', 값)}                # col < 값
+        {'col': ('>=', 값)}               # col >= 값
+        {'col': ('<=', 값)}               # col <= 값
+        {'col': ('==', 값)}               # col == 값
+        {'col': ('!=', 값)}               # col != 값
+        {'col': ('>', '@other_col')}      # col > other_col (컬럼 간 비교)
+        """
         result = []
         for row in self.data:
             if self._match_conditions(row, conditions):
@@ -750,11 +706,21 @@ class TableManager:
             if isinstance(item_value, str) and isinstance(value, str):
                 if value not in item_value:
                     return False
-            # 숫자형인 경우 대소 비교 지원
+            # 컬럼 간 비교인 경우 ('컬럼' 또는 '@컬럼')
             elif isinstance(value, (list, tuple)) and len(value) == 2:
                 op, compare_value = value
-                if not self._compare_values(item_value, op, compare_value):
-                    return False
+                # '@'로 시작하는 문자열은 다른 컬럼을 참조
+                if isinstance(compare_value, str) and compare_value.startswith('@'):
+                    other_column = compare_value[1:]  # '@' 제거
+                    if other_column not in row:
+                        return False
+                    other_value = row[other_column]
+                    if not self._compare_values(item_value, op, other_value):
+                        return False
+                # 일반 비교값
+                else:
+                    if not self._compare_values(item_value, op, compare_value):
+                        return False
             # 그 외의 경우 정확히 일치하는지 확인
             elif item_value != value:
                 return False
@@ -795,11 +761,13 @@ class TableManager:
             table_widget.setRowCount(0)
             return
         
+        table_widget.setUpdatesEnabled(False)
+        table_widget.setSortingEnabled(False)
         columns = self.display_columns or self.all_columns
-        
-        table_widget.setRowCount(len(data_copy))
-        table_widget.setColumnCount(len(columns))
-        table_widget.setHorizontalHeaderLabels(columns)
+        if self._resize:
+            table_widget.setRowCount(len(data_copy))
+            table_widget.setColumnCount(len(columns))
+            table_widget.setHorizontalHeaderLabels(columns)
         
         try:
             for row, item in enumerate(data_copy):
@@ -807,20 +775,20 @@ class TableManager:
                     if column in item:
                         self._set_table_cell(table_widget, row, col, column, item[column], self.profit_columns)
             
-            # 컬럼 너비 조정
             if self._resize:
                 table_widget.resizeColumnsToContents()
                 table_widget.resizeRowsToContents()
                 self._resize = False
-            
-            # 마지막 컬럼 늘이기 설정
-            if stretch and columns:
+
+            if stretch:
                 header = table_widget.horizontalHeader()
                 header.setStretchLastSection(stretch)
+
         except Exception as e:
             logging.error(f'update_table_widget 오류: {type(e).__name__} - {e}', exc_info=True)
         finally:
-            pass
+            table_widget.setUpdatesEnabled(True)
+            table_widget.setSortingEnabled(True)
 
     def _set_table_cell(self, table_widget, row, col, column, value, profit_columns):
         """테이블의 특정 셀에 값 설정"""

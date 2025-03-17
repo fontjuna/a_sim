@@ -61,60 +61,32 @@ class GUI(QMainWindow, form_class):
         success, gm.json_config =   load_json(os.path.join(get_path(dc.fp.CONFIG_PATH), dc.fp.CONFIG_FILE), {'level': logging.INFO})
         logging.getLogger().setLevel(gm.json_config['level'])
         self.rbDebug.setChecked(gm.json_config['level'] == logging.DEBUG)
-        #self.rbInfo.setChecked(gm.json_config['level'] == logging.INFO)
-        #QTimer.singleShot(500, delayed_init)
-
-    def gui_fx갱신_계좌정보(self):
-        try:
-            row = gm.잔고합산.get(key=1)
-            if row is None: row = {}
-            self.lblBuy.setText(f"{int(row.get('총매입금액', 0)):,}")
-            self.lblAmount.setText(f"{int(row.get('총평가금액', 0)):,}")
-            self.lblAssets.setText(f"{int(row.get('추정예탁자산', 0)):,}")
-            self.gui_set_color(self.lblProfit, int(row.get('총평가손익금액', 0)))
-            self.gui_set_color(self.lblFrofitRate, float(row.get('총수익률(%)', 0.0)))
-            self.tblBalanceHeld.clearContents()
-            gm.잔고목록.update_table_widget(self.tblBalanceHeld, stretch=False)
-        except Exception as e:
-            logging.error(f'계좌정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
 
     # 화면 갱신 ---------------------------------------------------------------------------------------------
     def gui_refresh_data(self):
         try:
-            if not self.queue.empty(): # bus 역할 함
-                work = self.queue.get()
+            if not gm.qdict['gui'].request.empty(): # bus 역할 함
+                work = gm.qdict['gui'].request.get()
                 if hasattr(self, work.order):
                     getattr(self, work.order)(**work.job)
             self.gui_update_display()
             self.gui_fx갱신_계좌정보()
-            #self.gui_fx갱신_조건정보()
-            #self.gui_fx갱신_주문정보()
+            self.gui_fx갱신_조건정보()
+            self.gui_fx갱신_주문정보()
 
 
         except Exception as e:
             logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_set_color(self, label, value):
-        try:
-            if isinstance(value, float):
-                label.setText(f"{value:.2f}")
-            else:
-                label.setText(f"{value:,}")
-
-            if value > 0:
-                label.setStyleSheet("color: red;background-color: #F9F9F9;")
-            elif value < 0:
-                label.setStyleSheet("color: blue;background-color: #F9F9F9;")
-            else:
-                label.setStyleSheet("color: black;background-color: #F9F9F9;")
-        except Exception as e:
-            logging.error(f'색상 설정 오류: {type(e).__name__} - {e}', exc_info=True)
-
     # 화면 설정 ---------------------------------------------------------------------------------------------
+    def set_strategy_toggle(self, run=True):
+        self.btnStartAll.setEnabled(not run)
+        self.btnStopAll.setEnabled(run)
+
     def set_widgets(self):
         logging.debug('')
         try:
-            self.setWindowTitle("리베라니모 키움증권 자동매매 프로그램 - AAA v2025.0313")
+            self.setWindowTitle("리베라니모 키움증권 자동매매 프로그램 - AAA v2025.0317")
             self.setWindowIcon(QIcon(os.path.join(get_path(dc.fp.RESOURCE_PATH), "aaa.ico")))
 
             self.btnSimulation_start.setEnabled(True)
@@ -152,11 +124,360 @@ class GUI(QMainWindow, form_class):
         logging.debug('')
         try:
             self.btnExit.clicked.connect(self.gui_close)                                # 종료
-            self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
+            self.cbAccounts.currentIndexChanged.connect(self.gui_account_changed)       # 계좌 변경 선택
+            self.cbCondition.currentIndexChanged.connect(self.gui_strategy_changed)     # 검색식 변경 선택
+            self.btnReloadAccount.clicked.connect(self.gui_account_reload)              # 계좌 재로드
+            self.btnLoadProfitLoss.clicked.connect(self.gui_load_profit_loss)           # 당일 매매 손익 로드
+            self.btnProfitLoss.clicked.connect(self.gui_load_profit_loss)               # 당일 매매 손익 로드
+
+            self.tblStrategy.clicked.connect(lambda x: self.gui_set_strategy(x.row()))  # 전략설정 선택
+            self.btnLoadCondition.clicked.connect(self.gui_strategy_reload)             # 검색식 재로드
+            self.btnTabLoadStrategy.clicked.connect(self.gui_strategy_load)             # 전략설정 로드
+            self.btnConditionBuy.clicked.connect(lambda: self.gui_strategy_get(kind='buy')) # 매수전략 선택
+            self.btnConditionSell.clicked.connect(lambda: self.gui_strategy_get(kind='sell'))# 매도전략 선택
+            self.btnBuyClear.clicked.connect(lambda: self.gui_strategy_get(clear='buy'))    # 매수전략 클리어
+            self.btnSellClear.clicked.connect(lambda: self.gui_strategy_get(clear='sell'))  # 매도전략 클리어
+            self.btnStrategySave.clicked.connect(self.gui_strategy_save)                # 전략설정 저장
+            self.btnStrategyDelete.clicked.connect(self.gui_strategy_delete)            # 전략설정 삭제
+
+            self.btnRestartAll.clicked.connect(self.gui_strategy_restart)                 # 전략매매 재시작
+            self.btnStartAll.clicked.connect(lambda: self.gui_strategy_start(question=True))                   # 전략매매 시작
+            self.btnStopAll.clicked.connect(lambda: self.gui_strategy_stop(question=True))                     # 전략매매 중지
+            self.btnLoadDaily.clicked.connect(self.gui_daily_load)                      # 매매일지 로드
+            self.btnDeposit.clicked.connect(self.gui_deposit_load)                      # 예수금 로드
+            self.btnLoadConclusion.clicked.connect(self.gui_conclusion_load)            # 체결목록 로드
+
             self.rbInfo.toggled.connect(lambda: self.gui_log_level_set('INFO', self.rbInfo.isChecked()))
+            self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
+
+            self.gui_tabs_init()
 
         except Exception as e:
             logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
+
+    # 전략설정 탭 ----------------------------------------------------------------------------------------
+    def gui_tabs_init(self):
+        """10개의 전략탭 초기화"""
+        try:
+            tab_widget = self.findChild(QTabWidget, "tabDeca")
+            for i in range(1, 11):
+                seq = f'{i:02d}'
+                current_tab = tab_widget.widget(i-1)
+
+                btn_get_strategy = current_tab.findChild(QPushButton, f'btnTabGetStrategy_{seq}')
+                btn_clear = current_tab.findChild(QPushButton, f'btnTabClear_{seq}')
+                btn_save = current_tab.findChild(QPushButton, f'btnTabSave_{seq}')
+
+                btn_clear.clicked.connect(lambda _, tab=seq: self.gui_tabs_clear(tab))
+                btn_get_strategy.clicked.connect(lambda _, tab=seq: self.gui_tabs_get(tab))
+                btn_save.clicked.connect(lambda _, tab=seq: self.gui_tabs_save(tab))
+
+                chk_run = current_tab.findChild(QCheckBox, f'chkRun_{seq}')
+                led_condition = current_tab.findChild(QLineEdit, f'ledTabStrategy_{seq}')
+                chk_run.setChecked(gm.전략설정[i]['전략적용'])
+                led_condition.setText(gm.전략설정[i]['전략명칭'])
+
+        except Exception as e:
+            logging.error(f'전략탭 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_tabs_clear(self, seq):
+        """10개 전략탭 설정 초기화"""
+        try:
+            tab = self.findChild(QTabWidget, "tabDeca")
+            chk_run = tab.findChild(QCheckBox, f'chkRun_{seq}')
+            led_condition = tab.findChild(QLineEdit, f'ledTabStrategy_{seq}')
+            chk_run.setChecked(False)
+            led_condition.setText('')
+        except Exception as e:
+            logging.error(f'전략 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_tabs_get(self, seq):
+        try:
+            condition_text = self.cbTabStrategy.currentText()
+            led_condition = self.findChild(QLineEdit, f'ledTabStrategy_{seq}')
+            led_condition.setText(condition_text)
+        except Exception as e:
+            logging.error(f'전략 선택 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_tabs_save(self, seq):
+        try:
+            tab = self.findChild(QTabWidget, "tabDeca")
+            chk_run = tab.findChild(QCheckBox, f'chkRun_{seq}')
+            led_condition = tab.findChild(QLineEdit, f'ledTabStrategy_{seq}')
+            전략명칭 = led_condition.text().strip()
+
+            if chk_run.isChecked() and not 전략명칭:
+                QMessageBox.warning(None, '경고', '전략명칭이 입력되지 않았습니다.')
+                logging.warning(f'전략명칭이 입력되지 않았습니다.')
+                return
+
+            if 전략명칭 == dc.const.BASIC_STRATEGY:
+                QMessageBox.warning(None, '경고', f'{dc.const.BASIC_STRATEGY}은 사용할 수 없습니다.')
+                logging.warning(f'{dc.const.BASIC_STRATEGY}은 사용할 수 없습니다.')
+                return
+
+            gm.전략설정[int(seq)] = {
+                '전략': f'전략{seq}',
+                '전략적용': chk_run.isChecked(),
+                '전략명칭': 전략명칭,
+            }
+
+            # 전략명칭 중복 검사 - 빈 문자열 제외
+            strategy_names = [
+                d['전략명칭'].strip()
+                for d in gm.전략설정
+                if '전략명칭' in d and d['전략명칭'].strip()
+            ]
+            if len(strategy_names) != len(set(strategy_names)):
+                QMessageBox.warning(None, '경고', f'전략명칭 {전략명칭}이 중복되었습니다.')
+                logging.warning(f'전략명칭 {전략명칭}이 중복되었습니다.')
+                return
+
+            # 매수전략 중복 검사 - 빈 문자열과 None 제외
+            buy_strategies = [
+                gm.전략정의.get(key=strategy.get('전략명칭', '').strip(), column='매수전략')
+                for strategy in gm.전략설정
+                if strategy.get('전략명칭', '').strip() and
+                   gm.전략정의.get(key=strategy.get('전략명칭', '').strip(), column='매수전략') not in ['', 'None', None]
+            ]
+            if len(buy_strategies) != len(set(buy_strategies)):
+                QMessageBox.warning(None, '경고', f'{전략명칭}의 매수전략이 중복되었습니다.')
+                logging.warning(f'{전략명칭}의 매수전략이 중복되었습니다.')
+                return
+
+            # 매도전략 중복 검사 - 빈 문자열과 None 제외
+            sell_strategies = [
+                gm.전략정의.get(key=strategy.get('전략명칭', '').strip(), column='매도전략')
+                for strategy in gm.전략설정
+                if strategy.get('전략명칭', '').strip() and
+                   gm.전략정의.get(key=strategy.get('전략명칭', '').strip(), column='매도전략') not in ['', 'None', None]
+            ]
+            if len(sell_strategies) != len(set(sell_strategies)):
+                QMessageBox.warning(None, '경고', f'{전략명칭}의 매도전략이 중복되었습니다.')
+                logging.warning(f'{전략명칭}의 매도전략이 중복되었습니다.')
+                return
+
+            gm.pro.admin.json_save_define_sets()
+            gm.toast.toast(f'전략{seq} 전략적용={chk_run.isChecked()} 전략명칭={전략명칭} 저장 완료', duration=4000)
+
+        except Exception as e:
+           logging.error(f'전략 설정 저장 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    # 전략정의 탭 ----------------------------------------------------------------------------------------
+    def gui_set_strategy(self, row_index):
+        """전략정의 테이블 행 클릭시"""
+        try:
+            gm.strategy_row = gm.전략정의.get(key=row_index) # 화면표시 디폴트값 저장
+            self.gui_fx전시_전략정의()
+        except Exception as e:
+            logging.error(f'전략정의 선택 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_strategy_buy(self, key, value):
+        if key == '검색식':
+            if value == dc.const.NON_STRATEGY:
+                QMessageBox.warning(None, '검색식', f'"{value}"을 선택할 수 없습니다.')
+                return
+            else:
+                self.ledBuyCondition.setText(value)
+        logging.info(f'매수전략 설정 변경: {key} = {value}')
+
+    def gui_strategy_sell(self, key, value):
+        if key == '매도선택':
+            self.ledSellCondition.setText(value)
+        logging.info(f'전략 설정 변경: {key} = {value}')
+
+    def gui_strategy_load(self):
+        logging.debug('메세지 발행: cdn Work(json_load_strategy_defines, {})')
+        gm.pro.admin.json_load_define_sets()
+        self.gui_fx전시_전략정의()
+
+    def gui_strategy_save(self):
+        """현재 위젯값을 dict주문설정에 옮기기"""
+        try:
+            name = self.ledStrategyName.text().strip()
+            if not name:
+                QMessageBox.warning(self, '알림', '설정 이름을 입력하세요.')
+                return
+
+            dict설정 = dc.const.DEFAULT_STRATEGY_SETS
+            dict설정['전략명칭'] = name
+
+            for key, widget_name in dc.const.WIDGET_MAP.items():
+                widget = self.findChild(QWidget, widget_name)
+                if not widget: continue
+
+                if widget_name.startswith('spb'):
+                    dict설정[key] = widget.value()
+                elif widget_name.startswith('ted'):
+                    dict설정[key] = widget.time().toString("HH:mm")
+                elif widget_name.startswith('rb'):
+                    dict설정[key] = widget.isChecked()
+                elif widget_name.startswith('cb'):
+                    dict설정[key] = widget.currentText()
+                elif widget_name.startswith('chk'):
+                    dict설정[key] = widget.isChecked()
+                elif widget_name.startswith('dsb'):
+                    dict설정[key] = widget.value()
+                elif widget_name.startswith('led'):
+                    dict설정[key] = widget.text()
+
+            dict설정['남은횟수'] = dict설정['체결횟수']
+            gm.전략정의.set(key=name, data=dict설정)
+            gm.pro.admin.json_save_strategy_sets()
+            self.gui_fx채움_전략정의()
+            logging.debug(f'전략정의 {gm.전략정의.get()}')
+            gm.toast.toast(f'주문설정 "{name}"을 저장 했습니다.', duration=4000)
+            # return dict주문설정
+
+        except Exception as e:
+            logging.error(f'주문설정 저장 오류: {type(e).__name__} - {e}', exc_info=True)
+            # return None
+
+    def gui_strategy_delete(self):
+        """설정 삭제 버튼 클릭시"""
+        try:
+            name = self.ledStrategyName.text().strip()
+            if not name:
+                QMessageBox.warning(self, '알림', '삭제할 전략명칭을 확인 하세요.')
+                return
+            if name == dc.const.BASIC_STRATEGY:
+                QMessageBox.warning(self, '알림', f'{dc.const.BASIC_STRATEGY}은 삭제할 수 없습니다.')
+                return
+            if (any(gm.매수문자열들) or any(gm.매도문자열들)):
+                QMessageBox.warning(self, '알림', f'전략매매가 실행중입니다. 중지 후 삭제 하세요.')
+                return
+
+            reply = QMessageBox.question(self, '삭제 확인',
+                                        f'{name} 설정을 삭제하시겠습니까?',
+                                        QMessageBox.Yes | QMessageBox.No,
+                                        QMessageBox.No)
+
+            if reply == QMessageBox.Yes:
+                # 설정 삭제
+                result = gm.전략정의.delete(key=name)
+                if result:
+                    msg = '설정이 삭제되었습니다.'
+                    for i in range(1, 11):
+                        if gm.전략설정[i]['전략명칭'] == name:
+                            gm.전략설정[i]['전략명칭'] = ''
+                            gm.전략설정[i]['전략적용'] = False
+                            self.gui_tabs_clear(f'{i:02d}')
+                            break
+                    gm.pro.admin.json_save_strategy_sets()
+                    gm.pro.admin.json_save_define_sets()
+
+                else: msg = '설정이 삭제되지 않았습니다.'
+                self.gui_fx채움_전략정의()
+                QMessageBox.information(self, '알림', msg)
+
+        except Exception as e:
+            logging.error(f'설정 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_strategy_get(self, kind=None, clear=None):
+        """전략 선택 가져오기 버튼 클릭"""
+        try:
+            # 현재 선택된 전략과 전략명칭 가져오기
+            condition_text = self.cbCondition.currentText()
+
+            if condition_text == dc.const.NON_STRATEGY and kind != None:
+                QMessageBox.warning(None, '경고', f'검색식을 {dc.const.NON_STRATEGY} 이 아닌 것을 선택하세요.')
+                return
+            if kind:
+                if kind == 'buy':
+                    self.ledConditionBuy.setText(condition_text)
+                elif kind == 'sell':
+                    self.ledConditionSell.setText(condition_text)
+            elif clear:
+                if clear == 'buy':
+                    self.ledConditionBuy.setText('')
+                    self.chkConditionBuy.setChecked(False)
+                elif clear == 'sell':
+                    self.ledConditionSell.setText('')
+                    self.chkConditionSell.setChecked(False)
+
+        except Exception as e:
+            logging.error(f'전략 선택 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    # QWidget 이벤트 -------------------------------------------------------------------------------------
+    def gui_account_reload(self):
+        gm.pro.admin.get_holdings()
+        gm.toast.toast(f'계좌를 다시 읽어 왔습니다.', duration=1000)
+        logging.debug('메세지 발행: Work(pri_first_job, {})')
+
+    def gui_account_changed(self):
+        logging.debug('')
+        if self.cbAccounts.currentText():
+            gm.account = self.cbAccounts.currentText()
+            gm.pro.admin.get_holdings()
+            logging.debug('메세지 발행: Work(pri_first_job, {})')
+        else:
+            logging.warning('계좌를 선택하세요')
+
+    def gui_load_profit_loss(self):
+        self.btnLoadProfitLoss.setEnabled(False)
+        gm.pro.admin.pri_fx얻기_손익목록()
+        self.gui_fx갱신_손익정보()
+        self.btnLoadProfitLoss.setEnabled(True)
+
+    def gui_daily_load(self):
+        self.btnLoadDaily.setEnabled(False)
+        gm.pro.admin.pri_fx얻기_매매일지(self.dtDaily.date().toString("yyyyMMdd"))
+        self.gui_fx갱신_일지정보()
+        self.btnLoadDaily.setEnabled(True)
+
+    def gui_deposit_load(self):
+        self.btnDeposit.setEnabled(False)
+        gm.pro.admin.pri_fx얻기_예수금()
+        self.gui_fx갱신_예수금정보()
+        self.btnDeposit.setEnabled(True)
+
+    def gui_conclusion_load(self):
+        self.btnLoadConclusion.setEnabled(False)
+        gm.pro.admin.pri_fx얻기_체결목록(self.dtConclusion.date().toString("yyyyMMdd"))
+        self.gui_fx갱신_체결정보()
+        self.btnLoadConclusion.setEnabled(True)
+
+    def gui_strategy_restart(self):
+        self.gui_strategy_stop(question=False)
+        self.gui_strategy_reload()
+        self.gui_strategy_start(question=False)
+
+    def gui_strategy_start(self, question=True):
+        if question:
+            response = QMessageBox.question(None, '전략매매 실행', '전략매매를 실행하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+        else:
+            response = True
+        if response:
+            gm.pro.admin.cdn_fx실행_전략매매()
+            if not any(gm.매수문자열들) and not any(gm.매도문자열들):
+                gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
+                return
+            gm.toast.toast('전략매매를 실행했습니다.', duration=3000)
+            self.set_strategy_toggle(run=True)
+        else:
+            logging.debug('전략매매 시작 취소')
+
+    def gui_strategy_stop(self, question=True):
+        if question:
+            response = QMessageBox.question(None, '전략매매 중지', '전략매매를 중지하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+        else:
+            response = True
+        if response:
+            gm.pro.admin.cdn_fx중지_전략매매()
+            self.set_strategy_toggle(run=False)
+            gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
+        else:
+            logging.debug('전략매매 중지 취소')
+
+    def gui_strategy_changed(self):
+        logging.debug('')
+        pass
+
+    def gui_strategy_reload(self):
+        logging.debug('메세지 발행: Work(cdn_fx요청_서버전략, {})')
+        gm.pro.admin.get_conditions()
+        self.gui_fx채움_조건콤보()
+        gm.toast.toast('전략매매를 다시 읽어 왔습니다.', duration=3000)
 
     def gui_log_level_set(self, key, value):
         if key == 'DEBUG' and value == True:
@@ -170,6 +491,7 @@ class GUI(QMainWindow, form_class):
 
         logging.info(f'로깅 설정 변경: {key} = {value}')
 
+    # 화면 갱신 -----------------------------------------------------------------------------------------------------------------
     def gui_fx채움_계좌콤보(self):
         try:
             self.cbAccounts.clear()
@@ -195,6 +517,142 @@ class GUI(QMainWindow, form_class):
             gm.전략정의.update_table_widget(self.tblStrategy)
         except Exception as e:
             logging.error(f'전략정의 채움 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx갱신_손익정보(self):
+        try:
+            # 손익합산 업데이트
+            self.gui_set_color(self.lblProfitLoss, gm.l2손익합산)
+
+            # 손익목록 업데이트
+            self.tblProfitLoss.clearContents()
+            gm.손익목록.update_table_widget(self.tblProfitLoss, stretch=True)
+
+        except Exception as e:
+            logging.error(f'손익정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_set_color(self, label, value):
+        try:
+            if isinstance(value, float):
+                label.setText(f"{value:.2f}")
+            else:
+                label.setText(f"{value:,}")
+
+            if value > 0:
+                label.setStyleSheet("color: red;background-color: #F9F9F9;")
+            elif value < 0:
+                label.setStyleSheet("color: blue;background-color: #F9F9F9;")
+            else:
+                label.setStyleSheet("color: black;background-color: #F9F9F9;")
+        except Exception as e:
+            logging.error(f'색상 설정 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx갱신_계좌정보(self):
+        try:
+            row = gm.잔고합산.get(key=0)
+            if row is None: row = {}
+            self.lblBuy.setText(f"{int(row.get('총매입금액', 0)):,}")
+            self.lblAmount.setText(f"{int(row.get('총평가금액', 0)):,}")
+            self.lblAssets.setText(f"{int(row.get('추정예탁자산', 0)):,}")
+            self.gui_set_color(self.lblProfit, int(row.get('총평가손익금액', 0)))
+            self.gui_set_color(self.lblFrofitRate, float(row.get('총수익률(%)', 0.0)))
+            self.tblBalanceHeld.clearContents()
+            gm.잔고목록.update_table_widget(self.tblBalanceHeld, stretch=False)
+        except Exception as e:
+            logging.error(f'계좌정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx갱신_조건정보(self):
+        try:
+            self.tblConditionBuy.clearContents()
+            gm.매수조건목록.update_table_widget(self.tblConditionBuy)
+            self.tblConditionSell.clearContents()
+            gm.매도조건목록.update_table_widget(self.tblConditionSell)
+
+        except Exception as e:
+            logging.error(f'조건정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx갱신_주문정보(self):
+        try:
+            self.tblWaitListBuy.clearContents()
+            gm.매수대기목록.update_table_widget(self.tblWaitListBuy)
+            self.tblWaitListSell.clearContents()
+            gm.매도대기목록.update_table_widget(self.tblWaitListSell)
+            self.tblSendList.clearContents()
+            gm.전송목록.update_table_widget(self.tblSendList)
+            self.tblReceiptList.clearContents()
+            gm.접수목록.update_table_widget(self.tblReceiptList)
+
+        except Exception as e:
+            logging.error(f'주문정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx갱신_전략정의(self):
+        try:
+            self.cbTabStrategy.clearContents()
+            gm.전략정의.update_table_widget(self.tblStrategy)
+        except Exception as e:
+            logging.error(f'전략정의 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx갱신_일지정보(self):
+        try:
+            row = gm.일지합산.get(key=0)
+            self.lblDailyBuy.setText(f"{int(row['총매수금액']):,}" if row else '0')
+            self.lblDailySell.setText(f"{int(row['총매도금액']):,}" if row else '0')
+            self.lblDailyFee.setText(f"{int(row['총수수료_세금']):,}" if row else '0')
+            self.lblDailyAmount.setText(f"{int(row['총정산금액']):,}" if row else '0')
+            #self.lblDailyProfit.setText(f"{int(row['총손익금액']):,}" if row else '0')
+            #self.lblDailyProfitRate.setText(f"{float(row['총수익률']):.2f}%" if row else '0.0')
+            self.gui_set_color(self.lblDailyProfit, int(row['총손익금액']) if row else 0)
+            self.gui_set_color(self.lblDailyProfitRate, float(row['총수익률']) if row else 0.0)
+            self.tblDaily.clearContents()
+            gm.일지목록.update_table_widget(self.tblDaily)
+            gm.toast.toast(f'일지를 갱신했습니다.', duration=1000)
+        except Exception as e:
+            logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx갱신_예수금정보(self):
+        try:
+            row = gm.예수금.get(key=0)
+            self.lblDeposit11.setText(f"{int(row['d+1추정예수금']):,}" if row else '0')
+            self.lblDeposit12.setText(f"{int(row['d+1매도매수정산금']):,}" if row else '0')
+            self.lblDeposit13.setText(f"{int(row['d+1미수변제소요금']):,}" if row else '0')
+            self.lblDeposit14.setText(f"{int(row['d+1출금가능금액']):,}" if row else '0')
+            self.lblDeposit21.setText(f"{int(row['d+2추정예수금']):,}" if row else '0')
+            self.lblDeposit22.setText(f"{int(row['d+2매도매수정산금']):,}" if row else '0')
+            self.lblDeposit23.setText(f"{int(row['d+2미수변제소요금']):,}" if row else '0')
+            self.lblDeposit24.setText(f"{int(row['d+2출금가능금액']):,}" if row else '0')
+            self.lblDeposit31.setText(f"{int(row['예수금']):,}" if row else '0')
+            self.lblDeposit32.setText(f"{int(row['주식증거금현금']):,}" if row else '0')
+            self.lblDeposit33.setText(f"{int(row['미수확보금']):,}" if row else '0')
+            self.lblDeposit34.setText(f"{int(row['권리대용금']):,}" if row else '0')
+            self.lblDeposit51.setText(f"{int(row['20%종목주문가능금액']):,}" if row else '0')
+            self.lblDeposit52.setText(f"{int(row['30%종목주문가능금액']):,}" if row else '0')
+            self.lblDeposit53.setText(f"{int(row['40%종목주문가능금액']):,}" if row else '0')
+            self.lblDeposit54.setText(f"{int(row['100%종목주문가능금액']):,}" if row else '0')
+            self.lblDeposit61.setText(f"{int(row['주문가능금액']):,}" if row else '0')
+            self.lblDeposit62.setText(f"{int(row['출금가능금액']):,}" if row else '0')
+            self.lblDeposit63.setText(f"{int(row['현금미수금']):,}" if row else '0')
+            gm.toast.toast(f'예수금을 갱신했습니다.', duration=1000)
+        except Exception as e:
+            logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx갱신_체결정보(self):
+        try:
+            매수금액, 매도금액, 손익금액, 제비용 = gm.체결목록.sum(filter={'매도수량': ('==', '@매수수량')}, column=['매수금액', '매도금액', '손익금액', '제비용'])
+            self.lblConcBuy.setText(f"{매수금액:,}")
+            self.lblConcSell.setText(f"{매도금액:,}")
+            self.lblConcFee.setText(f"{제비용:,}")
+            self.lblConcCount.setText(f"{gm.체결목록.len(filter={'매도수량': ('==', '@매수수량')})}") # 다른 컬럼과 비교시 @ 를 앞에 붙인다.
+            손익율 = round(손익금액 / 매수금액 * 100, 2) if 매수금액 else 0
+            self.gui_set_color(self.lblConcProfit, 손익금액)
+            self.gui_set_color(self.lblConcProfitRate, 손익율)
+            logging.debug(f"체결목록 합산: 매수금액={매수금액}, 매도금액={매도금액}, 손익금액={손익금액}, 제비용={제비용}")
+            if gm.체결목록.len(filter={'매도수량': ('!=', '@매수수량')}) > 0:
+                gm.체결목록.set(filter={'매도수량': ('!=', '@매수수량')}, data={'손익금액': 0, '손익율': 0})
+
+            self.tblConclusion.clearContents()
+            gm.체결목록.update_table_widget(self.tblConclusion)
+            gm.toast.toast(f'체결목록을 갱신했습니다.', duration=1000)
+        except Exception as e:
+            logging.error(f'체결정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_fx전시_전략정의(self):
         """전략설정 위젯에 표시"""
@@ -233,8 +691,8 @@ class GUI(QMainWindow, form_class):
             #self.lbl4.setText(gm.pro.api.com_market_status())
 
             # 큐 메시지 처리
-            while not self.que.empty():
-                data = self.que.get()
+            while not gm.qdict['msg'].request.empty():
+                data = gm.qdict['msg'].request.get()
                 if data.order == '주문내용':
                     self.gui_fx게시_주문내용(data.job['msg'])
                 elif data.order == '검색내용':

@@ -4,6 +4,7 @@ from gui import GUI
 from admin import Admin
 from server_sim import SIMServer
 from server_api import APIServer
+from server_dbm import DBMServer
 from PyQt5.QtWidgets import QApplication
 import logging
 import time
@@ -28,6 +29,8 @@ class Main:
         gm.pro.main = self
         gm.pro.admin = Admin()
         gm.pro.gui = GUI() if gm.config.gui_on else None
+        gm.pro.dbm = DBMServer(name='dbm', qdict=gm.qdict)
+        gm.pro.dbm.start()
 
     def show(self):
         if not gm.config.gui_on: return
@@ -36,12 +39,12 @@ class Main:
     def prepare(self):
         while not gm.pro.api.connected:
             time.sleep(0.01)
-        logging.debug(f'{gm.pro.api.name} connected')
+        logging.debug(f'***** {gm.pro.api.name.upper()} connected *****')
         gm.pro.admin.init()
         gm.pro.gui.init()
 
     def run(self):
-        gm.config.ready = True
+        gm.pro.admin.trade_start()
         return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def ask_use_sim(self):
@@ -71,12 +74,16 @@ class Main:
 
     def cleanup(self):
         self.app.quit()
+        gm.pro.aaa.stop()
+        gm.pro.admin.cdn_fx중지_전략매매()
+        gm.pro.dbm.stop()
+        gm.pro.dbm.join(timeout=3)
         self.cleanup_flag = True
         logging.info("cleanup")
 
 if __name__ == "__main__":
     try:
-        logging.info(f"start {'*'*100}")
+        logging.info(f"{'*'*10} LIBERANIMO logiacl intelligence enhanced robo aotonomic investment management operations {'*'*10}")
         main = Main()
         exit_code = main.main()
     except Exception as e:
