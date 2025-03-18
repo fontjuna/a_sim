@@ -384,7 +384,7 @@ class FilePath:
     path = get_path()
 
     LOG_PATH = 'log'
-    LOG_FILE = f'log_{datetime.now().strftime("%Y%m%d")}'
+    LOG_FILE = f'log_message'
     LOG_JSON = 'logging_config.json'
     LOG_MAX_BYTES = 1024 * 1024 * 5
 
@@ -553,17 +553,15 @@ log_config = {
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'detailed',
-            'level': 'DEBUG'
+            'formatter': 'detailed'
         },
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': "log_yyyymmdd_00.log",
+            'filename': "log_message",
             'formatter': 'detailed',
-            'maxBytes': 1024 * 1024 * 5,
-            'backupCount': 10,
-            'encoding': 'utf-8',
-            'level': 'DEBUG'
+            'maxBytes': 1024 * 1024 * 1,
+            'backupCount': 9,
+            'encoding': 'utf-8'
         }
     },
     'root': {
@@ -729,7 +727,7 @@ class QDict:
 @dataclass
 class GlobalMemory:
     toast = None
-    json_config = {'level': logging.DEBUG, }
+    json_config = log_config
     config = GlobalConfig()
     gui = GuiConfig()
     pro = Processes()
@@ -774,26 +772,59 @@ class GlobalMemory:
     holdings = {}
 gm = GlobalMemory()
 
-def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE, max_bytes=dc.fp.LOG_MAX_BYTES):
-    config_path = os.path.join(get_path(log_path), dc.fp.LOG_JSON)
-    result, config = load_json(config_path, dc.log_config)
+# def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE, max_bytes=None, backup_count=None, level=None, config_file=None):
+#     full_path = get_path(log_path)
     
-    # 현재 로그 파일 번호 확인
-    import glob
-    pattern = os.path.join(log_path, f"{filename}_??.log")
-    files = glob.glob(pattern)
-    if not files:
-        next_num = 0
-    else:
-        current_file = max(files)  # 가장 최근 파일
-        current_size = os.path.getsize(current_file)
-        current_num = int(current_file[-6:-4])
-        next_num = current_num if current_size < max_bytes else current_num + 1
+#     # 설정 파일 읽기 또는 기본값 저장
+#     config_file = os.path.join(full_path, dc.fp.LOG_JSON)
+#     _, gm.json_config = load_json(config_file, dc.log_config)
+
+#     # 로그 파일 설정
+#     message_file = os.path.join(full_path, dc.fp.LOG_FILE)
+#     gm.json_config['handlers']['file']['filename'] = message_file
+#     gm.json_config['handlers']['file']['maxBytes'] = max_bytes if max_bytes is not None else 1 * 1024 * 1024
+#     gm.json_config['handlers']['file']['backupCount'] = backup_count if backup_count is not None else 9
+#     gm.json_config['root']['level'] = level if level is not None else logging.INFO
     
-    config['handlers']['file']['filename'] = os.path.join(log_path, f"{filename}_{next_num:02d}.log")
-    config['handlers']['file']['maxBytes'] = max_bytes
+#     # 업데이트된 설정 저장
+#     save_json(config_file, gm.json_config)
     
-    logging.config.dictConfig(config)
+#     # 로깅 설정 적용
+#     logging.config.dictConfig(gm.json_config)
+
+def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE, max_bytes=None, backup_count=None, level=None, config_file=None):
+    full_path = get_path(log_path)
+    
+    # 설정 파일 읽기 또는 기본값 저장
+    config_file = os.path.join(full_path, dc.fp.LOG_JSON)
+    _, gm.json_config = load_json(config_file, dc.log_config)
+
+    # 로그 파일 설정
+    message_file = os.path.join(full_path, dc.fp.LOG_FILE)
+    gm.json_config['handlers']['file']['filename'] = message_file
+    gm.json_config['handlers']['file']['maxBytes'] = max_bytes if max_bytes is not None else 1 * 1024 * 1024
+    gm.json_config['handlers']['file']['backupCount'] = backup_count if backup_count is not None else 9
+    gm.json_config['root']['level'] = level if level is not None else logging.INFO
+
+    # 외부 라이브러리 활용 가능 여부 확인 및 적용
+    try:
+        from concurrent_log_handler import ConcurrentRotatingFileHandler # pip install concurrent-log-handler
+        gm.json_config['handlers']['file']['class'] = "concurrent_log_handler.ConcurrentRotatingFileHandler"
+    except ImportError:
+        # 외부 라이브러리가 없으면 기본 RotatingFileHandler 사용
+        gm.json_config['handlers']['file']['class'] = "logging.handlers.RotatingFileHandler"
+
+    # 업데이트된 설정 저장
+    save_json(config_file, gm.json_config)
+    
+    # 로깅 설정 적용
+    logging.config.dictConfig(gm.json_config)
+
+    # 문제 방지를 위한 핸들러 닫기 및 정리
+    logger = logging.getLogger()
+    for handler in logger.handlers:
+        if hasattr(handler, "close"):
+            handler.close()
 
 # 사용 예시
 if __name__ == "__main__":

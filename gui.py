@@ -58,9 +58,9 @@ class GUI(QMainWindow, form_class):
                 self.rbDebug.setChecked(False)
             self.refresh_data_timer.start(100)
         delayed_init()
-        success, gm.json_config =   load_json(os.path.join(get_path(dc.fp.CONFIG_PATH), dc.fp.CONFIG_FILE), {'level': logging.INFO})
-        logging.getLogger().setLevel(gm.json_config['level'])
-        self.rbDebug.setChecked(gm.json_config['level'] == logging.DEBUG)
+        success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
+        logging.getLogger().setLevel(gm.json_config['root']['level'])
+        self.rbDebug.setChecked(gm.json_config['root']['level'] == logging.DEBUG)
 
     # 화면 갱신 ---------------------------------------------------------------------------------------------
     def gui_refresh_data(self):
@@ -488,10 +488,9 @@ class GUI(QMainWindow, form_class):
             level = logging.DEBUG
         else:
             level = logging.INFO
-        gm.json_config['level'] = level
+        gm.json_config['root']['level'] = level
         logging.getLogger().setLevel(level)
-        #gm.aaa.put('dbm', Work('set_log_level', {'level': level}))
-        save_json(os.path.join(get_path(dc.fp.CONFIG_PATH), dc.fp.CONFIG_FILE), gm.json_config)
+        save_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), gm.json_config)
 
         logging.info(f'로깅 설정 변경: {key} = {value}')
 

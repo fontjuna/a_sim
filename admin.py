@@ -8,6 +8,7 @@ import logging
 import os
 import pandas as pd
 import time
+from server_dbm import DBMServer
 
 class Admin:
     def __init__(self):
@@ -15,9 +16,6 @@ class Admin:
 
     def init(self):
         logging.debug(f'{self.name} init')
-        gm.pro.aaa = ModelThread(name='aaa', qdict=gm.qdict, cls=self)
-        gm.pro.aaa.start()
-
         gm.req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
         gm.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
         self.get_login_info()

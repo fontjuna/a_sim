@@ -9,17 +9,15 @@
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "detailed",
-            "level": "DEBUG"
+            "formatter": "detailed"
         },
         "file": {
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": "log_yyyymmdd_00.log",
+            "class": "concurrent_log_handler.ConcurrentRotatingFileHandler",
+            "filename": "c:\\Users\\fontjuna\\OneDrive\\문서\\Develop_python\\a_prj\\aaa\\log\\log_message",
             "formatter": "detailed",
             "maxBytes": 1048576,
-            "backupCount": 10,
-            "encoding": "utf-8",
-            "level": "DEBUG"
+            "backupCount": 9,
+            "encoding": "utf-8"
         }
     },
     "root": {
@@ -27,6 +25,6 @@
             "console",
             "file"
         ],
-        "level": "DEBUG"
+        "level": 20
     }
 }

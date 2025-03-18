@@ -38,6 +38,9 @@ class APIServer:
         if hasattr(gm.pro.admin, work.order):
             getattr(gm.pro.admin, work.order)(**work.job)
 
+    def stop(self):
+        pass
+
     def api_init(self):
         logging.debug(f'{self.name} api_init start')
         self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
@@ -177,7 +180,7 @@ class APIServer:
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        logging.debug(f'Login {"Success" if code==0 else "Failed"}')
+        logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
         logging.debug(f'ret={ret}, msg={msg}')

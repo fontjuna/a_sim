@@ -12,12 +12,10 @@ import random
 import math
 import numpy as np
 
-
 real_thread = {}
 cond_thread = {}
 chejan_thread = []
 cond_data_list =  [('079', '전고돌파3분5억-매수'), ('080', '전고돌파3분5억-매도'), ('024', '1분10억'), ('076', '1분10억-매도')]
-send_cond_dict = {}
 price_dict = {}
 
 #init_logger() #멀티프로세스에서는 정의 해야함
@@ -201,8 +199,7 @@ class PortfolioManager:
 
     def _process_buy(self, code, name, price, quantity):
         """매수 처리"""
-        if not price or not quantity:
-            return
+        if not price or not quantity: return
 
         # 기존 보유 여부 확인
         if code in self.holdings:
@@ -238,8 +235,7 @@ class PortfolioManager:
 
     def _process_sell(self, code, name, price, quantity):
         """매도 처리"""
-        if not price or not quantity or code not in self.holdings:
-            return
+        if not price or not quantity or code not in self.holdings: return
 
         current = self.holdings[code]
         current_quantity = current['보유수량']
@@ -310,8 +306,6 @@ class OnReceiveChejanData(QThread):
     def run(self):
         cnt = 0
         while self.is_running:
-            if not self.is_running:
-                break
             if cnt == 2:
                 dictFID = {}
                 dictFID['종목코드'] = self.code
@@ -357,10 +351,10 @@ class OnReceiveChejanData(QThread):
                     portfolio.process_order(dictFID)
 
                 self.qdict['aaa'].request.put(Work('odr_fx처리_접수체결', {'dictFID': dictFID}))
+            if self._stop_event.wait(timeout=0.1): break
             cnt += 1
             self.is_running = cnt < 3
-            if self._stop_event.wait(timeout=0.2):
-                break
+        if self in chejan_thread: chejan_thread.remove(self)
 
     def stop(self):
         self.is_running = False
@@ -382,27 +376,23 @@ class OnReceiveRealCondition(QThread):
             type = random.choice(['D', 'I'])
 
             current_count = len(self.current_stocks)
+            if current_count >= 3 and type == 'I': continue
 
-            if not (type == 'D' and current_count == 0 or type == 'I' and current_count == 4):
-                cond = f'{self.cond_index} : {self.cond_name}'
-                if cond not in send_cond_dict:
-                    send_cond_dict[cond] = code
-                data = {
-                    'code': code,
-                    'type': type,
-                    'cond_name': self.cond_name,
-                    'cond_index': int(self.cond_index),
-                }
-                self.qdict['aaa'].request.put(Work('on_fx실시간_조건검색', data))
-                if type == 'I':
-                    self.current_stocks.add(code)
-                else:
-                    if code in self.current_stocks:
-                        self.current_stocks.remove(code)
+            data = {
+                'code': code,
+                'type': type,
+                'cond_name': self.cond_name,
+                'cond_index': int(self.cond_index),
+            }
+            self.qdict['aaa'].request.put(Work('on_fx실시간_조건검색', data))
+            if type == 'I':
+                self.current_stocks.add(code)
+            else:
+                if code in self.current_stocks:
+                    self.current_stocks.remove(code)
 
-            interval = random.uniform(3, 15)
-            if self._stop_event.wait(timeout=interval):
-                break
+            interval = random.uniform(3, 10)
+            if self._stop_event.wait(timeout=interval): break
 
     def stop(self):
         self.is_running = False
@@ -482,23 +472,15 @@ class SIMServer:
 
     def stop(self):
         # 1. 먼저 모든 쓰레드에 종료 신호
-        for thread in real_thread.values():
-            thread.stop()
-        for thread in cond_thread.values():
-            thread.stop()
-        for thread in chejan_thread:
-            thread.stop()
+        all_threads = [*real_thread.values(), *cond_thread.values(), *chejan_thread]
+        for thread in all_threads: thread.stop()
             
         # 2. 짧은 시간 대기하여 쓰레드들이 sleep에서 깨어날 시간 제공
         time.sleep(0.1)
         
         # 3. 각 쓰레드가 실제로 종료될 때까지 대기 (타임아웃 설정)
-        for thread in real_thread.values():
-            thread.wait(timeout=1000)  # 1초
-        for thread in cond_thread.values():
-            thread.wait(timeout=1000)
-        for thread in chejan_thread:
-            thread.wait(timeout=1000)
+        for thread in all_threads:
+            if hasattr(thread, 'is_alive') and thread.is_alive(): thread.wait(timeout=1000)  # 1초
             
         # 4. 컬렉션 정리
         real_thread.clear()
