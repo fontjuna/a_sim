@@ -217,6 +217,9 @@ class Strategy(ModelThread):
         logging.info(f'매수: {self.전략} - {reason}\nsend_data={send_data}')
         if is_ok:
             gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
+        else:
+            if code in gm.dict매수요청목록:
+                del gm.dict매수요청목록[code]
         return is_ok, send_data, reason
 
     def is_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
@@ -335,6 +338,9 @@ class Strategy(ModelThread):
                     gm.pro.admin.com_SendOrder(self.전략번호, **data)
             else:
                 gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
+        else:
+            if row['종목번호'] in gm.dict매도요청목록:
+                del gm.dict매도요청목록[row['종목번호']]
         return is_ok, send_data, reason
 
     def order_cancel(self, kind, order_no, code):

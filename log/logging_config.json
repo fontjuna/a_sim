@@ -16,7 +16,7 @@
             "class": "logging.handlers.RotatingFileHandler",
             "filename": "log_yyyymmdd_00.log",
             "formatter": "detailed",
-            "maxBytes": 5242880,
+            "maxBytes": 1048576,
             "backupCount": 10,
             "encoding": "utf-8",
             "level": "DEBUG"

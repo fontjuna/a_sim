@@ -612,7 +612,7 @@ class Admin:
         try:
             gm.체결목록.delete()
             dict_list = gm.pro.aaa.get('dbm', Answer('aaa', 'execute_query', {'sql': dc.ddb.CONC_SELECT_DATE, 'db': 'db', 'params': (date_text,)}))
-            logging.debug(f'체결목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)} len:{len(dict_list)}')
+            logging.debug(f'체결목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
             if dict_list is not None and len(dict_list) > 0:
                 gm.체결목록.set(data=dict_list)
                 손익금액, 매수금액 = gm.체결목록.sum(column=['손익금액', '매수금액'], filter={'매도수량': ('==', '@매수수량')})
@@ -689,14 +689,18 @@ class Admin:
     def pri_fx검사_매도요건(self, idx, code):
         msg = ''
         row = gm.잔고목록.get(key=code)
+        
         if not row: msg = f'잔고목록에 없는 종목'
-        elif gm.전송목록.in_key(code): msg = f'이미 매도 요청된 종목'
-        #elif row['상태'] == 0: msg = f'매도 요건 미 충족'
+        elif row['보유수량'] == 0 or row['현재가'] == 0: return
+        elif code in gm.dict매도요청목록 or gm.전송목록.in_key(code) or gm.접수목록.in_column('종목코드', code): msg = f'매매중인 종목'
+        elif row['상태'] == 0: msg = f'매도 요건 미 충족'
         if msg:
-            if msg != '이미 매도 요청된 종목': logging.error(f'{msg} : {code} {row.get("종목명", "종목명 없음")}')
+            if msg != '매매중인 종목': logging.error(f'{msg} : {code} {row.get("종목명", "종목명 없음")}')
             return
         row.update({ 'rqname': '신규매도', 'account': gm.config.account })
-        if gm.전략쓰레드[idx]: gm.전략쓰레드[idx].order_sell(row)
+        if gm.전략쓰레드[idx]: 
+            gm.dict매도요청목록[code] = row['현재가']
+            gm.전략쓰레드[idx].order_sell(row)
 
     # 전략 매매  -------------------------------------------------------------------------------------------
     def cdn_fx준비_전략매매(self):
@@ -735,8 +739,11 @@ class Admin:
 
     def cdn_fx중지_전략매매(self):
         try:
-            for i in range(1, 11):
+            for i in range(0, 11):
                 gm.전략쓰레드[i].cdn_fx실행_전략마무리()
+                if gm.전략쓰레드[i]:
+                    gm.전략쓰레드[i].stop()
+                    gm.전략쓰레드[i].wait()
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.매수대기목록.delete()
@@ -859,7 +866,7 @@ class Admin:
                     logging.warning(f'{kind}에러 - 주문접수대장에 없음: order_no={order_no} {code} {종목명}')
                     name = gm.pro.api.GetMasterCodeName(code)
                     row = {'전략': '전략00', '전략번호': 0, '종목코드': code, '종목명': name, '주문번호': order_no,\
-                            '주문유형': dictFID['주문구분'], '전략명칭': dc.BASIC_STRATEGY, '전송번호': '외부주문'}
+                            '주문유형': dictFID['주문구분'], '전략명칭': dc.const.BASIC_STRATEGY, '전송번호': '외부주문'}
                     gm.접수목록.set(key=order_no, data=row)
                     if kind == '매수': gm.pro.api.SetRealReg(screen= dc.scr.화면['실시간감시'], code_list= code, fid_list= '10', opt_type= 1 )
 

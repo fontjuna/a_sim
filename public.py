@@ -23,17 +23,31 @@ def hoga(current_price, position=0):
         elif price < 500000: return 500
         else: return 1000
 
+    # 현재 가격이 호가 단위에 맞지 않으면 가까운 호가 단위로 조정
+    hoga_unit = get_hoga_unit(current_price)
+    remainder = current_price % hoga_unit
+    
+    if remainder != 0:
+        # 가까운 호가 단위로 조정
+        if remainder >= hoga_unit / 2:
+            current_price = current_price + (hoga_unit - remainder)  # 올림
+        else:
+            current_price = current_price - remainder  # 내림
+    
     if position == 0:
         return current_price
 
+    # 호가 단위에 맞게 조정된 가격에 position 적용
     hoga_unit = get_hoga_unit(current_price)
     new_price = current_price + (hoga_unit * position)
 
     # 호가 단위가 변경되는 경계값 처리
-    if position > 0 and get_hoga_unit(new_price) != hoga_unit:
-        return new_price - (new_price % get_hoga_unit(new_price))
-    elif position < 0 and get_hoga_unit(new_price) != hoga_unit:
-        return new_price + (get_hoga_unit(new_price) - (new_price % get_hoga_unit(new_price)))
+    new_hoga_unit = get_hoga_unit(new_price)
+    if new_hoga_unit != hoga_unit:
+        if position > 0:
+            return new_price - (new_price % new_hoga_unit)
+        elif position < 0:
+            return new_price + (new_hoga_unit - (new_price % new_hoga_unit)) if new_price % new_hoga_unit != 0 else new_price
 
     return new_price
 
@@ -344,13 +358,13 @@ class ScreenNumber:
         '검색05': '3305', '검색06': '3306', '검색07': '3307', '검색08': '3308', '검색09': '3309',  # 마지막 자리 전략번호
         '전략01': '4111', '전략02': '4211', '전략03': '4311', '전략04': '4411', '전략05': '4511',  # 두번째 자리 전략번호
         '전략06': '4611', '전략07': '4711', '전략08': '4811', '전략09': '4911', '전략10': '4011',  # 두번째 자리 전략번호
-        '신규매수': '8811', '신규매도': '8812', '매수취소': '5511', '매도취소': '5512', '매수정정': '6611', '매도정정': '6612',
+        '신규매수': '8811', '신규매도': '8812', '매수취소': '5511', '매도취소': '5512', '매수정정': '6611', '매도정정': '6612', '수동매수': '7711', '수동매도': '7712',
         '실시간감시': '5100', '조건감시': '5200', '실시간조회': '5900', '장시작시간': '5910'
     })
     # 화면번호 xx11 매수, xx12 매도 수정금지 및 사용 금지 - OnReceiveTrData() 처리
     # 화면번호 4xxxx 수정금지 screen.startswith('4') = '신규매수'   - OnReceiveTrData() 처리
     화면번호: dict = field(default_factory=lambda: {
-        '8811': '신규매수', '8812': '신규매도', '5511': '매수취소', '5512': '매도취소', '6611': '매수정정', '6612': '매도정정'
+        '8811': '신규매수', '8812': '신규매도', '5511': '매수취소', '5512': '매도취소', '6611': '매수정정', '6612': '매도정정', '7711': '수동매수', '7712': '수동매도'
     })
 
 @dataclass

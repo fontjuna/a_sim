@@ -292,11 +292,8 @@ class TableManager:
         self.all_columns = config.get('확장', config.get('컬럼', []))
         self.display_columns = config.get('헤더', [])
         
-        if not self.key_column:
-            raise ValueError("'키' 컬럼을 지정해야 합니다.")
-        
-        if not self.all_columns:
-            raise ValueError("'컬럼' 리스트를 지정해야 합니다.")
+        if not self.key_column: raise ValueError("'키' 컬럼을 지정해야 합니다.")
+        if not self.all_columns: raise ValueError("'컬럼' 리스트를 지정해야 합니다.")
         
         # 자주 사용하는 상수와 객체 미리 정의
         # 정렬 상수
@@ -617,19 +614,19 @@ class TableManager:
         with self.lock:
             return self._find_index_by_key(key) is not None
     
-    def in_column(self, name, value):
+    def in_column(self, column, value):
         """
         in_column('col', 값) -> bool      # 컬럼에 값 존재 여부
         """
         with self.lock:
-            if name not in self.all_columns:
+            if column not in self.all_columns:
                 return False
             
             # 타입 변환
-            converted_value = self._convert_value(name, value)
+            converted_value = self._convert_value(column, value)
             
             for item in self.data:
-                if item.get(name) == converted_value:
+                if item.get(column) == converted_value:
                     return True
             return False
     
@@ -780,9 +777,7 @@ class TableManager:
                 table_widget.resizeRowsToContents()
                 self._resize = False
 
-            if stretch:
-                header = table_widget.horizontalHeader()
-                header.setStretchLastSection(stretch)
+                if stretch: table_widget.horizontalHeader().setStretchLastSection(stretch)
 
         except Exception as e:
             logging.error(f'update_table_widget 오류: {type(e).__name__} - {e}', exc_info=True)

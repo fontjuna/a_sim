@@ -304,9 +304,14 @@ class OnReceiveChejanData(QThread):
         self.code = code
         self.orderno = orderno
         self.order = order
+        self.is_running = True
+        self._stop_event = threading.Event()
 
     def run(self):
-        for cnt in range(3):
+        cnt = 0
+        while self.is_running:
+            if not self.is_running:
+                break
             if cnt == 2:
                 dictFID = {}
                 dictFID['종목코드'] = self.code
@@ -352,12 +357,14 @@ class OnReceiveChejanData(QThread):
                     portfolio.process_order(dictFID)
 
                 self.qdict['aaa'].request.put(Work('odr_fx처리_접수체결', {'dictFID': dictFID}))
-            time.sleep(1)
-        global chejan_thread
-        if self in chejan_thread:
-            chejan_thread.remove(self)
-        self.quit()
-        self.wait()
+            cnt += 1
+            self.is_running = cnt < 3
+            if self._stop_event.wait(timeout=0.2):
+                break
+
+    def stop(self):
+        self.is_running = False
+        self._stop_event.set()
 
 class OnReceiveRealCondition(QThread):
     def __init__(self, qdict, cond_name, cond_index):
@@ -367,6 +374,7 @@ class OnReceiveRealCondition(QThread):
         self.cond_index = cond_index
         self.is_running = True
         self.current_stocks = set()
+        self._stop_event = threading.Event()
 
     def run(self):
         while self.is_running:
@@ -393,22 +401,27 @@ class OnReceiveRealCondition(QThread):
                         self.current_stocks.remove(code)
 
             interval = random.uniform(3, 15)
-            time.sleep(interval)
+            if self._stop_event.wait(timeout=interval):
+                break
 
     def stop(self):
         self.is_running = False
+        self._stop_event.set()
 
 class OnReceiveRealData(QThread):
     def __init__(self, qdict=None):
         super().__init__()
         self.is_running = True
         self.qdict = qdict
+        self._stop_event = threading.Event()
 
     def run(self):
         cnt = len(sim.ticker.keys())
         while self.is_running:
             # 모든 종목에 대해 가격 업데이트
             for code in sim.ticker.keys():
+                if not self.is_running:
+                    break
                 # 시뮬레이터에서 현재가 계산
                 current_price = sim.update_price(code)
                 price_dict[code] = current_price
@@ -433,10 +446,12 @@ class OnReceiveRealData(QThread):
                     }
                     self.qdict['aaa'].request.put(Work('on_fx실시간_주식체결', job))
 
-                time.sleep(1/cnt)
+                if self._stop_event.wait(timeout=1/cnt):
+                    return
 
     def stop(self):
         self.is_running = False
+        self._stop_event.set()
 
 class SIMServer:
     def __init__(self, name, qdict, cls=None):
@@ -466,15 +481,26 @@ class SIMServer:
             getattr(gm.pro.admin, work.order)(**work.job)
 
     def stop(self):
+        # 1. 먼저 모든 쓰레드에 종료 신호
         for thread in real_thread.values():
             thread.stop()
-            thread.wait()
         for thread in cond_thread.values():
             thread.stop()
-            thread.wait()
         for thread in chejan_thread:
             thread.stop()
-            thread.wait()
+            
+        # 2. 짧은 시간 대기하여 쓰레드들이 sleep에서 깨어날 시간 제공
+        time.sleep(0.1)
+        
+        # 3. 각 쓰레드가 실제로 종료될 때까지 대기 (타임아웃 설정)
+        for thread in real_thread.values():
+            thread.wait(timeout=1000)  # 1초
+        for thread in cond_thread.values():
+            thread.wait(timeout=1000)
+        for thread in chejan_thread:
+            thread.wait(timeout=1000)
+            
+        # 4. 컬렉션 정리
         real_thread.clear()
         cond_thread.clear()
         chejan_thread.clear()

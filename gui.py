@@ -1,4 +1,4 @@
-from public import get_path, gm, dc, Work, save_json, load_json
+from public import get_path, gm, dc, Work, save_json, load_json, hoga
 from classes import DataTables as dt
 from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox
 from PyQt5.QtWidgets import QTableWidgetItem, QHeaderView, QComboBox, QSpinBox, QDoubleSpinBox, QRadioButton, QTimeEdit, QComboBox
@@ -149,6 +149,10 @@ class GUI(QMainWindow, form_class):
 
             self.rbInfo.toggled.connect(lambda: self.gui_log_level_set('INFO', self.rbInfo.isChecked()))
             self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
+
+            self.btnTrOrder.clicked.connect(self.gui_tr_order)                          # 매매 주문 
+            self.leTrCode.editingFinished.connect(self.gui_tr_code_changed)            # 종목코드 변경
+            self.tblBalanceHeld.cellClicked.connect(self.gui_balance_held_select)  # 전략설정 선택
 
             self.gui_tabs_init()
 
@@ -491,6 +495,73 @@ class GUI(QMainWindow, form_class):
 
         logging.info(f'로깅 설정 변경: {key} = {value}')
 
+    def gui_balance_held_select(self, row_index, col_index):
+        code = self.tblBalanceHeld.item(row_index, 1).text()
+        logging.debug(f'cell = [{row_index:02d}:{col_index:02d}] code = {code}')
+        row = gm.잔고목록.get(key=code)
+        if row:
+            self.leTrCode.setText(row['종목번호'])
+            self.leTrName.setText(row['종목명'])
+            self.spbTrPrice.setValue(row['현재가'])
+            self.spbTrQty.setValue(row['보유수량'])
+            self.rbTrSell.setChecked(True)
+        #self.tblBalanceHeld.clearSelection()  
+
+    def gui_tr_code_changed(self):
+        code = self.leTrCode.text().strip()
+        if code:
+            self.leTrName.setText(gm.pro.api.GetMasterCodeName(code).strip())
+
+    def gui_tr_order(self):
+        code = self.leTrCode.text().strip()
+        price = self.spbTrPrice.value()
+        qty = self.spbTrQty.value()
+
+        price = int(price) if price != '' else 0
+        qty = int(qty) if qty != '' else 0
+
+        if not code:
+            QMessageBox.warning(self, '알림', '종목코드를 입력하세요.')
+            return
+
+        if self.rbTrLimit.isChecked() and price == 0:
+            QMessageBox.warning(self, '알림', '지정가 매수시 주문가격을 입력하세요.')
+            return
+        else:
+            price = hoga(price, int(self.spbTrHoga.value()))
+
+        if qty == 0:
+            QMessageBox.warning(self, '알림', '수량을 입력하세요.')
+            return
+
+        if self.rbTrBuy.isChecked():
+            if gm.잔고목록.in_key(code):
+                QMessageBox.warning(self, '알림', '이미 보유 중인 종목입니다.')
+                return
+        else:
+            if not gm.잔고목록.in_key(code):
+                QMessageBox.warning(self, '알림', '보유 중인 종목이 없습니다.')
+                return
+            
+        rqname = '수동매수' if self.rbTrBuy.isChecked() else '수동매도'
+        send_data = {
+            'rqname': rqname,
+            'screen': dc.scr.화면[rqname],
+            'accno': gm.config.account,
+            'ordtype': 1 if self.rbTrBuy.isChecked() else 2,
+            'code': code,
+            'quantity': qty,
+            'price': price if self.rbTrLimit.isChecked() else 0,
+            'hoga': '00' if self.rbTrLimit.isChecked() else '03',
+            'ordno': ''
+        }
+        if self.rbTrBuy.isChecked():
+            gm.dict매수요청목록[code] = price
+            gm.pro.api.SetRealReg(screen=dc.scr.화면['실시간감시'], code_list=code, fid_list='10', opt_type='1')
+        else:
+            gm.dict매도요청목록[code] = price
+        gm.pro.admin.com_SendOrder(0, **send_data)
+
     # 화면 갱신 -----------------------------------------------------------------------------------------------------------------
     def gui_fx채움_계좌콤보(self):
         try:
@@ -524,7 +595,7 @@ class GUI(QMainWindow, form_class):
             self.gui_set_color(self.lblProfitLoss, gm.l2손익합산)
 
             # 손익목록 업데이트
-            self.tblProfitLoss.clearContents()
+            #self.tblProfitLoss.clearContents()
             gm.손익목록.update_table_widget(self.tblProfitLoss, stretch=True)
 
         except Exception as e:
@@ -555,16 +626,16 @@ class GUI(QMainWindow, form_class):
             self.lblAssets.setText(f"{int(row.get('추정예탁자산', 0)):,}")
             self.gui_set_color(self.lblProfit, int(row.get('총평가손익금액', 0)))
             self.gui_set_color(self.lblFrofitRate, float(row.get('총수익률(%)', 0.0)))
-            self.tblBalanceHeld.clearContents()
+            #self.tblBalanceHeld.clearContents()
             gm.잔고목록.update_table_widget(self.tblBalanceHeld, stretch=False)
         except Exception as e:
             logging.error(f'계좌정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_fx갱신_조건정보(self):
         try:
-            self.tblConditionBuy.clearContents()
+            #self.tblConditionBuy.clearContents()
             gm.매수조건목록.update_table_widget(self.tblConditionBuy)
-            self.tblConditionSell.clearContents()
+            #self.tblConditionSell.clearContents()
             gm.매도조건목록.update_table_widget(self.tblConditionSell)
 
         except Exception as e:
@@ -572,13 +643,13 @@ class GUI(QMainWindow, form_class):
 
     def gui_fx갱신_주문정보(self):
         try:
-            self.tblWaitListBuy.clearContents()
+            #self.tblWaitListBuy.clearContents()
             gm.매수대기목록.update_table_widget(self.tblWaitListBuy)
-            self.tblWaitListSell.clearContents()
+            #self.tblWaitListSell.clearContents()
             gm.매도대기목록.update_table_widget(self.tblWaitListSell)
-            self.tblSendList.clearContents()
+            #self.tblSendList.clearContents()
             gm.전송목록.update_table_widget(self.tblSendList)
-            self.tblReceiptList.clearContents()
+            #self.tblReceiptList.clearContents()
             gm.접수목록.update_table_widget(self.tblReceiptList)
 
         except Exception as e:
@@ -586,7 +657,7 @@ class GUI(QMainWindow, form_class):
 
     def gui_fx갱신_전략정의(self):
         try:
-            self.cbTabStrategy.clearContents()
+            #self.cbTabStrategy.clearContents()
             gm.전략정의.update_table_widget(self.tblStrategy)
         except Exception as e:
             logging.error(f'전략정의 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -602,7 +673,7 @@ class GUI(QMainWindow, form_class):
             #self.lblDailyProfitRate.setText(f"{float(row['총수익률']):.2f}%" if row else '0.0')
             self.gui_set_color(self.lblDailyProfit, int(row['총손익금액']) if row else 0)
             self.gui_set_color(self.lblDailyProfitRate, float(row['총수익률']) if row else 0.0)
-            self.tblDaily.clearContents()
+            #self.tblDaily.clearContents()
             gm.일지목록.update_table_widget(self.tblDaily)
             gm.toast.toast(f'일지를 갱신했습니다.', duration=1000)
         except Exception as e:
@@ -648,7 +719,7 @@ class GUI(QMainWindow, form_class):
             if gm.체결목록.len(filter={'매도수량': ('!=', '@매수수량')}) > 0:
                 gm.체결목록.set(filter={'매도수량': ('!=', '@매수수량')}, data={'손익금액': 0, '손익율': 0})
 
-            self.tblConclusion.clearContents()
+            #self.tblConclusion.clearContents()
             gm.체결목록.update_table_widget(self.tblConclusion)
             gm.toast.toast(f'체결목록을 갱신했습니다.', duration=1000)
         except Exception as e:
