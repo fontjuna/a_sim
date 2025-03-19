@@ -99,20 +99,20 @@ class Main:
     def cleanup(self):
         gm.pro.dbm.stop()
         gm.pro.dbm.join(timeout=1)        
-        gm.pro.aaa.stop()
-        gm.pro.aaa.wait()
-        gm.pro.admin.cdn_fx중지_전략매매()
-        gm.pro.api.stop()
+        # gm.pro.aaa.stop()
+        # gm.pro.aaa.wait()
+        # gm.pro.admin.cdn_fx중지_전략매매()
+        # gm.pro.api.stop()
 
-        # Python의 Queue는 내부적으로 데몬 쓰레드인 QueueFeederThread를 사용합니다. 
-        # 큐에 데이터가 남아있으면 이 쓰레드가 계속 실행 상태로 남아있어 프로그램이 완전히 종료되지 않습니다.
-        for q in gm.qdict.values():
-            while not q.request.empty():
-                q.request.get()
-            while not q.answer.empty():
-                q.answer.get()
-            while not q.reply.empty():
-                q.reply.get()
+        # # Python의 Queue는 내부적으로 데몬 쓰레드인 QueueFeederThread를 사용합니다. 
+        # # 큐에 데이터가 남아있으면 이 쓰레드가 계속 실행 상태로 남아있어 프로그램이 완전히 종료되지 않습니다.
+        # for q in gm.qdict.values():
+        #     while not q.request.empty():
+        #         q.request.get()
+        #     while not q.answer.empty():
+        #         q.answer.get()
+        #     while not q.reply.empty():
+        #         q.reply.get()
 
         self.cleanup_flag = True 
         self.app.quit()
@@ -133,4 +133,4 @@ if __name__ == "__main__":
         if not main.cleanup_flag: main.cleanup()
         logging.info(f"### System Shutdown ###")
         logging.shutdown()
-        exit(exit_code)
+        sys.exit(exit_code)

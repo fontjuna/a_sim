@@ -307,7 +307,7 @@ class TableManager:
         self.color_zero = QColor(0, 0, 0)        # 검정색 (손익 0)
         
         # 손익 관련 컬럼
-        self.profit_columns = ["평가손익", "수익률(%)", "당일매도손익", "손익율", "손익금액", "수익률" ]
+        self.profit_columns = ["평가손익", "수익률(%)", "당일매도손익", "손익율", "손익금액", "수익률", "등락율"]
 
         # 리사이즈
         self._resize =  True
