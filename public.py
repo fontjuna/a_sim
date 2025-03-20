@@ -772,27 +772,7 @@ class GlobalMemory:
     holdings = {}
 gm = GlobalMemory()
 
-# def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE, max_bytes=None, backup_count=None, level=None, config_file=None):
-#     full_path = get_path(log_path)
-    
-#     # 설정 파일 읽기 또는 기본값 저장
-#     config_file = os.path.join(full_path, dc.fp.LOG_JSON)
-#     _, gm.json_config = load_json(config_file, dc.log_config)
-
-#     # 로그 파일 설정
-#     message_file = os.path.join(full_path, dc.fp.LOG_FILE)
-#     gm.json_config['handlers']['file']['filename'] = message_file
-#     gm.json_config['handlers']['file']['maxBytes'] = max_bytes if max_bytes is not None else 1 * 1024 * 1024
-#     gm.json_config['handlers']['file']['backupCount'] = backup_count if backup_count is not None else 9
-#     gm.json_config['root']['level'] = level if level is not None else logging.INFO
-    
-#     # 업데이트된 설정 저장
-#     save_json(config_file, gm.json_config)
-    
-#     # 로깅 설정 적용
-#     logging.config.dictConfig(gm.json_config)
-
-def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE, max_bytes=None, backup_count=None, level=None, config_file=None):
+def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):
     full_path = get_path(log_path)
     
     # 설정 파일 읽기 또는 기본값 저장
@@ -802,9 +782,6 @@ def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE, max_bytes=None
     # 로그 파일 설정
     message_file = os.path.join(full_path, dc.fp.LOG_FILE)
     gm.json_config['handlers']['file']['filename'] = message_file
-    gm.json_config['handlers']['file']['maxBytes'] = max_bytes if max_bytes is not None else 1 * 1024 * 1024
-    gm.json_config['handlers']['file']['backupCount'] = backup_count if backup_count is not None else 9
-    gm.json_config['root']['level'] = level if level is not None else logging.INFO
 
     # 외부 라이브러리 활용 가능 여부 확인 및 적용
     try:

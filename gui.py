@@ -559,6 +559,7 @@ class GUI(QMainWindow, form_class):
             gm.pro.api.SetRealReg(screen=dc.scr.화면['실시간감시'], code_list=code, fid_list='10', opt_type='1')
         else:
             gm.dict매도요청목록[code] = price
+        # 주문 전송
         gm.pro.admin.com_SendOrder(0, **send_data)
 
     # 화면 갱신 -----------------------------------------------------------------------------------------------------------------

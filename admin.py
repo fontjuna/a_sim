@@ -174,7 +174,7 @@ class Admin:
         success = gm.pro.api.SendOrder(**cmd)
         if gm.config.gui_on: gm.qdict['msg'].request.put(Work('주문내용', {'msg': msg}))
 
-        #self.dbm_order_upsert(idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno)
+        self.dbm_order_upsert(idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno)
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
 
     def com_market_status(self):
@@ -283,7 +283,7 @@ class Admin:
                     매도수구분 = '2' if '매수' in 주문유형 else '1'
                     query = "INSERT OR REPLACE INTO trades (전략번호, 매도수구분, 주문구분, 주문상태, 주문번호, 종목코드, 종목명) VALUES (?,?,?,?,?,?,?)"
                     params = (전략번호, 매도수구분, 주문구분, '요청', order_no, code, name,)
-                    #gm.pro.aaa.put('dbm', Work('execute_query', {'sql': query, 'db': 'daily', 'params': params}))
+                    gm.pro.qdict['dbm'].put(Work('execute_query', {'sql': query, 'db': 'daily', 'params': params}))
                 else:
                     logging.warning(f'TR 수신:주문번호 받지 못 함: rqname={rqname} 주문번호={order_no}')
 

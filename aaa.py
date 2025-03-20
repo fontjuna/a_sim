@@ -62,6 +62,7 @@ class Main:
             while not gm.pro.api.connected: pythoncom.PumpWaitingMessages()
             logging.debug(f'***** {gm.pro.api.name.upper()} connected *****')
             gm.pro.dbm.start()
+            gm.pro.dbm.init_db()
             gm.pro.admin.init()
             logging.debug('prepare : admin 초기화 완료')
             gm.pro.gui.init()
@@ -97,22 +98,22 @@ class Main:
         self.run()
 
     def cleanup(self):
-        gm.pro.dbm.stop()
-        gm.pro.dbm.join(timeout=1)        
+        #gm.pro.dbm.stop()
+        #gm.pro.dbm.join(timeout=1)        
         # gm.pro.aaa.stop()
         # gm.pro.aaa.wait()
-        # gm.pro.admin.cdn_fx중지_전략매매()
+        #gm.pro.admin.cdn_fx중지_전략매매()
         # gm.pro.api.stop()
 
-        # # Python의 Queue는 내부적으로 데몬 쓰레드인 QueueFeederThread를 사용합니다. 
-        # # 큐에 데이터가 남아있으면 이 쓰레드가 계속 실행 상태로 남아있어 프로그램이 완전히 종료되지 않습니다.
-        # for q in gm.qdict.values():
-        #     while not q.request.empty():
-        #         q.request.get()
-        #     while not q.answer.empty():
-        #         q.answer.get()
-        #     while not q.reply.empty():
-        #         q.reply.get()
+        # Python의 Queue는 내부적으로 데몬 쓰레드인 QueueFeederThread를 사용합니다. 
+        # 큐에 데이터가 남아있으면 이 쓰레드가 계속 실행 상태로 남아있어 프로그램이 완전히 종료되지 않습니다.
+        for q in gm.qdict.values():
+            while not q.request.empty():
+                q.request.get()
+            while not q.answer.empty():
+                q.answer.get()
+            while not q.reply.empty():
+                q.reply.get()
 
         self.cleanup_flag = True 
         self.app.quit()
@@ -125,7 +126,7 @@ if __name__ == "__main__":
         logging.info(f"{'*'*10} LIBERANIMO logiacl intelligence enhanced robo aotonomic investment management operations START{'*'*10}")
         main = Main()
         exit_code = main.main()
-        logging.info("{'*'*10} LIBERANIMO End {'*'*10}")
+        logging.info(f"{'*'*10} LIBERANIMO End {'*'*10}")
     except Exception as e:
         logging.error(str(e), exc_info=e)
         exit_code = 1
