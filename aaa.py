@@ -108,12 +108,9 @@ class Main:
         # Python의 Queue는 내부적으로 데몬 쓰레드인 QueueFeederThread를 사용합니다. 
         # 큐에 데이터가 남아있으면 이 쓰레드가 계속 실행 상태로 남아있어 프로그램이 완전히 종료되지 않습니다.
         for q in gm.qdict.values():
-            while not q.request.empty():
-                q.request.get()
-            while not q.answer.empty():
-                q.answer.get()
-            while not q.reply.empty():
-                q.reply.get()
+            while not q.request.empty(): q.request.get()
+            while not q.answer.empty(): q.answer.get()
+            while not q.reply.empty(): q.reply.get()
 
         self.cleanup_flag = True 
         self.app.quit()
@@ -123,15 +120,15 @@ if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support() # 없으면 실행파일(exe)로 실행시 DBMServer멀티프로세스 생성시 프로그램 리셋되어 시작 반복 하는 것 방지
     try:
-        logging.info(f"{'*'*10} LIBERANIMO logiacl intelligence enhanced robo aotonomic investment management operations START{'*'*10}")
+        logging.info(f"{'#'*10} LIBERANIMO logiacl intelligence enhanced robo aotonomic investment management operations START {'#'*10}")
         main = Main()
         exit_code = main.main()
-        logging.info(f"{'*'*10} LIBERANIMO End {'*'*10}")
+        logging.info(f"{'#'*10} System Shutdown {'#'*10}")
     except Exception as e:
         logging.error(str(e), exc_info=e)
         exit_code = 1
     finally:
         if not main.cleanup_flag: main.cleanup()
-        logging.info(f"### System Shutdown ###")
+        logging.info(f"{'#'*10} LIBERANIMO End {'#'*10}")
         logging.shutdown()
         sys.exit(exit_code)
