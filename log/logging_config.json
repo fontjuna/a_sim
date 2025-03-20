@@ -1,0 +1,30 @@
+{
+    "version": 1,
+    "formatters": {
+        "detailed": {
+            "format": "%(asctime)s.%(msecs)03d-%(levelname)s-[%(filename)s(%(lineno)d) / %(funcName)s] %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S"
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "detailed"
+        },
+        "file": {
+            "class": "concurrent_log_handler.ConcurrentRotatingFileHandler",
+            "filename": "C:\\Users\\fontjuna\\OneDrive\\문서\\Develop_python\\a_prj\\aaa\\log\\log_message",
+            "formatter": "detailed",
+            "maxBytes": 1048576,
+            "backupCount": 9,
+            "encoding": "utf-8"
+        }
+    },
+    "root": {
+        "handlers": [
+            "console",
+            "file"
+        ],
+        "level": 10
+    }
+}
