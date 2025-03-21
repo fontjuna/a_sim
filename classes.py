@@ -1013,6 +1013,34 @@ class DataTables:
     체결목록: TableManager = field(default_factory=TableManager(gm.tbl.hd체결목록))
     전략정의: TableManager = field(default_factory=TableManager(gm.tbl.hd전략정의))
 
+class OrderManager(QThread):
+    def __init__(self):
+        super().__init__()
+        self.order_ticker = {}
+        self.order_type = {}
+
+        gm.send_order_cmd = ThreadSafeList()
+
+    def run(self):
+        while True:
+            order = gm.send_order_cmd.get() # order = {'전략': 전략, 'cmd': cmd, 'rqname': rqname}
+            cmd = order['cmd']
+            if not request_time_check(kind='order', cond_text=cmd['rqname']): continue
+            code = cmd['code']
+            kind = cmd['ordtype']
+            if kind == 1 and code in gm.잔고목록.in_key(code): 
+                logging.warning(f'{code} 매수 중복 주문 제한')
+                continue
+            elif kind == 2 and code not in gm.잔고목록.in_key(code): 
+                logging.warning(f'{code} 없는 종목 매도 에러')
+                continue
+            key = f'{code}_{dc.fid.주문구분list[kind]}'
+            if gm.주문목록.in_key(key): continue
+            gm.주문목록.set(key=key, data={'종목코드': code, '주문구분': dc.fid.주문구분list[kind], '전략': order['전략']})
+            gm.pro.api.SendOrder(**cmd)
+            # time.sleep(0.01) # gm.send_order_cmd.get()이 대기한다.
+
+
 # 사용 예시
 if __name__ == "__main__":
     app = QApplication(sys.argv)

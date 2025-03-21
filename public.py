@@ -248,6 +248,15 @@ class FIDs:
         '6': '매도정정'
     })
 
+    주문구분list: list = field(default_factory=lambda: [
+        '매수',
+        '매도',
+        '매수취소',
+        '매도취소',
+        '매수정정',
+        '매도정정'
+    ])
+
     주식체결: dict = field(default_factory=lambda: {
         '체결시간': 20,
         '현재가': 10,  # 체결가
@@ -632,6 +641,14 @@ class DefineTbl:
     hd접수목록 = hd조건목록.copy()
     hd접수목록.update({'키': '주문번호'})
 
+    hd주문목록 = {
+        '키': '코드타입',
+        '정수': [],
+        '실수': [],
+        '컬럼': ['전략', '주문구분', '종목코드', '종목명', '코드타입'],
+        '헤더': ['전략', '주문구분', '종목코드', '종목명'],
+    }
+
     hd예수금 = {
         '키': '순번',
         '정수': ['순번', 'd+1추정예수금', 'd+1매도매수정산금', 'd+1미수변제소요금', 'd+1출금가능금액',\
@@ -733,6 +750,7 @@ class GlobalMemory:
     pro = Processes()
     qdict = QDict().qdict
     tbl = DefineTbl()
+    send_order_cmd = None # ThreadSafeList()
     잔고합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고합산))
     잔고목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고목록))
     매수조건목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
@@ -748,6 +766,7 @@ class GlobalMemory:
     매도대기목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd매도대기목록))
     전송목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd전송목록))
     접수목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd접수목록))
+    주문목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd주문목록))
     l2잔고합산_copy = None
     l2손익합산 = 0
     strategy_row = None

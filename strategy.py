@@ -508,7 +508,7 @@ class Strategy(ModelThread):
         except Exception as e:
             logging.error(f'매도 종목 검색 요청 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
-    def cdn_fx편입_실시간조건감시(self, kind, code, id_type, cond_name, cond_idx):
+    def cdn_fx편입_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
             종목명 = gm.pro.api.GetMasterCodeName(code=code)
             if code not in gm.dict종목정보:
@@ -539,7 +539,7 @@ class Strategy(ModelThread):
         except Exception as e:
             logging.error(f'{kind}조건 편입 처리 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
-    def cdn_fx이탈_실시간조건감시(self, kind, code, id_type, cond_name, cond_idx):
+    def cdn_fx이탈_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
             name = gm.pro.api.GetMasterCodeName(code)
             if kind == '매도':
