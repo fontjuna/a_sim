@@ -1,15 +1,15 @@
 {
-    "date": "20250321",
-    "last_update": 1742516482834.913,
+    "date": "20250322",
+    "last_update": 1742628985182.6868,
     "request_count": {
-        "second": 0,
-        "minute": 0,
-        "hour": 0
+        "second": 1,
+        "minute": 7,
+        "hour": 60
     },
     "first_request_time": {
-        "second": 0,
-        "minute": 0,
-        "hour": 0
+        "second": 1742628985182.6868,
+        "minute": 1742628956594.0967,
+        "hour": 1742625846987.6062
     },
     "condition_times": {}
 }

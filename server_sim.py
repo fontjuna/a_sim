@@ -296,6 +296,7 @@ portfolio = PortfolioManager()
 class OnReceiveChejanData(QThread):
     def __init__(self, qdict, code, orderno, order):
         super().__init__()
+        self.daemon = True
         self.qdict = qdict
         self.code = code
         self.orderno = orderno
@@ -312,7 +313,8 @@ class OnReceiveChejanData(QThread):
                 dictFID['종목명'] = sim.ticker.get(self.code, {}).get('종목명', '')
                 dictFID['보유수량'] = 0 if self.order['ordtype'] == 2 else self.order['quantity'] # 주문결과 수량 적용
                 dictFID['매입단가'] = 0 if self.order['ordtype'] == 2 else self.order['price'] # 주문결과 매입가 적용
-                self.qdict['aaa'].request.put(Work('odr_fx처리_잔고변경', {'dictFID': dictFID}))
+                #self.qdict['aaa'].request.put(Work('odr_fx처리_잔고변경', {'dictFID': dictFID}))
+                self.qdict['aaa'].request.put(Work('odr_recieve_balance_data', {'dictFID': dictFID}))
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = self.order['accno']
@@ -350,7 +352,8 @@ class OnReceiveChejanData(QThread):
 
                     portfolio.process_order(dictFID)
 
-                self.qdict['aaa'].request.put(Work('odr_fx처리_접수체결', {'dictFID': dictFID}))
+                #self.qdict['aaa'].request.put(Work('odr_fx처리_접수체결', {'dictFID': dictFID}))
+                self.qdict['aaa'].request.put(Work('odr_recieve_chegyeol_data', {'dictFID': dictFID}))
             if self._stop_event.wait(timeout=0.1): break
             cnt += 1
             self.is_running = cnt < 3
@@ -363,6 +366,7 @@ class OnReceiveChejanData(QThread):
 class OnReceiveRealCondition(QThread):
     def __init__(self, qdict, cond_name, cond_index):
         super().__init__()
+        self.daemon = True
         self.qdict = qdict
         self.cond_name = cond_name
         self.cond_index = cond_index
@@ -401,6 +405,7 @@ class OnReceiveRealCondition(QThread):
 class OnReceiveRealData(QThread):
     def __init__(self, qdict=None):
         super().__init__()
+        self.daemon = True
         self.is_running = True
         self.qdict = qdict
         self._stop_event = threading.Event()
@@ -520,12 +525,14 @@ class SIMServer:
         real_thread[screen].stop()
 
     def SetRealReg(self, screen, code_list, fid_list, opt_type):
+        global real_thread
         thread = OnReceiveRealData(self.qdict)
         real_thread[screen] = thread
         thread.start()
         return 0
 
     def SetRealRemove(self, screen, del_code):
+        global real_thread
         logging.debug(f'screen={screen}, del_code={del_code}')
         if not real_thread: return
         if screen == 'ALL':
@@ -545,14 +552,15 @@ class SIMServer:
         return cond_data_list
 
     def SendCondition(self, screen, cond_name, cond_index, search, block=True):
+        global cond_thread
         self.tr_condition_loaded = True
         self.tr_condition_list = []
-        cond = OnReceiveRealCondition(self.qdict, cond_name, cond_index)
-        cond.start()
-        cond_thread[screen] = cond
+        cond_thread[screen] = OnReceiveRealCondition(self.qdict, cond_name, cond_index)
+        cond_thread[screen].start()
         return self.tr_condition_list
 
     def SendConditionStop(self, screen, cond_name, index):
+        global cond_thread
         cond_thread[screen].stop()
         return 0
 
@@ -571,14 +579,6 @@ class SIMServer:
             'hoga': hoga,
             'ordno': '',
         }
-        result = {
-            'code': code,
-            'name': sim.ticker.get(code, {}).get('종목명', ''),
-            'order_no': orderno,
-            'screen': screen,
-            'rqname': rqname,
-        }
-        self.put('aaa', Work('on_fx수신_주문결과TR', result))
 
         global chejan_thread
         chejan = OnReceiveChejanData(self.qdict, code, orderno, order)

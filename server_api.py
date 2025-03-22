@@ -194,22 +194,23 @@ class APIServer:
 
     def OnReceiveTrData(self, screen, rqname, trcode, record, next):
         if screen.startswith('4') or screen.startswith('88'):
-            try:
-                logging.debug(f'OnReceiveTrData: screen={screen}, rqname={rqname}, trcode={trcode}, record={record}, next={next}')
-                data = rqname.split('_')
-                code = data[1]
-                order_no = self.GetCommData(trcode, rqname, 0, '주문번호')
-                result = {
-                    'code': code,
-                    'name': self.GetMasterCodeName(code),
-                    'order_no': order_no,
-                    'screen': screen,
-                    'rqname': rqname,
-                }
-                self.put('aaa', Work('on_fx수신_주문결과TR', result))
+            pass
+            # try:
+            #     logging.debug(f'OnReceiveTrData: screen={screen}, rqname={rqname}, trcode={trcode}, record={record}, next={next}')
+            #     data = rqname.split('_')
+            #     code = data[1]
+            #     order_no = self.GetCommData(trcode, rqname, 0, '주문번호')
+            #     result = {
+            #         'code': code,
+            #         'name': self.GetMasterCodeName(code),
+            #         'order_no': order_no,
+            #         'screen': screen,
+            #         'rqname': rqname,
+            #     }
+            #     self.put('aaa', Work('on_fx수신_주문결과TR', result))
 
-            except Exception as e:
-                logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
+            # except Exception as e:
+            #     logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
 
         else:
             try:
@@ -276,10 +277,10 @@ class APIServer:
         try:
             dictFID = {}
             if gubun == '0':
-                order = 'odr_fx처리_접수체결'
+                order = 'odr_recieve_chegyeol_data'
                 dict_tmp = dc.fid.주문체결
             elif gubun == '1':
-                order = 'odr_fx처리_잔고변경'
+                order = 'odr_recieve_balance_data'
                 dict_tmp = dc.fid.잔고
             for key, value in dict_tmp.items():
                 data = self.GetChejanData(value)

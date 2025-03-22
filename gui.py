@@ -650,7 +650,7 @@ class GUI(QMainWindow, form_class):
             #self.tblSendList.clearContents()
             gm.전송목록.update_table_widget(self.tblSendList)
             #self.tblReceiptList.clearContents()
-            gm.접수목록.update_table_widget(self.tblReceiptList)
+            gm.주문목록.update_table_widget(self.tblReceiptList)
 
         except Exception as e:
             logging.error(f'주문정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)

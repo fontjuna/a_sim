@@ -1016,115 +1016,21 @@ class DataTables:
 class OrderManager(QThread):
     def __init__(self):
         super().__init__()
-        self.order_ticker = {}
-        self.order_type = {}
 
         gm.send_order_cmd = ThreadSafeList()
 
     def run(self):
         while True:
-            order = gm.send_order_cmd.get() # order = {'전략': 전략, 'cmd': cmd, 'rqname': rqname}
-            cmd = order['cmd']
-            if not request_time_check(kind='order', cond_text=cmd['rqname']): continue
-            code = cmd['code']
-            kind = cmd['ordtype']
-            if kind == 1 and code in gm.잔고목록.in_key(code): 
-                logging.warning(f'{code} 매수 중복 주문 제한')
-                continue
-            elif kind == 2 and code not in gm.잔고목록.in_key(code): 
-                logging.warning(f'{code} 없는 종목 매도 에러')
-                continue
-            key = f'{code}_{dc.fid.주문구분list[kind]}'
-            if gm.주문목록.in_key(key): continue
-            gm.주문목록.set(key=key, data={'종목코드': code, '주문구분': dc.fid.주문구분list[kind], '전략': order['전략']})
-            gm.pro.api.SendOrder(**cmd)
-            # time.sleep(0.01) # gm.send_order_cmd.get()이 대기한다.
+            order = gm.send_order_cmd.get() # order : SendOrder parameters
+
+            if not request_time_check(kind='order', cond_text=order['rqname']): continue
+
+            code = order['code']
+            kind = ['', '매수', '매도', '매수취소', '매도취소', '매수정정', '매도정정'][order['ordtype']]
+            key = f'{code}_{kind}'
+            gm.주문목록.set(key=key, data={'상태': '전송'})
+            order.pop('msg', None)
+            gm.pro.api.SendOrder(**order)
+            logging.info(f'주문전송: {key} {order}')
 
 
-# 사용 예시
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    
-    # 설정 정보
-    config = {
-        '키': '종목코드',
-        '정수': ['보유수량'],
-        '실수': ['현재가', '매입가', '평가금액', '손익금액', '손익률'],
-        '컬럼': ['종목코드', '종목명', '현재가', '매입가', '보유수량', '평가금액', '손익금액', '손익률'],
-        '헤더': ['종목코드', '종목명', '현재가', '매입가', '보유수량', '평가금액', '손익금액', '손익률']
-    }
-    
-    # 샘플 데이터 (타입 혼합됨)
-    sample_data = [
-        {"종목코드": "005930", "종목명": "삼성전자", "현재가": "72000", "매입가": "68000", "보유수량": "10", "평가금액": "720000", "손익금액": "40000", "손익률": "5.88"},
-        {"종목코드": "035720", "종목명": "카카오", "현재가": "48000", "매입가": "50000", "보유수량": "5", "평가금액": "240000", "손익금액": "-10000", "손익률": "-2.00"},
-        {"종목코드": "051910", "종목명": "LG화학", "현재가": "675000", "매입가": "650000", "보유수량": "2", "평가금액": "1350000", "손익금액": "50000", "손익률": "3.85"}
-    ]
-    
-    # 관리 클래스 생성
-    manager = TableManager(config)
-    
-    # 데이터 로드 (기존 방식)
-    # manager.load_data(sample_data)
-    
-    # 새로운 API로 데이터 설정
-    for item in sample_data:
-        manager.set(key=item["종목코드"], data=item)
-    
-    # 메인 윈도우 설정
-    main_window = QMainWindow()
-    main_window.setWindowTitle("범용 데이터 관리")
-    main_window.setGeometry(100, 100, 800, 400)
-    
-    # 중앙 위젯 설정
-    central_widget = QWidget()
-    main_window.setCentralWidget(central_widget)
-    layout = QVBoxLayout(central_widget)
-    
-    # 테이블 위젯 생성 및 데이터 표시
-    table = QTableWidget()
-    layout.addWidget(table)
-    manager.display_data_in_table(table)
-    
-    # 개별 셀 업데이트 예시
-    manager.update_cell(table, "005930", "현재가", 73000)
-    
-    # 새 API 사용 예시
-    # 항목 추가/업데이트
-    manager.set(key="000660", data={"종목명": "SK하이닉스", "현재가": 123000, "매입가": 115000, "보유수량": 3})
-    
-    # 특정 항목 조회
-    samsung = manager.get(key="005930")
-    print("삼성전자 정보:", samsung)
-    
-    # 데이터 필터링
-    high_price = manager.get(filter={"현재가": ('>=', 100000)})
-    print("고가 종목:", [(item["종목코드"], item["종목명"]) for item in high_price])
-    
-    # 특정 조건 항목 업데이트
-    manager.set(filter={"종목명": "삼성"}, data={"현재가": 74000})
-    
-    # 합계 계산
-    total_quantity, total_value = manager.sum(column=["보유수량", "평가금액"])
-    print(f"총 보유수량: {total_quantity}주, 총 평가금액: {total_value:,.0f}원")
-    
-    # 항목 삭제
-    manager.delete(key="035720")
-    
-    # 데이터 길이 확인
-    count = manager.len()
-    print(f"보유종목 수: {count}")
-    
-    # 키 존재 확인
-    if manager.in_key("000660"):
-        print("SK하이닉스 종목이 존재합니다.")
-    
-    # 컬럼 값 존재 확인
-    if manager.in_column("종목명", "삼성전자"):
-        print("삼성전자 종목이 존재합니다.")
-    
-    # 테이블 갱신
-    manager.display_data_in_table(table)
-    
-    main_window.show()
-    sys.exit(app.exec_())

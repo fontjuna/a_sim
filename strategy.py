@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 import logging
 import threading
-
+from queue import Queue
 class Strategy(ModelThread):
     def __init__(self, name, qdict, cls=None, 전략정의=None):
         super().__init__(name, qdict, cls)
@@ -25,8 +25,42 @@ class Strategy(ModelThread):
         self.end_timer = None
         self.start_timer = None
         self.lock = threading.Lock()
+        self.order_q = Queue()
 
         self.init()
+
+    def run_loop(self):
+        super().run_loop()
+        if self.order_q.empty(): return
+
+        data = self.order_q.get() # data={'키': key, '구분': '매수', '상태': '대기', '전략': self.전략, '종목코드': code, '종목명': 종목명}
+        code = data['종목코드']
+        name = gm.dict종목정보[code].get('종목명', '')
+        price = gm.dict종목정보[code].get('현재가', 0)
+        kind = data['구분']
+        order_send = False
+        if kind == '매수':
+            if self.매수시장가:
+                self.order_buy(code, self.전략, price)
+                order_send = True
+            else: # 매수지정가
+                if price > 0:
+                    self.order_buy(code, self.전략, price)
+                    order_send = True
+        else:
+            row = gm.잔고목록.get(key=code)
+            row.update({ 'rqname': '신규매도', 'account': gm.config.account, '현재가': price})  # 매수 조건 만족 매수 이므로 수익율등 필요 없음
+            if self.매도시장가:
+                self.order_sell(row, sell_condition=True)
+            else: # 매도지정가
+                if price > 0:
+                    self.order_sell(row, sell_condition=True)
+                    order_send = True
+        #logging.debug(f'order_send={order_send} 종목정보[{code} {name}] = {gm.dict종목정보.get(code, {})}')
+        if order_send:
+            gm.주문목록.set(key=f'{code}_{kind}', data={'상태': '요청'})
+        else:
+            self.order_q.put(data)
 
     def init(self):
         for key, value in self.전략정의.items():
@@ -65,32 +99,33 @@ class Strategy(ModelThread):
             logging.error(f'딕셔너리 조회 오류: {self.전략} - {type(e).__name__} - {e}', exc_info=True)
             return {}
 
-    def set(self, key: str, value: Any) -> bool:
-        """인스턴스 변수 설정"""
-        try:
-            if hasattr(self, key):
-                setattr(self, key, value)
-                self.전략정의[key] = value
-                return True
-            else:
-                logging.warning(f'존재하지 않는 키 설정 시도: {self.전략} - {key}', exc_info=True)
-                return False
-        except Exception as e:
-            logging.error(f'변수 설정 오류: {self.전략} - {type(e).__name__} - {e}', exc_info=True)
-            return False
+    '''
+    # def set(self, key: str, value: Any) -> bool:
+    #     """인스턴스 변수 설정"""
+    #     try:
+    #         if hasattr(self, key):
+    #             setattr(self, key, value)
+    #             self.전략정의[key] = value
+    #             return True
+    #         else:
+    #             logging.warning(f'존재하지 않는 키 설정 시도: {self.전략} - {key}', exc_info=True)
+    #             return False
+    #     except Exception as e:
+    #         logging.error(f'변수 설정 오류: {self.전략} - {type(e).__name__} - {e}', exc_info=True)
+    #         return False
 
-    def get(self, key: str) -> Any:
-        """인스턴스 변수 조회"""
-        try:
-            if hasattr(self, key):
-                return getattr(self, key)
-            else:
-                logging.warning(f'존재하지 않는 키 조회 시도: {self.전략} - {key}', exc_info=True)
-                return None
-        except Exception as e:
-            logging.error(f'변수 조회 오류: {self.전략} - {type(e).__name__} - {e}', exc_info=True)
-            return None
-
+    # def get(self, key: str) -> Any:
+    #     """인스턴스 변수 조회"""
+    #     try:
+    #         if hasattr(self, key):
+    #             return getattr(self, key)
+    #         else:
+    #             logging.warning(f'존재하지 않는 키 조회 시도: {self.전략} - {key}', exc_info=True)
+    #             return None
+    #     except Exception as e:
+    #         logging.error(f'변수 조회 오류: {self.전략} - {type(e).__name__} - {e}', exc_info=True)
+    #         return None
+    '''
     def _move_to_var(self, input_dict: dict) -> None:
         """딕셔너리의 값을 인스턴스 변수로 설정"""
         try:
@@ -216,10 +251,11 @@ class Strategy(ModelThread):
         is_ok, send_data, reason = self.is_buy(code, rqname, price) # rqname : 전략
         logging.info(f'매수: {self.전략} - {reason}\nsend_data={send_data}')
         if is_ok:
-            gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
-        else:
-            if code in gm.dict매수요청목록:
-                del gm.dict매수요청목록[code]
+            #gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
+            gm.send_order_cmd.put(send_data)
+        # else:
+        #     if code in gm.dict매수요청목록:
+        #         del gm.dict매수요청목록[code]
         return is_ok, send_data, reason
 
     def is_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
@@ -335,12 +371,14 @@ class Strategy(ModelThread):
         if is_ok:
             if isinstance(send_data, list):
                 for data in send_data:
-                    gm.pro.admin.com_SendOrder(self.전략번호, **data)
+                    #gm.pro.admin.com_SendOrder(self.전략번호, **data)
+                    gm.send_order_cmd.put(data)
             else:
-                gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
-        else:
-            if row['종목번호'] in gm.dict매도요청목록:
-                del gm.dict매도요청목록[row['종목번호']]
+                #gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
+                gm.send_order_cmd.put(send_data)
+        # else:
+        #     if row['종목번호'] in gm.dict매도요청목록:
+        #         del gm.dict매도요청목록[row['종목번호']]
         return is_ok, send_data, reason
 
     def order_cancel(self, kind, order_no, code):
@@ -359,7 +397,8 @@ class Strategy(ModelThread):
                 'ordno': order_no
             }
             logging.debug(f'주문취소: {self.전략} - {order_no} {send_data}')
-            gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
+            #gm.pro.admin.com_SendOrder(self.전략번호, **send_data)
+            gm.send_order_cmd.put(send_data)
         except Exception as e:
             logging.error(f'주문취소 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -439,7 +478,6 @@ class Strategy(ModelThread):
             if buy_stop and not sell_stop:
                 gm.toast.toast(f'{self.전략} 매수전략 {gm.매수문자열들[self.전략번호]}이 종료되었습니다.')
 
-
         except Exception as e:
             logging.error(f'전략 마무리 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
@@ -472,19 +510,22 @@ class Strategy(ModelThread):
         try:
             for code in condition_list:
                 if gm.잔고목록.in_key(code): continue # 기 보유종목
-                if gm.매수대기목록.in_key(code) or gm.전송목록.in_key(code) or gm.접수목록.in_column('종목코드', code): continue # 매수중
 
                 종목명 = gm.pro.api.GetMasterCodeName(code=code)
                 if code not in gm.dict종목정보:
                     전일가 = gm.pro.api.GetMasterLastPrice(code=code)
                     gm.dict종목정보[code] = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
 
-                # DataFrame에 새로운 행 추가
-                gm.매수대기목록.set(key=code, data={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명})
+                key = f'{code}_매수'
+                if gm.주문목록.in_key(key): continue # 주문 처리 중
+
+                data={'키': key, '구분': '매수', '상태': '대기', '전략': self.전략, '종목코드': code, '종목명': 종목명}
+                self.order_q.put(data)
+                gm.주문목록.set(key=key, data=data)
                 gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
 
             logging.info(f'매수 종목 검색 결과: {self.전략} result count={len(condition_list)}')
-            logging.debug(f'매수 대기 목록 =\n{gm.매수대기목록.get(column=["전략", "종목코드","종목명"])}')
+            logging.debug(f'매수 대기 목록 =\n{gm.주문목록.get(column=["키", "구분", "상태", "전략", "종목코드", "종목명"])}')
         except Exception as e:
             logging.error(f'매수 종목 검색 요청 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
@@ -514,28 +555,33 @@ class Strategy(ModelThread):
             if code not in gm.dict종목정보:
                 전일가 = gm.pro.api.GetMasterLastPrice(code=code)
                 gm.dict종목정보[code] = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
+            
+            key = f'{code}_{kind}'
+            if gm.주문목록.in_key(key): return # 주문 처리 중
 
             if kind == '매도':
-                gm.매도조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
+                if not gm.매도조건목록.in_key(code):
+                    gm.매도조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
                 if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음
-                if gm.매도대기목록.in_key(code) or code in gm.dict매도요청목록 or gm.전송목록.in_key(code) or gm.접수목록.in_key(code): return # 매도중
-                if self.전략 != gm.잔고목록.get(key=code, column='전략'): return
-                gm.매도대기목록.set(key=code, data={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명})
-                logging.debug(f'매도 대기 목록 =\n{gm.매도대기목록.get(column=["전략", "종목코드", "종목명"])}')
-                return
+                if self.전략 != gm.잔고목록.get(key=code, column='전략'): return # 다른 전략 종목
 
-            if not gm.매수조건목록.in_key(code):
-                if gm.매수대기목록.in_key(code) or code in gm.dict매수요청목록 or gm.전송목록.in_key(code) or gm.접수목록.in_key(code): return # 매수중
+
+            if kind == '매수':
+                if not gm.매수조건목록.in_key(code): 
+                    gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
                 if gm.잔고목록.in_key(code): return # 기 보유종목
+
                 if code not in gm.dict조건종목감시:
                     self.cdn_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
-
-                gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
-                gm.매수대기목록.set(key=code, data={'전략': self.전략, '전략번호': self.전략번호, '종목명': 종목명})
-                logging.debug(f'매수 대기 목록 =\n{gm.매수대기목록.get(column=["전략", "종목코드","종목명"])}')
-                if gm.config.gui_on: gm.qdict['msg'].request.put(Work('검색내용', {'msg': f'{kind}편입 : {self.전략} {code} {종목명}'}))
-                logging.info(f'{kind}편입 : {self.전략} {self.전략명칭} {code} {종목명}')
-
+           
+            data={'키': key, '구분': kind, '상태': '대기', '전략': self.전략, '종목코드': code, '종목명': 종목명}
+            self.order_q.put(data)
+            gm.주문목록.set(key=key, data=data)
+            logging.debug(f'{kind} 대기 목록 =\n{gm.주문목록.get(column=["키", "구분", "상태", "전략", "종목코드", "종목명"])}')
+  
+            if gm.config.gui_on: gm.qdict['msg'].request.put(Work('검색내용', {'msg': f'{kind}편입 : {self.전략} {code} {종목명}'}))
+            logging.info(f'{kind}편입 : {self.전략} {self.전략명칭} {code} {종목명}')
+  
         except Exception as e:
             logging.error(f'{kind}조건 편입 처리 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
@@ -610,7 +656,7 @@ class Strategy(ModelThread):
 
             now = datetime.now()
             current = now.strftime('%H:%M')
-            if "15:30" > current > self.stop_time:
+            if "15:30" > current > self.stop_time and not gm.config.sim_on:
                 msg = f'{self.전략} 전략 종료시간 지났습니다. {self.stop_time} {current}'
                 return msg
             else:
