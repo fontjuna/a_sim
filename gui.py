@@ -45,19 +45,17 @@ class GUI(QMainWindow, form_class):
         logging.debug(f'{self.name} init')
         self.set_widgets()
         self.gui_fx채움_계좌콤보()
-        def delayed_init():
-            self.gui_fx채움_조건콤보()
-            self.gui_fx채움_전략정의()
-            self.gui_fx전시_전략정의()
-            self.set_widget_events()
-            if gm.config.log_level == logging.DEBUG:
-                self.rbDebug.setChecked(True)
-                self.rbInfo.setChecked(False)
-            else:
-                self.rbInfo.setChecked(True)
-                self.rbDebug.setChecked(False)
-            self.refresh_data_timer.start(100)
-        delayed_init()
+        self.gui_fx채움_조건콤보()
+        self.gui_fx채움_전략정의()
+        self.gui_fx전시_전략정의()
+        self.set_widget_events()
+        if gm.config.log_level == logging.DEBUG:
+            self.rbDebug.setChecked(True)
+            self.rbInfo.setChecked(False)
+        else:
+            self.rbInfo.setChecked(True)
+            self.rbDebug.setChecked(False)
+        self.refresh_data_timer.start(100)
         success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
         logging.getLogger().setLevel(gm.json_config['root']['level'])
         self.rbDebug.setChecked(gm.json_config['root']['level'] == logging.DEBUG)

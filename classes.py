@@ -1016,21 +1016,47 @@ class DataTables:
 class OrderManager(QThread):
     def __init__(self):
         super().__init__()
+        self.is_running = True
 
         gm.send_order_cmd = ThreadSafeList()
 
     def run(self):
-        while True:
+        while self.is_running:
             order = gm.send_order_cmd.get() # order : SendOrder parameters
+            code = order['code']
+            if code not in gm.dict종목정보:
+                gm.dict종목정보[code] = {
+                    '종목명': gm.pro.api.GetMasterCodeName(code),
+                    '전일가': gm.pro.api.GetMasterLastPrice(code),
+                    '현재가': 0}
+                gm.pro.api.SetRealReg(screen=dc.scr.화면['실시간감시'], code_list=code, fid_list="10", opt_type=1)
+
+            if gm.dict종목정보[order['code']]['현재가'] == 0:
+                time.sleep(0.1)
+                gm.send_order_cmd.put(order)
+                continue
 
             if not request_time_check(kind='order', cond_text=order['rqname']): continue
 
-            code = order['code']
             kind = ['', '매수', '매도', '매수취소', '매도취소', '매수정정', '매도정정'][order['ordtype']]
             key = f'{code}_{kind}'
+            row = gm.주문목록.get(key=key)
+            if not row: 
+                # 자동 취소, 외부주문은 이곳으로 오지 않는다. 그 외는 직접 만들어 줘야 한다. order_buy, order_sell을 이용
+                logging.error(f'********* 주문목록에 없는 종목입니다. {key} *********') 
+                continue
+
             gm.주문목록.set(key=key, data={'상태': '전송'})
-            order.pop('msg', None)
+            reason = order.pop('msg', None)
             gm.pro.api.SendOrder(**order)
+
+            msg = f"{reason} : {row['전략']} {code} {row['종목명']} 주문수량:{order['quantity']}주 / 주문가:{order['price']}원"
+            if gm.config.gui_on: gm.qdict['msg'].request.put(Work('주문내용', {'msg': msg}))
+            #self.dbm_order_upsert(idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno)
+            idx = int(row['전략'][-2:])
+            gm.pro.admin.dbm_order_upsert(idx, code, row['종목명'], order['quantity'], order['price'], order['ordtype'], order['hoga'], order['screen'], order['rqname'], order['accno'], order['ordno'])
+
             logging.info(f'주문전송: {key} {order}')
 
-
+    def stop(self):
+        self.is_running = False

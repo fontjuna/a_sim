@@ -517,7 +517,7 @@ class Strategy(ModelThread):
                     gm.dict종목정보[code] = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
 
                 key = f'{code}_매수'
-                if gm.주문목록.in_key(key): continue # 주문 처리 중
+                if gm.주문목록.in_column('종목코드', code): continue # 주문 처리 중
 
                 data={'키': key, '구분': '매수', '상태': '대기', '전략': self.전략, '종목코드': code, '종목명': 종목명}
                 self.order_q.put(data)
@@ -556,15 +556,13 @@ class Strategy(ModelThread):
                 전일가 = gm.pro.api.GetMasterLastPrice(code=code)
                 gm.dict종목정보[code] = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
             
-            key = f'{code}_{kind}'
-            if gm.주문목록.in_key(key): return # 주문 처리 중
+            if gm.주문목록.in_column('종목코드', code): return # 주문 처리 중
 
             if kind == '매도':
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
                 if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음
                 if self.전략 != gm.잔고목록.get(key=code, column='전략'): return # 다른 전략 종목
-
 
             if kind == '매수':
                 if not gm.매수조건목록.in_key(code): 
@@ -574,6 +572,7 @@ class Strategy(ModelThread):
                 if code not in gm.dict조건종목감시:
                     self.cdn_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
            
+            key = f'{code}_{kind}'
             data={'키': key, '구분': kind, '상태': '대기', '전략': self.전략, '종목코드': code, '종목명': 종목명}
             self.order_q.put(data)
             gm.주문목록.set(key=key, data=data)

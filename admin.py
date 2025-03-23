@@ -312,7 +312,7 @@ class Admin:
             gm.dict종목정보[code].update({'현재가': abs(int(dictFID['현재가']))})
 
         try:
-            gm.qdict['dbm'].request.put(Work('receive_current_price', {'code': code, 'dictFID': dictFID}))
+            #gm.qdict['dbm'].request.put(Work('receive_current_price', {'code': code, 'dictFID': dictFID}))
 
             if gm.잔고목록.in_key(code):
                 row = gm.잔고목록.get(key=code)
@@ -628,7 +628,7 @@ class Admin:
         
         if not row: msg = f'잔고목록에 없는 종목'
         elif row['보유수량'] == 0 or row['현재가'] == 0: return
-        elif gm.주문목록.in_key(key=f'{code}_매도'): msg = f'매매중인 종목'
+        elif gm.주문목록.in_column('종목코드', code): msg = f'매매중인 종목'
         elif row['상태'] == 0: msg = f'매도 요건 미 충족'
         if msg:
             if msg != '매매중인 종목': logging.error(f'{msg} : {code} {row.get("종목명", "종목명 없음")}')
@@ -758,7 +758,7 @@ class Admin:
                 row = gm.주문목록.get(key=key)
                 if row and 주문수량 != 0 and 미체결수량 == 0: # 주문취소 주문 클리어
                     logging.debug(f'주문체결 취소확인: order_no = {order_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
-                    gm.주문목록.delete(key=key)
+                    gm.주문목록.delete(key=key) 
 
         except Exception as e:
             logging.error(f"접수체결 오류: {type(e).__name__} - {e}", exc_info=True)

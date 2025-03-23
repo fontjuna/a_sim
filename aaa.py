@@ -65,7 +65,7 @@ class Main:
             gm.pro.dbm.init_db()
             gm.pro.admin.init()
             logging.debug('prepare : admin 초기화 완료')
-            gm.pro.gui.init()
+            if gm.config.gui_on: gm.pro.gui.init()
             logging.debug('prepare : gui 초기화 완료')
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -97,25 +97,177 @@ class Main:
         self.prepare()
         self.run()
 
+    def clear_queue(self, q):
+        try:
+            # 큐를 비우기 전에 put 작업 중단
+            q.mutex.acquire()
+            q.queue.clear()
+            q.all_tasks_done.notify_all()
+            q.unfinished_tasks = 0
+            q.mutex.release()
+        except:
+            pass
+
+    def cleanup_worker(self, worker, timeout=3):
+        """
+        쓰레드나 프로세스를 안전하게 종료
+        worker: Thread 또는 Process 객체
+        timeout: 종료 대기 시간 (초)
+        """
+        try:
+            # 프로세스인 경우
+            if hasattr(worker, 'terminate'):
+                try:
+                    worker.terminate()  # 종료 신호 보내기
+                    worker.join(timeout)  # 정상 종료 대기
+                    if worker.is_alive():  # 여전히 살아있으면
+                        worker.kill()  # 강제 종료
+                except:
+                    pass
+                    
+            # 쓰레드인 경우
+            else:
+                try:
+                    if worker.is_alive():
+                        worker.join(timeout)  # 정상 종료 대기
+                        if worker.is_alive() and hasattr(worker, '_stop'):
+                            worker._stop()  # 쓰레드 강제 종료
+                except:
+                    pass
+        except:
+            pass
+        
     def cleanup(self):
-        gm.pro.dbm.stop()
-        gm.pro.dbm.join(timeout=1)        
-        gm.pro.aaa.stop()
-        gm.pro.aaa.wait()
-        gm.pro.api.stop()
-        #gm.pro.admin.cdn_fx중지_전략매매()
-        for t in gm.전략쓰레드: t.stop()
+        try:
+            # 1. 전략 쓰레드 종료
+            for t in gm.전략쓰레드: t.stop()
+            for t in gm.전략쓰레드: self.cleanup_worker(t)
 
-        # Python의 Queue는 내부적으로 데몬 쓰레드인 QueueFeederThread를 사용합니다. 
-        # 큐에 데이터가 남아있으면 이 쓰레드가 계속 실행 상태로 남아있어 프로그램이 완전히 종료되지 않습니다.
-        for q in gm.qdict.values():
-            while not q.request.empty(): q.request.get()
-            while not q.answer.empty(): q.answer.get()
-            while not q.reply.empty(): q.reply.get()
+            # 2. API/SIM 서버 종료
+            if hasattr(gm.pro, 'api'): 
+                gm.pro.api.stop()
+                self.cleanup_worker(gm.pro.api)
 
-        self.cleanup_flag = True 
-        self.app.quit()
-        logging.info("cleanup")
+            # 3. AAA 쓰레드 종료
+            if hasattr(gm.pro, 'aaa'): 
+                gm.pro.aaa.stop()
+                self.cleanup_worker(gm.pro.aaa)
+
+            # 4. DBM 서버 종료
+            if hasattr(gm.pro, 'dbm'): 
+                gm.pro.dbm.stop()
+                self.cleanup_worker(gm.pro.dbm)
+
+            # 5. 큐 정리 (모든 쓰레드가 종료된 후)
+            if hasattr(gm, 'qdict'):
+                for q in gm.qdict.values():
+                    if hasattr(q, 'request'): self.clear_queue(q.request)
+                    if hasattr(q, 'answer'): self.clear_queue(q.answer)
+                    if hasattr(q, 'reply'): self.clear_queue(q.reply)
+
+        except Exception as e:
+            logging.error(f"Cleanup 중 에러: {str(e)}")
+        finally:
+            self.cleanup_flag = True
+            if hasattr(self, 'app'): self.app.quit()
+            logging.info("cleanup completed")
+            
+import psutil
+import threading
+
+def force_cleanup():
+    # 1. 모든 쓰레드 강제 종료
+    for thread in threading.enumerate():
+        if thread.name != 'MainThread':
+            if hasattr(thread, '_stop'):
+                thread._stop()
+    
+    # 2. 모든 열린 파일 닫기
+    current_process = psutil.Process()
+    for file in current_process.open_files():
+        try:
+            import os
+            os.close(file.fd)
+        except:
+            pass
+    
+    # 3. 남은 프로세스 정리
+    for child in current_process.children(recursive=True):
+        try:
+            child.terminate()
+            child.wait(timeout=3)
+        except:
+            child.kill()
+    
+    # 4. 메모리 정리
+    import gc
+    gc.collect()
+
+def show_detailed_threads():
+    try:
+        active_threads = threading.enumerate()
+        logging.debug("\n=== 쓰레드 상세 정보 ===")
+        
+        for thread in active_threads:
+            try:
+                logging.debug(f"\n쓰레드 이름: {thread.name}")
+                logging.debug(f"쓰레드 ID: {thread.ident}")
+                logging.debug(f"데몬 여부: {thread.daemon}")
+                logging.debug(f"활성 상태: {thread.is_alive()}")
+                
+                # 타겟 함수 정보
+                try:
+                    if hasattr(thread, '_target'):
+                        target = thread._target
+                        target_name = target.__name__ if target and hasattr(target, '__name__') else str(target)
+                        logging.debug(f"타겟 함수: {target_name}")
+                except:
+                    logging.debug("타겟 함수: 확인 불가")
+                
+                # 인자 정보
+                try:
+                    if hasattr(thread, '_args'):
+                        logging.debug(f"인자: {repr(thread._args)}")
+                except:
+                    logging.debug("인자: 확인 불가")
+                
+                # 키워드 인자 정보
+                try:
+                    if hasattr(thread, '_kwargs'):
+                        logging.debug(f"키워드 인자: {repr(thread._kwargs)}")
+                except:
+                    logging.debug("키워드 인자: 확인 불가")
+                
+            except Exception as e:
+                logging.debug(f"쓰레드 정보 수집 중 오류: {str(e)}")
+                
+    except Exception as e:
+        logging.debug(f"쓰레드 분석 중 오류 발생: {str(e)}")
+
+def show_remaining_resources():
+    # 현재 프로세스 정보
+    current_process = psutil.Process()
+    
+    # 활성 쓰레드 
+    active_threads = threading.enumerate()
+    logging.debug("\n=== 남아있는 쓰레드 ===")
+    for thread in active_threads:
+        logging.debug(f"쓰레드: {thread.name}, 상태: {'alive' if thread.is_alive() else 'dead'}")
+    
+    # 자식 프로세스
+    children = current_process.children(recursive=True)
+    logging.debug("\n=== 남아있는 프로세스 ===")
+    for child in children:
+        logging.debug(f"프로세스: {child.name()}, PID: {child.pid}")
+    
+    # 현재 프로세스의 열린 파일들
+    logging.debug("\n=== 열린 파일 ===")
+    for file in current_process.open_files():
+        logging.debug(f"파일: {file.path}")
+    
+    # 메모리 사용량
+    logging.debug(f"\n=== 메모리 사용량 ===")
+    logging.debug(f"메모리: {current_process.memory_info().rss / 1024 / 1024:.2f} MB")
 
 if __name__ == "__main__":
     import multiprocessing
@@ -130,6 +282,9 @@ if __name__ == "__main__":
         exit_code = 1
     finally:
         if not main.cleanup_flag: main.cleanup()
+        show_remaining_resources()
+        show_detailed_threads()
         logging.info(f"{'#'*10} LIBERANIMO End {'#'*10}")
         logging.shutdown()
+        print("sys.exit(exit_code) 직전")
         sys.exit(exit_code)

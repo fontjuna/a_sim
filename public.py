@@ -81,6 +81,10 @@ def load_json(file_path, default_data):
             data = json.load(f)
             return True, data
 
+    except json.JSONDecodeError as e:
+        result, data = save_json(file_path, default_data)
+        return result, data
+    
     except Exception as e:
         logging.error(f'파일 로드 오류: {os.path.basename(file_path)} {type(e).__name__} - {e}', exc_info=True)
         return False, e

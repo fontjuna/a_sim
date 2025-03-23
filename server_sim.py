@@ -448,6 +448,17 @@ class OnReceiveRealData(QThread):
         self.is_running = False
         self._stop_event.set()
 
+    def clear_queue(self, q):
+        try:
+            # 큐를 비우기 전에 put 작업 중단
+            q.mutex.acquire()
+            q.queue.clear()
+            q.all_tasks_done.notify_all()
+            q.unfinished_tasks = 0
+            q.mutex.release()
+        except:
+            pass
+
 class SIMServer:
     def __init__(self, name, qdict, cls=None):
         self.name = name

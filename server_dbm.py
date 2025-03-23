@@ -18,6 +18,11 @@ class DBMServer(ModelProcess):
         self.init_db()
         super().run()
 
+    def stop(self):
+        self.daily_db.close()
+        self.db.close()
+        super().stop()
+
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
         logging.debug(f'DBM 로그 레벨 설정: {level}')
