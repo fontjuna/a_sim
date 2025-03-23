@@ -727,33 +727,15 @@ class Processes:
     odr = None
 
 @dataclass
-class QDict:
-    qdict: dict = field(default_factory=lambda: {
-        'aaa': Message(),
-        'dbm': Message(),
-        'gui': Message(),
-        'msg': Message(),
-        '전략00': Message(),
-        '전략01': Message(),
-        '전략02': Message(),
-        '전략03': Message(),
-        '전략04': Message(),
-        '전략05': Message(),
-        '전략06': Message(),
-        '전략07': Message(),
-        '전략08': Message(),
-        '전략09': Message(),
-        '전략10': Message(),
-    })
-
-@dataclass
 class GlobalMemory:
     toast = None
     json_config = log_config
     config = GlobalConfig()
     gui = GuiConfig()
     pro = Processes()
-    qdict = QDict().qdict
+    qdict = {} #QDict().qdict
+    work_dbmq = None
+    answer_dbmq = None
     tbl = DefineTbl()
     send_order_cmd = None # ThreadSafeList()
     잔고합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고합산))

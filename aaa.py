@@ -8,6 +8,7 @@ from server_dbm import DBMServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
+import multiprocessing as mp
 import logging
 import time
 import sys
@@ -39,12 +40,14 @@ class Main:
     def set_proc(self):
         try:
             gm.toast = Toast()
-            gm.pro.aaa = ModelThread(name='aaa', qdict=gm.qdict, cls=gm.pro.admin)
+            gm.pro.aaa = ModelThread(name='aaa', cls=gm.pro.admin)
             gm.pro.aaa.start()
             logging.debug('aaa 쓰레드 시작')
             gm.pro.gui = GUI() if gm.config.gui_on else None
-            gm.pro.dbm = DBMServer(name='dbm', qdict=gm.qdict)
-            gm.pro.api = APIServer(name='api', qdict=gm.qdict, cls=gm.pro.admin) if not gm.config.sim_on else SIMServer(name='sim', qdict=gm.qdict, cls=gm.pro.admin)
+            gm.work_dbmq = mp.Queue()
+            gm.answer_dbmq = mp.Queue()
+            gm.pro.dbm = DBMServer('dbm', gm.work_dbmq, gm.answer_dbmq)
+            gm.pro.api = APIServer('api') if not gm.config.sim_on else SIMServer('sim')
             logging.debug('api 쓰레드 생성 완료')
             gm.pro.api.CommConnect(block=False)
             logging.debug('CommConnect 완료')
@@ -98,6 +101,7 @@ class Main:
         self.run()
 
     def clear_queue(self, q):
+        return
         try:
             # 큐를 비우기 전에 put 작업 중단
             q.mutex.acquire()
@@ -114,6 +118,7 @@ class Main:
         worker: Thread 또는 Process 객체
         timeout: 종료 대기 시간 (초)
         """
+        return
         try:
             # 프로세스인 경우
             if hasattr(worker, 'terminate'):
@@ -282,9 +287,9 @@ if __name__ == "__main__":
         exit_code = 1
     finally:
         if not main.cleanup_flag: main.cleanup()
-        show_remaining_resources()
-        show_detailed_threads()
+        # show_remaining_resources()
+        # show_detailed_threads()
         logging.info(f"{'#'*10} LIBERANIMO End {'#'*10}")
         logging.shutdown()
-        print("sys.exit(exit_code) 직전")
+        # print("sys.exit(exit_code) 직전")
         sys.exit(exit_code)

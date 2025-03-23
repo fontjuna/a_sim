@@ -2,7 +2,7 @@ from public import *
 from PyQt5.QtWidgets import QApplication, QTableWidget, QTableWidgetItem, QMainWindow, QVBoxLayout, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread
 from PyQt5.QtGui import QColor
-from queue import Empty
+from queue import Empty, Queue
 import sys
 import threading
 import copy
@@ -10,6 +10,7 @@ import multiprocessing as mp
 import uuid
 import time
 import logging
+from tabulate import tabulate
 
 class ThreadSafeList:
     def __init__(self):
@@ -116,13 +117,46 @@ class Toast(QWidget):
     def mousePressEvent(self, event):
         self.hide()
 
-class Model:
-    result_dict = ThreadSafeDict()
-    def __init__(self, name, qdict, cls=None):
+class ModelThread(QThread):
+    def __init__(self, name, cls=None):
+        QThread.__init__(self)
         self.name = name
-        self.qdict = qdict
         self.cls = cls
-        self.myq = self.qdict[self.name]
+        self.work_q = Queue()
+        self.daemon = True
+        self.is_running = True
+
+        gm.qdict[self.name] = self.work_q
+
+    def run(self):
+        logging.debug(f'{self.name} 시작...')
+        while self.is_running:
+            self.run_loop()
+            time.sleep(0.01)
+
+    def stop(self):
+        self.is_running = False
+
+    def run_loop(self):
+        if not self.work_q.empty():
+            data = self.work_q.get()
+            if self.cls:
+                obj = next((obj for obj in [self, self.cls] if hasattr(obj, data.order)), None)
+            else:
+                obj = self
+            if obj == None or not isinstance(data, Work):
+                logging.debug(f'{self.name} 에 잘못된 요청: {data}')
+                return
+            method = getattr(obj, data.order)
+            if isinstance(data, Work):
+                method(**data.job)
+
+class AnswerModel:
+    result_dict = ThreadSafeDict()
+    def __init__(self, name, work_q, answer_q):
+        self.name = name
+        self.work_q = work_q
+        self.answer_q = answer_q
         self.is_running = True
 
     def logging_setup(self):
@@ -139,130 +173,28 @@ class Model:
         self.is_running = False
 
     def run_loop(self):
-        if not self.myq.request.empty():
-            data = self.myq.request.get()
-            if self.cls:
-                obj = next((obj for obj in [self, self.cls] if hasattr(obj, data.order)), None)
-            else:
-                obj = self
-            if obj == None or not isinstance(data, (Work, Answer, Reply)):
+        if not self.work_q.empty():
+            data = self.work_q.get()
+            if data == None or not isinstance(data, (Work, Answer)):
                 logging.debug(f'{self.name} 에 잘못된 요청: {data}')
                 return
-            method = getattr(obj, data.order)
+            method = getattr(self, data.order)
             if isinstance(data, Work):
                 method(**data.job)
             else:
-                sender = data.sender
-                for k, q in self.qdict.items():
-                    if k == sender:
-                        if isinstance(data, Answer):
-                            result_q = q.answer
-                        else:
-                            result_q = q.reply
-                        break
-                qid = data.qid
                 result = method(**data.job)
-                result_q.put((qid, result))
+                self.answer_q.put(result)
 
-    def put(self, target, work): # bus 대신 사용
-        if not isinstance(work, Work):
-            raise ValueError('Work 객체가 필요합니다.')
-
-        target_q = self.qdict.get(target, None)
-        if target_q == None:
-            logging.debug(f"{self.name}: Target '{target}' not found in qlist")
-            return
-        target_q.request.put(work)
-        return True
-
-    def get(self, target, request, timeout=dc.td.WAIT_SEC, check_interval=dc.td.RUN_INTERVAL):
-        """
-        대상에게 요청을 보내고 응답을 기다립니다.
-
-        Args:
-            target_name: 대상 프로세스/쓰레드 이름
-            request: Answer 또는 Reply 객체
-            timeout: 응답 대기 시간(초)
-            check_interval: 결과 확인 간격(초)
-
-        Returns:
-            응답 결과 또는 타임아웃시 None
-        """
-        # 대상 큐 찾기
-        target_q = self.qdict[target]
-
-        if not target_q:
-            logging.debug(f"{self.name}: Target '{target}' not found in qlist")
-            return None
-
-        # 응답 큐 선택
-        if isinstance(request, Answer):
-            result_queue = self.myq.answer
-        else:
-            result_queue = self.myq.reply
-
-        # qid 생성
-        qid = str(uuid.uuid4())
-        request.qid = qid
-        request.sender = self.name
-
-        # 요청 전송
-        #logging.debug(f"{self.name}: Sending {type(request).__name__} to {target} (qid: {qid})")
-        target_q.request.put(request)
-
-        # 응답 대기
-        end_time = time.time() + timeout
-        while time.time() < end_time:
-            # 결과 딕셔너리 확인
-            result = self.result_dict.get(qid)
-            if result:
-                self.result_dict.remove(qid)
-                return result
-
-            # 응답 큐 확인
-            try:
-                while not result_queue.empty():
-                    result_qid, result_value = result_queue.get_nowait()
-                    if result_qid == qid:
-                        return result_value
-                    else:
-                        # 다른 요청의 결과 저장
-                        self.result_dict.set(result_qid, result_value)
-            except Empty:
-                pass
-
-            time.sleep(check_interval)
-
-        #logging.debug(f"{self.name}: Request to {target} timed out after {timeout}s")
-        return None
-
-class ModelThread(Model, QThread):
-    def __init__(self, name, qdict, cls=None):
-        Model.__init__(self, name, qdict, cls)
-        QThread.__init__(self)
-        self.daemon = True
+class ModelProcess(AnswerModel, mp.Process):
+    def __init__(self, name, work_q, answer_q, daemon=True):
+        AnswerModel.__init__(self, name, work_q, answer_q)
+        mp.Process.__init__(self, name=name, daemon=daemon)
 
     def run(self):
-        Model.run(self)
+        AnswerModel.run(self)
 
     def stop(self):
-        Model.stop(self)
-        logging.debug(f'{self.name} 쓰레드 종료...')
-
-    def start(self):
-        QThread.start(self)
-        return self
-
-class ModelProcess(Model, mp.Process):
-    def __init__(self, name, qdict, cls=None, daemon=True):
-        Model.__init__(self, name, qdict, cls)
-        mp.Process.__init__(self, name=name, daemon=True)
-
-    def run(self):
-        Model.run(self)
-
-    def stop(self):
-        Model.stop(self)
+        AnswerModel.stop(self)
         logging.debug(f'{self.name} 프로세스 종료...')
 
     def start(self):
@@ -1014,30 +946,17 @@ class DataTables:
     전략정의: TableManager = field(default_factory=TableManager(gm.tbl.hd전략정의))
 
 class OrderManager(QThread):
-    def __init__(self):
+    def __init__(self, cmd_list):
         super().__init__()
         self.is_running = True
-
-        gm.send_order_cmd = ThreadSafeList()
+        self.cmd_list = cmd_list
 
     def run(self):
         while self.is_running:
-            order = gm.send_order_cmd.get() # order : SendOrder parameters
-            code = order['code']
-            if code not in gm.dict종목정보:
-                gm.dict종목정보[code] = {
-                    '종목명': gm.pro.api.GetMasterCodeName(code),
-                    '전일가': gm.pro.api.GetMasterLastPrice(code),
-                    '현재가': 0}
-                gm.pro.api.SetRealReg(screen=dc.scr.화면['실시간감시'], code_list=code, fid_list="10", opt_type=1)
-
-            if gm.dict종목정보[order['code']]['현재가'] == 0:
-                time.sleep(0.1)
-                gm.send_order_cmd.put(order)
-                continue
-
+            order = self.cmd_list.get() # order : SendOrder parameters
             if not request_time_check(kind='order', cond_text=order['rqname']): continue
 
+            code = order['code']
             kind = ['', '매수', '매도', '매수취소', '매도취소', '매수정정', '매도정정'][order['ordtype']]
             key = f'{code}_{kind}'
             row = gm.주문목록.get(key=key)
@@ -1047,11 +966,14 @@ class OrderManager(QThread):
                 continue
 
             gm.주문목록.set(key=key, data={'상태': '전송'})
+            logging.debug(f'주문목록 키 확인 :' +
+                         f'\n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
             reason = order.pop('msg', None)
+            if reason is None: reason = dc.fid.주문유형FID[f'{order["ordtype"]:01d}']
             gm.pro.api.SendOrder(**order)
 
             msg = f"{reason} : {row['전략']} {code} {row['종목명']} 주문수량:{order['quantity']}주 / 주문가:{order['price']}원"
-            if gm.config.gui_on: gm.qdict['msg'].request.put(Work('주문내용', {'msg': msg}))
+            if gm.config.gui_on: gm.qdict['msg'].put(Work('주문내용', {'msg': msg}))
             #self.dbm_order_upsert(idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno)
             idx = int(row['전략'][-2:])
             gm.pro.admin.dbm_order_upsert(idx, code, row['종목명'], order['quantity'], order['price'], order['ordtype'], order['hoga'], order['screen'], order['rqname'], order['accno'], order['ordno'])

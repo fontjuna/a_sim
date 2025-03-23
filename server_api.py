@@ -12,10 +12,8 @@ import copy
 
 # init_logger()
 class APIServer:
-    def __init__(self, name, qdict, cls=None):
+    def __init__(self, name):
         self.name = name
-        self.qdict = qdict
-        self.cls = cls
 
         self.ocx = None
         self.connected = False
@@ -33,10 +31,6 @@ class APIServer:
         self.tr_condition_list = None       # OnReceiveTrCondition에서 리스트 담기
 
         self.api_init()  # 초기화 바로 실행
-
-    def put(self, target, work):
-        if hasattr(gm.pro.admin, work.order):
-            getattr(gm.pro.admin, work.order)(**work.job)
 
     def stop(self):
         pass
@@ -207,7 +201,7 @@ class APIServer:
             #         'screen': screen,
             #         'rqname': rqname,
             #     }
-            #     self.put('aaa', Work('on_fx수신_주문결과TR', result))
+            #     gm.qdict['aaa'].put(Work('on_fx수신_주문결과TR', result))
 
             # except Exception as e:
             #     logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -250,7 +244,7 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        self.put('aaa', Work('on_fx실시간_조건검색', data))
+        gm.qdict['aaa'].put(Work('on_fx실시간_조건검색', data))
 
     def OnReceiveRealData(self, code, rtype, data):
         try:
@@ -268,7 +262,7 @@ class APIServer:
                 elif rtype == '장시작시간': order = 'on_fx실시간_장운영감시'
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
-                self.put('aaa', Work(order, job))
+                gm.qdict['aaa'].put(Work(order, job))
 
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
@@ -286,7 +280,7 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            self.put('aaa', Work(order, {'dictFID': dictFID}))
+            gm.qdict['aaa'].put(Work(order, {'dictFID': dictFID}))
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)

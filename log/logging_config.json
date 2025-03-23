@@ -13,7 +13,7 @@
         },
         "file": {
             "class": "concurrent_log_handler.ConcurrentRotatingFileHandler",
-            "filename": "C:\\Users\\fontjuna\\OneDrive\\문서\\Develop_python\\a_prj\\aaa\\log\\log_message",
+            "filename": "c:\\Users\\fontjuna\\OneDrive\\문서\\Develop_python\\a_prj\\aaa\\log\\log_message",
             "formatter": "detailed",
             "maxBytes": 1048576,
             "backupCount": 9,

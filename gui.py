@@ -6,6 +6,7 @@ from PyQt5.QtGui import QIcon, QTextCursor
 from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate, Qt
 from PyQt5 import uic
 from datetime import datetime, timedelta
+from queue import Queue
 import multiprocessing as mp
 import logging
 import os
@@ -18,11 +19,14 @@ class GUI(QMainWindow, form_class):
     def __init__(self):
         super().__init__()
         self.name = 'gui'
-        self.queue = mp.Queue()
-        self.que = mp.Queue()
+        self.gui_q = Queue()
+        self.msg_q = Queue()
         self.setupUi(self)
         self.refresh_data_timer = QTimer()
         self.refresh_data_timer.timeout.connect(self.gui_refresh_data)
+
+        gm.qdict['gui'] = self.gui_q
+        gm.qdict['msg'] = self.msg_q
 
     def gui_show(self):
         self.show()
@@ -63,8 +67,8 @@ class GUI(QMainWindow, form_class):
     # 화면 갱신 ---------------------------------------------------------------------------------------------
     def gui_refresh_data(self):
         try:
-            if not gm.qdict['gui'].request.empty(): # bus 역할 함
-                work = gm.qdict['gui'].request.get()
+            if not gm.qdict['gui'].empty(): # bus 역할 함
+                work = gm.qdict['gui'].get()
                 if hasattr(self, work.order):
                     getattr(self, work.order)(**work.job)
             self.gui_update_display()
@@ -760,8 +764,8 @@ class GUI(QMainWindow, form_class):
             #self.lbl4.setText(gm.pro.api.com_market_status())
 
             # 큐 메시지 처리
-            while not gm.qdict['msg'].request.empty():
-                data = gm.qdict['msg'].request.get()
+            while not gm.qdict['msg'].empty():
+                data = gm.qdict['msg'].get()
                 if data.order == '주문내용':
                     self.gui_fx게시_주문내용(data.job['msg'])
                 elif data.order == '검색내용':

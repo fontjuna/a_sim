@@ -7,8 +7,8 @@ import os
 
 init_logger()
 class DBMServer(ModelProcess):
-    def __init__(self, name, qdict):
-        super().__init__(name, qdict)
+    def __init__(self, name, work_dbmq, answer_dbmq):
+        super().__init__(name, work_dbmq, answer_dbmq)
         self.daily_db = None
         self.daily_cursor = None
         self.db = None

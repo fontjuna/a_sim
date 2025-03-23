@@ -187,6 +187,7 @@ class PortfolioManager:
         quantity = int(dictFID.get('체결량', 0))
         ordtype = dictFID.get('매도수구분')
 
+
         # 매수인 경우
         if ordtype == '2':
             self._process_buy(code, name, price, quantity)
@@ -285,7 +286,12 @@ class PortfolioManager:
 
     def get_holdings_list(self):
         """보유종목 리스트 조회"""
-        return list(self.holdings.values())
+        holdings_list = []
+        for code, data in self.holdings.items():
+            holding = data.copy()
+            holding['종목번호'] = code
+            holdings_list.append(holding)
+        return holdings_list
 
     def get_summary(self):
         """합산 데이터 조회"""
@@ -293,81 +299,10 @@ class PortfolioManager:
 
 portfolio = PortfolioManager()
 
-class OnReceiveChejanData(QThread):
-    def __init__(self, qdict, code, orderno, order):
-        super().__init__()
-        self.daemon = True
-        self.qdict = qdict
-        self.code = code
-        self.orderno = orderno
-        self.order = order
-        self.is_running = True
-        self._stop_event = threading.Event()
-
-    def run(self):
-        cnt = 0
-        while self.is_running:
-            if cnt == 2:
-                dictFID = {}
-                dictFID['종목코드'] = self.code
-                dictFID['종목명'] = sim.ticker.get(self.code, {}).get('종목명', '')
-                dictFID['보유수량'] = 0 if self.order['ordtype'] == 2 else self.order['quantity'] # 주문결과 수량 적용
-                dictFID['매입단가'] = 0 if self.order['ordtype'] == 2 else self.order['price'] # 주문결과 매입가 적용
-                #self.qdict['aaa'].request.put(Work('odr_fx처리_잔고변경', {'dictFID': dictFID}))
-                self.qdict['aaa'].request.put(Work('odr_recieve_balance_data', {'dictFID': dictFID}))
-            else:
-                dictFID = {}
-                dictFID['계좌번호'] = self.order['accno']
-                dictFID['주문번호'] = self.orderno
-                dictFID['종목코드'] = self.code
-                dictFID['종목명'] = sim.ticker.get(self.code, {}).get('종목명', '')
-                dictFID['주문수량'] = self.order['quantity']
-                dictFID['주문가격'] = self.order['price']
-                dictFID['원주문번호'] = self.order['ordno']
-                dictFID['주문구분'] = '+매수' if self.order['ordtype'] == 1 else '-매도'
-                dictFID['매매구분'] = '보통' if self.order['hoga'] == '00' else '시장가'
-                dictFID['매도수구분'] = '2' if self.order['ordtype'] == 1 else '1'
-                dictFID['주문/체결시간'] = time.strftime('%H%M%S', time.localtime())
-                dictFID['현재가'] = price_dict.get(self.code, 0)
-                if cnt == 0:
-                    dictFID['주문상태'] = '접수'
-                    dictFID['체결가'] = ''
-                    dictFID['체결량'] = ''
-                    dictFID['체결번호'] = ''
-                    dictFID['미체결수량'] = self.order['quantity']
-                    dictFID['체결누계금액'] = ''
-                    dictFID['단위체결가'] = ''
-                    dictFID['단위체결량'] = ''
-                    dictFID['주문가능수량'] = 0
-                else:
-                    dictFID['주문상태'] = '체결'
-                    dictFID['체결가'] = self.order['price']
-                    dictFID['체결량'] = self.order['quantity']
-                    dictFID['체결번호'] = f'{random.randint(1000000, 9999999):07d}' # 임의의 7자리 숫자형 문자
-                    dictFID['미체결수량'] = 0
-                    dictFID['체결누계금액'] = self.order['price'] * self.order['quantity']
-                    dictFID['단위체결가'] = self.order['price']
-                    dictFID['단위체결량'] = self.order['quantity']
-                    dictFID['주문가능수량'] = 0 if self.order['ordtype'] == 2 else self.order['quantity'] # 주문결과 주문가능수량 적용
-
-                    portfolio.process_order(dictFID)
-
-                #self.qdict['aaa'].request.put(Work('odr_fx처리_접수체결', {'dictFID': dictFID}))
-                self.qdict['aaa'].request.put(Work('odr_recieve_chegyeol_data', {'dictFID': dictFID}))
-            if self._stop_event.wait(timeout=0.1): break
-            cnt += 1
-            self.is_running = cnt < 3
-        if self in chejan_thread: chejan_thread.remove(self)
-
-    def stop(self):
-        self.is_running = False
-        self._stop_event.set()
-
 class OnReceiveRealCondition(QThread):
-    def __init__(self, qdict, cond_name, cond_index):
+    def __init__(self, cond_name, cond_index):
         super().__init__()
         self.daemon = True
-        self.qdict = qdict
         self.cond_name = cond_name
         self.cond_index = cond_index
         self.is_running = True
@@ -388,7 +323,7 @@ class OnReceiveRealCondition(QThread):
                 'cond_name': self.cond_name,
                 'cond_index': int(self.cond_index),
             }
-            self.qdict['aaa'].request.put(Work('on_fx실시간_조건검색', data))
+            gm.qdict['aaa'].put(Work('on_fx실시간_조건검색', data))
             if type == 'I':
                 self.current_stocks.add(code)
             else:
@@ -403,11 +338,10 @@ class OnReceiveRealCondition(QThread):
         self._stop_event.set()
 
 class OnReceiveRealData(QThread):
-    def __init__(self, qdict=None):
+    def __init__(self):
         super().__init__()
         self.daemon = True
         self.is_running = True
-        self.qdict = qdict
         self._stop_event = threading.Event()
 
     def run(self):
@@ -433,13 +367,12 @@ class OnReceiveRealData(QThread):
                 portfolio.update_stock_price(code, current_price)
 
                 # 실시간 데이터 전송
-                if self.qdict and hasattr(self.qdict['aaa'], 'request'):
-                    job = {
-                        'code': code,
-                        'rtype': '주식체결',
-                        'dictFID': dictFID
-                    }
-                    self.qdict['aaa'].request.put(Work('on_fx실시간_주식체결', job))
+                job = {
+                    'code': code,
+                    'rtype': '주식체결',
+                    'dictFID': dictFID
+                }
+                gm.qdict['aaa'].put(Work('on_fx실시간_주식체결', job))
 
                 if self._stop_event.wait(timeout=1/cnt):
                     return
@@ -448,22 +381,9 @@ class OnReceiveRealData(QThread):
         self.is_running = False
         self._stop_event.set()
 
-    def clear_queue(self, q):
-        try:
-            # 큐를 비우기 전에 put 작업 중단
-            q.mutex.acquire()
-            q.queue.clear()
-            q.all_tasks_done.notify_all()
-            q.unfinished_tasks = 0
-            q.mutex.release()
-        except:
-            pass
-
 class SIMServer:
-    def __init__(self, name, qdict, cls=None):
+    def __init__(self, name):
         self.name = name
-        self.qdict = qdict
-        self.cls = cls
 
         self.ocx = None
         self.connected = False
@@ -481,10 +401,6 @@ class SIMServer:
         self.tr_condition_list = None       # OnReceiveTrCondition에서 리스트 담기
 
         self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
-
-    def put(self, target, work):
-        if hasattr(gm.pro.admin, work.order):
-            getattr(gm.pro.admin, work.order)(**work.job)
 
     def stop(self):
         # 1. 먼저 모든 쓰레드에 종료 신호
@@ -537,7 +453,7 @@ class SIMServer:
 
     def SetRealReg(self, screen, code_list, fid_list, opt_type):
         global real_thread
-        thread = OnReceiveRealData(self.qdict)
+        thread = OnReceiveRealData()
         real_thread[screen] = thread
         thread.start()
         return 0
@@ -549,9 +465,11 @@ class SIMServer:
         if screen == 'ALL':
             for screen in real_thread:
                 real_thread[screen].stop()
+                del real_thread[screen]
         else:
             if screen in real_thread:
                 real_thread[screen].stop()
+                del real_thread[screen]
 
     # 조건 관련 메서드 --------------------------------------------------------------------------------------------------
     def GetConditionLoad(self, block=True):
@@ -566,13 +484,17 @@ class SIMServer:
         global cond_thread
         self.tr_condition_loaded = True
         self.tr_condition_list = []
-        cond_thread[screen] = OnReceiveRealCondition(self.qdict, cond_name, cond_index)
+        cond_thread[screen] = OnReceiveRealCondition(cond_name, cond_index)
         cond_thread[screen].start()
+        logging.debug(cond_thread)
         return self.tr_condition_list
 
     def SendConditionStop(self, screen, cond_name, index):
         global cond_thread
         cond_thread[screen].stop()
+        logging.debug(cond_thread)
+        del cond_thread[screen]
+        logging.debug(cond_thread)
         return 0
 
     # 주문 관련 메서드 --------------------------------------------------------------------------------------------------
@@ -591,11 +513,59 @@ class SIMServer:
             'ordno': '',
         }
 
-        global chejan_thread
-        chejan = OnReceiveChejanData(self.qdict, code, orderno, order)
-        chejan_thread.append(chejan)
-        chejan.start()
+        self.OnReceiveChejanData(code, orderno, order)
         return 0
+
+    def OnReceiveChejanData(self, code, orderno, order):
+        global price_dict
+        for cnt in range(3):
+            if cnt == 2:
+                dictFID = {}
+                dictFID['종목코드'] = code
+                dictFID['종목명'] = sim.ticker.get(code, {}).get('종목명', '')
+                dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity'] # 주문결과 수량 적용
+                dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price'] # 주문결과 매입가 적용
+                dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity'] # 주문결과 주문가능수량 적용
+                gm.qdict['aaa'].put(Work('odr_recieve_balance_data', {'dictFID': dictFID}))
+            else:
+                dictFID = {}
+                dictFID['계좌번호'] = order['accno']
+                dictFID['주문번호'] = orderno
+                dictFID['종목코드'] = code
+                dictFID['종목명'] = sim.ticker.get(code, {}).get('종목명', '')
+                dictFID['주문수량'] = order['quantity']
+                dictFID['주문가격'] = order['price']
+                dictFID['원주문번호'] = order['ordno']
+                dictFID['주문구분'] = '+매수' if order['ordtype'] == 1 else '-매도'
+                dictFID['매매구분'] = '보통' if order['hoga'] == '00' else '시장가'
+                dictFID['매도수구분'] = '2' if order['ordtype'] == 1 else '1'
+                dictFID['주문/체결시간'] = time.strftime('%H%M%S', time.localtime())
+                dictFID['현재가'] = price_dict.get(code, 0)
+                if cnt == 0:
+                    dictFID['주문상태'] = '접수'
+                    dictFID['체결가'] = ''
+                    dictFID['체결량'] = ''
+                    dictFID['체결번호'] = ''
+                    dictFID['미체결수량'] = order['quantity']
+                    dictFID['체결누계금액'] = ''
+                    dictFID['단위체결가'] = ''
+                    dictFID['단위체결량'] = ''
+                    dictFID['주문가능수량'] = 0
+                else:
+                    dictFID['주문상태'] = '체결'
+                    dictFID['체결가'] = order['price']
+                    dictFID['체결량'] = order['quantity']
+                    dictFID['체결번호'] = f'{random.randint(1000000, 9999999):07d}' # 임의의 7자리 숫자형 문자
+                    dictFID['미체결수량'] = 0
+                    dictFID['체결누계금액'] = order['price'] * order['quantity']
+                    dictFID['단위체결가'] = order['price']
+                    dictFID['단위체결량'] = order['quantity']
+                    dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity'] # 주문결과 주문가능수량 적용
+
+                    portfolio.process_order(dictFID)
+
+                gm.qdict['aaa'].put(Work('odr_recieve_chegyeol_data', {'dictFID': dictFID}))
+            time.sleep(0.1)
 
     # 즉답 관련 메서드 --------------------------------------------------------------------------------------------------
     def GetLoginInfo(self, kind):
