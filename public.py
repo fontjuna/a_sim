@@ -607,11 +607,11 @@ class DefineTbl:
 
     hd잔고목록 = {
         '키': '종목번호',
-        '정수': ["보유수량", "매입가", "매입금액", "현재가", "평가금액", "평가손익", '시가', '고가', '저가', '전일대비', \
-                        '누적거래량', '거래량', '매도가능수량', '최고가', '감시', '보존', '상태', '매수수량', '매수가', '매수금액'],
+        '정수': ["보유수량", "매입가", "매입금액", "현재가", "평가금액", "평가손익", '전일대비', \
+                        '누적거래량', '거래량', '주문가능수량', '최고가', '감시', '보존', '상태', '매수수량', '매수가', '매수금액'],
         '실수': ["수익률(%)", "등락율", '이익보존율', '감시시작율'],
         '컬럼': ["종목번호", "종목명", "보유수량", "매입가", "매입금액", "현재가", "평가금액", "평가손익", "수익률(%)"],
-        '추가': ['시가', '고가', '저가', '전일대비', "등락율", '누적거래량', '거래량', '최고가', '매수수량', '매수가', '매수금액',\
+        '추가': ['주문가능수량', '전일대비', "등락율", '누적거래량', '거래량', '최고가', '매수수량', '매수가', '매수금액',\
                         '보존', '이익보존율', '감시', '감시시작율', '상태', '전략', '매수전략', '전략명칭', '매수일자', '매수시간', '매수번호'], # 상태: 0-일반, 1-매수, 2-매도
     }
     hd잔고목록.update({
@@ -743,16 +743,11 @@ class GlobalMemory:
     매수조건목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
     매도조건목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
     손익목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd손익목록))
-    접수목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd접수목록))
     예수금 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd예수금))
     일지합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd일지합산))
     일지목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd일지목록))
     체결목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd체결목록))
     전략정의 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd전략정의))
-    매수대기목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd매수대기목록))
-    매도대기목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd매도대기목록))
-    전송목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd전송목록))
-    접수목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd접수목록))
     주문목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd주문목록))
     l2잔고합산_copy = None
     l2손익합산 = 0
@@ -765,8 +760,6 @@ class GlobalMemory:
     ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨
     매수문자열들 = [''] * 11                # ['000 : 전략01', '', ...] # SendConditionStop 에서 사용, OnReceiveRealCondition 에서 쓰레드 분기
     매도문자열들 = [''] * 11                # ['000 : 전략01', '', ...] # SendConditionStop 에서 사용, OnReceiveRealCondition 에서 쓰레드 분기
-    dict매수요청목록 = {}
-    dict매도요청목록 = {}
     dict잔고종목감시 = {}
     dict조건종목감시 = {}
     dict종목정보 = {}

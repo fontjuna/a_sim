@@ -59,7 +59,7 @@ class GUI(QMainWindow, form_class):
         else:
             self.rbInfo.setChecked(True)
             self.rbDebug.setChecked(False)
-        self.refresh_data_timer.start(100)
+        self.refresh_data_timer.start(200)
         success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
         logging.getLogger().setLevel(gm.json_config['root']['level'])
         self.rbDebug.setChecked(gm.json_config['root']['level'] == logging.DEBUG)
@@ -517,6 +517,7 @@ class GUI(QMainWindow, form_class):
         code = self.leTrCode.text().strip()
         price = self.spbTrPrice.value()
         qty = self.spbTrQty.value()
+        row = gm.잔고목록.get(key=code)
 
         price = int(price) if price != '' else 0
         qty = int(qty) if qty != '' else 0
@@ -536,11 +537,11 @@ class GUI(QMainWindow, form_class):
             return
 
         if self.rbTrBuy.isChecked():
-            if gm.잔고목록.in_key(code):
+            if row:
                 QMessageBox.warning(self, '알림', '이미 보유 중인 종목입니다.')
                 return
         else:
-            if not gm.잔고목록.in_key(code):
+            if not row:
                 QMessageBox.warning(self, '알림', '보유 중인 종목이 없습니다.')
                 return
             
@@ -557,10 +558,19 @@ class GUI(QMainWindow, form_class):
             'ordno': ''
         }
         if self.rbTrBuy.isChecked():
-            gm.dict매수요청목록[code] = price
+            kind = '매수'
             gm.pro.api.SetRealReg(screen=dc.scr.화면['실시간감시'], code_list=code, fid_list='10', opt_type='1')
         else:
-            gm.dict매도요청목록[code] = price
+            kind = '매도'
+            if row['주문가능수량'] == 0:
+                QMessageBox.warning(self, '알림', '주문가능수량이 없습니다.')
+                return
+            row['주문가능수량'] -= qty if row['주문가능수량'] >= qty else row['주문가능수량']
+            gm.잔고목록.set(key=code, data=row)
+
+        key = f'{code}_{kind}'
+        data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
+        gm.주문목록.set(key=key, data=data) 
         # 주문 전송
         gm.pro.admin.com_SendOrder(0, **send_data)
 
@@ -645,13 +655,6 @@ class GUI(QMainWindow, form_class):
 
     def gui_fx갱신_주문정보(self):
         try:
-            #self.tblWaitListBuy.clearContents()
-            gm.매수대기목록.update_table_widget(self.tblWaitListBuy)
-            #self.tblWaitListSell.clearContents()
-            gm.매도대기목록.update_table_widget(self.tblWaitListSell)
-            #self.tblSendList.clearContents()
-            gm.전송목록.update_table_widget(self.tblSendList)
-            #self.tblReceiptList.clearContents()
             gm.주문목록.update_table_widget(self.tblReceiptList)
 
         except Exception as e:

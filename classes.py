@@ -201,7 +201,7 @@ class ModelProcess(AnswerModel, mp.Process):
         mp.Process.start(self)
         return self
 
-class TableManager:
+class DataManager:
     def __init__(self, config):
         """
         쓰레드 안전한 데이터 관리 클래스 초기화
@@ -215,6 +215,7 @@ class TableManager:
             - '헤더': 화면용 컬럼 리스트
         """
         self.data = []
+        self.data_dict = {}
         self.lock = threading.RLock()
         
         # 설정 정보 저장
@@ -334,12 +335,12 @@ class TableManager:
             # 0. 키가 정수형인 경우
             if isinstance(key, int):
                 if 0 <= key < len(self.data):
-                    return self.data[key]
+                    return copy.deepcopy(self.data[key])
                 return  None
             
             # 1. 특정 키 + 특정 컬럼 조회
             if key is not None and column is not None:
-                item = self._find_item_by_key(key)
+                item = self.data_dict.get(key)
                 if item is None:
                     return None
                 
@@ -372,7 +373,7 @@ class TableManager:
             
             # 3. 특정 키 조회
             if key is not None:
-                item = self._find_item_by_key(key)
+                item = self.data_dict.get(key)
                 return copy.deepcopy(item) if item else None
             
             # 4. 필터링 조회
@@ -441,13 +442,14 @@ class TableManager:
     
     def _set_item_by_key(self, key, data):
         """키로 항목 추가/업데이트"""
-        idx = self._find_index_by_key(key)
-        
         # 기존 항목이 있으면 업데이트
-        if idx is not None:
+        item = self.data_dict.get(key)
+        
+        if item is not None:
+            # 기존 항목 업데이트
             for column, value in data.items():
                 if column in self.all_columns and column != self.key_column:
-                    self.data[idx][column] = self._convert_value(column, value)
+                    item[column] = self._convert_value(column, value)
             return True
         
         # 신규 항목 추가
@@ -470,10 +472,11 @@ class TableManager:
             if column in self.all_columns:
                 item[column] = self._convert_value(column, value)
         
-        self.data.append(item)
+        self.data.append(item)  # 리스트에 추가
+        self.data_dict[key] = item  # 딕셔너리에 추가
         self._resize = True
         return True
-    
+
     def _update_filtered_items(self, filter, data):
         """필터링된 항목 업데이트"""
         updated = False
@@ -505,24 +508,32 @@ class TableManager:
         with self.lock:
             # 1. 특정 키 삭제
             if key is not None:
-                idx = self._find_index_by_key(key)
-                if idx is not None:
-                    del self.data[idx]
+                item = self.data_dict.pop(key, None)
+                if item is not None:
+                    self.data.remove(item)  # 리스트에서도 삭제
                     self._resize = True
                     return True
                 return False
             
             # 2. 필터링된 항목 삭제
             if filter is not None:
-                deleted = self._delete_filtered_items(filter)
-                self._resize = deleted
-                return deleted
+                # 삭제할 항목들을 미리 찾음
+                items_to_delete = [item for item in self.data if self._match_conditions(item, filter)]
+                if items_to_delete:
+                    for item in items_to_delete:
+                        key_val = item.get(self.key_column)
+                        self.data_dict.pop(key_val, None)
+                        self.data.remove(item)
+                    self._resize = True
+                    return True
+                return False
             
             # 3. 전체 데이터 삭제
             self.data = []
+            self.data_dict = {}
             self._resize = True
             return True
-    
+
     def _delete_filtered_items(self, filter):
         """필터링된 항목 삭제"""
         original_len = len(self.data)
@@ -592,17 +603,17 @@ class TableManager:
     
     def _find_index_by_key(self, key):
         """키 값으로 항목의 인덱스 찾기"""
-        for i, item in enumerate(self.data):
-            if item.get(self.key_column) == key:
-                return i
+        item = self.data_dict.get(key)
+        if item is not None:
+            try:
+                return self.data.index(item)
+            except ValueError:
+                return None
         return None
-    
+
     def _find_item_by_key(self, key):
         """키 값으로 항목 찾기"""
-        idx = self._find_index_by_key(key)
-        if idx is not None:
-            return self.data[idx]
-        return None
+        return self.data_dict.get(key)
     
     def _filter_data(self, conditions):
         """
@@ -682,9 +693,14 @@ class TableManager:
         table_widget (QTableWidget): 데이터를 표시할 테이블 위젯
         stretch (bool): 마지막 열을 테이블 너비에 맞게 늘릴지 여부
         """
-        # 화면 표시만 하므로 락 불필요, 데이터 복사본 생성
+        # 데이터 복사본 생성 (락 내부에서 최소한의 작업만 수행)
+        data_copy = None
+        resize_needed = False
         with self.lock:
             data_copy = copy.deepcopy(self.data)
+            resize_needed = self._resize
+            if resize_needed:
+                self._resize = False  # 락 내부에서 상태 업데이트
         
         if not data_copy:
             table_widget.setRowCount(0)
@@ -693,7 +709,8 @@ class TableManager:
         table_widget.setUpdatesEnabled(False)
         table_widget.setSortingEnabled(False)
         columns = self.display_columns or self.all_columns
-        if self._resize:
+        
+        if resize_needed:
             table_widget.setRowCount(len(data_copy))
             table_widget.setColumnCount(len(columns))
             table_widget.setHorizontalHeaderLabels(columns)
@@ -704,19 +721,19 @@ class TableManager:
                     if column in item:
                         self._set_table_cell(table_widget, row, col, column, item[column], self.profit_columns)
             
-            if self._resize:
+            if resize_needed:
                 table_widget.resizeColumnsToContents()
                 table_widget.resizeRowsToContents()
-                self._resize = False
-
-                if stretch: table_widget.horizontalHeader().setStretchLastSection(stretch)
+                
+                if stretch: 
+                    table_widget.horizontalHeader().setStretchLastSection(stretch)
 
         except Exception as e:
             logging.error(f'update_table_widget 오류: {type(e).__name__} - {e}', exc_info=True)
         finally:
             table_widget.setUpdatesEnabled(True)
             table_widget.setSortingEnabled(True)
-
+            
     def _set_table_cell(self, table_widget, row, col, column, value, profit_columns):
         """테이블의 특정 셀에 값 설정"""
         # 숫자 형식화
@@ -791,20 +808,514 @@ class TableManager:
             return True
                 
         return False
+
+class TableManager:
+    def __init__(self, config):
+        """쓰레드 안전한 데이터 관리 클래스 초기화"""
+        self.data = []
+        self.data_dict = {}  # 키 기반 검색을 위한 딕셔너리
+        self.lock = threading.RLock()
+        self.lock_timeout = 1.0  # 락 타임아웃 (초)
+        
+        # 설정 정보 저장
+        self.key_column = config.get('키', '')
+        self.int_columns = config.get('정수', [])
+        self.float_columns = config.get('실수', [])
+        self.all_columns = config.get('확장', config.get('컬럼', []))
+        self.display_columns = config.get('헤더', [])
+        
+        if not self.key_column: raise ValueError("'키' 컬럼을 지정해야 합니다.")
+        if not self.all_columns: raise ValueError("'컬럼' 리스트를 지정해야 합니다.")
+        
+        # UI 관련 상수
+        self.align_right = Qt.AlignRight | Qt.AlignVCenter
+        self.align_left = Qt.AlignLeft | Qt.AlignVCenter
+        self.align_center = Qt.AlignCenter
+        
+        self.color_positive = QColor(255, 0, 0)  # 적색 (손익 양수)
+        self.color_negative = QColor(0, 0, 255)  # 청색 (손익 음수)
+        self.color_zero = QColor(0, 0, 0)        # 검정색 (손익 0)
+        
+        self.profit_columns = ["평가손익", "수익률(%)", "당일매도손익", "손익율", "손익금액", "수익률", "등락율"]
+        self._resize = True  # 테이블 크기 조정 필요 여부
+        self._sync_version = 0  # 데이터 변경 추적용 버전 카운터
     
+    def _with_lock(self, func, default_value=None):
+        """락을 획득하고 함수를 실행한 후 락을 해제하는 헬퍼 메서드"""
+        if not self.lock.acquire(timeout=self.lock_timeout):
+            logging.warning(f"TableManager: {func.__name__} 메서드에서 락 획득 실패")
+            return default_value
+        try:
+            return func()
+        finally:
+            self.lock.release()
+    
+    def _convert_value(self, column, value):
+        """값을 적절한 타입으로 변환"""
+        # 기본값 정의
+        default_values = {
+            'int': 0, 'float': 0.0, 'str': ""
+        }
+        
+        # 문자열 처리
+        if isinstance(value, str):
+            value = value.strip()
+            if any(c.isdigit() for c in value):
+                value = value.replace(',', '')
+        
+        # None이나 빈 문자열은 기본값으로
+        if value is None or value == "":
+            return default_values['int'] if column in self.int_columns else \
+                   default_values['float'] if column in self.float_columns else \
+                   default_values['str']
+        
+        # 타입별 변환
+        try:
+            if column in self.int_columns:
+                return int(float(value))
+            elif column in self.float_columns:
+                return float(value)
+            else:
+                return value
+        except (ValueError, TypeError):
+            return default_values['int'] if column in self.int_columns else \
+                   default_values['float'] if column in self.float_columns else \
+                   str(value)
+    
+    def _process_item(self, item):
+        """항목의 각 값을 적절한 타입으로 변환"""
+        processed_item = {}
+        # 모든 컬럼을 기본값으로 먼저 초기화
+        for column in self.all_columns:
+            if column in self.int_columns:
+                processed_item[column] = 0
+            elif column in self.float_columns:
+                processed_item[column] = 0.0
+            else:
+                processed_item[column] = ""
+        
+        # 주어진 값으로 업데이트
+        for column in self.all_columns:
+            if column in item:
+                processed_item[column] = self._convert_value(column, item.get(column, ''))
+        
+        return processed_item
+    
+    def get(self, key=None, filter=None, type=None, column=None):
+        """데이터 조회 함수"""
+        def _get():
+            # 인덱스로 행 조회
+            if isinstance(key, int):
+                if 0 <= key < len(self.data):
+                    return copy.deepcopy(self.data[key])
+                return None
+            
+            # 키와 컬럼으로 조회
+            if key is not None and column is not None:
+                item = self.data_dict.get(key)
+                if item is None:
+                    return None
+                
+                if isinstance(column, (list, tuple)):
+                    return item.get(column[0]) if len(column) == 1 else \
+                           tuple(item.get(col) for col in column)
+                elif isinstance(column, str):
+                    return item.get(column)
+                return None
+            
+            # 전체 데이터와 특정 컬럼 조회
+            if column is not None:
+                if isinstance(column, (list, tuple)):
+                    result = []
+                    for item in self.data:
+                        filtered_item = {col: item.get(col) for col in column if col in item}
+                        result.append(filtered_item)
+                    return copy.deepcopy(result)
+                elif isinstance(column, str):
+                    return [item.get(column) for item in self.data]
+            
+            # 키로 행 조회
+            if key is not None:
+                item = self.data_dict.get(key)
+                return copy.deepcopy(item) if item else None
+            
+            # 필터로 조회
+            if filter is not None:
+                return self._filter_data(filter)
+            
+            # 전체 데이터 조회
+            data_copy = copy.deepcopy(self.data)
+            
+            # DataFrame 반환
+            if type == 'df':
+                try:
+                    import pandas as pd
+                    return pd.DataFrame(data_copy)
+                except ImportError:
+                    raise ImportError("pandas 라이브러리가 필요합니다.")
+            
+            return data_copy
+        
+        default_value = [] if filter is not None or column is not None else None
+        return self._with_lock(_get, default_value)
+    
+    def set(self, key=None, filter=None, data=None):
+        """데이터 추가/수정 함수"""
+        if data is None:
+            return False
+        
+        def _set():
+            # 리스트로 전체 데이터 대체
+            if isinstance(data, list):
+                for item in data:
+                    if self.key_column not in item:
+                        raise ValueError(f"모든 항목에 키 컬럼('{self.key_column}')이 필요합니다.")
+                
+                self.data = []
+                self.data_dict = {}
+                for item in data:
+                    key_value = item[self.key_column]
+                    self._set_item_by_key(key_value, item)
+                
+                self._sync_version += 1  # 버전 증가
+                return True
+            
+            # 딕셔너리로 업데이트
+            if isinstance(data, dict):
+                valid_data = {k: v for k, v in data.items() if k in self.all_columns}
+                if not valid_data:
+                    return False
+                
+                result = False
+                # 키로 업데이트
+                if key is not None:
+                    result = self._set_item_by_key(key, valid_data)
+                # 필터로 업데이트
+                elif filter is not None:
+                    result = self._update_filtered_items(filter, valid_data)
+                # 전체 업데이트
+                else:
+                    result = self._update_all_items(valid_data)
+                
+                if result:
+                    self._sync_version += 1  # 버전 증가
+                return result
+            
+            return False
+        
+        return self._with_lock(_set, False)
+    
+    def _set_item_by_key(self, key, data):
+        """키로 항목 추가/업데이트"""
+        # 기존 항목 업데이트
+        item = self.data_dict.get(key)
+        if item is not None:
+            for column, value in data.items():
+                if column in self.all_columns and column != self.key_column:
+                    item[column] = self._convert_value(column, value)
+            return True
+        
+        # 신규 항목 추가
+        item = {}
+        for column in self.all_columns:
+            if column == self.key_column:
+                item[column] = key
+            else:
+                item[column] = 0 if column in self.int_columns else \
+                              0.0 if column in self.float_columns else ""
+        
+        # 데이터 채우기
+        for column, value in data.items():
+            if column in self.all_columns:
+                item[column] = self._convert_value(column, value)
+        
+        self.data.append(item)
+        self.data_dict[key] = item
+        self._resize = True
+        return True
+    
+    def _update_filtered_items(self, filter, data):
+        """필터링된 항목 업데이트"""
+        updated = False
+        for item in self.data:
+            if self._match_conditions(item, filter):
+                for column, value in data.items():
+                    if column in self.all_columns and column != self.key_column:
+                        item[column] = self._convert_value(column, value)
+                updated = True
+        return updated
+    
+    def _update_all_items(self, data):
+        """모든 항목 업데이트"""
+        if not self.data:
+            return False
+        
+        for item in self.data:
+            for column, value in data.items():
+                if column in self.all_columns and column != self.key_column:
+                    item[column] = self._convert_value(column, value)
+        return True
+    
+    def delete(self, key=None, filter=None):
+        """데이터 삭제 함수"""
+        def _delete():
+            # 키로 삭제
+            if key is not None:
+                item = self.data_dict.pop(key, None)
+                if item is not None and item in self.data:
+                    self.data.remove(item)
+                    self._resize = True
+                    self._sync_version += 1
+                    return True
+                return False
+            
+            # 필터로 삭제
+            if filter is not None:
+                items_to_delete = [item for item in self.data if self._match_conditions(item, filter)]
+                if not items_to_delete:
+                    return False
+                
+                for item in items_to_delete:
+                    key_val = item.get(self.key_column)
+                    self.data_dict.pop(key_val, None)
+                    if item in self.data:
+                        self.data.remove(item)
+                
+                self._resize = True
+                self._sync_version += 1
+                return True
+            
+            # 전체 삭제
+            self.data = []
+            self.data_dict = {}
+            self._resize = True
+            self._sync_version += 1
+            return True
+        
+        return self._with_lock(_delete, False)
+    
+    def len(self, filter=None):
+        """행 수 반환 함수"""
+        def _len():
+            if filter is not None:
+                return len(self._filter_data(filter))
+            return len(self.data)
+        
+        return self._with_lock(_len, 0)
+    
+    def in_key(self, key):
+        """키 존재 여부 확인 함수"""
+        def _in_key():
+            return key in self.data_dict
+        
+        return self._with_lock(_in_key, False)
+    
+    def in_column(self, column, value):
+        """컬럼에 값 존재 여부 확인 함수"""
+        def _in_column():
+            if column not in self.all_columns:
+                return False
+            
+            converted_value = self._convert_value(column, value)
+            for item in self.data:
+                if item.get(column) == converted_value:
+                    return True
+            return False
+        
+        return self._with_lock(_in_column, False)
+    
+    def sum(self, column=None, filter=None):
+        """컬럼 합계 계산 함수"""
+        def _sum():
+            if not column:
+                return ()
+            
+            data_to_sum = self.data
+            if filter is not None:
+                data_to_sum = self._filter_data(filter)
+            
+            result = []
+            col_list = [column] if isinstance(column, str) else column
+            for col in col_list:
+                if col in self.int_columns or col in self.float_columns:
+                    total = sum(item.get(col, 0) for item in data_to_sum)
+                    result.append(total)
+                else:
+                    result.append(0)
+            
+            return tuple(result)
+        
+        return self._with_lock(_sum, ())
+    
+    def _filter_data(self, conditions):
+        """조건에 맞는 데이터 필터링"""
+        result = []
+        for row in self.data:
+            if self._match_conditions(row, conditions):
+                result.append(copy.deepcopy(row))
+        return result
+    
+    def _match_conditions(self, row, conditions):
+        """항목이 조건에 맞는지 확인"""
+        for column, value in conditions.items():
+            if column not in row:
+                return False
+            
+            item_value = row[column]
+            
+            # 문자열 포함 여부 확인
+            if isinstance(item_value, str) and isinstance(value, str):
+                if value not in item_value:
+                    return False
+            # 컬럼 간 비교
+            elif isinstance(value, (list, tuple)) and len(value) == 2:
+                op, compare_value = value
+                # '@'로 시작하는 문자열은 다른 컬럼 참조
+                if isinstance(compare_value, str) and compare_value.startswith('@'):
+                    other_column = compare_value[1:]
+                    if other_column not in row:
+                        return False
+                    other_value = row[other_column]
+                    if not self._compare_values(item_value, op, other_value):
+                        return False
+                # 일반 비교
+                elif not self._compare_values(item_value, op, compare_value):
+                    return False
+            # 값 일치 여부
+            elif item_value != value:
+                return False
+        
+        return True
+    
+    def _compare_values(self, item_value, operator, compare_value):
+        """값 비교 연산"""
+        ops = {
+            '>': lambda x, y: x > y,
+            '<': lambda x, y: x < y,
+            '>=': lambda x, y: x >= y,
+            '<=': lambda x, y: x <= y,
+            '==': lambda x, y: x == y,
+            '!=': lambda x, y: x != y
+        }
+        
+        if operator in ops:
+            try:
+                return ops[operator](item_value, compare_value)
+            except (TypeError, ValueError):
+                return False
+        return False
+    
+    def update_table_widget(self, table_widget, stretch=True):
+        """테이블 위젯 업데이트 - 락 사용 최소화"""
+        # 데이터 스냅샷 생성
+        data_snapshot = None
+        columns = None
+        resize_needed = False
+        version = 0
+        
+        # 데이터 스냅샷만 빠르게 생성
+        def _get_snapshot():
+            nonlocal data_snapshot, columns, resize_needed, version
+            
+            if not self.data:
+                return False
+            
+            data_snapshot = copy.deepcopy(self.data)
+            columns = self.display_columns or self.all_columns
+            resize_needed = self._resize
+            version = self._sync_version
+            
+            if resize_needed:
+                self._resize = False
+            
+            return True
+        
+        # 스냅샷 생성 실패시 종료
+        if not self._with_lock(_get_snapshot, False):
+            table_widget.setRowCount(0)
+            return
+        
+        # 락 없이 UI 업데이트
+        table_widget.setUpdatesEnabled(False)
+        table_widget.setSortingEnabled(False)
+        
+        try:
+            row_count = len(data_snapshot)
+            col_count = len(columns)
+            
+            # 기존 테이블 크기와 다르면 리사이즈 필요
+            if table_widget.rowCount() != row_count or table_widget.columnCount() != col_count:
+                resize_needed = True
+            
+            # 테이블 크기 조정
+            if resize_needed:
+                table_widget.setRowCount(row_count)
+                table_widget.setColumnCount(col_count)
+                table_widget.setHorizontalHeaderLabels(columns)
+            
+            # 데이터 표시
+            for row, item in enumerate(data_snapshot):
+                for col, column in enumerate(columns):
+                    if column in item:
+                        self._set_table_cell(table_widget, row, col, column, item[column])
+            
+            # 행/열 크기 조정
+            if resize_needed:
+                table_widget.resizeColumnsToContents()
+                table_widget.resizeRowsToContents()
+                if stretch:
+                    table_widget.horizontalHeader().setStretchLastSection(stretch)
+        except Exception as e:
+            logging.error(f'update_table_widget 오류: {type(e).__name__} - {e}', exc_info=True)
+        finally:
+            table_widget.setUpdatesEnabled(True)
+            table_widget.setSortingEnabled(True)
+    
+    def _set_table_cell(self, table_widget, row, col, column, value):
+        """테이블 셀 설정"""
+        # 값 형식화
+        if column in self.int_columns and isinstance(value, int):
+            display_value = f"{value:,}"
+        elif column in self.float_columns and isinstance(value, float):
+            display_value = f"{value:,.2f}"
+        else:
+            display_value = str(value)
+        
+        # 셀 아이템 설정
+        cell_item = table_widget.item(row, col)
+        if cell_item:
+            if cell_item.text() == display_value:
+                return
+            cell_item.setText(display_value)
+        else:
+            cell_item = QTableWidgetItem(display_value)
+            table_widget.setItem(row, col, cell_item)
+        
+        # 정렬 및 색상 설정
+        if column in self.int_columns or column in self.float_columns:
+            cell_item.setTextAlignment(self.align_right)
+        else:
+            cell_item.setTextAlignment(self.align_left)
+        
+        # 손익 컬럼 색상 설정
+        if column in self.profit_columns and isinstance(value, (int, float)):
+            if value < 0:
+                cell_item.setForeground(self.color_negative)
+            elif value > 0:
+                cell_item.setForeground(self.color_positive)
+            else:
+                cell_item.setForeground(self.color_zero)
+                
 class TimeLimiter:
     def __init__(self, name, second=5, minute=100, hour=1000):
         self.name = name
         self.SEC = second
         self.MIN = minute
         self.HOUR = hour
-        self.json_file = os.path.join(get_path(dc.fp.CONFIG_PATH), f'{name}_time_limiter.json')
         self.request_count = { 'second': 0, 'minute': 0, 'hour': 0 }
         self.first_request_time = { 'second': 0, 'minute': 0, 'hour': 0 }
         self.condition_times = {}  # 조건별 마지막 실행 시간
         self.lock = threading.Lock()
-
-        self._load_from_json()
 
     def check_interval(self) -> int:
         current_time = time.time() * 1000
@@ -853,56 +1364,11 @@ class TimeLimiter:
             self.request_count['second'] += 1
             self.request_count['minute'] += 1
             self.request_count['hour'] += 1
-        self._save_to_json()
 
     def update_condition_time(self, condition):
         with self.lock:
             self.condition_times[condition] = time.time() * 1000
         self.update_request_times()
-
-    def _save_to_json(self):
-        data = {
-            'date': time.strftime("%Y%m%d"),
-            'last_update': time.time() * 1000,
-            'request_count': self.request_count,
-            'first_request_time': self.first_request_time,
-            'condition_times': self.condition_times
-        }
-        threading.Thread(target=self._async_save, args=(data,), daemon=True).start()
-
-    def _async_save(self, data):
-        try:
-            with open(self.json_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
-        except Exception as e:
-            logging.error(f'time_limiter 저장 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def _load_from_json(self):
-        try:
-            with open(self.json_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                current_time = time.time() * 1000
-                today = time.strftime("%Y%m%d")
-
-                # 날짜가 다르면 초기화
-                if data.get('date') != today:
-                    self.request_count = {'second': 0, 'minute': 0, 'hour': 0}
-                    self.first_request_time = {'second': 0, 'minute': 0, 'hour': 0}
-                    self.condition_times = {}
-                    self._save_to_json()
-                    return
-
-                # 카운트 로드
-                self.request_count = data.get('request_count', {'second': 0, 'minute': 0, 'hour': 0})
-                self.first_request_time = data.get('first_request_time', {'second': 0, 'minute': 0, 'hour': 0})
-                # 1분 이내의 condition만 로드
-                self.condition_times = { k: v for k, v in data.get('condition_times', {}).items() if current_time - v <= 60000 }
-
-        except FileNotFoundError:
-            self.request_count = {'second': 0, 'minute': 0, 'hour': 0}
-            self.first_request_time = {'second': 0, 'minute': 0, 'hour': 0}
-            self.condition_times = {}
-            self._save_to_json()
 
 def request_time_check(kind='order', cond_text = None):
     if kind == 'order':
@@ -966,8 +1432,7 @@ class OrderManager(QThread):
                 continue
 
             gm.주문목록.set(key=key, data={'상태': '전송'})
-            logging.debug(f'주문목록 키 확인 :' +
-                         f'\n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+            #logging.debug(f'주문목록 키 확인 :\n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
             reason = order.pop('msg', None)
             if reason is None: reason = dc.fid.주문유형FID[f'{order["ordtype"]:01d}']
             gm.pro.api.SendOrder(**order)
