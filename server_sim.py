@@ -300,11 +300,11 @@ class PortfolioManager:
 portfolio = PortfolioManager()
 
 class OnReceiveRealCondition(QThread):
-    def __init__(self, cond_name, cond_index):
+    def __init__(self, cond_name, cond_idx):
         super().__init__()
         self.daemon = True
         self.cond_name = cond_name
-        self.cond_index = cond_index
+        self.cond_idx = cond_idx
         self.is_running = True
         self.current_stocks = set()
         self._stop_event = threading.Event()
@@ -321,7 +321,7 @@ class OnReceiveRealCondition(QThread):
                 'code': code,
                 'type': type,
                 'cond_name': self.cond_name,
-                'cond_index': int(self.cond_index),
+                'cond_idx': int(self.cond_idx),
             }
             gm.qdict['aaa'].put(Work('on_fx실시간_조건검색', data))
             if type == 'I':
@@ -330,7 +330,7 @@ class OnReceiveRealCondition(QThread):
                 if code in self.current_stocks:
                     self.current_stocks.remove(code)
 
-            interval = random.uniform(3, 10)
+            interval = random.uniform(0.2, 1)
             if self._stop_event.wait(timeout=interval): break
 
     def stop(self):
@@ -374,7 +374,7 @@ class OnReceiveRealData(QThread):
                 }
                 gm.qdict['aaa'].put(Work('on_fx실시간_주식체결', job))
 
-                if self._stop_event.wait(timeout=1/cnt):
+                if self._stop_event.wait(timeout=0.3/cnt):
                     return
 
     def stop(self):
@@ -480,16 +480,16 @@ class SIMServer:
         logging.debug('')
         return cond_data_list
 
-    def SendCondition(self, screen, cond_name, cond_index, search, block=True):
+    def SendCondition(self, screen, cond_name, cond_idx, search, block=True):
         global cond_thread
         self.tr_condition_loaded = True
         self.tr_condition_list = []
-        cond_thread[screen] = OnReceiveRealCondition(cond_name, cond_index)
+        cond_thread[screen] = OnReceiveRealCondition(cond_name, cond_idx)
         cond_thread[screen].start()
         logging.debug(cond_thread)
         return self.tr_condition_list
 
-    def SendConditionStop(self, screen, cond_name, index):
+    def SendConditionStop(self, screen, cond_name, cond_idx):
         global cond_thread
         cond_thread[screen].stop()
         logging.debug(cond_thread)

@@ -1,5 +1,4 @@
 from public import get_path, gm, dc, Work, save_json, load_json, hoga
-from classes import DataTables as dt
 from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox
 from PyQt5.QtWidgets import QTableWidgetItem, QHeaderView, QComboBox, QSpinBox, QDoubleSpinBox, QRadioButton, QTimeEdit, QComboBox
 from PyQt5.QtGui import QIcon, QTextCursor
@@ -41,7 +40,7 @@ class GUI(QMainWindow, form_class):
             logging.debug(f'{self.name} stopping...')
             event.accept()
             self.refresh_data_timer.stop()
-            gm.pro.main.cleanup()
+            gm.main.cleanup()
         else:
             event.ignore()
 
@@ -59,7 +58,7 @@ class GUI(QMainWindow, form_class):
         else:
             self.rbInfo.setChecked(True)
             self.rbDebug.setChecked(False)
-        self.refresh_data_timer.start(200)
+        self.refresh_data_timer.start(100)
         success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
         logging.getLogger().setLevel(gm.json_config['root']['level'])
         self.rbDebug.setChecked(gm.json_config['root']['level'] == logging.DEBUG)
@@ -263,7 +262,7 @@ class GUI(QMainWindow, form_class):
                 logging.warning(f'{전략명칭}의 매도전략이 중복되었습니다.')
                 return
 
-            gm.pro.admin.json_save_define_sets()
+            gm.admin.json_save_define_sets()
             gm.toast.toast(f'전략{seq} 전략적용={chk_run.isChecked()} 전략명칭={전략명칭} 저장 완료', duration=4000)
 
         except Exception as e:
@@ -294,7 +293,7 @@ class GUI(QMainWindow, form_class):
 
     def gui_strategy_load(self):
         logging.debug('메세지 발행: cdn Work(json_load_strategy_defines, {})')
-        gm.pro.admin.json_load_define_sets()
+        gm.admin.json_load_define_sets()
         self.gui_fx전시_전략정의()
 
     def gui_strategy_save(self):
@@ -329,7 +328,7 @@ class GUI(QMainWindow, form_class):
 
             dict설정['남은횟수'] = dict설정['체결횟수']
             gm.전략정의.set(key=name, data=dict설정)
-            gm.pro.admin.json_save_strategy_sets()
+            gm.admin.json_save_strategy_sets()
             self.gui_fx채움_전략정의()
             logging.debug(f'전략정의 {gm.전략정의.get()}')
             gm.toast.toast(f'주문설정 "{name}"을 저장 했습니다.', duration=4000)
@@ -369,8 +368,8 @@ class GUI(QMainWindow, form_class):
                             gm.전략설정[i]['전략적용'] = False
                             self.gui_tabs_clear(f'{i:02d}')
                             break
-                    gm.pro.admin.json_save_strategy_sets()
-                    gm.pro.admin.json_save_define_sets()
+                    gm.admin.json_save_strategy_sets()
+                    gm.admin.json_save_define_sets()
 
                 else: msg = '설정이 삭제되지 않았습니다.'
                 self.gui_fx채움_전략정의()
@@ -406,7 +405,7 @@ class GUI(QMainWindow, form_class):
 
     # QWidget 이벤트 -------------------------------------------------------------------------------------
     def gui_account_reload(self):
-        gm.pro.admin.get_holdings()
+        gm.admin.get_holdings()
         gm.toast.toast(f'계좌를 다시 읽어 왔습니다.', duration=1000)
         logging.debug('메세지 발행: Work(pri_first_job, {})')
 
@@ -414,32 +413,32 @@ class GUI(QMainWindow, form_class):
         logging.debug('')
         if self.cbAccounts.currentText():
             gm.account = self.cbAccounts.currentText()
-            gm.pro.admin.get_holdings()
+            gm.admin.get_holdings()
             logging.debug('메세지 발행: Work(pri_first_job, {})')
         else:
             logging.warning('계좌를 선택하세요')
 
     def gui_load_profit_loss(self):
         self.btnLoadProfitLoss.setEnabled(False)
-        gm.pro.admin.pri_fx얻기_손익목록()
+        gm.admin.pri_fx얻기_손익목록()
         self.gui_fx갱신_손익정보()
         self.btnLoadProfitLoss.setEnabled(True)
 
     def gui_daily_load(self):
         self.btnLoadDaily.setEnabled(False)
-        gm.pro.admin.pri_fx얻기_매매일지(self.dtDaily.date().toString("yyyyMMdd"))
+        gm.admin.pri_fx얻기_매매일지(self.dtDaily.date().toString("yyyyMMdd"))
         self.gui_fx갱신_일지정보()
         self.btnLoadDaily.setEnabled(True)
 
     def gui_deposit_load(self):
         self.btnDeposit.setEnabled(False)
-        gm.pro.admin.pri_fx얻기_예수금()
+        gm.admin.pri_fx얻기_예수금()
         self.gui_fx갱신_예수금정보()
         self.btnDeposit.setEnabled(True)
 
     def gui_conclusion_load(self):
         self.btnLoadConclusion.setEnabled(False)
-        gm.pro.admin.pri_fx얻기_체결목록(self.dtConclusion.date().toString("yyyyMMdd"))
+        gm.admin.pri_fx얻기_체결목록(self.dtConclusion.date().toString("yyyyMMdd"))
         self.gui_fx갱신_체결정보()
         self.btnLoadConclusion.setEnabled(True)
 
@@ -454,7 +453,7 @@ class GUI(QMainWindow, form_class):
         else:
             response = True
         if response:
-            gm.pro.admin.cdn_fx실행_전략매매()
+            gm.admin.cdn_fx실행_전략매매()
             if not any(gm.매수문자열들) and not any(gm.매도문자열들):
                 gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
                 return
@@ -469,7 +468,7 @@ class GUI(QMainWindow, form_class):
         else:
             response = True
         if response:
-            gm.pro.admin.cdn_fx중지_전략매매()
+            gm.admin.cdn_fx중지_전략매매()
             self.set_strategy_toggle(run=False)
             gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
         else:
@@ -481,7 +480,7 @@ class GUI(QMainWindow, form_class):
 
     def gui_strategy_reload(self):
         logging.debug('메세지 발행: Work(cdn_fx요청_서버전략, {})')
-        gm.pro.admin.get_conditions()
+        gm.admin.get_conditions()
         self.gui_fx채움_조건콤보()
         gm.toast.toast('전략매매를 다시 읽어 왔습니다.', duration=3000)
 
@@ -511,7 +510,7 @@ class GUI(QMainWindow, form_class):
     def gui_tr_code_changed(self):
         code = self.leTrCode.text().strip()
         if code:
-            self.leTrName.setText(gm.pro.api.GetMasterCodeName(code).strip())
+            self.leTrName.setText(gm.api.GetMasterCodeName(code).strip())
 
     def gui_tr_order(self):
         code = self.leTrCode.text().strip()
@@ -559,7 +558,7 @@ class GUI(QMainWindow, form_class):
         }
         if self.rbTrBuy.isChecked():
             kind = '매수'
-            gm.pro.api.SetRealReg(screen=dc.scr.화면['실시간감시'], code_list=code, fid_list='10', opt_type='1')
+            gm.api.SetRealReg(dc.scr.화면['실시간감시'], code, '10', '1')
         else:
             kind = '매도'
             if row['주문가능수량'] == 0:
@@ -572,7 +571,7 @@ class GUI(QMainWindow, form_class):
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 
         # 주문 전송
-        gm.pro.admin.com_SendOrder(0, **send_data)
+        gm.admin.com_SendOrder(0, **send_data)
 
     # 화면 갱신 -----------------------------------------------------------------------------------------------------------------
     def gui_fx채움_계좌콤보(self):
@@ -762,9 +761,8 @@ class GUI(QMainWindow, form_class):
             now = datetime.now()
             if now > self.lbl3_update_time + timedelta(seconds=60): self.lbl3.setText('')
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
-            self.lbl2.setText('연결됨' if gm.pro.api.connected else '끊어짐')
-            self.lbl2.setStyleSheet("color: green;" if gm.pro.api.connected else "color: red;")
-            #self.lbl4.setText(gm.pro.api.com_market_status())
+            self.lbl2.setText('연결됨' if gm.api.connected else '끊어짐')
+            self.lbl2.setStyleSheet("color: green;" if gm.api.connected else "color: red;")
 
             # 큐 메시지 처리
             while not gm.qdict['msg'].empty():

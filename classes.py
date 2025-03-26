@@ -1,4 +1,6 @@
 from public import *
+from server_api import APIServer
+from server_sim import SIMServer
 from PyQt5.QtWidgets import QApplication, QTableWidget, QTableWidgetItem, QMainWindow, QVBoxLayout, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread
 from PyQt5.QtGui import QColor
@@ -7,10 +9,9 @@ import sys
 import threading
 import copy
 import multiprocessing as mp
-import uuid
 import time
 import logging
-from tabulate import tabulate
+import pythoncom
 
 class ThreadSafeList:
     def __init__(self):
@@ -53,31 +54,55 @@ class ThreadSafeDict:
 
     def items(self):
         with self.lock:
-            return self.dict.items()
+            return list(self.dict.items())  # 복사본 반환
 
     def keys(self):
         with self.lock:
-            return self.dict.keys()
+            return list(self.dict.keys())  # 복사본 반환
 
     def values(self):
         with self.lock:
-            return self.dict.values()
+            return list(self.dict.values())  # 복사본 반환
 
-    def set(self, key, value):
+    def set(self, key, value=None, next=None):
         with self.lock:
-            self.dict[key] = value
+            if next is None:
+                self.dict[key] = copy.deepcopy(value) if value is not None else {}
+            else:
+                if key not in self.dict:
+                    self.dict[key] = {}
+                self.dict[key][next] = copy.deepcopy(value) if value is not None else {}
 
-    def get(self, key):
+    def get(self, key, next=None):
         with self.lock:
-            return self.dict.get(key, None)
+            try:
+                if next is None:
+                    value = self.dict.get(key)
+                    return copy.deepcopy(value) if value is not None else None
+                else:
+                    if key not in self.dict:
+                        return None
+                    value = self.dict[key].get(next)
+                    return copy.deepcopy(value) if value is not None else None
+            except Exception as e:
+                logging.error(f"ThreadSafeDict get 오류: {e}")
+                return None
 
     def contains(self, item):
         with self.lock:
             return item in self.dict
 
-    def remove(self, key):
+    def remove(self, key, next=None):
         with self.lock:
-            return self.dict.pop(key, None)
+            try:
+                if next is None:
+                    return copy.deepcopy(self.dict.pop(key, None))
+                elif key in self.dict:
+                    return copy.deepcopy(self.dict[key].pop(next, None))
+                return None
+            except Exception as e:
+                logging.error(f"ThreadSafeDict remove 오류: {e}")
+                return None
 
 class Toast(QWidget):
     def __init__(self):
@@ -117,9 +142,8 @@ class Toast(QWidget):
     def mousePressEvent(self, event):
         self.hide()
 
-class ModelThread(QThread):
+class WorkModel():
     def __init__(self, name, cls=None):
-        QThread.__init__(self)
         self.name = name
         self.cls = cls
         self.work_q = Queue()
@@ -152,18 +176,14 @@ class ModelThread(QThread):
                 method(**data.job)
 
 class AnswerModel:
-    result_dict = ThreadSafeDict()
-    def __init__(self, name, work_q, answer_q):
+    def __init__(self, name, work_q, answer_q, cls=None):
         self.name = name
         self.work_q = work_q
         self.answer_q = answer_q
+        self.cls = cls
         self.is_running = True
 
-    def logging_setup(self):
-        pass
-
     def run(self):
-        self.logging_setup()
         logging.debug(f'{self.name} 시작...')
         while self.is_running:
             self.run_loop()
@@ -175,19 +195,55 @@ class AnswerModel:
     def run_loop(self):
         if not self.work_q.empty():
             data = self.work_q.get()
-            if data == None or not isinstance(data, (Work, Answer)):
+            if self.cls:
+                obj = next((obj for obj in [self, self.cls] if hasattr(obj, data.order)), None)
+            else:
+                obj = self
+            if obj == None or not isinstance(data, (Work, Answer)):
                 logging.debug(f'{self.name} 에 잘못된 요청: {data}')
                 return
-            method = getattr(self, data.order)
+            method = getattr(obj, data.order)
             if isinstance(data, Work):
                 method(**data.job)
             else:
                 result = method(**data.job)
                 self.answer_q.put(result)
 
-class ModelProcess(AnswerModel, mp.Process):
+class WorkThread(WorkModel, QThread):
+    def __init__(self, name, cls=None):
+        WorkModel.__init__(self, name, cls)
+        QThread.__init__(self)
+
+    def run(self):
+        WorkModel.run(self)
+
+    def stop(self):
+        WorkModel.stop(self)
+        logging.debug(f'{self.name} 프로세스 종료...')
+
+    def start(self):
+        QThread.start(self)
+        return self
+    
+class AnswerThread(AnswerModel, QThread):
+    def __init__(self, name, work_q, answer_q, cls=None):
+        AnswerModel.__init__(self, name, work_q, answer_q, cls)
+        QThread.__init__(self)
+
+    def run(self):
+        AnswerModel.run(self)
+
+    def stop(self):
+        AnswerModel.stop(self)
+        logging.debug(f'{self.name} 프로세스 종료...')
+
+    def start(self):
+        QThread.start(self)
+        return self
+
+class AnswerProcess(AnswerModel, mp.Process):
     def __init__(self, name, work_q, answer_q, daemon=True):
-        AnswerModel.__init__(self, name, work_q, answer_q)
+        AnswerModel.__init__(self, name, work_q, answer_q )
         mp.Process.__init__(self, name=name, daemon=daemon)
 
     def run(self):
@@ -201,7 +257,7 @@ class ModelProcess(AnswerModel, mp.Process):
         mp.Process.start(self)
         return self
 
-class DataManager:
+class TableManager:
     def __init__(self, config):
         """
         쓰레드 안전한 데이터 관리 클래스 초기화
@@ -215,7 +271,7 @@ class DataManager:
             - '헤더': 화면용 컬럼 리스트
         """
         self.data = []
-        self.data_dict = {}
+        self.data_dict = {}  # 키 기반 검색을 위한 딕셔너리
         self.lock = threading.RLock()
         
         # 설정 정보 저장
@@ -243,7 +299,7 @@ class DataManager:
         self.profit_columns = ["평가손익", "수익률(%)", "당일매도손익", "손익율", "손익금액", "수익률", "등락율"]
 
         # 리사이즈
-        self._resize =  True
+        self._resize = True
     
     def _convert_value(self, column, value):
         """
@@ -336,7 +392,7 @@ class DataManager:
             if isinstance(key, int):
                 if 0 <= key < len(self.data):
                     return copy.deepcopy(self.data[key])
-                return  None
+                return None
             
             # 1. 특정 키 + 특정 컬럼 조회
             if key is not None and column is not None:
@@ -414,6 +470,7 @@ class DataManager:
                 
                 # 데이터 대체
                 self.data = []
+                self.data_dict = {}
                 for item in data:
                     key_value = item[self.key_column]
                     self._set_item_by_key(key_value, item)
@@ -446,7 +503,6 @@ class DataManager:
         item = self.data_dict.get(key)
         
         if item is not None:
-            # 기존 항목 업데이트
             for column, value in data.items():
                 if column in self.all_columns and column != self.key_column:
                     item[column] = self._convert_value(column, value)
@@ -472,11 +528,11 @@ class DataManager:
             if column in self.all_columns:
                 item[column] = self._convert_value(column, value)
         
-        self.data.append(item)  # 리스트에 추가
-        self.data_dict[key] = item  # 딕셔너리에 추가
+        self.data.append(item)
+        self.data_dict[key] = item
         self._resize = True
         return True
-
+    
     def _update_filtered_items(self, filter, data):
         """필터링된 항목 업데이트"""
         updated = False
@@ -509,36 +565,34 @@ class DataManager:
             # 1. 특정 키 삭제
             if key is not None:
                 item = self.data_dict.pop(key, None)
-                if item is not None:
-                    self.data.remove(item)  # 리스트에서도 삭제
+                if item is not None and item in self.data:
+                    self.data.remove(item)
                     self._resize = True
                     return True
                 return False
             
             # 2. 필터링된 항목 삭제
             if filter is not None:
-                # 삭제할 항목들을 미리 찾음
                 items_to_delete = [item for item in self.data if self._match_conditions(item, filter)]
-                if items_to_delete:
-                    for item in items_to_delete:
-                        key_val = item.get(self.key_column)
-                        self.data_dict.pop(key_val, None)
+                if not items_to_delete:
+                    return False
+                    
+                for item in items_to_delete:
+                    key_val = item.get(self.key_column)
+                    self.data_dict.pop(key_val, None)
+                    if item in self.data:
                         self.data.remove(item)
+                
+                if items_to_delete:
                     self._resize = True
-                    return True
-                return False
+                    
+                return bool(items_to_delete)
             
             # 3. 전체 데이터 삭제
             self.data = []
             self.data_dict = {}
             self._resize = True
             return True
-
-    def _delete_filtered_items(self, filter):
-        """필터링된 항목 삭제"""
-        original_len = len(self.data)
-        self.data = [item for item in self.data if not self._match_conditions(item, filter)]
-        return len(self.data) < original_len
     
     def len(self, filter=None):
         """
@@ -555,7 +609,7 @@ class DataManager:
         in_key('key') -> bool             # 키 존재 여부
         """
         with self.lock:
-            return self._find_index_by_key(key) is not None
+            return key in self.data_dict
     
     def in_column(self, column, value):
         """
@@ -601,19 +655,19 @@ class DataManager:
             
             return tuple(result)
     
+    def _find_item_by_key(self, key):
+        """키 값으로 항목 찾기 - 딕셔너리 사용으로 O(1) 성능"""
+        return self.data_dict.get(key)
+    
     def _find_index_by_key(self, key):
-        """키 값으로 항목의 인덱스 찾기"""
+        """키 값으로 인덱스 찾기"""
         item = self.data_dict.get(key)
         if item is not None:
             try:
                 return self.data.index(item)
             except ValueError:
-                return None
+                pass
         return None
-
-    def _find_item_by_key(self, key):
-        """키 값으로 항목 찾기"""
-        return self.data_dict.get(key)
     
     def _filter_data(self, conditions):
         """
@@ -693,48 +747,53 @@ class DataManager:
         table_widget (QTableWidget): 데이터를 표시할 테이블 위젯
         stretch (bool): 마지막 열을 테이블 너비에 맞게 늘릴지 여부
         """
-        # 데이터 복사본 생성 (락 내부에서 최소한의 작업만 수행)
-        data_copy = None
-        resize_needed = False
+        # 락 사용 최소화 - 데이터 스냅샷만 빠르게 복사
         with self.lock:
+            if not self.data:
+                table_widget.setRowCount(0)
+                return
+                
             data_copy = copy.deepcopy(self.data)
+            columns = self.display_columns or self.all_columns
             resize_needed = self._resize
+            
             if resize_needed:
-                self._resize = False  # 락 내부에서 상태 업데이트
+                self._resize = False
         
-        if not data_copy:
-            table_widget.setRowCount(0)
-            return
-        
+        # UI 업데이트는 락 없이 수행
         table_widget.setUpdatesEnabled(False)
         table_widget.setSortingEnabled(False)
-        columns = self.display_columns or self.all_columns
-        
-        if resize_needed:
-            table_widget.setRowCount(len(data_copy))
-            table_widget.setColumnCount(len(columns))
-            table_widget.setHorizontalHeaderLabels(columns)
         
         try:
+            # 테이블 크기 확인 및 조정
+            if table_widget.rowCount() != len(data_copy) or table_widget.columnCount() != len(columns):
+                resize_needed = True
+                
+            if resize_needed:
+                table_widget.setRowCount(len(data_copy))
+                table_widget.setColumnCount(len(columns))
+                table_widget.setHorizontalHeaderLabels(columns)
+            
+            # 데이터 표시
             for row, item in enumerate(data_copy):
                 for col, column in enumerate(columns):
                     if column in item:
-                        self._set_table_cell(table_widget, row, col, column, item[column], self.profit_columns)
+                        self._set_table_cell(table_widget, row, col, column, item[column])
             
+            # 테이블 크기 조정
             if resize_needed:
                 table_widget.resizeColumnsToContents()
                 table_widget.resizeRowsToContents()
                 
-                if stretch: 
+                if stretch:
                     table_widget.horizontalHeader().setStretchLastSection(stretch)
-
         except Exception as e:
             logging.error(f'update_table_widget 오류: {type(e).__name__} - {e}', exc_info=True)
         finally:
             table_widget.setUpdatesEnabled(True)
             table_widget.setSortingEnabled(True)
-            
-    def _set_table_cell(self, table_widget, row, col, column, value, profit_columns):
+
+    def _set_table_cell(self, table_widget, row, col, column, value):
         """테이블의 특정 셀에 값 설정"""
         # 숫자 형식화
         if column in self.int_columns and isinstance(value, int):
@@ -771,51 +830,14 @@ class DataManager:
                     cell_item.setForeground(self.color_positive)  # 양수는 적색
                 else:
                     cell_item.setForeground(self.color_zero)      # 0은 검정색
-    
-    def update_cell(self, table_widget, key_value, column, value):
-        """
-        특정 셀만 업데이트
-        """
-        # 데이터 업데이트
-        with self.lock:
-            idx = self._find_index_by_key(key_value)
-            if idx is None:
-                return False
-            
-            # 데이터 업데이트 (타입 변환 수행)
-            self.data[idx][column] = self._convert_value(column, value)
-        
-        # UI 갱신
-        columns = self.display_columns or self.all_columns
-        try:
-            col_idx = columns.index(column)
-        except ValueError:
-            return False
-        
-        # 테이블에서 해당 행 찾기
-        row_idx = -1
-        for i in range(table_widget.rowCount()):
-            item = table_widget.item(i, columns.index(self.key_column))
-            if item and item.text() == str(key_value):
-                row_idx = i
-                break
-        
-        if row_idx != -1:
-            with self.lock:
-                value = self.data[idx][column]
-            
-            self._set_table_cell(table_widget, row_idx, col_idx, column, value, self.profit_columns)
-            return True
-                
-        return False
 
-class TableManager:
+class DataManager:
     def __init__(self, config):
         """쓰레드 안전한 데이터 관리 클래스 초기화"""
         self.data = []
         self.data_dict = {}  # 키 기반 검색을 위한 딕셔너리
         self.lock = threading.RLock()
-        self.lock_timeout = 1.0  # 락 타임아웃 (초)
+        self.lock_timeout = 0.5  # 락 타임아웃 (초)
         
         # 설정 정보 저장
         self.key_column = config.get('키', '')
@@ -1206,71 +1228,51 @@ class TableManager:
         return False
     
     def update_table_widget(self, table_widget, stretch=True):
-        """테이블 위젯 업데이트 - 락 사용 최소화"""
-        # 데이터 스냅샷 생성
-        data_snapshot = None
-        columns = None
-        resize_needed = False
-        version = 0
-        
-        # 데이터 스냅샷만 빠르게 생성
-        def _get_snapshot():
-            nonlocal data_snapshot, columns, resize_needed, version
-            
-            if not self.data:
-                return False
-            
+        """락 없이 테이블 위젯 업데이트 - 더 빠르지만 일시적 불일치 가능성 있음"""
+        try:
+            # 데이터 스냅샷 생성 (락 없이)
             data_snapshot = copy.deepcopy(self.data)
             columns = self.display_columns or self.all_columns
-            resize_needed = self._resize
-            version = self._sync_version
             
-            if resize_needed:
-                self._resize = False
+            if not data_snapshot:
+                table_widget.setRowCount(0)
+                return
+                
+            # 테이블 업데이트
+            table_widget.setUpdatesEnabled(False)
             
-            return True
-        
-        # 스냅샷 생성 실패시 종료
-        if not self._with_lock(_get_snapshot, False):
-            table_widget.setRowCount(0)
-            return
-        
-        # 락 없이 UI 업데이트
-        table_widget.setUpdatesEnabled(False)
-        table_widget.setSortingEnabled(False)
-        
-        try:
-            row_count = len(data_snapshot)
-            col_count = len(columns)
-            
-            # 기존 테이블 크기와 다르면 리사이즈 필요
-            if table_widget.rowCount() != row_count or table_widget.columnCount() != col_count:
-                resize_needed = True
-            
-            # 테이블 크기 조정
-            if resize_needed:
-                table_widget.setRowCount(row_count)
-                table_widget.setColumnCount(col_count)
+            # 행/열 수 확인 및 조정
+            if table_widget.rowCount() != len(data_snapshot) or table_widget.columnCount() != len(columns):
+                table_widget.setRowCount(len(data_snapshot))
+                table_widget.setColumnCount(len(columns))
                 table_widget.setHorizontalHeaderLabels(columns)
-            
-            # 데이터 표시
+                resize_needed = True
+            else:
+                resize_needed = False
+                
+            # 데이터 표시 (예외 처리 추가)
             for row, item in enumerate(data_snapshot):
                 for col, column in enumerate(columns):
-                    if column in item:
-                        self._set_table_cell(table_widget, row, col, column, item[column])
-            
-            # 행/열 크기 조정
+                    try:
+                        if column in item:
+                            self._set_table_cell(table_widget, row, col, column, item[column])
+                    except Exception as e:
+                        # 셀 업데이트 중 오류 발생 - 무시하고 계속 진행
+                        logging.debug(f"셀 업데이트 오류(무시됨): {e}")
+                        
+            # 필요시 크기 조정
             if resize_needed:
                 table_widget.resizeColumnsToContents()
                 table_widget.resizeRowsToContents()
                 if stretch:
                     table_widget.horizontalHeader().setStretchLastSection(stretch)
+                    
         except Exception as e:
-            logging.error(f'update_table_widget 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.error(f'테이블 업데이트 오류: {e}', exc_info=True)
         finally:
             table_widget.setUpdatesEnabled(True)
             table_widget.setSortingEnabled(True)
-    
+
     def _set_table_cell(self, table_widget, row, col, column, value):
         """테이블 셀 설정"""
         # 값 형식화
@@ -1398,52 +1400,42 @@ def request_time_check(kind='order', cond_text = None):
 
     return True
 
-@dataclass
-class DataTables:
-    잔고합산: TableManager = field(default_factory=TableManager(gm.tbl.hd잔고합산))
-    잔고목록: TableManager = field(default_factory=TableManager(gm.tbl.hd잔고목록))
-    조건목록: TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
-    손익목록: TableManager = field(default_factory=TableManager(gm.tbl.hd손익목록))
-    접수목록: TableManager = field(default_factory=TableManager(gm.tbl.hd접수목록))
-    예수금: TableManager = field(default_factory=TableManager(gm.tbl.hd예수금))
-    일지합산: TableManager = field(default_factory=TableManager(gm.tbl.hd일지합산))
-    일지목록: TableManager = field(default_factory=TableManager(gm.tbl.hd일지목록))
-    체결목록: TableManager = field(default_factory=TableManager(gm.tbl.hd체결목록))
-    전략정의: TableManager = field(default_factory=TableManager(gm.tbl.hd전략정의))
+import threading
+import traceback
+import sys
+import signal
 
-class OrderManager(QThread):
-    def __init__(self, cmd_list):
-        super().__init__()
-        self.is_running = True
-        self.cmd_list = cmd_list
+# 모든 스레드의 스택 트레이스를 출력하는 함수
+def print_thread_stacks(signum=None, frame=None):
+    logging.debug("\n--- 스레드 스택 트레이스 ---")
+    current_thread_id = threading.current_thread().ident
+    
+    for thread_id, frame in sys._current_frames().items():
+        if thread_id == current_thread_id and signum is not None:
+            continue  # 시그널 핸들러를 호출한 현재 스레드는 건너뜀
+        
+        stack = traceback.extract_stack(frame)
+        logging.debug(f"\nThread {thread_id} (이름: {get_thread_name(thread_id)}):")
+        for filename, lineno, name, line in stack:
+            logging.debug(f'  파일 "{filename}", 라인 {lineno}, in {name}')
+            if line:
+                logging.debug(f'    {line.strip()}')
 
-    def run(self):
-        while self.is_running:
-            order = self.cmd_list.get() # order : SendOrder parameters
-            if not request_time_check(kind='order', cond_text=order['rqname']): continue
+# 스레드 ID로 스레드 이름 가져오기
+def get_thread_name(thread_id):
+    for thread in threading.enumerate():
+        if thread.ident == thread_id:
+            return thread.name
+    return "Unknown"
 
-            code = order['code']
-            kind = ['', '매수', '매도', '매수취소', '매도취소', '매수정정', '매도정정'][order['ordtype']]
-            key = f'{code}_{kind}'
-            row = gm.주문목록.get(key=key)
-            if not row: 
-                # 자동 취소, 외부주문은 이곳으로 오지 않는다. 그 외는 직접 만들어 줘야 한다. order_buy, order_sell을 이용
-                logging.error(f'********* 주문목록에 없는 종목입니다. {key} *********') 
-                continue
+# 주기적으로 스레드 스택 출력 (예: 30초마다)
+def start_thread_monitoring(interval=30):
+    def monitor():
+        while True:
+            time.sleep(interval)
+            print_thread_stacks()
+    
+    monitor_thread = threading.Thread(target=monitor, name="ThreadMonitor")
+    monitor_thread.daemon = True
+    monitor_thread.start()
 
-            gm.주문목록.set(key=key, data={'상태': '전송'})
-            #logging.debug(f'주문목록 키 확인 :\n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
-            reason = order.pop('msg', None)
-            if reason is None: reason = dc.fid.주문유형FID[f'{order["ordtype"]:01d}']
-            gm.pro.api.SendOrder(**order)
-
-            msg = f"{reason} : {row['전략']} {code} {row['종목명']} 주문수량:{order['quantity']}주 / 주문가:{order['price']}원"
-            if gm.config.gui_on: gm.qdict['msg'].put(Work('주문내용', {'msg': msg}))
-            #self.dbm_order_upsert(idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno)
-            idx = int(row['전략'][-2:])
-            gm.pro.admin.dbm_order_upsert(idx, code, row['종목명'], order['quantity'], order['price'], order['ordtype'], order['hoga'], order['screen'], order['rqname'], order['accno'], order['ordno'])
-
-            logging.info(f'주문전송: {key} {order}')
-
-    def stop(self):
-        self.is_running = False

@@ -102,20 +102,20 @@ def save_json(file_path, data):
 @dataclass
 class Work:
     order: str              # 수신자가 실행할 함수명 또는 메세지(루프에서 인식할 조건)
-    job: dict               # 수신자가 실행할 함수에 전달할 데이터
+    job: dict = field(default_factory={})              # 수신자가 실행할 함수에 전달할 데이터
 
 @dataclass
 class Answer:
-    sender: str             # 송신자 이름
     order: str             # 수신자가 실행할 함수명 또는 메세지(루프에서 인식할 조건)
-    job: dict              # 수신자에게 전달할 데이터
+    job: dict = field(default_factory={})              # 수신자에게 전달할 데이터
+    sender: str = None     # 송신자 이름
     qid: str = None        # 동기식 요청에 대한 답변
 
 @dataclass
 class Reply:
-    sender: str             # 송신자 이름
     order: str             # 수신자가 실행할 함수명 또는 메세지(루프에서 인식할 조건)
-    job: dict              # 수신자에게 전달할 데이터
+    job: dict = field(default_factory={})              # 수신자에게 전달할 데이터
+    sender: str = None     # 송신자 이름
     qid: str = None        # TR 요청에 대한 답변
 
 @dataclass
@@ -717,7 +717,7 @@ class GuiConfig:
     list전략튜플 = []
 
 @dataclass
-class Processes:
+class GlobalMemory:
     main = None
     gui = None
     api = None
@@ -726,16 +726,19 @@ class Processes:
     aaa = None
     odr = None
 
-@dataclass
-class GlobalMemory:
     toast = None
     json_config = log_config
     config = GlobalConfig()
     gui = GuiConfig()
-    pro = Processes()
     qdict = {} #QDict().qdict
+
     work_dbmq = None
     answer_dbmq = None
+    work_apiq = None
+    answer_apiq = None
+    work_aaaq = None
+    answer_aaaq = None
+
     tbl = DefineTbl()
     send_order_cmd = None # ThreadSafeList()
     잔고합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고합산))
@@ -762,7 +765,8 @@ class GlobalMemory:
     매도문자열들 = [''] * 11                # ['000 : 전략01', '', ...] # SendConditionStop 에서 사용, OnReceiveRealCondition 에서 쓰레드 분기
     dict잔고종목감시 = {}
     dict조건종목감시 = {}
-    dict종목정보 = {}
+    dict종목정보 = None
+    dict주문대기종목 = {} # 주문대기종목 = {종목코드: 전략번호}
     json_counter_tickers = {}
     json_counter_strategy = {}
     수수료율 = 0.0

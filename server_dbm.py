@@ -1,12 +1,12 @@
 from public import *
-from classes import *
+from classes import AnswerProcess
 import logging
 import sqlite3
 from datetime import datetime
 import os
 
 init_logger()
-class DBMServer(ModelProcess):
+class DBMServer(AnswerProcess):
     def __init__(self, name, work_dbmq, answer_dbmq):
         super().__init__(name, work_dbmq, answer_dbmq)
         self.daily_db = None

@@ -1,5 +1,5 @@
 from public import *
-from classes import *
+#from classes import *
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QAxContainer import QAxWidget
 import multiprocessing as mp
@@ -107,9 +107,9 @@ class APIServer:
         ret = self.ocx.dynamicCall("SetRealRemove(QString, QString)", screen, del_code)
         return ret
 
-    def SendConditionStop(self, screen, cond_name, index):
-        logging.debug(f'전략 중지: screen={screen}, name={cond_name}, index={index}')
-        self.ocx.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, index)
+    def SendConditionStop(self, screen, cond_name, cond_idx):
+        logging.debug(f'전략 중지: screen={screen}, name={cond_name}, index={cond_idx}')
+        self.ocx.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, cond_idx)
 
     def SetInputValue(self, id, value):
         self.ocx.dynamicCall("SetInputValue(QString, QString)", id, value)
@@ -249,16 +249,14 @@ class APIServer:
     def OnReceiveRealData(self, code, rtype, data):
         try:
             dictFID = {}
-            if rtype in ['주식체결', '주문체결', '장시작시간']:
+            if rtype in ['주식체결', '장시작시간']:
                 if rtype == '주식체결': dict_temp = dc.fid.주식체결
-                elif rtype == '주문체결': dict_temp = dc.fid.주문체결
                 elif rtype == '장시작시간': dict_temp = dc.fid.장시작시간
                 for key, value in dict_temp.items():
                     data = self.GetCommRealData(code, value)
                     dictFID[key] = data.strip() if type(data) == str else data
 
-                if rtype == '주문체결': order = 'on_fx실시간_주문체결'
-                elif rtype == '주식체결': order = 'on_fx실시간_주식체결'
+                if rtype == '주식체결': order = 'on_fx실시간_주식체결'
                 elif rtype == '장시작시간': order = 'on_fx실시간_장운영감시'
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
