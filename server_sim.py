@@ -11,10 +11,10 @@ import time
 import random
 import math
 import numpy as np
+import threading
 
 real_thread = {}
 cond_thread = {}
-chejan_thread = []
 cond_data_list =  [('079', '전고돌파3분5억-매수'), ('080', '전고돌파3분5억-매도'), ('024', '1분10억'), ('076', '1분10억-매도'), ('073', '3분30억전고돌파-매수'), ('077', '3분30억전고돌파-매수')]
 price_dict = {}
 
@@ -174,7 +174,7 @@ class PortfolioManager:
         self.summary = {
             '총매입금액': 0,
             '총평가금액': 0,
-            '추정예탁자산': 4000000,  # 초기 예탁금 10억원으로 설정
+            '추정예탁자산': 400000000,  # 초기 예탁금 4억원으로 설정
             '총평가손익금액': 0,
             '총수익률(%)': 0.0
         }
@@ -300,11 +300,11 @@ class PortfolioManager:
 portfolio = PortfolioManager()
 
 class OnReceiveRealCondition(QThread):
-    def __init__(self, cond_name, cond_idx):
+    def __init__(self, cond_name, cond_index):
         super().__init__()
         self.daemon = True
         self.cond_name = cond_name
-        self.cond_idx = cond_idx
+        self.cond_index = cond_index
         self.is_running = True
         self.current_stocks = set()
         self._stop_event = threading.Event()
@@ -321,9 +321,9 @@ class OnReceiveRealCondition(QThread):
                 'code': code,
                 'type': type,
                 'cond_name': self.cond_name,
-                'cond_idx': int(self.cond_idx),
+                'cond_index': int(self.cond_index),
             }
-            gm.qdict['aaa'].put(Work('on_fx실시간_조건검색', data))
+            gm.qwork['aaa'].put(Work('on_fx실시간_조건검색', data))
             if type == 'I':
                 self.current_stocks.add(code)
             else:
@@ -372,7 +372,7 @@ class OnReceiveRealData(QThread):
                     'rtype': '주식체결',
                     'dictFID': dictFID
                 }
-                gm.qdict['aaa'].put(Work('on_fx실시간_주식체결', job))
+                gm.qwork['aaa'].put(Work('on_fx실시간_주식체결', job))
 
                 if self._stop_event.wait(timeout=0.3/cnt):
                     return
@@ -404,7 +404,7 @@ class SIMServer:
 
     def stop(self):
         # 1. 먼저 모든 쓰레드에 종료 신호
-        all_threads = [*real_thread.values(), *cond_thread.values(), *chejan_thread]
+        all_threads = [*real_thread.values(), *cond_thread.values()]
         for thread in all_threads: thread.stop()
             
         # 2. 짧은 시간 대기하여 쓰레드들이 sleep에서 깨어날 시간 제공
@@ -417,7 +417,6 @@ class SIMServer:
         # 4. 컬렉션 정리
         real_thread.clear()
         cond_thread.clear()
-        chejan_thread.clear()
 
     def api_login(self, block=True):
         logging.debug(f'login: block={block}')
@@ -480,16 +479,16 @@ class SIMServer:
         logging.debug('')
         return cond_data_list
 
-    def SendCondition(self, screen, cond_name, cond_idx, search, block=True):
+    def SendCondition(self, screen, cond_name, cond_index, search, block=True):
         global cond_thread
         self.tr_condition_loaded = True
         self.tr_condition_list = []
-        cond_thread[screen] = OnReceiveRealCondition(cond_name, cond_idx)
+        cond_thread[screen] = OnReceiveRealCondition(cond_name, cond_index)
         cond_thread[screen].start()
         logging.debug(cond_thread)
         return self.tr_condition_list
 
-    def SendConditionStop(self, screen, cond_name, cond_idx):
+    def SendConditionStop(self, screen, cond_name, cond_index):
         global cond_thread
         cond_thread[screen].stop()
         logging.debug(cond_thread)
@@ -526,7 +525,7 @@ class SIMServer:
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity'] # 주문결과 수량 적용
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price'] # 주문결과 매입가 적용
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity'] # 주문결과 주문가능수량 적용
-                gm.qdict['aaa'].put(Work('odr_recieve_balance_data', {'dictFID': dictFID}))
+                gm.qwork['aaa'].put(Work('odr_recieve_balance_data', {'dictFID': dictFID}))
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -564,7 +563,7 @@ class SIMServer:
 
                     portfolio.process_order(dictFID)
 
-                gm.qdict['aaa'].put(Work('odr_recieve_chegyeol_data', {'dictFID': dictFID}))
+                gm.qwork['aaa'].put(Work('odr_recieve_chegyeol_data', {'dictFID': dictFID}))
             time.sleep(0.1)
 
     # 즉답 관련 메서드 --------------------------------------------------------------------------------------------------

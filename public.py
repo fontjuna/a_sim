@@ -730,12 +730,12 @@ class GlobalMemory:
     json_config = log_config
     config = GlobalConfig()
     gui = GuiConfig()
-    qdict = {} #QDict().qdict
+
+    qwork = {} #QDict().qdict
+    qanswer = {} #QDict().qanswer
 
     work_dbmq = None
     answer_dbmq = None
-    work_apiq = None
-    answer_apiq = None
     work_aaaq = None
     answer_aaaq = None
 

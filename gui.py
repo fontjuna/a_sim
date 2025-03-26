@@ -24,8 +24,8 @@ class GUI(QMainWindow, form_class):
         self.refresh_data_timer = QTimer()
         self.refresh_data_timer.timeout.connect(self.gui_refresh_data)
 
-        gm.qdict['gui'] = self.gui_q
-        gm.qdict['msg'] = self.msg_q
+        gm.qwork['gui'] = self.gui_q
+        gm.qwork['msg'] = self.msg_q
 
     def gui_show(self):
         self.show()
@@ -58,7 +58,7 @@ class GUI(QMainWindow, form_class):
         else:
             self.rbInfo.setChecked(True)
             self.rbDebug.setChecked(False)
-        self.refresh_data_timer.start(100)
+        self.refresh_data_timer.start(200)
         success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
         logging.getLogger().setLevel(gm.json_config['root']['level'])
         self.rbDebug.setChecked(gm.json_config['root']['level'] == logging.DEBUG)
@@ -66,8 +66,8 @@ class GUI(QMainWindow, form_class):
     # 화면 갱신 ---------------------------------------------------------------------------------------------
     def gui_refresh_data(self):
         try:
-            if not gm.qdict['gui'].empty(): # bus 역할 함
-                work = gm.qdict['gui'].get()
+            if not gm.qwork['gui'].empty(): # bus 역할 함
+                work = gm.qwork['gui'].get()
                 if hasattr(self, work.order):
                     getattr(self, work.order)(**work.job)
             self.gui_update_display()
@@ -765,8 +765,8 @@ class GUI(QMainWindow, form_class):
             self.lbl2.setStyleSheet("color: green;" if gm.api.connected else "color: red;")
 
             # 큐 메시지 처리
-            while not gm.qdict['msg'].empty():
-                data = gm.qdict['msg'].get()
+            while not gm.qwork['msg'].empty():
+                data = gm.qwork['msg'].get()
                 if data.order == '주문내용':
                     self.gui_fx게시_주문내용(data.job['msg'])
                 elif data.order == '검색내용':

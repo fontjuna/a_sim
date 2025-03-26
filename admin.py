@@ -86,10 +86,8 @@ class Admin:
 
     # 매매 개시 -------------------------------------------------------------------------------------------
     def trade_start(self):
+        logging.debug('trade_start')
         self.cdn_fx실행_전략매매()
-        #for i in range(6):
-        #    if not gm.전략설정[i].get('전략적용', False): continue
-        #    gm.전략쓰레드[i].start()
         gm.config.ready = True
 
     # 공용 함수 -------------------------------------------------------------------------------------------
@@ -115,13 +113,14 @@ class Admin:
             logging.error(f'com_SendRequest 오류: {e}')
             return [], False
 
-    def com_SendCondition(self, screen, cond_name, cond_idx, search=1): # search=0: 조건검색만, 1: 조건검색 + 실시간 조건검색
-        cond_text = f'{cond_idx:03d} : {cond_name.strip()}'
+    def com_SendCondition(self, screen, cond_name, cond_index, search=1): # search=0: 조건검색만, 1: 조건검색 + 실시간 조건검색
+        cond_text = f'{cond_index:03d} : {cond_name.strip()}'
         if not request_time_check(kind='request', cond_text=cond_text):
             logging.warning(f'조건 검색 시간 초과: {cond_text}')
             return [], False
 
-        condition_list = gm.api.SendCondition(screen, cond_name, cond_idx, search)
+        logging.debug(f'조건 검색 요청 전: {cond_text}')
+        condition_list = gm.api.SendCondition(screen, cond_name, cond_index, search)
         if not isinstance(condition_list, list):
             logging.warning(f'조건 검색 실패: {cond_text} result={condition_list}')
             return [], False
@@ -162,19 +161,19 @@ class Admin:
             'ordno': ordno
         }
         success = gm.api.SendOrder(**cmd)
-        #if gm.config.gui_on: gm.qdict['msg'].put(Work('주문내용', {'msg': msg}))
-        gm.admin.com_status_msg('주문내용', job)
+        #if gm.config.gui_on: gm.qwork['msg'].put(Work('주문내용', {'msg': msg}))
+        self.com_status_msg('주문내용', job)
 
-        #self.dbm_order_upsert(idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno)
+        self.dbm_order_upsert(idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno)
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
 
     def com_status_msg(self, order, args):
         if order=='주문내용':
-            job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']} 주문수량:{args['quantity']}주 / 주문가:{args['price']}원"}
+            job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']} 주문수량:{args['quantity']}주 / 주문가:{args['price']}원 주문번호:{args.get('ordno', '')}"}
         elif order=='검색내용':
             job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']}"}
 
-        if gm.config.gui_on: gm.qdict['msg'].put(Work(order, job))
+        if gm.config.gui_on: gm.qwork['msg'].put(Work(order, job))
 
     # json 파일 사용 메소드 -----------------------------------------------------------------------------------------
 
@@ -262,7 +261,7 @@ class Admin:
         elif fid215 == '3': msg = f'장이 시작 되었습니다.'
         elif fid215 == '4': msg = f'장이 마감 되었습니다.'
         if msg:
-            if gm.config.gui_on: gm.qdict['msg'].put(Work('상태바', {'msg': msg}))
+            if gm.config.gui_on: gm.qwork['msg'].put(Work('상태바', {'msg': msg}))
             logging.debug(f'{rtype} {code} : {fid215}, {fid20}, {fid214} {msg}')
 
     def on_fx실시간_조건검색(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
@@ -280,9 +279,9 @@ class Admin:
                 return
             job = {'kind': kind, 'code': code, 'type': type, 'cond_name': cond_name, 'cond_index': cond_index}
             if type == 'I':
-                gm.qdict[f'전략{idx:02d}'].put(Work('cdn_fx편입_실시간조건감시', job))
+                gm.qwork[f'전략{idx:02d}'].put(Work('cdn_fx편입_실시간조건감시', job))
             elif type == 'D':
-                gm.qdict[f'전략{idx:02d}'].put(Work('cdn_fx이탈_실시간조건감시', job))
+                gm.qwork[f'전략{idx:02d}'].put(Work('cdn_fx이탈_실시간조건감시', job))
         except Exception as e:
             logging.error(f"쓰레드 찾기오류 {code} {type} {cond_name} {cond_index}: {type(e).__name__} - {e}", exc_info=True)
 
@@ -302,7 +301,7 @@ class Admin:
                     gm.전략쓰레드[data['idx']].order_sell(row, True)
 
         try:
-            #gm.qdict['dbm'].put(Work('receive_current_price', {'code': code, 'dictFID': dictFID}))
+            gm.work_dbmq.put(Work('receive_current_price', {'code': code, 'dictFID': dictFID}))
 
             if gm.잔고목록.in_key(code):
                 row = gm.잔고목록.get(key=code)
@@ -534,7 +533,7 @@ class Admin:
     def pri_fx얻기_체결목록(self, date_text):
         try:
             gm.체결목록.delete()
-            gm.work_dbmq.put(Answer('aaa', 'execute_query', {'sql': dc.ddb.CONC_SELECT_DATE, 'db': 'db', 'params': (date_text,)}))
+            gm.work_dbmq.put(Answer('execute_query', {'sql': dc.ddb.CONC_SELECT_DATE, 'db': 'db', 'params': (date_text,)}))
             dict_list = gm.answer_dbmq.get()
             logging.debug(f'체결목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
             if dict_list is not None and len(dict_list) > 0:
@@ -631,11 +630,12 @@ class Admin:
         try:
             success, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
             gm.전략쓰레드 = [None] * 11
-            gm.전략쓰레드[0] = Strategy(name='전략00', cls=self, api=gm.api, ticker=gm.dict종목정보, 전략정의=gm.basic_strategy, work_q=gm.work_aaaq, answer_q=gm.answer_aaaq)
+            gm.전략쓰레드[0] = Strategy(name='전략00', cls=self, api=gm.api, ticker=gm.dict종목정보, 전략정의=gm.basic_strategy)
             for i in range(1, 11):
                 전략 = f'전략{i:02d}'
                 전략정의 = gm.전략정의.get(key=gm.전략설정[i]['전략명칭'])
-                gm.전략쓰레드[i] = Strategy(name=전략, cls=self, api=gm.api, ticker=gm.dict종목정보, 전략정의=전략정의, work_q=gm.work_aaaq, answer_q=gm.answer_aaaq)
+                gm.전략쓰레드[i] = Strategy(name=전략, cls=self, api=gm.api, ticker=gm.dict종목정보, 전략정의=전략정의)
+                logging.debug(f'{전략} {gm.전략쓰레드[i]}')
         except Exception as e:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -650,10 +650,15 @@ class Admin:
             msgs = ''
             for i in range(1, 11):
                 if not gm.전략설정[i]['전략적용']: continue
-                msg = gm.전략쓰레드[i].cdn_fx실행_전략초기화()
-                if not msg:
-                    gm.전략쓰레드[i].start()
-                else:
+                gm.전략쓰레드[i].start()
+                gm.qwork[f'전략{i:02d}'].put(Answer('cdn_fx실행_전략초기화', {}))
+                msg = gm.qanswer[f'전략{i:02d}'].get()
+                logging.debug(f'전략{i:02d} msg={msg}')
+                if msg:
+                    gm.qwork[f'전략{i:02d}'].put(Work('cdn_fx실행_전략마무리', {}))
+                    if gm.전략쓰레드[i]:
+                        gm.전략쓰레드[i].stop()
+                        gm.전략쓰레드[i].wait()
                     msgs += f'\n{msg}' if msgs else msg
             if msgs: gm.toast.toast(msgs, duration=3000) #dc.TOAST_TIME
             #logging.debug(f'전략매매 쓰레드 설정: {gm.전략쓰레드}')
@@ -664,7 +669,7 @@ class Admin:
     def cdn_fx중지_전략매매(self):
         try:
             for i in range(0, 11):
-                gm.전략쓰레드[i].cdn_fx실행_전략마무리()
+                gm.qwork[f'전략{i:02d}'].put(Work('cdn_fx실행_전략마무리', {}))
                 if gm.전략쓰레드[i]:
                     gm.전략쓰레드[i].stop()
                     gm.전략쓰레드[i].wait()
@@ -729,7 +734,7 @@ class Admin:
             logging.debug(f'체결잔고 : 주문상태={주문상태} order_no={order_no} ' +
                             f'\n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
 
-            #self.dbm_trade_upsert(dictFID)
+            self.dbm_trade_upsert(dictFID)
 
             if '접수' in 주문상태:
                 self.odr_redeipt_data(dictFID)
@@ -846,7 +851,7 @@ class Admin:
 
             conclusion_row = {'전략': 전략, '종목번호': code, '종목명': name, '매수수량': qty, '매수가': price, '매수금액': amount, '매수일자': dc.td.ToDay, '매수시간': 매매시간, \
                         '매수번호': order_no, '매수전략': 전략정의['매수전략'], '전략명칭': 전략정의['전략명칭']}
-            #gm.work_dbmq.put(Work('conclusion_upsert_buy', {'row': conclusion_row}))
+            gm.work_dbmq.put(Work('conclusion_upsert_buy', {'row': conclusion_row}))
 
 
         def sell_conclution():
@@ -857,7 +862,7 @@ class Admin:
                 conclusion_row = { k: row[k] for k in gm.tbl.hd체결목록['컬럼'] if k in row }
                 conclusion_row.update({'매도일자': dc.td.ToDay, '매도시간': 매매시간, '매도번호': order_no, '체결가': price, '체결량': qty, '체결누계금액': amount, \
                                         '매도가': price, '매도수량': qty, '매도금액': amount, '단위체결량': 단위체결량, '단위체결가': 단위체결가, '수수료율': gm.수수료율, '거래세율': gm.세금율})
-                #gm.work_dbmq.put(Work('conclusion_upsert_sell', {'row': conclusion_row}))
+                gm.work_dbmq.put(Work('conclusion_upsert_sell', {'row': conclusion_row}))
             else:
                 logging.error(f"잔고목록 조회 오류: {code} {name} 매도 체결처리 디비 저장 실패 ***")
 
@@ -870,8 +875,8 @@ class Admin:
             elif kind == '매도':
                 sell_conclution()
 
-            msg = f"{kind}체결 : {전략} {code} {dictFID['종목명']} 체결수량:{qty}주 / 체결가:{dictFID['체결가']}원 주문번호:{order_no} "
-            if gm.config.gui_on: gm.qdict['msg'].put(Work('주문내용', {'msg': msg}))
+            msg = {'kind': f'{kind}체결', '전략': 전략, 'code': code, 'name': name, 'quantity': qty, 'price': price, 'ordno': order_no}
+            gm.qwork['aaa'].put(Work('com_status_msg', {'order': '주문내용', 'args': msg}))
             logging.info(msg)
 
         except Exception as e:
@@ -894,7 +899,7 @@ class Admin:
                 if gm.잔고목록.in_key(code):
                     gm.잔고목록.set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량, '주문가능수량': 주문가능수량, '현재가': 현재가})
             dictFID['주문상태'] = '잔고'
-            #self.dbm_trade_upsert(dictFID)
+            self.dbm_trade_upsert(dictFID)
             msg = f"잔고변경 : {code} {dictFID['종목명']} 보유수량:{보유수량}주 매입단가:{매입단가}원 매입금액:{보유수량 * 매입단가}원 주문가능수량:{주문가능수량}주"
             logging.info(msg)
             logging.debug(f'잔고 dictFID:\n{tabulate(pd.DataFrame([dictFID]), headers="keys", showindex=True, numalign="right")}')
@@ -902,10 +907,6 @@ class Admin:
             logging.error(f"잔고 변경 오류: {type(e).__name__} - {e}", exc_info=True)
 
     # dbm 처리 메소드 -----------------------------------------------------------------------------------------------
-
-    def dbm_first_job(self):
-        logging.debug('dbm_first_job')
-        gm.work_dbmq.put(Work('init_db', {}))
 
     def dbm_stop(self):
         gm.work_dbmq.put(Work('stop', {}))

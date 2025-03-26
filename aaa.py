@@ -1,5 +1,5 @@
 from public import init_logger, dc, gm
-from classes import Toast, AnswerThread
+from classes import Toast, AnswerThread, Work
 from server_api import APIServer
 from server_sim import SIMServer
 from gui import GUI
@@ -45,18 +45,20 @@ class Main:
     def set_proc(self):
         try:
             gm.api = APIServer('api') if not gm.config.sim_on else SIMServer('sim')
+            logging.debug('api 서버 생성 완료')
             gm.api.CommConnect(block=False)
             gm.toast = Toast()
-            gm.work_aaaq = queue.Queue()
-            gm.answer_aaaq = queue.Queue()
-            gm.aaa = AnswerThread(name='aaa', work_q=gm.work_aaaq, answer_q=gm.answer_aaaq, cls=gm.admin)
+            gm.work_aaaq = mp.Queue()
+            gm.answer_aaaq = mp.Queue()
+            gm.aaa = AnswerThread(name='aaa', cls=gm.admin, work_q=gm.work_aaaq, answer_q=gm.answer_aaaq)
             gm.aaa.start()
             logging.debug('aaa 쓰레드 시작')
             gm.gui = GUI() if gm.config.gui_on else None
             gm.work_dbmq = mp.Queue()
             gm.answer_dbmq = mp.Queue()
-            #gm.dbm = DBMServer('dbm', gm.work_dbmq, gm.answer_dbmq)
-            logging.debug('api 쓰레드 생성 완료')
+            gm.dbm = DBMServer('dbm', gm.work_dbmq, gm.answer_dbmq, gm.work_aaaq)
+            gm.dbm.start()
+            logging.debug('dbm 프로세스 시작')
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -70,10 +72,8 @@ class Main:
             logging.debug('prepare : 로그인 대기 시작')
             while not gm.api.connected:
                 pythoncom.PumpWaitingMessages()
-                time.sleep(1)
+                time.sleep(0.1)
             logging.debug(f'***** {gm.api.name.upper()} connected *****')
-            #gm.dbm.start()
-            #gm.dbm.init_db()
             gm.admin.init()
             logging.debug('prepare : admin 초기화 완료')
             if gm.config.gui_on: gm.gui.init()
@@ -110,21 +110,10 @@ class Main:
 
     def cleanup(self):
         try:
-            # 1. 전략 쓰레드 종료
             for t in gm.전략쓰레드: t.stop()
-
-            # 2. API/SIM 서버 종료
-            if hasattr(gm.pro, 'api'): 
-                gm.api.stop()
-
-            # 3. AAA 쓰레드 종료
-            if hasattr(gm.pro, 'aaa'): 
-                gm.aaa.stop()
-
-            # 4. DBM 서버 종료
-            # if hasattr(gm.pro, 'dbm'): 
-            #     gm.dbm.stop()
-            #     self.cleanup_worker(gm.dbm)
+            if hasattr(gm, 'api'): gm.api.stop()
+            if hasattr(gm, 'aaa'): gm.aaa.stop()
+            if hasattr(gm, 'dbm'): gm.dbm.stop()
 
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")

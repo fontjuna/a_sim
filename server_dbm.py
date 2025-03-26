@@ -7,8 +7,8 @@ import os
 
 init_logger()
 class DBMServer(AnswerProcess):
-    def __init__(self, name, work_dbmq, answer_dbmq):
-        super().__init__(name, work_dbmq, answer_dbmq)
+    def __init__(self, name, work_q=None, answer_q=None, sender_q=None):
+        super().__init__(name, work_q=work_q, answer_q=answer_q, sender_q=sender_q)
         self.daily_db = None
         self.daily_cursor = None
         self.db = None
@@ -19,9 +19,22 @@ class DBMServer(AnswerProcess):
         super().run()
 
     def stop(self):
-        self.daily_db.close()
-        self.db.close()
         super().stop()
+        if self.daily_db is not None:
+            if self.daily_cursor is not None:
+                self.daily_cursor.close()
+                self.daily_cursor = None
+            self.daily_db.commit()
+            self.daily_db.close()
+            self.daily_db = None
+        if self.db is not None:
+            if self.cursor is not None:
+                self.cursor.close()
+                self.cursor = None
+            self.db.commit()
+            self.db.close()
+            self.db = None
+
 
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
@@ -95,7 +108,7 @@ class DBMServer(AnswerProcess):
             'result': result,
             'error': error
         })
-        self.put('aaa', work)
+        self.sender_q.put(work)
 
     def execute_query(self, sql, db='daily', params=None):
         try:

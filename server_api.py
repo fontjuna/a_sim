@@ -107,9 +107,9 @@ class APIServer:
         ret = self.ocx.dynamicCall("SetRealRemove(QString, QString)", screen, del_code)
         return ret
 
-    def SendConditionStop(self, screen, cond_name, cond_idx):
-        logging.debug(f'전략 중지: screen={screen}, name={cond_name}, index={cond_idx}')
-        self.ocx.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, cond_idx)
+    def SendConditionStop(self, screen, cond_name, cond_index):
+        logging.debug(f'전략 중지: screen={screen}, name={cond_name}, index={cond_index}')
+        self.ocx.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, cond_index)
 
     def SetInputValue(self, id, value):
         self.ocx.dynamicCall("SetInputValue(QString, QString)", id, value)
@@ -146,7 +146,7 @@ class APIServer:
         ret = self.ocx.dynamicCall("SetRealReg(QString, QString, QString, QString)", screen, code_list, fid_list, opt_type)
         return ret
 
-    def SendCondition(self, screen, cond_name, cond_index, search, block=True):
+    def SendCondition(self, screen, cond_name, cond_index, search, block=True, timeout=5):
         try:
             if block is True:
                 self.tr_condition_loaded = False
@@ -156,8 +156,12 @@ class APIServer:
 
             if success: # 1: 성공, 0: 실패
                 if block is True:
+                    start_time = time.time()
                     while not self.tr_condition_loaded:
                         pythoncom.PumpWaitingMessages()
+                        if time.time() - start_time > timeout:
+                            logging.warning(f'조건 검색 시간 초과: {screen} {cond_name} {cond_index} {search}')
+                            return False
                     data = self.tr_condition_list # 성공시 리스트
                 else:
                     data = False # 비동기 요청 시
@@ -201,7 +205,7 @@ class APIServer:
             #         'screen': screen,
             #         'rqname': rqname,
             #     }
-            #     gm.qdict['aaa'].put(Work('on_fx수신_주문결과TR', result))
+            #     gm.qwork['aaa'].put(Work('on_fx수신_주문결과TR', result))
 
             # except Exception as e:
             #     logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -244,7 +248,7 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        gm.qdict['aaa'].put(Work('on_fx실시간_조건검색', data))
+        gm.qwork['aaa'].put(Work('on_fx실시간_조건검색', data))
 
     def OnReceiveRealData(self, code, rtype, data):
         try:
@@ -260,7 +264,7 @@ class APIServer:
                 elif rtype == '장시작시간': order = 'on_fx실시간_장운영감시'
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
-                gm.qdict['aaa'].put(Work(order, job))
+                gm.qwork['aaa'].put(Work(order, job))
 
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
@@ -278,7 +282,7 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            gm.qdict['aaa'].put(Work(order, {'dictFID': dictFID}))
+            gm.qwork['aaa'].put(Work(order, {'dictFID': dictFID}))
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)

@@ -150,7 +150,7 @@ class WorkModel():
         self.daemon = True
         self.is_running = True
 
-        gm.qdict[self.name] = self.work_q
+        gm.qwork[self.name] = self.work_q
 
     def run(self):
         logging.debug(f'{self.name} 시작...')
@@ -176,12 +176,15 @@ class WorkModel():
                 method(**data.job)
 
 class AnswerModel:
-    def __init__(self, name, work_q, answer_q, cls=None):
+    def __init__(self, name, cls=None, work_q=None, answer_q=None):
         self.name = name
-        self.work_q = work_q
-        self.answer_q = answer_q
+        self.work_q = work_q if work_q is not None else Queue()
+        self.answer_q = answer_q if answer_q is not None else Queue()
         self.cls = cls
         self.is_running = True
+
+        gm.qwork[self.name] = self.work_q
+        gm.qanswer[self.name] = self.answer_q
 
     def run(self):
         logging.debug(f'{self.name} 시작...')
@@ -206,7 +209,9 @@ class AnswerModel:
             if isinstance(data, Work):
                 method(**data.job)
             else:
+                logging.debug(f'{self.name} run_loop: executing {data.order}')
                 result = method(**data.job)
+                logging.debug(f'{self.name} run_loop: got result {result}')
                 self.answer_q.put(result)
 
 class WorkThread(WorkModel, QThread):
@@ -226,8 +231,8 @@ class WorkThread(WorkModel, QThread):
         return self
     
 class AnswerThread(AnswerModel, QThread):
-    def __init__(self, name, work_q, answer_q, cls=None):
-        AnswerModel.__init__(self, name, work_q, answer_q, cls)
+    def __init__(self, name, cls=None, work_q=None, answer_q=None):
+        AnswerModel.__init__(self, name, cls, work_q, answer_q)
         QThread.__init__(self)
 
     def run(self):
@@ -241,21 +246,36 @@ class AnswerThread(AnswerModel, QThread):
         QThread.start(self)
         return self
 
-class AnswerProcess(AnswerModel, mp.Process):
-    def __init__(self, name, work_q, answer_q, daemon=True):
-        AnswerModel.__init__(self, name, work_q, answer_q )
-        mp.Process.__init__(self, name=name, daemon=daemon)
+class AnswerProcess(mp.Process):
+    def __init__(self, name, work_q, answer_q, sender_q):
+        super().__init__(name=name, daemon=True)
+        self.name = name
+        self.work_q = work_q
+        self.answer_q = answer_q
+        self.sender_q = sender_q
+        self.is_running = True
 
     def run(self):
-        AnswerModel.run(self)
+        logging.debug(f'{self.name} 시작...')
+        while self.is_running:
+            self.run_loop()
+            time.sleep(0.01)
 
     def stop(self):
-        AnswerModel.stop(self)
-        logging.debug(f'{self.name} 프로세스 종료...')
+        self.is_running = False
 
-    def start(self):
-        mp.Process.start(self)
-        return self
+    def run_loop(self):
+        if not self.work_q.empty():
+            data = self.work_q.get()
+            if not hasattr(self, data.order) or not isinstance(data, (Work, Answer)):
+                logging.debug(f'{self.name} 에 잘못된 요청: {data}')
+                return
+            method = getattr(self, data.order)
+            if isinstance(data, Work):
+                method(**data.job)
+            else:
+                result = method(**data.job)
+                self.answer_q.put(result)
 
 class TableManager:
     def __init__(self, config):

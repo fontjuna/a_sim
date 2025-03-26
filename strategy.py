@@ -1,4 +1,4 @@
-from classes import WorkThread
+from classes import AnswerThread
 from public import *
 from PyQt5.QtCore import QTimer
 from tabulate import tabulate
@@ -7,20 +7,18 @@ from typing import Any
 import logging
 import threading
 from queue import Queue
-class Strategy(WorkThread):
-    def __init__(self, name, cls=None, api=None, ticker=None, 전략정의=None, work_q=None, answer_q=None):
+class Strategy(AnswerThread):
+    def __init__(self, name, cls=None, api=None, ticker=None, 전략정의=None):
         super().__init__(name, cls=cls)
         self.name = name
         self.api = api
         self.dict종목정보 = ticker
         self.전략정의 = 전략정의 if 전략정의 else dc.const.DEFAULT_STRATEGY_SETS
-        self.work_q = work_q
-        self.answer_q = answer_q
         self.전략 = name
         self.전략번호 = int(name[-2:])
-        self.buy_cond_idx = 0
+        self.buy_cond_index = 0
         self.buy_cond_name = ''
-        self.sell_cond_idx = 0
+        self.sell_cond_index = 0
         self.sell_cond_name = ''
         self.loss_cut_timer = None
         self.clear_timer = None
@@ -40,10 +38,10 @@ class Strategy(WorkThread):
 
     def set_index_name(self) -> None:
         if self.매수전략:
-            self.buy_cond_idx = int(self.매수전략.split(' : ')[0])
+            self.buy_cond_index = int(self.매수전략.split(' : ')[0])
             self.buy_cond_name = self.매수전략.split(' : ')[1]
         if self.매도전략:
-            self.sell_cond_idx = int(self.매도전략.split(' : ')[0])
+            self.sell_cond_index = int(self.매도전략.split(' : ')[0])
             self.sell_cond_name = self.매도전략.split(' : ')[1]
 
     def set_dict(self, new_dict: dict) -> None:
@@ -195,7 +193,7 @@ class Strategy(WorkThread):
         if is_ok:
             #self.cmd_list.put(send_data)
             send_data['idx'] = self.전략번호
-            gm.qdict['aaa'].put(Work('com_SendOrder', send_data))
+            gm.qwork['aaa'].put(Work('com_SendOrder', send_data))
         else:
             key = f'{code}_매수'
             if gm.주문목록.in_key(key):
@@ -318,11 +316,11 @@ class Strategy(WorkThread):
                 for data in send_data:
                     #self.cmd_list.put(data)
                     data['idx'] = self.전략번호
-                    gm.qdict['aaa'].put(Work('com_SendOrder', data))
+                    gm.qwork['aaa'].put(Work('com_SendOrder', data))
             else:
                 #self.cmd_list.put(send_data)
                 send_data['idx'] = self.전략번호
-                gm.qdict['aaa'].put(Work('com_SendOrder', send_data))
+                gm.qwork['aaa'].put(Work('com_SendOrder', send_data))
         else:
             key = f'{row["종목번호"]}_매도'
             if gm.주문목록.in_key(key):
@@ -380,6 +378,7 @@ class Strategy(WorkThread):
 
     def cdn_fx실행_전략초기화(self):
         try:
+            logging.debug(f'전략 초기화 시작: {self.전략} {self.전략명칭}')
             msg = self.cdn_fx체크_전략매매()
             if msg: return msg
             self.cdn_fx실행_전략매매()
@@ -388,16 +387,16 @@ class Strategy(WorkThread):
                 gm.json_counter_strategy[self.전략] = {'전략명칭': self.전략명칭, '체결횟수': self.체결횟수, '남은횟수': self.체결횟수}
 
             if gm.config.gui_on: 
-                gm.qdict['gui'].put(Work('set_strategy_toggle', {'run': any(gm.매수문자열들) or any(gm.매도문자열들)}))
+                gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any(gm.매수문자열들) or any(gm.매도문자열들)}))
 
         except Exception as e:
             logging.error(f'전략 초기화 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
     def cdn_fx실행_전략매매(self):
         try:
-            def run_trade(cond_idx, cond_name, trade_type):
-                condition = f'{int(cond_idx):03d} : {cond_name.strip()}'
-                condition_list, bool_ok = self.cdn_fx등록_조건검색(trade_type, cond_name, cond_idx) #-------------------- 조건 검색 실행
+            def run_trade(cond_index, cond_name, trade_type):
+                condition = f'{int(cond_index):03d} : {cond_name.strip()}'
+                condition_list, bool_ok = self.cdn_fx등록_조건검색(trade_type, cond_name, cond_index) #-------------------- 조건 검색 실행
                 if bool_ok:
                     if trade_type == '매수':
                         self.cdn_fx등록_종목감시(condition_list, 0) # ------------------------------- 조건 만족 종목 실시간 감시
@@ -410,8 +409,8 @@ class Strategy(WorkThread):
                 else:
                     logging.warning(f'전략 실행 실패 - 전략={self.전략} 전략명칭={self.전략명칭} {trade_type}전략={condition}') # 같은 조건 1분 제한 조건 위반
 
-            if self.매수적용: run_trade(self.buy_cond_idx, self.buy_cond_name, '매수')
-            if self.매도적용: run_trade(self.sell_cond_idx, self.sell_cond_name, '매도')
+            if self.매수적용: run_trade(self.buy_cond_index, self.buy_cond_name, '매수')
+            if self.매도적용: run_trade(self.sell_cond_index, self.sell_cond_name, '매도')
 
         except Exception as e:
             logging.error(f'전략 매매 실행 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -444,26 +443,29 @@ class Strategy(WorkThread):
 
     def cdn_fx중지_전략매매(self, buy_stop=True, sell_stop=True):
         try:
-            def stop_trade(cond_idx, cond_name, trade_type):
+            def stop_trade(cond_index, cond_name, trade_type):
                 if cond_name:
                     screen = f'{3 if trade_type == "매수" else 2}0{self.전략[-2:]}'
-                    self.api.SendConditionStop(screen, cond_name, cond_idx)
+                    self.api.SendConditionStop(screen, cond_name, cond_index)
                 else:
                     raise Exception(f'{trade_type} 조건이 없습니다.')
-                logging.info(f'{trade_type} 전략 중지 - {self.전략} : {cond_idx:03d} : {cond_name}')
-            if buy_stop and self.매수적용: stop_trade(self.buy_cond_idx, self.buy_cond_name, '매수')
-            if sell_stop and self.매도적용: stop_trade(self.sell_cond_idx, self.sell_cond_name, '매도')
+                logging.info(f'{trade_type} 전략 중지 - {self.전략} : {cond_index:03d} : {cond_name}')
+            if buy_stop and self.매수적용: stop_trade(self.buy_cond_index, self.buy_cond_name, '매수')
+            if sell_stop and self.매도적용: stop_trade(self.sell_cond_index, self.sell_cond_name, '매도')
 
         except Exception as e:
             logging.error(f'전략 중지 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
-    def cdn_fx등록_조건검색(self, trade_type, cond_name, cond_idx):
+    def cdn_fx등록_조건검색(self, trade_type, cond_name, cond_index):
         screen = f'{3 if trade_type == "매수" else 2}0{self.전략[-2:]}'
-        logging.debug(f'조건 검색 요청: 전략={self.전략} 화면={screen} 인덱스={cond_idx:03d} 수식명={cond_name} 구분={trade_type}')
+        logging.debug(f'조건 검색 요청: 전략={self.전략} 화면={screen} 인덱스={cond_index:03d} 수식명={cond_name} 구분={trade_type}')
         condition_list = []
         try:
-            self.work_q.put(Work('com_SendCondition', {'screen': screen, 'cond_name': cond_name, 'cond_idx': cond_idx, 'search': 1}))
-            condition_list, bool_ok = self.answer_q.get() #gm.admin.com_SendCondition(screen, cond_name, cond_idx, 1) # +++++++ SendCondition
+            # gm.qwork['aaa'].put(Answer('com_SendCondition', {'screen': screen, 'cond_name': cond_name, 'cond_index': cond_index, 'search': 1}))
+            # logging.debug(f'조건 검색 요청: {screen} {cond_name} {cond_index} {trade_type}')
+            # data = gm.qanswer['aaa'].get() #gm.admin.com_SendCondition(screen, cond_name, cond_index, 1) # +++++++ SendCondition
+            # logging.debug(f'조건 검색 결과: {data}')
+            condition_list, bool_ok = gm.admin.com_SendCondition(screen, cond_name, cond_index, 1)
             return condition_list, bool_ok
         except Exception as e:
             logging.error(f'조건 검색 요청 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -529,8 +531,8 @@ class Strategy(WorkThread):
             if kind == '매수':
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
-                    self.work_q.put(Work('com_status_msg', {"kind": f'{kind}편입', "전략": self.전략, "code": code, "name": 종목명}))
-                    #if gm.config.gui_on: gm.qdict['msg'].put(Work('검색내용', {'msg': f'{kind}편입 : {self.전략} {code} {종목명}'}))
+                    gm.qwork['aaa'].put(Work('com_status_msg', {'order': '검색내용', 'args': {"kind": f'{kind}편입', "전략": self.전략, "code": code, "name": 종목명}}))
+                    #if gm.config.gui_on: gm.qwork['msg'].put(Work('검색내용', {'msg': f'{kind}편입 : {self.전략} {code} {종목명}'}))
                     #logging.debug(f'매수조건목록 추가 확인 :\n매수조건목록=\n{tabulate(gm.매수조건목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
                 if gm.잔고목록.in_key(code): return # 기 보유종목
                 if gm.주문목록.in_column('종목코드', code): return # 주문 처리 중 - 여기에 있어야 메세지 생략 안 함     
@@ -568,7 +570,7 @@ class Strategy(WorkThread):
 
             if gm.매수조건목록.in_key(code):
                 logging.info(f'{kind}이탈: {self.전략} {self.전략명칭} {code} {name}')
-                if gm.config.gui_on: gm.qdict['msg'].put(Work('검색내용', {'msg': f'{kind}이탈 : {self.전략} {code} {name}'}))
+                gm.qwork['aaa'].put(Work('com_status_msg', {'order': '검색내용', 'args': {"kind": f'{kind}이탈', "전략": self.전략, "code": code, "name": name}}))
                 success = gm.매수조건목록.delete(key=code)
                 #logging.debug(f'매수조건목록 삭제 확인 : {code} {name} : result={success}')
                 #logging.debug(f'매수조건목록 삭제 확인 :\n매수조건목록=\n{tabulate(gm.매수조건목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
