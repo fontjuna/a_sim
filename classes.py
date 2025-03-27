@@ -175,6 +175,22 @@ class WorkModel():
             if isinstance(data, Work):
                 method(**data.job)
 
+class WorkThread(WorkModel, QThread):
+    def __init__(self, name, cls=None):
+        WorkModel.__init__(self, name, cls)
+        QThread.__init__(self)
+
+    def run(self):
+        WorkModel.run(self)
+
+    def stop(self):
+        WorkModel.stop(self)
+        logging.debug(f'{self.name} 프로세스 종료...')
+
+    def start(self):
+        QThread.start(self)
+        return self
+    
 class AnswerModel:
     def __init__(self, name, cls=None, work_q=None, answer_q=None):
         self.name = name
@@ -214,22 +230,6 @@ class AnswerModel:
                 logging.debug(f'{self.name} run_loop: got result {result}')
                 self.answer_q.put(result)
 
-class WorkThread(WorkModel, QThread):
-    def __init__(self, name, cls=None):
-        WorkModel.__init__(self, name, cls)
-        QThread.__init__(self)
-
-    def run(self):
-        WorkModel.run(self)
-
-    def stop(self):
-        WorkModel.stop(self)
-        logging.debug(f'{self.name} 프로세스 종료...')
-
-    def start(self):
-        QThread.start(self)
-        return self
-    
 class AnswerThread(AnswerModel, QThread):
     def __init__(self, name, cls=None, work_q=None, answer_q=None):
         AnswerModel.__init__(self, name, cls, work_q, answer_q)

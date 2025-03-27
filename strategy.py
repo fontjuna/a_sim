@@ -485,7 +485,6 @@ class Strategy(AnswerThread):
                 if gm.주문목록.in_column('종목코드', code): continue # 주문 처리 중
 
                 data={'키': key, '구분': '매수', '상태': '대기', '전략': self.전략, '종목코드': code, '종목명': 종목명}
-                self.order_q.put(data)
                 gm.주문목록.set(key=key, data=data)
                 gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
 

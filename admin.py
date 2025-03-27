@@ -650,15 +650,16 @@ class Admin:
             msgs = ''
             for i in range(1, 11):
                 if not gm.전략설정[i]['전략적용']: continue
-                gm.전략쓰레드[i].start()
-                gm.qwork[f'전략{i:02d}'].put(Answer('cdn_fx실행_전략초기화', {}))
-                msg = gm.qanswer[f'전략{i:02d}'].get()
+                # gm.전략쓰레드[i].start()
+                # gm.qwork[f'전략{i:02d}'].put(Answer('cdn_fx실행_전략초기화', {}))
+                # msg = gm.qanswer[f'전략{i:02d}'].get()
+                msg = gm.전략쓰레드[i].cdn_fx실행_전략초기화()
                 logging.debug(f'전략{i:02d} msg={msg}')
                 if msg:
-                    gm.qwork[f'전략{i:02d}'].put(Work('cdn_fx실행_전략마무리', {}))
-                    if gm.전략쓰레드[i]:
-                        gm.전략쓰레드[i].stop()
-                        gm.전략쓰레드[i].wait()
+                    # gm.qwork[f'전략{i:02d}'].put(Work('cdn_fx실행_전략마무리', {}))
+                    # if gm.전략쓰레드[i]:
+                    #     gm.전략쓰레드[i].stop()
+                    #     gm.전략쓰레드[i].wait()
                     msgs += f'\n{msg}' if msgs else msg
             if msgs: gm.toast.toast(msgs, duration=3000) #dc.TOAST_TIME
             #logging.debug(f'전략매매 쓰레드 설정: {gm.전략쓰레드}')

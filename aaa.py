@@ -111,9 +111,9 @@ class Main:
     def cleanup(self):
         try:
             for t in gm.전략쓰레드: t.stop()
-            if hasattr(gm, 'api'): gm.api.stop()
-            if hasattr(gm, 'aaa'): gm.aaa.stop()
-            if hasattr(gm, 'dbm'): gm.dbm.stop()
+            gm.api.stop()
+            gm.aaa.stop()
+            gm.dbm.stop()
 
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
