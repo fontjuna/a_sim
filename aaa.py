@@ -98,12 +98,13 @@ class Main:
         self.run()
 
     def cleanup(self):
-        #gm.pro.dbm.stop()
+        for i in range(len(gm.전략쓰레드)): gm.전략쓰레드[i].stop()
+        gm.pro.dbm.stop()
         #gm.pro.dbm.join(timeout=1)        
-        # gm.pro.aaa.stop()
+        gm.pro.aaa.stop()
         # gm.pro.aaa.wait()
         #gm.pro.admin.cdn_fx중지_전략매매()
-        # gm.pro.api.stop()
+        gm.pro.api.stop()
 
         # Python의 Queue는 내부적으로 데몬 쓰레드인 QueueFeederThread를 사용합니다. 
         # 큐에 데이터가 남아있으면 이 쓰레드가 계속 실행 상태로 남아있어 프로그램이 완전히 종료되지 않습니다.
