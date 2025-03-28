@@ -1,5 +1,5 @@
 from public import init_logger, dc, gm
-from classes import Toast, AnswerThread, Work
+from classes import Toast, la
 from server_api import APIServer
 from server_sim import SIMServer
 from gui import GUI
@@ -30,6 +30,7 @@ class Main:
         args = [arg.lower() for arg in sys.argv]
         gm.main = self
         gm.admin = Admin()
+        la.register('aaa', gm.admin, use_thread=False)
         gm.config.gui_on = 'off' not in args
         gm.config.sim_on = 'sim' in args    
         logging.info(f"### {'GUI' if gm.config.gui_on else 'CONSOLE'} Mode 로 시작 합니다. ###")
@@ -44,39 +45,37 @@ class Main:
 
     def set_proc(self):
         try:
-            gm.api = APIServer('api') if not gm.config.sim_on else SIMServer('sim')
+            gm.api = APIServer('api') if not gm.config.sim_on else SIMServer('api')
+            la.register('api', gm.api, use_thread=False)
             logging.debug('api 서버 생성 완료')
-            gm.api.CommConnect(block=False)
+            la.work('api', 'CommConnect', {'block': True})
             gm.toast = Toast()
-            gm.work_aaaq = mp.Queue()
-            gm.answer_aaaq = mp.Queue()
-            gm.aaa = AnswerThread(name='aaa', cls=gm.admin, work_q=gm.work_aaaq, answer_q=gm.answer_aaaq)
-            gm.aaa.start()
-            logging.debug('aaa 쓰레드 시작')
             gm.gui = GUI() if gm.config.gui_on else None
-            gm.work_dbmq = mp.Queue()
-            gm.answer_dbmq = mp.Queue()
-            gm.dbm = DBMServer('dbm', gm.work_dbmq, gm.answer_dbmq, gm.work_aaaq)
-            gm.dbm.start()
-            logging.debug('dbm 프로세스 시작')
+            if gm.gui: la.register('gui', gm.gui, use_thread=False)
+            #gm.work_dbmq = mp.Queue()
+            #gm.answer_dbmq = mp.Queue()
+            #gm.dbm = DBMServer('dbm', gm.work_dbmq, gm.answer_dbmq, gm.work_aaaq)
+            #gm.dbm.start()
+            #logging.debug('dbm 프로세스 시작')
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
 
     def show(self):
         if not gm.config.gui_on: return
-        gm.gui.gui_show()
+        la.work('gui', 'gui_show')
 
     def prepare(self):
         try:
             logging.debug('prepare : 로그인 대기 시작')
-            while not gm.api.connected:
+            while True:
                 pythoncom.PumpWaitingMessages()
+                if la.answer('api', 'api_connected'): break
                 time.sleep(0.1)
             logging.debug(f'***** {gm.api.name.upper()} connected *****')
-            gm.admin.init()
+            la.work('aaa', 'init')
             logging.debug('prepare : admin 초기화 완료')
-            if gm.config.gui_on: gm.gui.init()
+            if gm.config.gui_on: la.work('gui', 'init')
             logging.debug('prepare : gui 초기화 완료')
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -84,7 +83,7 @@ class Main:
 
     def run(self):
         if gm.config.gui_on: self.splash.close()
-        gm.admin.trade_start()
+        la.work('aaa', 'trade_start')
         return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
@@ -111,9 +110,9 @@ class Main:
     def cleanup(self):
         try:
             for t in gm.전략쓰레드: t.stop()
-            gm.api.stop()
-            gm.aaa.stop()
-            gm.dbm.stop()
+            la.work('api', 'stop')
+            la.work('aaa', 'stop')
+            #.stop()
 
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")

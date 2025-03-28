@@ -1,5 +1,5 @@
 from public import *
-#from classes import *
+from classes import la
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QAxContainer import QAxWidget
 import multiprocessing as mp
@@ -11,7 +11,7 @@ import time
 import copy
 
 # init_logger()
-class APIServer:
+class APIServer():
     def __init__(self, name):
         self.name = name
 
@@ -36,10 +36,13 @@ class APIServer:
         pass
 
     def api_init(self):
-        logging.debug(f'{self.name} api_init start')
-        self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
-        self._set_signal_slots()
-        logging.debug(f'{self.name} api_init end: ocx={self.ocx}')
+        try:
+            logging.debug(f'{self.name} api_init start')
+            self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+            self._set_signal_slots()
+            logging.debug(f'{self.name} api_init end: ocx={self.ocx}')
+        except Exception as e:
+            logging.error(f"API 초기화 오류: {type(e).__name__} - {e}")
 
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
@@ -248,7 +251,8 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        gm.qwork['aaa'].put(Work('on_fx실시간_조건검색', data))
+        #gm.qwork['aaa'].put(Work('on_fx실시간_조건검색', data))
+        la.work('aaa', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
         try:
@@ -264,7 +268,8 @@ class APIServer:
                 elif rtype == '장시작시간': order = 'on_fx실시간_장운영감시'
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
-                gm.qwork['aaa'].put(Work(order, job))
+                #gm.qwork['aaa'].put(Work(order, job))
+                la.work('aaa', order, **job)
 
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
@@ -282,7 +287,8 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            gm.qwork['aaa'].put(Work(order, {'dictFID': dictFID}))
+            #gm.qwork['aaa'].put(Work(order, {'dictFID': dictFID}))
+            la.work('aaa', order, **{'dictFID': dictFID})
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
