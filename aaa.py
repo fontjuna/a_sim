@@ -52,11 +52,8 @@ class Main:
             gm.toast = Toast()
             gm.gui = GUI() if gm.config.gui_on else None
             if gm.gui: la.register('gui', gm.gui, use_thread=False)
-            #gm.work_dbmq = mp.Queue()
-            #gm.answer_dbmq = mp.Queue()
-            #gm.dbm = DBMServer('dbm', gm.work_dbmq, gm.answer_dbmq, gm.work_aaaq)
-            #gm.dbm.start()
-            #logging.debug('dbm 프로세스 시작')
+            la.register('dbm', DBMServer, use_process=True) # 직렬화 문제로 인스턴스를 넘기지 못함, 클래스를 넘겨서 프로세스내에서 인스턴스 생성
+            logging.debug('dbm 프로세스 시작')
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -109,11 +106,11 @@ class Main:
 
     def cleanup(self):
         try:
-            for t in gm.전략쓰레드: t.stop()
-            la.work('api', 'stop')
-            la.work('aaa', 'stop')
-            #.stop()
-
+            la.is_shutting_down = True
+            for t in gm.전략쓰레드:
+                la.stop_worker(t.name)
+            la.stop_worker('api')
+            la.stop_worker('dbm')
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:

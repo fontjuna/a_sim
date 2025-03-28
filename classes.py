@@ -314,6 +314,8 @@ class WorkerManager:
         self.listener = None
         self.connection_thread = None
 
+        self.is_shutting_down = False
+
         # 프로세스 통신 리스너 시작
         self._start_listener()
 
@@ -336,7 +338,12 @@ class WorkerManager:
                 if isinstance(msg, dict) and 'register' in msg:
                     process_name = msg['register']
                     self.process_connections[process_name] = conn
-                    logging.debug(f"프로세스 연결됨: {process_name}")
+                    
+                    # 프로세스 상태 업데이트
+                    if process_name in self.processes:
+                        self.processes[process_name]['status'] = 'running'
+                        
+                    logging.info(f"프로세스 {process_name} 연결 완료")
                     
                     # 응답 처리 쓰레드 시작
                     thread = threading.Thread(
@@ -346,7 +353,8 @@ class WorkerManager:
                     )
                     thread.start()
             except Exception as e:
-                logging.error(f"연결 수락 오류: {e}")
+                # 여기서는 연결 중 오류는 DEBUG 레벨로 낮춤
+                logging.debug(f"연결 수락 오류: {e}")
                 time.sleep(1)
 
     def _process_responses(self, process_name, connection):
@@ -371,7 +379,8 @@ class WorkerManager:
                 connection.close()
                 break
             except Exception as e:
-                logging.error(f"응답 처리 오류: {e}")
+                if not self.is_shutting_down:   
+                    logging.error(f"응답 처리 오류: {e}")
                 time.sleep(0.1)
             
     def register(self, name, target_class=None, use_thread=True, use_process=False):
@@ -387,15 +396,84 @@ class WorkerManager:
             self.targets[name] = target
         return self
 
+    def stop_worker(self, worker_name):
+        """워커 중지"""
+        # 쓰레드 워커 중지
+        if worker_name in self.workers:
+            worker = self.workers[worker_name]
+            worker.running = False
+            worker.quit()  # 이벤트 루프 종료
+            worker.wait(1000)  # 최대 1초간 대기
+            self.workers.pop(worker_name, None)
+            logging.debug(f"워커 종료: {worker_name} (쓰레드)")
+            return True
+            
+        # 프로세스 워커 중지
+        elif worker_name in self.processes:
+            process_info = self.processes[worker_name]
+            process_info['status'] = 'stopping'
+            logging.info(f"프로세스 {worker_name} 종료 중...")
+            process = process_info.get('process')
+            connection = self.process_connections.get(worker_name)
+            
+            if connection:
+                try:
+                    connection.send({'command': 'stop'})
+                    connection.close()
+                    self.process_connections.pop(worker_name, None)
+                except:
+                    pass
+                
+            if process and process.is_alive():
+                process.terminate()
+                process.join(1.0)
+                if process.is_alive():
+                    process.kill()  # 강제 종료
+                    
+            self.processes.pop(worker_name, None)
+            logging.debug(f"워커 종료: {worker_name} (프로세스)")
+            return True
+            
+        # 메인 쓰레드 워커 제거
+        elif worker_name in self.targets:
+            self.targets.pop(worker_name, None)
+            logging.debug(f"워커 제거: {worker_name} (메인 쓰레드)")
+            return True
+            
+        return False
+
+    def stop_all(self):
+        """모든 워커 중지"""
+        # 모든 쓰레드 워커 중지
+        self.is_shutting_down = True
+        logging.info("모든 워커 중지 중...")
+        for name in list(self.workers.keys()):
+            self.stop_worker(name)
+            
+        # 모든 프로세스 워커 중지
+        for name in list(self.processes.keys()):
+            self.stop_worker(name)
+            
+        # 모든 메인 쓰레드 워커 제거
+        self.targets.clear()
+        
+        # 리스너 종료
+        if self.listener:
+            self.listener.close()
+            self.listener = None
+            
+        logging.debug("모든 워커 종료")
+        
     def _register_process(self, name, target_class):
         """프로세스 워커 등록"""
         # 프로세스 정보 저장
         self.processes[name] = {
             'callbacks': {},  # task_id -> callback
             'events': {},     # task_id -> event
-            'results': {}     # task_id -> result
+            'results': {},     # task_id -> result
+            'status': 'connecting'  # 프로세스 상태: connecting, running, stopping
         }
-        
+        logging.info(f"프로세스 {name} 연결 중...")
         # 프로세스 시작
         process = mp.Process(
             target=process_worker_main,
@@ -411,9 +489,12 @@ class WorkerManager:
         
     def answer(self, worker_name, method_name, *args, **kwargs):
         """동기식 함수 호출"""
+        if self.is_shutting_down:
+            return None
+        
         # 프로세스인 경우
         if worker_name in self.processes:
-            return self._rocess_call_sync(worker_name, method_name, args, kwargs)
+            return self._process_call_sync(worker_name, method_name, args, kwargs)
         
         # 워커 찾기
         if worker_name not in self.workers and worker_name not in self.targets:
@@ -459,11 +540,21 @@ class WorkerManager:
         if not process_info:
             logging.error(f"프로세스 없음: {process_name}")
             return None
-            
+        
+        # 프로세스 상태 확인
+        status = process_info['status']
+        if status == 'connecting':
+            logging.error(f"프로세스 {process_name} 연결 대기 중...")
+            return None
+        elif status == 'stopping':
+            logging.error(f"프로세스 {process_name} 종료 중...")
+            return None
+        
         # 연결 확인
         connection = self.process_connections.get(process_name)
         if not connection:
-            logging.error(f"프로세스 연결 없음: {process_name}")
+            if status == 'running':
+                logging.error(f"프로세스 {process_name} 연결 끊김...")
             return None
             
         # 태스크 ID 생성
@@ -494,7 +585,7 @@ class WorkerManager:
             return None
             
         # 결과 대기
-        if not event.wait(5.0):
+        if not event.wait(10.0):
             logging.warning(f"프로세스 호출 타임아웃: {process_name}.{method_name}")
             process_info['callbacks'].pop(task_id, None)
             return None
@@ -503,6 +594,9 @@ class WorkerManager:
         
     def work(self, worker_name, method_name, *args, callback=None, **kwargs):
         """비동기 함수 호출"""
+        if self.is_shutting_down:
+            return None
+        
         # 프로세스인 경우
         if worker_name in self.processes:
             return self._process_call_async(worker_name, method_name, args, kwargs, callback)
@@ -538,17 +632,30 @@ class WorkerManager:
 
     def _process_call_async(self, process_name, method_name, args, kwargs, callback):
         """프로세스 비동기식 호출"""
+        if self.is_shutting_down:
+            return None
+        
         process_info = self.processes.get(process_name)
         if not process_info:
             logging.error(f"프로세스 없음: {process_name}")
             return False
             
+        # 프로세스 상태 확인
+        status = process_info.get('status')
+        if status == 'connecting':
+            #logging.debug(f"프로세스 {process_name} 연결 대기 중...")
+            return False
+        elif status == 'stopping':
+            logging.debug(f"프로세스 {process_name} 종료 중...")
+            return False
+            
         # 연결 확인
         connection = self.process_connections.get(process_name)
         if not connection:
-            logging.error(f"프로세스 연결 없음: {process_name}")
+            if status == 'running':
+                logging.error(f"프로세스 {process_name} 연결 끊김")
             return False
-            
+        
         # 태스크 ID 생성
         task_id = str(uuid.uuid4())
         
@@ -591,7 +698,12 @@ def process_worker_main(name, target_class, address, authkey):
                 msg = connection.recv()
                 if not msg:
                     continue
-                    
+
+                # 종료 명령 처리
+                if msg.get('command') == 'stop':
+                    logging.info(f"프로세스 {name} 종료 명령 수신")
+                    break
+                                        
                 # 명령 파싱
                 task_id = msg.get('task_id')
                 method_name = msg.get('method')
@@ -628,6 +740,11 @@ def process_worker_main(name, target_class, address, authkey):
     except Exception as e:
         logging.error(f"프로세스 {name} 시작 오류: {e}")
     finally:
+        if hasattr(target, 'close') and callable(target.close):
+            try:
+                target.close()
+            except:
+                pass
         logging.info(f"프로세스 {name} 종료")
 
 # 전역 관리자 인스턴스

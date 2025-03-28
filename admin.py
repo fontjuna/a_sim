@@ -8,7 +8,6 @@ import logging
 import os
 import pandas as pd
 import time
-from server_dbm import DBMServer
 
 class Admin:
     def __init__(self):
@@ -164,7 +163,7 @@ class Admin:
         #if gm.config.gui_on: gm.qwork['msg'].put(Work('주문내용', {'msg': msg}))
         self.com_status_msg('주문내용', job)
 
-        #self.dbm_order_upsert(idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno)
+        self.dbm_order_upsert(idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno)
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
 
     def com_status_msg(self, order, args):
@@ -304,7 +303,7 @@ class Admin:
                     gm.전략쓰레드[data['idx']].order_sell(row, True)
 
         try:
-            #gm.work_dbmq.put(Work('receive_current_price', {'code': code, 'dictFID': dictFID}))
+            la.work('dbm', 'receive_current_price', code=code, dictFID=dictFID)
 
             if gm.잔고목록.in_key(code):
                 row = gm.잔고목록.get(key=code)
@@ -536,8 +535,7 @@ class Admin:
     def pri_fx얻기_체결목록(self, date_text):
         try:
             gm.체결목록.delete()
-            #gm.work_dbmq.put(Answer('execute_query', {'sql': dc.ddb.CONC_SELECT_DATE, 'db': 'db', 'params': (date_text,)}))
-            dict_list = None #gm.answer_dbmq.get()
+            dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
             logging.debug(f'체결목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
             if dict_list is not None and len(dict_list) > 0:
                 gm.체결목록.set(data=dict_list)
@@ -736,7 +734,7 @@ class Admin:
             logging.debug(f'체결잔고 : 주문상태={주문상태} order_no={order_no} ' +
                             f'\n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
 
-            #self.dbm_trade_upsert(dictFID)
+            self.dbm_trade_upsert(dictFID)
 
             if '접수' in 주문상태:
                 self.odr_redeipt_data(dictFID)
@@ -853,7 +851,7 @@ class Admin:
 
             conclusion_row = {'전략': 전략, '종목번호': code, '종목명': name, '매수수량': qty, '매수가': price, '매수금액': amount, '매수일자': dc.td.ToDay, '매수시간': 매매시간, \
                         '매수번호': order_no, '매수전략': 전략정의['매수전략'], '전략명칭': 전략정의['전략명칭']}
-            #gm.work_dbmq.put(Work('conclusion_upsert_buy', {'row': conclusion_row}))
+            la.work('dbm', 'conclusion_upsert_buy', row=conclusion_row)
 
 
         def sell_conclution():
@@ -864,7 +862,7 @@ class Admin:
                 conclusion_row = { k: row[k] for k in gm.tbl.hd체결목록['컬럼'] if k in row }
                 conclusion_row.update({'매도일자': dc.td.ToDay, '매도시간': 매매시간, '매도번호': order_no, '체결가': price, '체결량': qty, '체결누계금액': amount, \
                                         '매도가': price, '매도수량': qty, '매도금액': amount, '단위체결량': 단위체결량, '단위체결가': 단위체결가, '수수료율': gm.수수료율, '거래세율': gm.세금율})
-                #gm.work_dbmq.put(Work('conclusion_upsert_sell', {'row': conclusion_row}))
+                la.work('dbm', 'conclusion_upsert_sell', row=conclusion_row)
             else:
                 logging.error(f"잔고목록 조회 오류: {code} {name} 매도 체결처리 디비 저장 실패 ***")
 
@@ -902,7 +900,7 @@ class Admin:
                 if gm.잔고목록.in_key(code):
                     gm.잔고목록.set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량, '주문가능수량': 주문가능수량, '현재가': 현재가})
             dictFID['주문상태'] = '잔고'
-            #self.dbm_trade_upsert(dictFID)
+            self.dbm_trade_upsert(dictFID)
             msg = f"잔고변경 : {code} {dictFID['종목명']} 보유수량:{보유수량}주 매입단가:{매입단가}원 매입금액:{보유수량 * 매입단가}원 주문가능수량:{주문가능수량}주"
             logging.info(msg)
             logging.debug(f'잔고 dictFID:\n{tabulate(pd.DataFrame([dictFID]), headers="keys", showindex=True, numalign="right")}')
@@ -912,7 +910,7 @@ class Admin:
     # dbm 처리 메소드 -----------------------------------------------------------------------------------------------
 
     def dbm_stop(self):
-        gm.work_dbmq.put(Work('stop', {}))
+        la.work('dbm', 'stop')
         time.sleep(0.1)  # 마지막 메시지 처리를 위한 대기
 
     def dbm_order_upsert(self, idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno):
@@ -930,7 +928,7 @@ class Admin:
                 '계좌번호': accno,
                 '주문번호': ordno
             }
-            gm.work_dbmq.put(Work('table_upsert', {'db': 'daily', 'table': 'orders', 'dict_data': dict_data}))
+            la.work('dbm', 'table_upsert', db='daily', table='orders', dict_data=dict_data)
         except Exception as e:
             logging.error(f"dbm_order_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
             logging.info(f'dbm_order_upsert: {dc.주문유형FID[f"{ordtype:01d}"]} 주문번호={ordno} {code} {name} 수량:{quantity} 주문가격:{price} {"시장가" if hoga == "03" else "지정가"}')
@@ -938,7 +936,7 @@ class Admin:
     def dbm_trade_upsert(self, dictFID):
         try:
             dict_data = {key: dictFID[key] for key in dc.ddb.TRD_COLUMN_NAMES if key in dictFID}
-            gm.work_dbmq.put(Work('table_upsert', {'db': 'daily', 'table': 'trades', 'dict_data': dict_data}))
+            la.work('dbm', 'table_upsert', db='daily', table='trades', dict_data=dict_data)
         except Exception as e:
             logging.error(f"dbm_trade_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
 

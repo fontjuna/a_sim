@@ -1,25 +1,21 @@
 from public import *
-from classes import AnswerProcess, la
+from classes import la
 import logging
 import sqlite3
 from datetime import datetime
 import os
 
 init_logger()
-class DBMServer(AnswerProcess):
-    def __init__(self, name, work_q=None, answer_q=None, sender_q=None):
-        super().__init__(name, work_q=work_q, answer_q=answer_q, sender_q=sender_q)
+class DBMServer:
+    def __init__(self):
         self.daily_db = None
         self.daily_cursor = None
         self.db = None
         self.cursor = None
 
-    def run(self):
         self.init_db()
-        super().run()
 
     def stop(self):
-        super().stop()
         if self.daily_db is not None:
             if self.daily_cursor is not None:
                 self.daily_cursor.close()
@@ -34,7 +30,6 @@ class DBMServer(AnswerProcess):
             self.db.commit()
             self.db.close()
             self.db = None
-
 
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
@@ -104,11 +99,11 @@ class DBMServer(AnswerProcess):
 
     def send_result(self, result, error=None):
         order = 'dbm_query_result'
-        work = Work(order, {
+        work = {
             'result': result,
             'error': error
-        })
-        self.sender_q.put(work)
+        }
+        la.work('aaa', order, **work)
 
     def execute_query(self, sql, db='daily', params=None):
         try:

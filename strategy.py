@@ -8,7 +8,7 @@ import logging
 import threading
 from queue import Queue
 
-class Strategy():
+class Strategy:
     def __init__(self, name, ticker=None, 전략정의=None):
         self.name = name
         self.dict종목정보 = ticker
