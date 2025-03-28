@@ -1,19 +1,25 @@
 from public import init_logger, dc, gm
-from classes import Toast, Work, ModelThread
+from classes import Toast, la
+from server_api import APIServer
+from server_sim import SIMServer
 from gui import GUI
 from admin import Admin
-from server_sim import SIMServer
-from server_api import APIServer
 from server_dbm import DBMServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
+import multiprocessing as mp
 import logging
 import time
 import sys
 import pythoncom
+import queue
+import signal
+import threading
+import traceback
 
 init_logger()
+
 class Main:
     def __init__(self):
         self.app = None
@@ -22,8 +28,9 @@ class Main:
     def init(self):
         self.app = QApplication(sys.argv)
         args = [arg.lower() for arg in sys.argv]
-        gm.pro.main = self
-        gm.pro.admin = Admin()
+        gm.main = self
+        gm.admin = Admin()
+        la.register('aaa', gm.admin, use_thread=False)
         gm.config.gui_on = 'off' not in args
         gm.config.sim_on = 'sim' in args    
         logging.info(f"### {'GUI' if gm.config.gui_on else 'CONSOLE'} Mode 로 시작 합니다. ###")
@@ -38,34 +45,34 @@ class Main:
 
     def set_proc(self):
         try:
+            gm.api = APIServer('api') if not gm.config.sim_on else SIMServer('api')
+            la.register('api', gm.api, use_thread=False)
+            logging.debug('api 서버 생성 완료')
+            la.work('api', 'CommConnect', {'block': True})
             gm.toast = Toast()
-            gm.pro.aaa = ModelThread(name='aaa', qdict=gm.qdict, cls=gm.pro.admin)
-            gm.pro.aaa.start()
-            logging.debug('aaa 쓰레드 시작')
-            gm.pro.gui = GUI() if gm.config.gui_on else None
-            gm.pro.dbm = DBMServer(name='dbm', qdict=gm.qdict)
-            gm.pro.api = APIServer(name='api', qdict=gm.qdict, cls=gm.pro.admin) if not gm.config.sim_on else SIMServer(name='sim', qdict=gm.qdict, cls=gm.pro.admin)
-            logging.debug('api 쓰레드 생성 완료')
-            gm.pro.api.CommConnect(block=False)
-            logging.debug('CommConnect 완료')
+            gm.gui = GUI() if gm.config.gui_on else None
+            if gm.gui: la.register('gui', gm.gui, use_thread=False)
+            la.register('dbm', DBMServer, use_process=True) # 직렬화 문제로 인스턴스를 넘기지 못함, 클래스를 넘겨서 프로세스내에서 인스턴스 생성
+            logging.debug('dbm 프로세스 시작')
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
 
     def show(self):
         if not gm.config.gui_on: return
-        gm.pro.gui.gui_show()
+        la.work('gui', 'gui_show')
 
     def prepare(self):
         try:
             logging.debug('prepare : 로그인 대기 시작')
-            while not gm.pro.api.connected: pythoncom.PumpWaitingMessages()
-            logging.debug(f'***** {gm.pro.api.name.upper()} connected *****')
-            gm.pro.dbm.start()
-            gm.pro.dbm.init_db()
-            gm.pro.admin.init()
+            while True:
+                pythoncom.PumpWaitingMessages()
+                if la.answer('api', 'api_connected'): break
+                time.sleep(0.1)
+            logging.debug(f'***** {gm.api.name.upper()} connected *****')
+            la.work('aaa', 'init')
             logging.debug('prepare : admin 초기화 완료')
-            gm.pro.gui.init()
+            if gm.config.gui_on: la.work('gui', 'init')
             logging.debug('prepare : gui 초기화 완료')
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -73,7 +80,7 @@ class Main:
 
     def run(self):
         if gm.config.gui_on: self.splash.close()
-        gm.pro.admin.trade_start()
+        la.work('aaa', 'trade_start')
         return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
@@ -98,25 +105,19 @@ class Main:
         self.run()
 
     def cleanup(self):
-        for i in range(len(gm.전략쓰레드)): gm.전략쓰레드[i].stop()
-        gm.pro.dbm.stop()
-        #gm.pro.dbm.join(timeout=1)        
-        gm.pro.aaa.stop()
-        # gm.pro.aaa.wait()
-        #gm.pro.admin.cdn_fx중지_전략매매()
-        gm.pro.api.stop()
-
-        # Python의 Queue는 내부적으로 데몬 쓰레드인 QueueFeederThread를 사용합니다. 
-        # 큐에 데이터가 남아있으면 이 쓰레드가 계속 실행 상태로 남아있어 프로그램이 완전히 종료되지 않습니다.
-        for q in gm.qdict.values():
-            while not q.request.empty(): q.request.get()
-            while not q.answer.empty(): q.answer.get()
-            while not q.reply.empty(): q.reply.get()
-
-        self.cleanup_flag = True 
-        self.app.quit()
-        logging.info("cleanup")
-
+        try:
+            la.is_shutting_down = True
+            for t in gm.전략쓰레드:
+                la.stop_worker(t.name)
+            la.stop_worker('api')
+            la.stop_worker('dbm')
+        except Exception as e:
+            logging.error(f"Cleanup 중 에러: {str(e)}")
+        finally:
+            self.cleanup_flag = True
+            if hasattr(self, 'app'): self.app.quit()
+            logging.info("cleanup completed")
+            
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support() # 없으면 실행파일(exe)로 실행시 DBMServer멀티프로세스 생성시 프로그램 리셋되어 시작 반복 하는 것 방지

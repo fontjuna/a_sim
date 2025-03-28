@@ -2168,7 +2168,7 @@
         <x>0</x>
         <y>140</y>
         <width>321</width>
-        <height>201</height>
+        <height>261</height>
        </rect>
       </property>
       <property name="title">
@@ -2180,39 +2180,7 @@
          <x>10</x>
          <y>20</y>
          <width>301</width>
-         <height>181</height>
-        </rect>
-       </property>
-       <property name="sizeAdjustPolicy">
-        <enum>QAbstractScrollArea::AdjustToContents</enum>
-       </property>
-       <property name="editTriggers">
-        <set>QAbstractItemView::NoEditTriggers</set>
-       </property>
-       <property name="sortingEnabled">
-        <bool>false</bool>
-       </property>
-      </widget>
-     </widget>
-     <widget class="QGroupBox" name="groupBox_17">
-      <property name="geometry">
-       <rect>
-        <x>320</x>
-        <y>350</y>
-        <width>311</width>
-        <height>101</height>
-       </rect>
-      </property>
-      <property name="title">
-       <string>주문전송종목</string>
-      </property>
-      <widget class="QTableWidget" name="tblSendList">
-       <property name="geometry">
-        <rect>
-         <x>10</x>
-         <y>20</y>
-         <width>291</width>
-         <height>71</height>
+         <height>241</height>
         </rect>
        </property>
        <property name="sizeAdjustPolicy">
@@ -2229,10 +2197,10 @@
      <widget class="QGroupBox" name="groupBox_18">
       <property name="geometry">
        <rect>
-        <x>320</x>
-        <y>460</y>
-        <width>311</width>
-        <height>101</height>
+        <x>0</x>
+        <y>410</y>
+        <width>631</width>
+        <height>151</height>
        </rect>
       </property>
       <property name="title">
@@ -2243,40 +2211,8 @@
         <rect>
          <x>10</x>
          <y>20</y>
-         <width>291</width>
-         <height>71</height>
-        </rect>
-       </property>
-       <property name="sizeAdjustPolicy">
-        <enum>QAbstractScrollArea::AdjustToContents</enum>
-       </property>
-       <property name="editTriggers">
-        <set>QAbstractItemView::NoEditTriggers</set>
-       </property>
-       <property name="sortingEnabled">
-        <bool>false</bool>
-       </property>
-      </widget>
-     </widget>
-     <widget class="QGroupBox" name="groupBox_20">
-      <property name="geometry">
-       <rect>
-        <x>320</x>
-        <y>140</y>
-        <width>311</width>
-        <height>101</height>
-       </rect>
-      </property>
-      <property name="title">
-       <string>매수대기종목</string>
-      </property>
-      <widget class="QTableWidget" name="tblWaitListBuy">
-       <property name="geometry">
-        <rect>
-         <x>10</x>
-         <y>20</y>
-         <width>291</width>
-         <height>71</height>
+         <width>611</width>
+         <height>121</height>
         </rect>
        </property>
        <property name="sizeAdjustPolicy">
@@ -3115,45 +3051,13 @@
        </property>
       </widget>
      </widget>
-     <widget class="QGroupBox" name="groupBox_21">
-      <property name="geometry">
-       <rect>
-        <x>320</x>
-        <y>250</y>
-        <width>311</width>
-        <height>101</height>
-       </rect>
-      </property>
-      <property name="title">
-       <string>매도대기종목</string>
-      </property>
-      <widget class="QTableWidget" name="tblWaitListSell">
-       <property name="geometry">
-        <rect>
-         <x>10</x>
-         <y>20</y>
-         <width>291</width>
-         <height>71</height>
-        </rect>
-       </property>
-       <property name="sizeAdjustPolicy">
-        <enum>QAbstractScrollArea::AdjustToContents</enum>
-       </property>
-       <property name="editTriggers">
-        <set>QAbstractItemView::NoEditTriggers</set>
-       </property>
-       <property name="sortingEnabled">
-        <bool>false</bool>
-       </property>
-      </widget>
-     </widget>
      <widget class="QGroupBox" name="groupBox_24">
       <property name="geometry">
        <rect>
-        <x>0</x>
-        <y>350</y>
-        <width>321</width>
-        <height>211</height>
+        <x>320</x>
+        <y>140</y>
+        <width>311</width>
+        <height>261</height>
        </rect>
       </property>
       <property name="title">
@@ -3162,10 +3066,10 @@
       <widget class="QTableWidget" name="tblConditionSell">
        <property name="geometry">
         <rect>
-         <x>10</x>
+         <x>0</x>
          <y>20</y>
          <width>301</width>
-         <height>181</height>
+         <height>241</height>
         </rect>
        </property>
        <property name="sizeAdjustPolicy">
@@ -5246,6 +5150,102 @@
        </property>
        <property name="readOnly">
         <bool>true</bool>
+       </property>
+      </widget>
+     </widget>
+     <widget class="QGroupBox" name="groupBox_20">
+      <property name="geometry">
+       <rect>
+        <x>180</x>
+        <y>340</y>
+        <width>311</width>
+        <height>101</height>
+       </rect>
+      </property>
+      <property name="title">
+       <string>매수대기종목</string>
+      </property>
+      <widget class="QTableWidget" name="tblWaitListBuy">
+       <property name="geometry">
+        <rect>
+         <x>10</x>
+         <y>20</y>
+         <width>291</width>
+         <height>71</height>
+        </rect>
+       </property>
+       <property name="sizeAdjustPolicy">
+        <enum>QAbstractScrollArea::AdjustToContents</enum>
+       </property>
+       <property name="editTriggers">
+        <set>QAbstractItemView::NoEditTriggers</set>
+       </property>
+       <property name="sortingEnabled">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </widget>
+     <widget class="QGroupBox" name="groupBox_21">
+      <property name="geometry">
+       <rect>
+        <x>190</x>
+        <y>450</y>
+        <width>311</width>
+        <height>101</height>
+       </rect>
+      </property>
+      <property name="title">
+       <string>매도대기종목</string>
+      </property>
+      <widget class="QTableWidget" name="tblWaitListSell">
+       <property name="geometry">
+        <rect>
+         <x>10</x>
+         <y>20</y>
+         <width>291</width>
+         <height>71</height>
+        </rect>
+       </property>
+       <property name="sizeAdjustPolicy">
+        <enum>QAbstractScrollArea::AdjustToContents</enum>
+       </property>
+       <property name="editTriggers">
+        <set>QAbstractItemView::NoEditTriggers</set>
+       </property>
+       <property name="sortingEnabled">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </widget>
+     <widget class="QGroupBox" name="groupBox_17">
+      <property name="geometry">
+       <rect>
+        <x>190</x>
+        <y>570</y>
+        <width>311</width>
+        <height>101</height>
+       </rect>
+      </property>
+      <property name="title">
+       <string>주문전송종목</string>
+      </property>
+      <widget class="QTableWidget" name="tblSendList">
+       <property name="geometry">
+        <rect>
+         <x>10</x>
+         <y>20</y>
+         <width>291</width>
+         <height>71</height>
+        </rect>
+       </property>
+       <property name="sizeAdjustPolicy">
+        <enum>QAbstractScrollArea::AdjustToContents</enum>
+       </property>
+       <property name="editTriggers">
+        <set>QAbstractItemView::NoEditTriggers</set>
+       </property>
+       <property name="sortingEnabled">
+        <bool>false</bool>
        </property>
       </widget>
      </widget>
