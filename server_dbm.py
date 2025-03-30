@@ -140,7 +140,6 @@ class DBMServer:
             params = tuple(row.values())
             sql = f"INSERT OR REPLACE INTO conclusion ({columns}) VALUES ({column_str})"
             self.execute_query(sql, db='db', params=params)
-            logging.debug(f'conclusion_upsert_buy: {params}')
         except Exception as e:
             logging.error(f"conclusion_upsert_buy error: {e}", exc_info=True)
 
@@ -183,7 +182,6 @@ class DBMServer:
             params = tuple(val_list)
             sql = f"INSERT OR REPLACE INTO conclusion ({columns}) VALUES ({column_str})"
             self.execute_query(sql, db='db', params=params)
-            logging.debug(f'conclusion_upsert_sell: {params}')
         except Exception as e:
             logging.error(f"conclusion_upsert_sell error: {e}", exc_info=True)
 
