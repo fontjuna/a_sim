@@ -13,10 +13,7 @@ import logging
 import time
 import sys
 import pythoncom
-import queue
-import signal
-import threading
-import traceback
+import os
 
 init_logger()
 
@@ -28,9 +25,6 @@ class Main:
     def init(self):
         self.app = QApplication(sys.argv)
         args = [arg.lower() for arg in sys.argv]
-        gm.main = self
-        gm.admin = Admin()
-        la.register('aaa', gm.admin, use_thread=False)
         gm.config.gui_on = 'off' not in args
         gm.config.sim_on = 'sim' in args    
         logging.info(f"### {'GUI' if gm.config.gui_on else 'CONSOLE'} Mode 로 시작 합니다. ###")
@@ -45,22 +39,23 @@ class Main:
 
     def set_proc(self):
         try:
-            gm.api = APIServer('api') if not gm.config.sim_on else SIMServer('api')
-            la.register('api', gm.api, use_thread=False)
-            logging.debug('api 서버 생성 완료')
-            la.work('api', 'CommConnect', {'block': True})
             gm.toast = Toast()
+            gm.main = self
+            gm.admin = Admin()
+            gm.api = APIServer('api') if not gm.config.sim_on else SIMServer('api')
             gm.gui = GUI() if gm.config.gui_on else None
-            if gm.gui: la.register('gui', gm.gui, use_thread=False)
+            la.register('api', gm.api, use_thread=False)
+            la.work('api', 'CommConnect', block=False)
+            la.register('aaa', gm.admin, use_thread=False)
             la.register('dbm', DBMServer, use_process=True) # 직렬화 문제로 인스턴스를 넘기지 못함, 클래스를 넘겨서 프로세스내에서 인스턴스 생성
-            logging.debug('dbm 프로세스 시작')
+            logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
 
     def show(self):
         if not gm.config.gui_on: return
-        la.work('gui', 'gui_show')
+        gm.gui.gui_show()
 
     def prepare(self):
         try:
@@ -72,7 +67,7 @@ class Main:
             logging.debug(f'***** {gm.api.name.upper()} connected *****')
             la.work('aaa', 'init')
             logging.debug('prepare : admin 초기화 완료')
-            if gm.config.gui_on: la.work('gui', 'init')
+            if gm.config.gui_on: gm.gui.init()
             logging.debug('prepare : gui 초기화 완료')
         except Exception as e:
             logging.error(str(e), exc_info=e)

@@ -18,14 +18,10 @@ class GUI(QMainWindow, form_class):
     def __init__(self):
         super().__init__()
         self.name = 'gui'
-        self.gui_q = Queue()
-        self.msg_q = Queue()
         self.setupUi(self)
         self.refresh_data_timer = QTimer()
         self.refresh_data_timer.timeout.connect(self.gui_refresh_data)
-
-        gm.qwork['gui'] = self.gui_q
-        gm.qwork['msg'] = self.msg_q
+        gm.qwork['gui'] = Queue()
 
     def gui_show(self):
         self.show()
@@ -66,15 +62,8 @@ class GUI(QMainWindow, form_class):
     # 화면 갱신 ---------------------------------------------------------------------------------------------
     def gui_refresh_data(self):
         try:
-            if not gm.qwork['gui'].empty(): # bus 역할 함
-                work = gm.qwork['gui'].get()
-                if hasattr(self, work.order):
-                    getattr(self, work.order)(**work.job)
-            self.gui_update_display()
-            self.gui_fx갱신_계좌정보()
-            self.gui_fx갱신_조건정보()
-            self.gui_fx갱신_주문정보()
-
+            self.gui_update_status()
+            self.gui_fx갱신_목록테이블()
 
         except Exception as e:
             logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
@@ -87,7 +76,7 @@ class GUI(QMainWindow, form_class):
     def set_widgets(self):
         logging.debug('')
         try:
-            self.setWindowTitle("리베라니모 키움증권 자동매매 프로그램 - AAA v2025.0317")
+            self.setWindowTitle("리베라니모 키움증권 자동매매 프로그램 - v2025.0330")
             self.setWindowIcon(QIcon(os.path.join(get_path(dc.fp.RESOURCE_PATH), "aaa.ico")))
 
             self.btnSimulation_start.setEnabled(True)
@@ -165,7 +154,7 @@ class GUI(QMainWindow, form_class):
         """10개의 전략탭 초기화"""
         try:
             tab_widget = self.findChild(QTabWidget, "tabDeca")
-            for i in range(1, 11):
+            for i in range(1, 6):
                 seq = f'{i:02d}'
                 current_tab = tab_widget.widget(i-1)
 
@@ -628,7 +617,7 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'색상 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_fx갱신_계좌정보(self):
+    def gui_fx갱신_목록테이블(self):
         try:
             row = gm.잔고합산.get(key=0)
             if row is None: row = {}
@@ -637,27 +626,14 @@ class GUI(QMainWindow, form_class):
             self.lblAssets.setText(f"{int(row.get('추정예탁자산', 0)):,}")
             self.gui_set_color(self.lblProfit, int(row.get('총평가손익금액', 0)))
             self.gui_set_color(self.lblFrofitRate, float(row.get('총수익률(%)', 0.0)))
-            #self.tblBalanceHeld.clearContents()
             gm.잔고목록.update_table_widget(self.tblBalanceHeld, stretch=False)
-        except Exception as e:
-            logging.error(f'계좌정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_fx갱신_조건정보(self):
-        try:
-            #self.tblConditionBuy.clearContents()
             gm.매수조건목록.update_table_widget(self.tblConditionBuy)
-            #self.tblConditionSell.clearContents()
             gm.매도조건목록.update_table_widget(self.tblConditionSell)
-
-        except Exception as e:
-            logging.error(f'조건정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def gui_fx갱신_주문정보(self):
-        try:
             gm.주문목록.update_table_widget(self.tblReceiptList)
 
         except Exception as e:
-            logging.error(f'주문정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.error(f'목록테이블 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_fx갱신_전략정의(self):
         try:
@@ -755,7 +731,7 @@ class GUI(QMainWindow, form_class):
             logging.error(f'주문설정 표시 오류: {type(e).__name__} - {e}', exc_info=True)
 
     # 상태 표시 -------------------------------------------------------------------------------------
-    def gui_update_display(self):
+    def gui_update_status(self, data=None):
         try:
             # 기본 상태바 업데이트
             now = datetime.now()
@@ -765,8 +741,8 @@ class GUI(QMainWindow, form_class):
             self.lbl2.setStyleSheet("color: green;" if gm.api.connected else "color: red;")
 
             # 큐 메시지 처리
-            while not gm.qwork['msg'].empty():
-                data = gm.qwork['msg'].get()
+            while not gm.qwork['gui'].empty():
+                data = gm.qwork['gui'].get()
                 if data.order == '주문내용':
                     self.gui_fx게시_주문내용(data.job['msg'])
                 elif data.order == '검색내용':
