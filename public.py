@@ -734,13 +734,7 @@ class GlobalMemory:
     qwork = {} #QDict().qdict
     qanswer = {} #QDict().qanswer
 
-    work_dbmq = None
-    answer_dbmq = None
-    work_aaaq = None
-    answer_aaaq = None
-
     tbl = DefineTbl()
-    send_order_cmd = None # ThreadSafeList()
     잔고합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고합산))
     잔고목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고목록))
     매수조건목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
@@ -754,25 +748,36 @@ class GlobalMemory:
     주문목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd주문목록))
     l2잔고합산_copy = None
     l2손익합산 = 0
+    # 서버 호출 제한 체크
+    req = None # 요청 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (CommRqData + CommKwRqData + SendCondition 포함) - 1 초마다 리셋 됨
+    ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨
     strategy_row = None
     basic_strategy = None
     전략설정 = None # json
     전략쓰레드 = None
-    # 서버 호출 제한 체크
-    req = None # 요청 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (CommRqData + CommKwRqData + SendCondition 포함) - 1 초마다 리셋 됨
-    ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨
     매수문자열들 = [''] * 11                # ['000 : 전략01', '', ...] # SendConditionStop 에서 사용, OnReceiveRealCondition 에서 쓰레드 분기
     매도문자열들 = [''] * 11                # ['000 : 전략01', '', ...] # SendConditionStop 에서 사용, OnReceiveRealCondition 에서 쓰레드 분기
     dict잔고종목감시 = {}
     dict조건종목감시 = {}
-    dict종목정보 = None
-    dict주문대기종목 = {} # 주문대기종목 = {종목코드: 전략번호}
+    dict종목정보 = None # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
+    dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
     json_counter_tickers = {}
     json_counter_strategy = {}
     수수료율 = 0.0
     세금율 = 0.0
-    temp_order_count = 0
     holdings = {}
+
+    def send_status_msg(self, order, args):
+        if order=='주문내용':
+            job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']} 주문수량:{args['quantity']}주 / 주문가:{args['price']}원 주문번호:{args.get('ordno', '')}"}
+        elif order=='검색내용':
+            job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']}"}
+        elif order=='상태바':
+            job = {'msg': args}
+
+        if self.config.gui_on:
+            self.qwork['gui'].put(Work(order=order, job=job))
+
 gm = GlobalMemory()
 
 def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):

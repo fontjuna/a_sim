@@ -190,9 +190,7 @@ class Strategy:
         is_ok, send_data, reason = self.is_buy(code, rqname, price) # rqname : 전략
         logging.info(f'매수: {self.전략} - {reason}\nsend_data={send_data}')
         if is_ok:
-            #self.cmd_list.put(send_data)
             send_data['idx'] = self.전략번호
-            #gm.qwork['aaa'].put(Work('com_SendOrder', send_data))
             la.work('aaa', 'com_SendOrder', **send_data)
         else:
             key = f'{code}_매수'
@@ -314,14 +312,10 @@ class Strategy:
         if is_ok:
             if isinstance(send_data, list):
                 for data in send_data:
-                    #self.cmd_list.put(data)
                     data['idx'] = self.전략번호
-                    #gm.qwork['aaa'].put(Work('com_SendOrder', data))
                     la.work('aaa', 'com_SendOrder', **data)
             else:
-                #self.cmd_list.put(send_data)
                 send_data['idx'] = self.전략번호
-                #gm.qwork['aaa'].put(Work('com_SendOrder', send_data))
                 la.work('aaa', 'com_SendOrder', **send_data)
         else:
             key = f'{row["종목번호"]}_매도'
@@ -346,7 +340,7 @@ class Strategy:
                 'ordno': order_no
             }
             logging.debug(f'주문취소: {self.전략} - {order_no} {send_data}')
-            gm.send_order_cmd.put(send_data)
+            la.work('aaa', 'com_SendOrder', **send_data)
         except Exception as e:
             logging.error(f'주문취소 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -389,7 +383,7 @@ class Strategy:
                 gm.json_counter_strategy[self.전략] = {'전략명칭': self.전략명칭, '체결횟수': self.체결횟수, '남은횟수': self.체결횟수}
 
             if gm.config.gui_on: 
-                gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any(gm.매수문자열들) or any(gm.매도문자열들)}))
+                la.work('gui', 'set_strategy_toggle', run=(any(gm.매수문자열들) or any(gm.매도문자열들)))
 
         except Exception as e:
             logging.error(f'전략 초기화 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -463,11 +457,6 @@ class Strategy:
         logging.debug(f'조건 검색 요청: 전략={self.전략} 화면={screen} 인덱스={cond_index:03d} 수식명={cond_name} 구분={trade_type}')
         condition_list = []
         try:
-            #gm.qwork['aaa'].put(Answer('com_SendCondition', {'screen': screen, 'cond_name': cond_name, 'cond_index': cond_index, 'search': 1}))
-            #logging.debug(f'조건 검색 요청: {screen} {cond_name} {cond_index} {trade_type}')
-            #data = gm.qanswer['aaa'].get() #gm.admin.com_SendCondition(screen, cond_name, cond_index, 1) # +++++++ SendCondition
-            #logging.debug(f'조건 검색 결과: {data}')
-            #condition_list, bool_ok = gm.admin.com_SendCondition(screen, cond_name, cond_index, 1)
             job = {'screen': screen, 'cond_name': cond_name, 'cond_index': cond_index, 'search': 1}
             condition_list, bool_ok = la.answer('aaa', 'com_SendCondition', **job)
             return condition_list, bool_ok
@@ -523,7 +512,6 @@ class Strategy:
             if kind == '매도':
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
-                    #logging.debug(f'매도조건목록 추가 확인 :\n매도조건목록=\n{tabulate(gm.매도조건목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
                 if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음
                 if gm.잔고목록.get(key=code, column='주문가능수량') == 0: return # 매도 가능 수량 없음
                 if self.전략 != gm.잔고목록.get(key=code, column='전략'): return # 다른 전략 종목
@@ -534,9 +522,7 @@ class Strategy:
             if kind == '매수':
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
-                    la.work('aaa', 'com_status_msg', order='검색내용', args={"kind": f'{kind}편입', "전략": self.전략, "code": code, "name": 종목명})
-                    #if gm.config.gui_on: gm.qwork['msg'].put(Work('검색내용', {'msg': f'{kind}편입 : {self.전략} {code} {종목명}'}))
-                    #logging.debug(f'매수조건목록 추가 확인 :\n매수조건목록=\n{tabulate(gm.매수조건목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                    gm.send_status_msg('검색내용', {'kind': f'{kind}편입', '전략': self.전략, 'code': code, 'name': 종목명})
                 if gm.잔고목록.in_key(code): return # 기 보유종목
                 if gm.주문목록.in_column('종목코드', code): return # 주문 처리 중 - 여기에 있어야 메세지 생략 안 함     
 
@@ -553,8 +539,7 @@ class Strategy:
                 row = gm.잔고목록.get(key=code)
                 self.order_sell(row, True)
             else:
-                gm.dict주문대기종목[code] = {'idx': self.전략번호, 'kind': kind}
-            #logging.debug(f'주문목록 키 확인 :\n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                gm.dict주문대기종목.set(key=code, value={'idx': self.전략번호, 'kind': kind})
   
             logging.info(f'{kind}편입 : {self.전략} {self.전략명칭} {code} {종목명}')
   
@@ -567,17 +552,12 @@ class Strategy:
             if kind == '매도':
                 if gm.매도조건목록.in_key(code):
                     success = gm.매도조건목록.delete(key=code)
-                    #logging.debug(f'매도조건목록 삭제 확인 : {code} {name} : result={success}')
-                    #logging.debug(f'매도조건목록 삭제 확인 :\n매도조건목록=\n{tabulate(gm.매도조건목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
                 return
 
             if gm.매수조건목록.in_key(code):
                 logging.info(f'{kind}이탈: {self.전략} {self.전략명칭} {code} {name}')
-                #gm.qwork['aaa'].put(Work('com_status_msg', {'order': '검색내용', 'args': {"kind": f'{kind}이탈', "전략": self.전략, "code": code, "name": name}}))
-                la.work('aaa', 'com_status_msg', order='검색내용', args={"kind": f'{kind}이탈', "전략": self.전략, "code": code, "name": name})
+                gm.send_status_msg('검색내용', {'kind': f'{kind}이탈', '전략': self.전략, 'code': code, 'name': name})
                 success = gm.매수조건목록.delete(key=code)
-                #logging.debug(f'매수조건목록 삭제 확인 : {code} {name} : result={success}')
-                #logging.debug(f'매수조건목록 삭제 확인 :\n매수조건목록=\n{tabulate(gm.매수조건목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
 
             # 실시간 감시 해지하지 않는다.
             if len(gm.dict조건종목감시) > 90 and code in gm.dict조건종목감시:
