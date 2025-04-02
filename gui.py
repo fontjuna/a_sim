@@ -1,12 +1,11 @@
-from public import get_path, gm, dc, Work, save_json, load_json, hoga
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox
-from PyQt5.QtWidgets import QTableWidgetItem, QHeaderView, QComboBox, QSpinBox, QDoubleSpinBox, QRadioButton, QTimeEdit, QComboBox
+from public import get_path, gm, dc, save_json, load_json, hoga
+from classes import la
+from PyQt5.QtWidgets import QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox
 from PyQt5.QtGui import QIcon, QTextCursor
-from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate, Qt
+from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate
 from PyQt5 import uic
 from datetime import datetime, timedelta
 from queue import Queue
-import multiprocessing as mp
 import logging
 import os
 
@@ -21,7 +20,9 @@ class GUI(QMainWindow, form_class):
         self.setupUi(self)
         self.refresh_data_timer = QTimer()
         self.refresh_data_timer.timeout.connect(self.gui_refresh_data)
+
         gm.qwork['gui'] = Queue()
+        gm.qwork['msg'] = Queue()
 
     def gui_show(self):
         self.show()
@@ -62,6 +63,10 @@ class GUI(QMainWindow, form_class):
     # 화면 갱신 ---------------------------------------------------------------------------------------------
     def gui_refresh_data(self):
         try:
+            if not gm.qwork['gui'].empty():
+                data = gm.qwork['gui'].get()
+                getattr(self, data.order)(**data.job)
+
             self.gui_update_status()
             self.gui_fx갱신_목록테이블()
 
@@ -78,9 +83,6 @@ class GUI(QMainWindow, form_class):
         try:
             self.setWindowTitle("리베라니모 키움증권 자동매매 프로그램 - v2025.0330")
             self.setWindowIcon(QIcon(os.path.join(get_path(dc.fp.RESOURCE_PATH), "aaa.ico")))
-
-            self.btnSimulation_start.setEnabled(True)
-            self.btnSimulation_stop.setEnabled(False)
 
             today = QDate.currentDate()
             min_date = today.addMonths(-2)
@@ -140,9 +142,12 @@ class GUI(QMainWindow, form_class):
             self.rbInfo.toggled.connect(lambda: self.gui_log_level_set('INFO', self.rbInfo.isChecked()))
             self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
 
+            # 수동 주문 / 주문 취소
             self.btnTrOrder.clicked.connect(self.gui_tr_order)                          # 매매 주문 
-            self.leTrCode.editingFinished.connect(self.gui_tr_code_changed)            # 종목코드 변경
-            self.tblBalanceHeld.cellClicked.connect(self.gui_balance_held_select)  # 전략설정 선택
+            self.btnTrCancel.clicked.connect(self.gui_tr_cancel)                        # 매매 취소 
+            self.leTrCode.editingFinished.connect(self.gui_tr_code_changed)             # 종목코드 변경
+            self.tblBalanceHeld.cellClicked.connect(self.gui_balance_held_select)       # 잔고목록 선택
+            self.tblReceiptList.cellClicked.connect(self.gui_receipt_list_select)       # 주문목록 선택
 
             self.gui_tabs_init()
 
@@ -494,7 +499,23 @@ class GUI(QMainWindow, form_class):
             self.spbTrPrice.setValue(row['현재가'])
             self.spbTrQty.setValue(row['보유수량'])
             self.rbTrSell.setChecked(True)
+            self.leTrStrategy.setText(row['전략'])
         #self.tblBalanceHeld.clearSelection()  
+
+    def gui_receipt_list_select(self, row_index, col_index):
+        code = self.tblReceiptList.item(row_index, 3).text()
+        kind = self.tblReceiptList.item(row_index, 1).text()
+        key = f'{code}_{kind}'
+        logging.debug(f'cell = [{row_index:02d}:{col_index:02d}] code = {code} kind = {kind} key = {key}')
+        row = gm.주문목록.get(key=key)
+        if row:
+            self.leTrCode.setText(row['종목코드'])
+            self.leTrName.setText(row['종목명'])
+            self.spbTrPrice.setValue(row['주문가격'])
+            self.spbTrQty.setValue(row['주문수량'])
+            self.rbTrSell.setChecked(True if row['구분'] == '매도' else False)
+            self.leTrStrategy.setText(row['전략'])
+            self.leTrCancelKey.setText(row['키'])
 
     def gui_tr_code_changed(self):
         code = self.leTrCode.text().strip()
@@ -502,6 +523,8 @@ class GUI(QMainWindow, form_class):
             self.leTrName.setText(gm.api.GetMasterCodeName(code).strip())
 
     def gui_tr_order(self):
+        전략 = self.leTrStrategy.text().strip()
+        전략번호 = int(전략[-2:])
         code = self.leTrCode.text().strip()
         price = self.spbTrPrice.value()
         qty = self.spbTrQty.value()
@@ -533,7 +556,8 @@ class GUI(QMainWindow, form_class):
                 QMessageBox.warning(self, '알림', '보유 중인 종목이 없습니다.')
                 return
             
-        rqname = '수동매수' if self.rbTrBuy.isChecked() else '수동매도'
+        kind = '매수' if self.rbTrBuy.isChecked() else '매도'
+        rqname = f'수동{kind}'
         send_data = {
             'rqname': rqname,
             'screen': dc.scr.화면[rqname],
@@ -545,11 +569,9 @@ class GUI(QMainWindow, form_class):
             'hoga': '00' if self.rbTrLimit.isChecked() else '03',
             'ordno': ''
         }
-        if self.rbTrBuy.isChecked():
-            kind = '매수'
+        if kind == '매수':
             gm.api.SetRealReg(dc.scr.화면['실시간감시'], code, '10', '1')
         else:
-            kind = '매도'
             if row['주문가능수량'] == 0:
                 QMessageBox.warning(self, '알림', '주문가능수량이 없습니다.')
                 return
@@ -557,10 +579,42 @@ class GUI(QMainWindow, form_class):
             gm.잔고목록.set(key=code, data=row)
 
         key = f'{code}_{kind}'
-        data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
+        data={'키': key, '구분': kind, '상태': '요청', '전략': 전략, '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 
         # 주문 전송
-        gm.admin.com_SendOrder(0, **send_data)
+        gm.admin.com_SendOrder(전략번호, **send_data)
+
+    def gui_tr_cancel(self):
+        key = self.leTrCancelKey.text().strip()
+        row = gm.주문목록.get(key=key)
+        if not row:
+            QMessageBox.warning(self, '알림', '주문접수목록에서 취소할 항목을 선택하세요.')
+            return
+        if row['상태'] != '접수':
+            gm.주문목록.delete(key=key)
+            return
+        
+        전략 = row['전략']
+        전략번호 = int(전략[-2:])
+        odrerno = row['주문번호']
+        code = row['종목코드']
+
+        kind = '매수' if self.rbTrBuy.isChecked() else '매도'
+        rqname = f'수취{kind}'
+        send_data = {
+            'rqname': rqname,
+            'screen': dc.scr.화면[rqname],
+            'accno': gm.config.account,
+            'ordtype': 3 if kind == '매수' else 4,
+            'code': code,
+            'quantity': 0,
+            'price': 0,
+            'hoga': '03',
+            'ordno': odrerno
+        }
+
+        # 주문 전송
+        gm.admin.com_SendOrder(전략번호, **send_data)
 
     # 화면 갱신 -----------------------------------------------------------------------------------------------------------------
     def gui_fx채움_계좌콤보(self):
@@ -739,10 +793,11 @@ class GUI(QMainWindow, form_class):
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
             self.lbl2.setText('연결됨' if gm.api.connected else '끊어짐')
             self.lbl2.setStyleSheet("color: green;" if gm.api.connected else "color: red;")
+            self.lbl4.setText(la.answer('aaa', 'com_market_status'))
 
             # 큐 메시지 처리
-            while not gm.qwork['gui'].empty():
-                data = gm.qwork['gui'].get()
+            while not gm.qwork['msg'].empty():
+                data = gm.qwork['msg'].get()
                 if data.order == '주문내용':
                     self.gui_fx게시_주문내용(data.job['msg'])
                 elif data.order == '검색내용':

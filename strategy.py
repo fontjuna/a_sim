@@ -1,12 +1,8 @@
 from classes import la
-from public import *
+from public import dc, gm, hoga
 from PyQt5.QtCore import QTimer
-from tabulate import tabulate
 from datetime import datetime
-from typing import Any
 import logging
-import threading
-from queue import Queue
 
 class Strategy:
     def __init__(self, name, ticker=None, 전략정의=None):
@@ -114,7 +110,7 @@ class Strategy:
     def is_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         """매수 조건 충족 여부를 확인하는 메소드"""
         if not gm.config.sim_on:
-            status_market = self.com_market_status()
+            status_market = la.answer('aaa', 'com_market_status')
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
         if not code:
@@ -203,7 +199,7 @@ class Strategy:
         """매도 조건 충족 여부를 확인하는 메소드"""
         try:
             if not gm.config.sim_on:
-                status_market = self.com_market_status()
+                status_market = la.answer('aaa', 'com_market_status')
                 if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
             code = row.get('종목번호', '')          # 종목번호 ='999999' 일 때 당일청산 매도
@@ -359,19 +355,6 @@ class Strategy:
             self.clear_timer.setSingleShot(True)
             self.clear_timer.start(delay_ms)
 
-    def com_market_status(self):
-        now = datetime.now()
-        time = int(now.strftime("%H%M%S"))
-        if time < 83000: return dc.ms.장종료
-        elif time < 84000: return dc.ms.장전시간외종가
-        elif time < 90000: return dc.ms.장전동시호가
-        elif time < 152000: return dc.ms.장운영중
-        elif time < 153000: return dc.ms.장마감동시호가
-        elif time < 154000: return dc.ms.장마감
-        elif time < 160000: return dc.ms.장후시간외종가
-        elif time < 180000: return dc.ms.시간외단일가
-        else: return dc.ms.장종료
-
     def cdn_fx실행_전략초기화(self):
         try:
             logging.debug(f'전략 초기화 시작: {self.전략} {self.전략명칭}')
@@ -382,8 +365,8 @@ class Strategy:
             if gm.json_counter_strategy[self.전략]['전략명칭'] == self.전략명칭:
                 gm.json_counter_strategy[self.전략] = {'전략명칭': self.전략명칭, '체결횟수': self.체결횟수, '남은횟수': self.체결횟수}
 
-            if gm.config.gui_on: 
-                la.work('gui', 'set_strategy_toggle', run=(any(gm.매수문자열들) or any(gm.매도문자열들)))
+            # if gm.config.gui_on: 
+            #     la.work('gui', 'set_strategy_toggle', run=(any(gm.매수문자열들) or any(gm.매도문자열들)))
 
         except Exception as e:
             logging.error(f'전략 초기화 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -420,6 +403,7 @@ class Strategy:
             if self.start_timer:
                 self.start_timer.stop()
                 self.start_timer = None
+                
             self.cdn_fx중지_전략매매(buy_stop, sell_stop)
 
             if buy_stop:
@@ -427,9 +411,9 @@ class Strategy:
             if sell_stop:
                 gm.매도문자열들[self.전략번호] = None
 
-            if buy_stop and sell_stop:
-                gm.전략쓰레드[self.전략번호] = None
-                self.stop()
+            #if buy_stop and sell_stop:
+            #    gm.전략쓰레드[self.전략번호] = None
+            #    self.stop()
 
             if buy_stop and not sell_stop:
                 gm.toast.toast(f'{self.전략} 매수전략 {gm.매수문자열들[self.전략번호]}이 종료되었습니다.')
@@ -442,7 +426,7 @@ class Strategy:
             def stop_trade(cond_index, cond_name, trade_type):
                 if cond_name:
                     screen = f'{3 if trade_type == "매수" else 2}0{self.전략[-2:]}'
-                    self.api.SendConditionStop(screen, cond_name, cond_index)
+                    la.work('api', 'SendConditionStop', screen, cond_name, cond_index)
                 else:
                     raise Exception(f'{trade_type} 조건이 없습니다.')
                 logging.info(f'{trade_type} 전략 중지 - {self.전략} : {cond_index:03d} : {cond_name}')
