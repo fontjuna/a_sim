@@ -421,7 +421,7 @@ class Admin:
                     '매수수량': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수수량', item.get('보유수량', 0)),
                     '매수가': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수가', item.get('매입가', 0)),
                     '매수금액': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수금액', item.get('매입금액', 0)),
-                    '주문가능수량': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수수량', item.get('주문가능수량', 0)),
+                    '주문가능수량': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('매수수량', item.get('보유수량', 0)),
                 } for item in dict_list]
                 return dict_list
 
@@ -651,8 +651,9 @@ class Admin:
         if row['현재가'] == 0: return
         if row['상태'] == 0: return
         if gm.주문목록.in_column('종목코드', code): return
-        if gm.전략쓰레드[idx]:
-            전략 = f'전략{idx:02d}'
+        #if gm.전략쓰레드[idx]:
+        전략 = f'전략{idx:02d}'
+        if 전략 in la.workers.keys():
             row.update({ 'rqname': 전략, 'account': gm.config.account })  
             key = f'{code}_매도'
             data={'키': key, '구분': '매도', '상태': '요청', '전략': 전략, '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
@@ -663,6 +664,7 @@ class Admin:
     # 전략 매매  -------------------------------------------------------------------------------------------
     def cdn_fx준비_전략매매(self):
         try:
+            self.json_load_strategy_sets()
             success, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
             gm.전략쓰레드 = [None] * 6
             gm.전략쓰레드[0] = Strategy(name='전략00', ticker=gm.dict종목정보, 전략정의=gm.basic_strategy)
@@ -679,15 +681,15 @@ class Admin:
     def cdn_fx실행_전략매매(self):
         try:
             self.cdn_fx준비_전략매매()
-            gm.매수조건목록.delete()
-            gm.매도조건목록.delete()
-            gm.dict조건종목감시 = {}  # {'종목번호': [fid1, fid2, fid3, ...]}
+            #gm.매수조건목록.delete()
+            #gm.매도조건목록.delete()
+            #gm.dict조건종목감시 = {}  # {'종목번호': [fid1, fid2, fid3, ...]}
             gm.매수문자열들 = [""] * 6     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
             gm.매도문자열들 = [""] * 6     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
             msgs = ''
             for i in range(1, 6):
                 if not gm.전략설정[i]['전략적용']: continue
-                msg = la.answer(f'전략{i:02d}', 'cdn_fx실행_전략초기화')
+                msg = la.answer(f'전략{i:02d}', 'cdn_fx실행_전략매매')
                 logging.debug(f'전략{i:02d} msg={msg}')
                 if msg:
                     la.work(f'전략{i:02d}', 'cdn_fx실행_전략마무리')
@@ -701,12 +703,10 @@ class Admin:
 
     def cdn_fx중지_전략매매(self):
         try:
-            for i in range(0, 6):
+            for i in range(1, 6):
                 la.work(f'전략{i:02d}', 'cdn_fx실행_전략마무리')
                 la.stop_worker(f'전략{i:02d}')
-                #if gm.전략쓰레드[i]:
-                #    gm.전략쓰레드[i].stop()
-                #    gm.전략쓰레드[i].wait()
+                gm.전략쓰레드[i] = None
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()
@@ -762,6 +762,7 @@ class Admin:
             dictFID['전략번호'] = 전략번호
             dictFID['전략'] = 전략
             dictFID['전략명칭'] = 전략명칭
+            logging.debug(f'전략명칭={전략명칭} 전략정의=\n{전략정의}')
             dictFID['매수전략'] = 전략정의.get('매수전략', '')
             dictFID['전략정의'] = 전략정의
             dictFID['주문수량'] = 주문수량
@@ -929,7 +930,6 @@ class Admin:
 
             if remain_qty == 0:
                 gm.주문목록.delete(key=f'{code}_{kind}') # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
-
         except Exception as e:
             logging.error(f"주문 체결 오류: {kind} {type(e).__name__} - {e}", exc_info=True)
 
@@ -943,7 +943,8 @@ class Admin:
             code = dictFID['종목코드'].lstrip('A')
             dictFID['종목코드'] = code
             if 보유수량 == 0: 
-                gm.잔고목록.delete(key=code)
+                if not gm.잔고목록.delete(key=code):
+                    logging.warning(f'잔고목록 삭제 실패: {code}\n잔고목록=\n{tabulate(gm.잔고목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
                 gm.holdings.pop(code, None)
                 save_json(dc.fp.holdings_file, gm.holdings)
             else:

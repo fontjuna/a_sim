@@ -386,6 +386,7 @@ class FilePath:
     CONFIG_PATH = 'config'
     RESOURCE_PATH = 'resources'
     API_PATH = "C:/OpenAPI/data"
+    IMAGE_PATH = "images"
 
     CONFIG_FILE = 'config.json'
     DEFINE_SETS_FILE = 'define_sets.json'
@@ -402,6 +403,7 @@ class FilePath:
     counter_tickers_file = os.path.join(get_path(DB_PATH), COUNTER_TICKERS_FILE)
     counter_strategy_file = os.path.join(get_path(DB_PATH), COUNTER_STRATEGY_FILE)
     charts_file = os.path.join(get_path(DB_PATH), CHARTS_FILE)
+    image_file = os.path.join(get_path(IMAGE_PATH), "Liberanimo_only.png")
 
 @dataclass
 class Constants:

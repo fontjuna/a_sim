@@ -1,3 +1,4 @@
+from public import get_path, dc
 from admin import Admin
 from gui import GUI
 from server_api import APIServer
@@ -6,12 +7,13 @@ from server_dbm import DBMServer
 from public import init_logger, gm
 from classes import Toast, la
 from PyQt5.QtWidgets import QApplication, QSplashScreen
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QGuiApplication
 from PyQt5.QtCore import Qt
 import logging
 import time
 import sys
 import pythoncom
+import os
 
 init_logger()
 
@@ -29,11 +31,39 @@ class Main:
 
     def show_splash(self):
         if not gm.config.gui_on: return
-        splash_pix = QPixmap(400, 200)
-        splash_pix.fill(Qt.blue)          
-        self.splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
-        self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.white)
+        #splash_pix = QPixmap(400, 200)
+        #splash_pix.fill(Qt.blue)          
+        #self.splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
+        #self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.white)
+        #self.splash.show()
+        
+        splash_pix = QPixmap(dc.fp.image_file)
+        screen_width = 800
+        screen_height = 400
+        resized_pixmap = splash_pix.scaled(screen_width, screen_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        #splash_pix.fill(Qt.blue)          
+        self.splash = QSplashScreen(resized_pixmap, Qt.WindowStaysOnTopHint)
+        self.splash.showMessage("로딩 중... 잠시만 기다려 주세요...", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
+        self.splash.setStyleSheet("background-color: rgba(255, 255, 255, 0); font-size: 20px; font-weight: bold;")
         self.splash.show()
+        
+        """
+        # 모니터 해상도 가져오기
+        screen = QGuiApplication.primaryScreen()
+        screen_size = screen.size()
+        screen_width = screen_size.width()
+        screen_height = screen_size.height()
+
+        # PNG 파일 로드 및 크기 맞추기
+        pixmap = QPixmap(dc.fp.image_file)
+        resized_pixmap = pixmap.scaled(screen_width, screen_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+        # 스플래시 화면 설정
+        self.splash = QSplashScreen(resized_pixmap, Qt.WindowStaysOnTopHint)
+        self.splash.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint)
+        self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
+        self.splash.showFullScreen()  # 화면 전체로 표시
+        """
 
     def set_proc(self):
         try:
@@ -72,7 +102,8 @@ class Main:
             exit(1)
 
     def run(self):
-        if gm.config.gui_on: self.splash.close()
+        if gm.config.gui_on: 
+            self.splash.close()
         la.work('aaa', 'trade_start')
         return self.app.exec_() if gm.config.gui_on else self.console_run()
 

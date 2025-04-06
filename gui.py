@@ -81,7 +81,7 @@ class GUI(QMainWindow, form_class):
     def set_widgets(self):
         logging.debug('')
         try:
-            self.setWindowTitle("리베라니모 키움증권 자동매매 프로그램 - v2025.0330")
+            self.setWindowTitle("리베라니모 키움증권 자동매매 프로그램 - v2025.0404.1122")
             self.setWindowIcon(QIcon(os.path.join(get_path(dc.fp.RESOURCE_PATH), "aaa.ico")))
 
             today = QDate.currentDate()
@@ -523,7 +523,16 @@ class GUI(QMainWindow, form_class):
             self.leTrName.setText(gm.api.GetMasterCodeName(code).strip())
 
     def gui_tr_order(self):
-        전략 = self.leTrStrategy.text().strip()
+        kind = '매수' if self.rbTrBuy.isChecked() else '매도'
+        if kind == '매수':
+            전략 = '전략00'
+        else:
+            전략 = self.leTrStrategy.text().strip()
+            if 전략: 
+                if 전략 not in la.workers.keys():
+                    logging.warning(f'전략이 실행중이지 않습니다. {전략}')
+                    return
+            
         전략번호 = int(전략[-2:])
         code = self.leTrCode.text().strip()
         price = self.spbTrPrice.value()
@@ -550,13 +559,14 @@ class GUI(QMainWindow, form_class):
         if self.rbTrBuy.isChecked():
             if row:
                 QMessageBox.warning(self, '알림', '이미 보유 중인 종목입니다.')
-                return
+                response = QMessageBox.question(None, '알림', '이미 보유 중인 종목입니다. 매수 하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+                if not response:
+                    return
         else:
             if not row:
                 QMessageBox.warning(self, '알림', '보유 중인 종목이 없습니다.')
                 return
             
-        kind = '매수' if self.rbTrBuy.isChecked() else '매도'
         rqname = f'수동{kind}'
         send_data = {
             'rqname': rqname,
