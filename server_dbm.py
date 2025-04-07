@@ -1,11 +1,10 @@
-from public import *
+from public import dc, get_path
 from classes import la
+from datetime import datetime
 import logging
 import sqlite3
-from datetime import datetime
 import os
 
-init_logger()
 class DBMServer:
     def __init__(self):
         self.daily_db = None

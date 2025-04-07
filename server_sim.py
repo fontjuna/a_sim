@@ -1,16 +1,9 @@
-from classes import *
-from public import *
-from PyQt5.QtWidgets import QApplication
+from classes import la, gm
+from public import hoga
 from PyQt5.QtCore import QThread
-from PyQt5.QAxContainer import QAxWidget
-import multiprocessing as mp
-import pandas as pd
 import logging
-import sys
 import time
 import random
-import math
-import numpy as np
 import threading
 
 real_thread = {}
@@ -323,7 +316,8 @@ class OnReceiveRealCondition(QThread):
                 'cond_name': self.cond_name,
                 'cond_index': int(self.cond_index),
             }
-            la.work('aaa', 'on_fx실시간_조건검색', **data)
+            gm.admin.on_fx실시간_조건검색(**data)
+
             if type == 'I':
                 self.current_stocks.add(code)
             else:
@@ -372,7 +366,7 @@ class OnReceiveRealData(QThread):
                     'rtype': '주식체결',
                     'dictFID': dictFID
                 }
-                la.work('aaa', 'on_fx실시간_주식체결', **job)
+                gm.admin.on_fx실시간_주식체결(**job)
 
                 if self._stop_event.wait(timeout=0.3/cnt):
                     return
@@ -524,7 +518,7 @@ class SIMServer():
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity'] # 주문결과 수량 적용
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price'] # 주문결과 매입가 적용
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity'] # 주문결과 주문가능수량 적용
-                la.work('aaa', 'odr_recieve_balance_data', dictFID=dictFID)
+                gm.admin.odr_recieve_balance_data(dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -562,7 +556,7 @@ class SIMServer():
 
                     portfolio.process_order(dictFID)
 
-                la.work('aaa', 'odr_recieve_chegyeol_data', dictFID=dictFID)
+                gm.admin.odr_recieve_chegyeol_data(dictFID)
             time.sleep(0.1)
 
     # 즉답 관련 메서드 --------------------------------------------------------------------------------------------------

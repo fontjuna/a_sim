@@ -1,16 +1,12 @@
-from public import *
+from public import dc, gm
 from classes import la
-from PyQt5.QtWidgets import QApplication
 from PyQt5.QAxContainer import QAxWidget
-import multiprocessing as mp
 import pandas as pd
 import logging
-import sys
 import pythoncom
 import time
 import copy
 
-# init_logger()
 class APIServer():
     def __init__(self, name):
         self.name = name
@@ -194,24 +190,24 @@ class APIServer():
         self.tr_condition_loaded = True
 
     def OnReceiveTrData(self, screen, rqname, trcode, record, next):
-        if screen.startswith('4') or screen.startswith('88'):
+        if screen.startswith('4') or screen.startswith('55'):
             pass
-            # try:
-            #     logging.debug(f'OnReceiveTrData: screen={screen}, rqname={rqname}, trcode={trcode}, record={record}, next={next}')
-            #     data = rqname.split('_')
-            #     code = data[1]
-            #     order_no = self.GetCommData(trcode, rqname, 0, '주문번호')
-            #     result = {
-            #         'code': code,
-            #         'name': self.GetMasterCodeName(code),
-            #         'order_no': order_no,
-            #         'screen': screen,
-            #         'rqname': rqname,
-            #     }
-            #     gm.qwork['aaa'].put(Work('on_fx수신_주문결과TR', result))
+            try:
+                logging.debug(f'OnReceiveTrData: screen={screen}, rqname={rqname}, trcode={trcode}, record={record}, next={next}')
+                data = rqname.split('_')
+                code = data[1]
+                order_no = self.GetCommData(trcode, rqname, 0, '주문번호')
+                result = {
+                    'code': code,
+                    'name': self.GetMasterCodeName(code),
+                    'order_no': order_no,
+                    'screen': screen,
+                    'rqname': rqname,
+                }
+                gm.admin.on_fx수신_주문결과TR(**result)
 
-            # except Exception as e:
-            #     logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
+            except Exception as e:
+                logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
 
         else:
             try:
@@ -251,8 +247,7 @@ class APIServer():
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        #gm.qwork['aaa'].put(Work('on_fx실시간_조건검색', data))
-        la.work('aaa', 'on_fx실시간_조건검색', **data)
+        gm.admin.on_fx실시간_조건검색(**data)
 
     def OnReceiveRealData(self, code, rtype, data):
         try:
@@ -264,12 +259,9 @@ class APIServer():
                     data = self.GetCommRealData(code, value)
                     dictFID[key] = data.strip() if type(data) == str else data
 
-                if rtype == '주식체결': order = 'on_fx실시간_주식체결'
-                elif rtype == '장시작시간': order = 'on_fx실시간_장운영감시'
-
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
-                #gm.qwork['aaa'].put(Work(order, job))
-                la.work('aaa', order, **job)
+                if rtype == '주식체결': gm.admin.on_fx실시간_주식체결(**job)
+                elif rtype == '장시작시간': gm.admin.on_fx실시간_장운영감시(**job)
 
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
@@ -277,18 +269,15 @@ class APIServer():
     def OnReceiveChejanData(self, gubun, item_cnt, fid_list):
         try:
             dictFID = {}
-            if gubun == '0':
-                order = 'odr_recieve_chegyeol_data'
-                dict_tmp = dc.fid.주문체결
-            elif gubun == '1':
-                order = 'odr_recieve_balance_data'
-                dict_tmp = dc.fid.잔고
+            if gubun == '0': dict_tmp = dc.fid.주문체결
+            elif gubun == '1': dict_tmp = dc.fid.잔고
+
             for key, value in dict_tmp.items():
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            #gm.qwork['aaa'].put(Work(order, {'dictFID': dictFID}))
-            la.work('aaa', order, **{'dictFID': dictFID})
+            if gubun == '0': gm.admin.odr_recieve_chegyeol_data(dictFID)
+            elif gubun == '1': gm.admin.odr_recieve_balance_data(dictFID)
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
