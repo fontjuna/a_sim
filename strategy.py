@@ -612,7 +612,7 @@ class Strategy:
                     start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.start_time}", '%Y-%m-%d %H:%M')
                     delay_ms = int((start_time - now).total_seconds() * 1000)
                     self.start_timer = QTimer()
-                    self.start_timer.timeout.connect(lambda: self.cdn_fx실행_전략초기화())
+                    self.start_timer.timeout.connect(lambda: self.cdn_fx실행_전략매매())
                     self.start_timer.setSingleShot(True)
                     self.start_timer.start(delay_ms)
 

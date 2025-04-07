@@ -659,7 +659,7 @@ class Admin:
             data={'키': key, '구분': '매도', '상태': '요청', '전략': 전략, '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
             gm.주문목록.set(key=key, data=data)
             row.update({'rqname': '신규매도', 'account': gm.config.account})
-            gm.전략쓰레드[idx].order_sell(row)
+            la.work(전략, 'order_sell', row)
 
     # 전략 매매  -------------------------------------------------------------------------------------------
     def cdn_fx준비_전략매매(self):
@@ -706,7 +706,7 @@ class Admin:
             for i in range(1, 6):
                 la.work(f'전략{i:02d}', 'cdn_fx실행_전략마무리')
                 la.stop_worker(f'전략{i:02d}')
-                gm.전략쓰레드[i] = None
+                #gm.전략쓰레드[i] = None
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()
@@ -745,8 +745,8 @@ class Admin:
             row = gm.주문목록.get(key=key)
             전략 = row.get('전략', '전략00') if row else '전략00'
             전략번호 = int(전략[-2:]) if 전략 else 0
-            전략명칭 = gm.전략설정[전략번호]['전략명칭']
-            전략정의 = gm.전략정의.get(key=전략명칭)
+            전략명칭 = gm.전략쓰레드[전략번호].전략명칭
+            전략정의 = gm.전략쓰레드[전략번호].전략정의
             주문상태 = dictFID.get('주문상태', '')
             주문수량 = int(dictFID.get('주문수량', 0) or 0)
             주문가격 = int(dictFID.get('주문가격', 0) or 0)
@@ -762,7 +762,6 @@ class Admin:
             dictFID['전략번호'] = 전략번호
             dictFID['전략'] = 전략
             dictFID['전략명칭'] = 전략명칭
-            logging.debug(f'전략명칭={전략명칭} 전략정의=\n{전략정의}')
             dictFID['매수전략'] = 전략정의.get('매수전략', '')
             dictFID['전략정의'] = 전략정의
             dictFID['주문수량'] = 주문수량
@@ -866,8 +865,8 @@ class Admin:
             else:
                 전략 = order_row.get('전략', '전략00')
             전략번호 = int(전략[-2:]) if 전략 else 0
-            전략명칭 = gm.전략설정[전략번호]['전략명칭']
-            전략정의 = gm.전략정의.get(key=전략명칭)
+            전략명칭 = gm.전략쓰레드[전략번호].전략명칭
+            전략정의 = gm.전략쓰레드[전략번호].전략정의
             매매시간 = datetime.now().strftime('%H:%M:%S')
         except Exception as e:
             logging.error(f"주문 체결 오류: {kind} {type(e).__name__} - {e}", exc_info=True)
