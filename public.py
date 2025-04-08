@@ -749,17 +749,6 @@ class GlobalMemory:
     세금율 = 0.0
     holdings = {}
 
-    def send_status_msg(self, order, args):
-        if order=='주문내용':
-            job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']} 주문수량:{args['quantity']}주 / 주문가:{args['price']}원 주문번호:{args.get('ordno', '')}"}
-        elif order=='검색내용':
-            job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']}"}
-        elif order=='상태바':
-            job = {'msg': args}
-
-        if self.config.gui_on:
-            self.qwork['msg'].put(Work(order=order, job=job))
-
 gm = GlobalMemory()
 
 def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):

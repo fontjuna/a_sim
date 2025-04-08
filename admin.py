@@ -97,17 +97,25 @@ class Admin:
 
         #logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
         if wait_time > 1666: # 1.666초 이내 주문 제한
-            msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {int(wait_time/1000)} 초' \
-                if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {int(wait_time/1000)} 초'
+            msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
+                if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
             gm.toast.toast(msg, duration=dc.td.TOAST_TIME)
             logging.warning(msg)
             return False
+        
+        elif wait_time > 1000:
+            msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
+            gm.toast.toast(msg, duration=wait_time)
+            time.sleep((wait_time-200)/1000) 
+            wait_time = 0
+            logging.info(msg)
+
         elif wait_time > 0:
-            msg = f'빈번한 요청은 시간 제한을 받습니다. 대기시간: {int(wait_time/1000)} 초'
+            msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
             gm.toast.toast(msg, duration=wait_time)
             logging.info(msg)
 
-        time.sleep((wait_time + 100)/1000) 
+        time.sleep((wait_time + 200)/1000) 
 
         if kind == 'order':
             gm.ord.update_request_times()
@@ -162,7 +170,7 @@ class Admin:
         주문유형 = dc.fid.주문유형FID[ordtype]
         kind = msg if msg else 주문유형
         job = {"kind": kind, "전략": 전략, "code": code, "name": name, "quantity": quantity, "price": price}
-        gm.send_status_msg('주문내용', job)
+        self.send_status_msg('주문내용', job)
 
         rqname = f'{전략}_{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
         key = f'{code}_{주문유형.lstrip("신규")}'
@@ -200,6 +208,17 @@ class Admin:
         elif time < 160000: return dc.ms.장후시간외종가
         elif time < 180000: return dc.ms.시간외단일가
         else: return dc.ms.장종료
+
+    def send_status_msg(self, order, args):
+        if order=='주문내용':
+            job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']} 주문수량:{args['quantity']}주 / 주문가:{args['price']}원 주문번호:{args.get('ordno', '')}"}
+        elif order=='검색내용':
+            job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']}"}
+        elif order=='상태바':
+            job = {'msg': args}
+
+        if gm.config.gui_on:
+            gm.qwork['msg'].put(Work(order=order, job=job))
 
     # json 파일 사용 메소드 -----------------------------------------------------------------------------------------
 
@@ -287,7 +306,7 @@ class Admin:
         elif fid215 == '3': msg = f'장이 시작 되었습니다.'
         elif fid215 == '4': msg = f'장이 마감 되었습니다.'
         if msg:
-            gm.send_status_msg('상태바', msg)
+            self.send_status_msg('상태바', msg)
             logging.debug(f'{rtype} {code} : {fid215}, {fid20}, {fid214} {msg}')
 
     def on_fx수신_주문결과TR(self, code, name, order_no, screen, rqname):
@@ -924,7 +943,7 @@ class Admin:
                 sell_conclution()
 
             msg = {'kind': f'{kind}체결', '전략': 전략, 'code': code, 'name': name, 'quantity': qty, 'price': price, 'ordno': order_no}
-            gm.send_status_msg('주문내용', msg)
+            self.send_status_msg('주문내용', msg)
             logging.info(msg)
 
             if remain_qty == 0:

@@ -499,7 +499,7 @@ class Strategy:
             if kind == '매수':
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
-                    gm.send_status_msg('검색내용', {'kind': f'{kind}편입', '전략': self.전략, 'code': code, 'name': 종목명})
+                    la.work('aaa', 'send_status_msg', '검색내용', {'kind': f'{kind}편입', '전략': self.전략, 'code': code, 'name': 종목명})
                 if gm.잔고목록.in_key(code): return # 기 보유종목
                 if gm.주문목록.in_column('종목코드', code): return # 주문 처리 중 - 여기에 있어야 메세지 생략 안 함     
 
@@ -533,7 +533,7 @@ class Strategy:
 
             if gm.매수조건목록.in_key(code):
                 logging.info(f'{kind}이탈: {self.전략} {self.전략명칭} {code} {name}')
-                gm.send_status_msg('검색내용', {'kind': f'{kind}이탈', '전략': self.전략, 'code': code, 'name': name})
+                la.work('aaa', 'send_status_msg', '검색내용', {'kind': f'{kind}이탈', '전략': self.전략, 'code': code, 'name': name})
                 success = gm.매수조건목록.delete(key=code)
 
             # 실시간 감시 해지하지 않는다.

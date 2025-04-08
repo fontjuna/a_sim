@@ -1,18 +1,18 @@
-from public import get_path, dc
+from public import init_logger, dc, gm
 from admin import Admin
 from gui import GUI
 from server_api import APIServer
 from server_sim import SIMServer
 from server_dbm import DBMServer
-from public import init_logger, gm
 from classes import Toast, la
 from PyQt5.QtWidgets import QApplication, QSplashScreen
+from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QPixmap, QGuiApplication
-from PyQt5.QtCore import Qt
 import logging
 import time
 import sys
 import pythoncom
+from datetime import datetime
 import os
 
 init_logger()
@@ -21,6 +21,7 @@ class Main:
     def __init__(self):
         self.app = None
         self.cleanup_flag = False
+        self.time_over = False
 
     def init(self):
         self.app = QApplication(sys.argv)
@@ -36,34 +37,33 @@ class Main:
         #self.splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
         #self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.white)
         #self.splash.show()
-        
-        splash_pix = QPixmap(dc.fp.image_file)
-        screen_width = 800
-        screen_height = 400
-        resized_pixmap = splash_pix.scaled(screen_width, screen_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        #splash_pix.fill(Qt.blue)          
-        self.splash = QSplashScreen(resized_pixmap, Qt.WindowStaysOnTopHint)
-        self.splash.showMessage("로딩 중... 잠시만 기다려 주세요...", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
-        self.splash.setStyleSheet("background-color: rgba(255, 255, 255, 0); font-size: 20px; font-weight: bold;")
-        self.splash.show()
-        
-        """
-        # 모니터 해상도 가져오기
-        screen = QGuiApplication.primaryScreen()
-        screen_size = screen.size()
-        screen_width = screen_size.width()
-        screen_height = screen_size.height()
+        if datetime.now() < datetime(2025, 4, 30):
+            splash_pix = QPixmap(dc.fp.image_file)
+            screen_width = 800
+            screen_height = 400
+            resized_pixmap = splash_pix.scaled(screen_width, screen_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.splash = QSplashScreen(resized_pixmap, Qt.WindowStaysOnTopHint)
+            self.splash.showMessage("로딩 중... 잠시만 기다려 주세요...", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
+            self.splash.setStyleSheet("color: rgba(255, 0, 0, 0); font-size: 20px; font-weight: bold;")
+            self.splash.show()
+        else:
+            # 모니터 해상도 가져오기
+            screen = QGuiApplication.primaryScreen()
+            screen_size = screen.size()
+            screen_width = screen_size.width()
+            screen_height = screen_width / 2 # screen_size.height()
 
-        # PNG 파일 로드 및 크기 맞추기
-        pixmap = QPixmap(dc.fp.image_file)
-        resized_pixmap = pixmap.scaled(screen_width, screen_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            # PNG 파일 로드 및 크기 맞추기
+            pixmap = QPixmap(dc.fp.image_file)
+            resized_pixmap = pixmap.scaled(screen_width, screen_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-        # 스플래시 화면 설정
-        self.splash = QSplashScreen(resized_pixmap, Qt.WindowStaysOnTopHint)
-        self.splash.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint)
-        self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
-        self.splash.showFullScreen()  # 화면 전체로 표시
-        """
+            # 스플래시 화면 설정
+            self.splash = QSplashScreen(resized_pixmap, Qt.WindowStaysOnTopHint)
+            self.splash.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint)
+            self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
+            self.splash.setStyleSheet("color: rgba(255, 0, 0, 0); font-size: 30px; font-weight: bold;")
+            self.splash.show() # showFullScreen()  # 화면 전체로 표시
+            self.time_over = True
 
     def set_proc(self):
         try:
@@ -104,8 +104,11 @@ class Main:
     def run(self):
         if gm.config.gui_on: 
             self.splash.close()
-        la.work('aaa', 'trade_start')
-        return self.app.exec_() if gm.config.gui_on else self.console_run()
+        if self.time_over:
+            QTimer.singleShot(15000, self.cleanup)
+        else:   
+            la.work('aaa', 'trade_start')
+            return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
         while True:
@@ -131,10 +134,10 @@ class Main:
     def cleanup(self):
         try:
             la.is_shutting_down = True
+            la.stop_worker('dbm')
             for t in gm.전략쓰레드:
                 la.stop_worker(t.name)
             la.stop_worker('api')
-            la.stop_worker('dbm')
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:
