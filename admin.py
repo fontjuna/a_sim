@@ -166,10 +166,11 @@ class Admin:
         if not self.com_request_time_check(kind='order'): return -308 # 5회 제한 초과
 
         전략 = f'전략{idx:02d}'
+        전략명칭 = gm.전략쓰레드[idx].전략명칭
         name = gm.api.GetMasterCodeName(code)
         주문유형 = dc.fid.주문유형FID[ordtype]
         kind = msg if msg else 주문유형
-        job = {"kind": kind, "전략": 전략, "code": code, "name": name, "quantity": quantity, "price": price}
+        job = {"구분": kind, "전략": 전략, "전략명칭": 전략명칭, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
         self.send_status_msg('주문내용', job)
 
         rqname = f'{전략}_{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
@@ -211,11 +212,14 @@ class Admin:
 
     def send_status_msg(self, order, args):
         if order=='주문내용':
-            job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']} 주문수량:{args['quantity']}주 / 주문가:{args['price']}원 주문번호:{args.get('ordno', '')}"}
+            job = {'msg': f"{args['구분']} : {args['전략']} {args['종목코드']} {args['종목명']} 주문수량:{args['주문수량']}주 / 주문가격:{args['주문가격']}원 주문번호:{args.get('주문번호', '')}"}
         elif order=='검색내용':
-            job = {'msg': f"{args['kind']} : {args['전략']} {args['code']} {args['name']}"}
+            job = {'msg': f"{args['구분']} : {args['전략']} {args['종목코드']} {args['종목명']}"}
         elif order=='상태바':
             job = {'msg': args}
+
+        if order in ['주문내용', '검색내용']:
+            la.work('dbm', 'table_upsert', db='db', table='monitor', dict_data=args)
 
         if gm.config.gui_on:
             gm.qwork['msg'].put(Work(order=order, job=job))
@@ -942,7 +946,7 @@ class Admin:
             elif kind == '매도':
                 sell_conclution()
 
-            msg = {'kind': f'{kind}체결', '전략': 전략, 'code': code, 'name': name, 'quantity': qty, 'price': price, 'ordno': order_no}
+            msg = {'구분': f'{kind}체결', '전략': 전략, '전략명칭': 전략명칭, '종목코드': code, '종목명': name, '주문수량': qty, '주문가격': price, '주문번호': order_no}
             self.send_status_msg('주문내용', msg)
             logging.info(msg)
 

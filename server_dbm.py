@@ -37,6 +37,8 @@ class DBMServer:
     # 디비 초기화 --------------------------------------------------------------------------------------------------
     def init_db(self):
         logging.debug('dbm_init_db')
+
+        # 통합 디비
         db = 'abc.db'
         path = os.path.join(get_path(dc.fp.DB_PATH), db)
         self.db = sqlite3.connect(path)
@@ -48,9 +50,17 @@ class DBMServer:
         # Conclusion Table
         sql = self.create_table_sql('conclusion', dc.ddb.CONC_COLUMNS)
         self.cursor.execute(sql)
-        self.cursor.execute(dc.ddb.CONC_INDEX_DATENO)
-        self.cursor.execute(dc.ddb.CONC_INDEX_CODEDATE)
+        for index in dc.ddb.CONC_INDEXES.values():
+            self.cursor.execute(index)
 
+        # 모니터 테이블
+        sql = self.create_table_sql('monitor', dc.ddb.MON_COLUMNS)
+        self.cursor.execute(sql)
+        for index in dc.ddb.MON_INDEXES.values():
+            self.cursor.execute(index)
+        self.db.commit()
+
+        # 매일 생성 디비
         db_daily = f'abc_{datetime.now().strftime("%Y%m%d")}.db'
         path_daily = os.path.join(get_path(dc.fp.DB_PATH), db_daily)
         self.daily_db = sqlite3.connect(path_daily)
@@ -62,15 +72,14 @@ class DBMServer:
         # 주문 테이블
         sql = self.create_table_sql('orders', dc.ddb.ORD_COLUMNS)
         self.daily_cursor.execute(sql)
-        self.daily_cursor.execute(dc.ddb.ORD_INDEX_STRATEGY)
-        self.daily_cursor.execute(dc.ddb.ORD_INDEX_RQNAME)
+        for index in dc.ddb.ORD_INDEXES.values():
+            self.daily_cursor.execute(index)
 
         # 체결 테이블
         sql = self.create_table_sql('trades', dc.ddb.TRD_COLUMNS)
         self.daily_cursor.execute(sql)
-        self.daily_cursor.execute(dc.ddb.TRD_INDEX_STRATEGY)
-        self.daily_cursor.execute(dc.ddb.TRD_INDEX_ORDNO)
-        self.daily_cursor.execute(dc.ddb.TRD_INDEX_KIND_CODE)
+        for index in dc.ddb.TRD_INDEXES.values():
+            self.daily_cursor.execute(index)
         self.daily_db.commit()
 
     # 테이블 생성 SQL문 생성 함수

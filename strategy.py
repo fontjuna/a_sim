@@ -487,21 +487,22 @@ class Strategy:
                 self.dict종목정보.set(code, value={'종목명': 종목명, '전일가': 전일가, '현재가': 0})
 
             if kind == '매도':
-                if not gm.매도조건목록.in_key(code):
-                    gm.매도조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
-                if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음
+                if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음 - 매도조건목록에도 추가 하지도 않고 있지도 않음
                 if gm.잔고목록.get(key=code, column='주문가능수량') == 0: return # 매도 가능 수량 없음
                 if self.전략 != gm.잔고목록.get(key=code, column='전략'): return # 다른 전략 종목
                 if gm.주문목록.in_column('종목코드', code): return # 주문 처리 중 - 여기에 있어야 메세지 생략 안 함
+                if not gm.매도조건목록.in_key(code):
+                    gm.매도조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
+                    la.work('aaa', 'send_status_msg', '검색내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
 
                 gm.잔고목록.set(key=code, data={'주문가능수량': 0})
 
             if kind == '매수':
-                if not gm.매수조건목록.in_key(code): 
-                    gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
-                    la.work('aaa', 'send_status_msg', '검색내용', {'kind': f'{kind}편입', '전략': self.전략, 'code': code, 'name': 종목명})
                 if gm.잔고목록.in_key(code): return # 기 보유종목
                 if gm.주문목록.in_column('종목코드', code): return # 주문 처리 중 - 여기에 있어야 메세지 생략 안 함     
+                if not gm.매수조건목록.in_key(code): 
+                    gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
+                    la.work('aaa', 'send_status_msg', '검색내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
 
                 if code not in gm.dict조건종목감시:
                     self.cdn_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
@@ -533,7 +534,7 @@ class Strategy:
 
             if gm.매수조건목록.in_key(code):
                 logging.info(f'{kind}이탈: {self.전략} {self.전략명칭} {code} {name}')
-                la.work('aaa', 'send_status_msg', '검색내용', {'kind': f'{kind}이탈', '전략': self.전략, 'code': code, 'name': name})
+                #la.work('aaa', 'send_status_msg', '검색내용', {'구분': f'{kind}이탈', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': name})
                 success = gm.매수조건목록.delete(key=code)
 
             # 실시간 감시 해지하지 않는다.

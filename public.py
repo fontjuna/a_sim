@@ -121,6 +121,7 @@ class FieldsAttributes: # 데이터베이스 필드 정의
 class DataBaseFields:
     id = FieldsAttributes(name='id', type='INTEGER', primary=True, autoincrement=True)
     계좌번호 = FieldsAttributes(name='계좌번호', type='TEXT', not_null=True, default="''")
+    구분 = FieldsAttributes(name='구분', type='TEXT', not_null=True, default="''")
     당일매매세금 = FieldsAttributes(name='당일매매세금', type='INTEGER', not_null=True, default=0)
     당일매매수수료 = FieldsAttributes(name='당일매매수수료', type='INTEGER', not_null=True, default=0)
     단위체결가 = FieldsAttributes(name='단위체결가', type='INTEGER', not_null=True, default=0)
@@ -176,24 +177,38 @@ class DataBaseColumns:
     fd = DataBaseFields()
     ORD_COLUMNS = [fd.id, fd.전략번호, fd.종목코드, fd.종목명, fd.주문수량, fd.주문가격, fd.주문유형, fd.호가구분, fd.화면번호, fd.요청명, fd.계좌번호, fd.주문번호, fd.처리일시]
     ORD_COLUMN_NAMES = [col.name for col in ORD_COLUMNS]
-    ORD_INDEX_STRATEGY = "CREATE INDEX IF NOT EXISTS idx_strategy ON orders(전략번호)"
-    ORD_INDEX_RQNAME = "CREATE UNIQUE INDEX IF NOT EXISTS idx_rqname ON orders(요청명)"
+    ORD_INDEXES = {
+        'idx_strategy': "CREATE INDEX IF NOT EXISTS idx_strategy ON orders(전략번호)",
+        'idx_rqname': "CREATE UNIQUE INDEX IF NOT EXISTS idx_rqname ON orders(요청명)"
+    }
 
     TRD_COLUMNS = [fd.id, fd.전략번호, fd.매도수구분, fd.주문구분, fd.주문상태, fd.주문번호, fd.종목코드, fd.종목명, fd.현재가, fd.주문수량, fd.주문가격, \
                     fd.미체결수량, fd.매매구분, fd.체결량, fd.체결가, fd.체결누계금액, fd.체결번호, fd.체결시간, fd.단위체결가, fd.단위체결량, fd.당일매매수수료, \
                         fd.당일매매세금, fd.원주문번호, fd.처리일시]
     TRD_COLUMN_NAMES = [col.name for col in TRD_COLUMNS]
-    TRD_INDEX_ORDNO = "CREATE INDEX IF NOT EXISTS idx_ordno ON trades(주문번호)"
-    TRD_INDEX_STRATEGY = "CREATE INDEX IF NOT EXISTS idx_strategy ON trades(전략번호)"
-    TRD_INDEX_KIND_CODE = "CREATE INDEX IF NOT EXISTS idx_kind_code ON trades(매도수구분, 종목코드)"
+    TRD_INDEXES = {
+        'idx_ordno': "CREATE INDEX IF NOT EXISTS idx_ordno ON trades(주문번호)",
+        'idx_strategy': "CREATE INDEX IF NOT EXISTS idx_strategy ON trades(전략번호)",
+        'idx_kind_code': "CREATE INDEX IF NOT EXISTS idx_kind_code ON trades(매도수구분, 종목코드)"
+    }
+
+    MON_COLUMNS = [fd.id, fd.구분, fd.전략, fd.전략명칭, fd.종목코드, fd.종목명, fd.주문수량, fd.주문가격, fd.주문번호, fd.처리일시]
+    MON_COLUMN_NAMES = [col.name for col in MON_COLUMNS]
+    MON_INDEXES = {
+        'idx_datetime': "CREATE INDEX IF NOT EXISTS idx_datetime ON monitor(처리일시)",
+        'idx_strategy': "CREATE INDEX IF NOT EXISTS idx_strategy ON monitor(전략)",
+        'idx_code': "CREATE INDEX IF NOT EXISTS idx_code ON monitor(종목코드)"
+    }
 
     CONC_SELECT_DATE = f"SELECT * FROM conclusion WHERE 매도일자 = ? AND 매수수량 = 매도수량 ORDER BY 매수일자, 매수시간 ASC"
     CONC_COLUMNS = [fd.id, fd.전략, fd.종목번호, fd.종목명, fd.손익금액, fd.손익율, fd.매수일자, fd.매수시간,\
                     fd.매수수량, fd.매수가, fd.매수금액, fd.매수번호, fd.매도일자, fd.매도시간, fd.매도수량,\
                     fd.매도가, fd.매도금액, fd.매도번호, fd.제비용, fd.매수전략, fd.전략명칭]
     CONC_COLUMN_NAMES = [col.name for col in CONC_COLUMNS]
-    CONC_INDEX_DATENO = "CREATE UNIQUE INDEX IF NOT EXISTS idx_dateorder ON conclusion(매수일자, 매수번호)"
-    CONC_INDEX_CODEDATE = "CREATE UNIQUE INDEX IF NOT EXISTS idx_datetimecode ON conclusion(매수일자, 매수시간, 종목번호)"
+    CONC_INDEXES = {
+        'idx_dateorder': "CREATE UNIQUE INDEX IF NOT EXISTS idx_dateorder ON conclusion(매수일자, 매수번호)",
+        'idx_datetimecode': "CREATE UNIQUE INDEX IF NOT EXISTS idx_datetimecode ON conclusion(매수일자, 매수시간, 종목번호)"
+    }
 
 @dataclass
 class FIDs:
