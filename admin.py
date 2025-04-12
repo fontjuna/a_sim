@@ -47,6 +47,7 @@ class Admin:
         gm.매수조건목록 = TableManager(gm.tbl.hd조건목록)
         gm.매도조건목록 = TableManager(gm.tbl.hd조건목록)
         gm.손익목록 = TableManager(gm.tbl.hd손익목록)
+        gm.매매목록 = TableManager(gm.tbl.hd매매목록)
         gm.예수금 = TableManager(gm.tbl.hd예수금)
         gm.일지합산 = TableManager(gm.tbl.hd일지합산)
         gm.일지목록 = TableManager(gm.tbl.hd일지목록)
@@ -212,13 +213,17 @@ class Admin:
 
     def send_status_msg(self, order, args):
         if order=='주문내용':
-            job = {'msg': f"{args['구분']} : {args['전략']} {args['종목코드']} {args['종목명']} 주문수량:{args['주문수량']}주 / 주문가격:{args['주문가격']}원 주문번호:{args.get('주문번호', '')}"}
+            #job = {'msg': f"{args['구분']} : {args['전략']} {args['종목코드']} {args['종목명']} 주문수량:{args['주문수량']}주 / 주문가격:{args.get('주문가격', 0)}원 주문번호:{args.get('주문번호', '')}"}
+            msg = f"{args['구분']} : {args['전략']} {args['종목코드']} {args['종목명']}"
+            if '주문수량' in args:
+                msg += f" 주문수량:{args['주문수량']}주 / 주문가격:{args.get('주문가격', 0)}원 주문번호:{args.get('주문번호', '')}"
+            job = {'msg': msg}
         elif order=='검색내용':
-            job = {'msg': f"{args['구분']} : {args['전략']} {args['종목코드']} {args['종목명']}"}
+            job = {'msg': args}
         elif order=='상태바':
             job = {'msg': args}
 
-        if order in ['주문내용', '검색내용']:
+        if order == '주문내용':
             la.work('dbm', 'table_upsert', db='db', table='monitor', dict_data=args)
 
         if gm.config.gui_on:
@@ -565,34 +570,37 @@ class Admin:
         except Exception as e:
             logging.error(f'예수금 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def pri_fx얻기_손익목록(self):
+    def pri_fx얻기_손익목록(self, date_text):
         try:
             gm.손익목록.delete()
-            dict_list = []
-            rqname = '손익목록'
-            trcode = 'opt10077'
-            input = {'계좌번호':gm.config.account, '비밀번호': '', '종목코드': ''}
-            output = gm.tbl.hd손익목록['컬럼']
-            next = '0'
-            screen = dc.scr.화면['손익목록']
-            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
-            dict_list.extend(data)
-            while remain:
-                next = '2'
-                data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
-                dict_list.extend(data)
-            dict_list = [{**item, '종목코드': item['종목코드'][1:]} for item in dict_list]
-            gm.손익목록.set(data=dict_list)
-            gm.l2손익합산 = gm.손익목록.sum(column='당일매도손익')[0]
-            logging.info(f"손익목록 얻기 완료: data count={gm.손익목록.len()}, 당일매도손익={gm.l2손익합산:,}원")
+            dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.MON_SELECT_DATE, db='db', params=(date_text,))
+            #logging.debug(f'손익목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
+            if dict_list is not None and len(dict_list) > 0:
+                gm.손익목록.set(data=dict_list)
+                logging.info(f"손익목록 얻기 완료: data count={gm.손익목록.len()}")
+            else:
+                logging.warning(f'손익목록 얻기 실패: date:{date_text}, dict_list:{dict_list}')
         except Exception as e:
             logging.error(f'손익목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def pri_fx얻기_매매목록(self, date_text):
+        try:
+            gm.매매목록.delete()
+            dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.MON_SELECT_DATE, db='db', params=(date_text,))
+            #logging.debug(f'매매목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
+            if dict_list is not None and len(dict_list) > 0:
+                gm.매매목록.set(data=dict_list)
+                logging.info(f"매매목록 얻기 완료: data count={gm.매매목록.len()}")
+            else:
+                logging.warning(f'매매목록 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+        except Exception as e:
+            logging.error(f'매매목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def pri_fx얻기_체결목록(self, date_text):
         try:
             gm.체결목록.delete()
             dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
-            logging.debug(f'체결목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
+            #logging.debug(f'체결목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
             if dict_list is not None and len(dict_list) > 0:
                 gm.체결목록.set(data=dict_list)
                 손익금액, 매수금액 = gm.체결목록.sum(column=['손익금액', '매수금액'], filter={'매도수량': ('==', '@매수수량')})
@@ -710,12 +718,13 @@ class Admin:
             gm.매수문자열들 = [""] * 6     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
             gm.매도문자열들 = [""] * 6     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
             msgs = ''
+            la.work('aaa', 'send_status_msg', '검색내용', args='')
             for i in range(1, 6):
                 if not gm.전략설정[i]['전략적용']: continue
                 msg = la.answer(f'전략{i:02d}', 'cdn_fx실행_전략매매')
                 logging.debug(f'전략{i:02d} msg={msg}')
                 if msg:
-                    la.work(f'전략{i:02d}', 'cdn_fx실행_전략마무리')
+                    # la.work(f'전략{i:02d}', 'cdn_fx실행_전략마무리')
                     msgs += f'\n{msg}' if msgs else msg
             if msgs: gm.toast.toast(msgs, duration=3000) #dc.TOAST_TIME
             if gm.config.gui_on: 
@@ -891,6 +900,8 @@ class Admin:
             전략명칭 = gm.전략쓰레드[전략번호].전략명칭
             전략정의 = gm.전략쓰레드[전략번호].전략정의
             매매시간 = datetime.now().strftime('%H:%M:%S')
+            단위체결량 = int(dictFID.setdefault('단위체결량', 0) or 0)
+            단위체결가 = int(dictFID.setdefault('단위체결가', 0) or 0)
         except Exception as e:
             logging.error(f"주문 체결 오류: {kind} {type(e).__name__} - {e}", exc_info=True)
 
@@ -929,8 +940,6 @@ class Admin:
             try:
                 row = gm.잔고목록.get(key=code)
                 if row:
-                    단위체결량 = int(dictFID.setdefault('단위체결량', 0) or 0)
-                    단위체결가 = int(dictFID.setdefault('단위체결가', 0) or 0)
                     conclusion_row = { k: row[k] for k in gm.tbl.hd체결목록['컬럼'] if k in row }
                     conclusion_row.update({'매도일자': dc.td.ToDay, '매도시간': 매매시간, '매도번호': order_no, '체결가': price, '체결량': qty, '체결누계금액': amount, \
                                             '매도가': price, '매도수량': qty, '매도금액': amount, '단위체결량': 단위체결량, '단위체결가': 단위체결가, '수수료율': gm.수수료율, '거래세율': gm.세금율})
@@ -941,12 +950,15 @@ class Admin:
                 logging.error(f"매도 처리중 오류 발생: {code} {name} ***")
 
         try:
+            msg = {'구분': f'{kind}체결', '전략': 전략, '전략명칭': 전략명칭, '종목코드': code, '종목명': name,\
+                    '주문수량': dictFID.get('주문수량', 0), '주문가격': dictFID.get('주문가격', 0), '주문번호': order_no}
             if kind == '매수':
                 buy_conclution()
+                msg.update({'매수수량': 단위체결량, '매수가': 단위체결가, '매수금액': 단위체결가 * 단위체결량})
             elif kind == '매도':
                 sell_conclution()
+                msg.update({'매도수량': 단위체결량, '매도가': 단위체결가, '매도금액': 단위체결가 * 단위체결량})
 
-            msg = {'구분': f'{kind}체결', '전략': 전략, '전략명칭': 전략명칭, '종목코드': code, '종목명': name, '주문수량': qty, '주문가격': price, '주문번호': order_no}
             self.send_status_msg('주문내용', msg)
             logging.info(msg)
 
@@ -962,6 +974,7 @@ class Admin:
             보유수량 = int(dictFID.get('보유수량', 0) or 0)
             매입단가 = abs(int(dictFID.get('매입단가', 0) or 0))
             주문가능수량 = int(dictFID.get('주문가능수량', 0) or 0)
+            gm.l2손익합산 = int(dictFID.get('당일총매도손익', 0) or 0)
             code = dictFID['종목코드'].lstrip('A')
             dictFID['종목코드'] = code
             if 보유수량 == 0: 

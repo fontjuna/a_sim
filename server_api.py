@@ -151,7 +151,7 @@ class APIServer():
                 self.tr_condition_loaded = False
 
             success = self.ocx.dynamicCall("SendCondition(QString, QString, int, int)", screen, cond_name, cond_index, search)
-            logging.debug(f'전략 요청: screen={screen}, name={cond_name}, index={cond_index}, 결과={"성공" if success else "실패"}')
+            logging.debug(f'전략 요청: screen={screen}, name={cond_name}, index={cond_index}, search={search}, 결과={"성공" if success else "실패"}')
 
             if success: # 1: 성공, 0: 실패
                 if block is True:
@@ -184,7 +184,7 @@ class APIServer():
         self.strategy_loaded = ret == 1
 
     def OnReceiveTrCondition(self, screen, code_list, cond_name, cond_index, next):
-        logging.debug(f'screen={screen}, code_list={code_list}, cond_name={cond_name}, cond_index={cond_index}, next={next}')
+        #logging.debug(f'screen={screen}, code_list={code_list}, cond_name={cond_name}, cond_index={cond_index}, next={next}')
         codes = code_list.split(';')[:-1]
         self.tr_condition_list = codes
         self.tr_condition_loaded = True
@@ -193,7 +193,7 @@ class APIServer():
         if screen.startswith('4') or screen.startswith('55'):
             pass
             try:
-                logging.debug(f'OnReceiveTrData: screen={screen}, rqname={rqname}, trcode={trcode}, record={record}, next={next}')
+                #logging.debug(f'OnReceiveTrData: screen={screen}, rqname={rqname}, trcode={trcode}, record={record}, next={next}')
                 data = rqname.split('_')
                 code = data[1]
                 order_no = self.GetCommData(trcode, rqname, 0, '주문번호')
