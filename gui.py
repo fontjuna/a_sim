@@ -100,10 +100,6 @@ class GUI(QMainWindow, form_class):
             self.dtMonitor.setCalendarPopup(True)
             self.dtMonitor.setDate(today)
 
-            self.dtProfitLoss.setMaximumDate(today)
-            self.dtProfitLoss.setCalendarPopup(True)
-            self.dtProfitLoss.setDate(today)
-
             statusBar = QStatusBar()
             self.setStatusBar(statusBar)
             self.lbl0 = QLabel(" "*5)
@@ -145,7 +141,6 @@ class GUI(QMainWindow, form_class):
             self.btnDeposit.clicked.connect(self.gui_deposit_load)                      # 예수금 로드
             self.btnLoadConclusion.clicked.connect(self.gui_conclusion_load)            # 체결목록 로드
             self.btnLoadMonitor.clicked.connect(self.gui_load_monitor)                  # 당일 매매 목록 로드
-            self.btnLoadProfitLoss.clicked.connect(self.gui_load_profit_loss)            # 손익 목록 로드
 
             self.rbInfo.toggled.connect(lambda: self.gui_log_level_set('INFO', self.rbInfo.isChecked()))
             self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
@@ -420,12 +415,6 @@ class GUI(QMainWindow, form_class):
         else:
             logging.warning('계좌를 선택하세요')
 
-    def gui_load_profit_loss(self):
-        self.btnLoadProfitLoss.setEnabled(False)
-        gm.admin.pri_fx얻기_손익목록(self.dtProfitLoss.date().toString("yyyy-MM-dd"))
-        self.gui_fx갱신_손익정보()
-        self.btnLoadProfitLoss.setEnabled(True)
-
     def gui_load_monitor(self):
         self.btnLoadMonitor.setEnabled(False)
         gm.admin.pri_fx얻기_매매목록(self.dtMonitor.date().toString("yyyy-MM-dd"))
@@ -667,30 +656,8 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'전략정의 채움 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_fx갱신_손익정보(self):
-        try:
-            총매수금액, 총매도금액, 총제비용, 총손익금액 = gm.손익목록.sum(column=['매수금액', '매도금액', '제비용', '손익금액'])
-            총매매건수 = gm.손익목록.len()
-            총손익율 = round(총손익금액 / 총매수금액 * 100, 2) if 총매수금액 else 0
-            self.lblProfitBuy.setText(f"{int(총매수금액):,}")
-            self.lblProfitSell.setText(f"{int(총매도금액):,}")
-            self.lblProfitFee.setText(f"{int(총제비용):,}")
-            self.lblProfitCount.setText(f"{총매매건수}")
-            self.gui_set_color(self.lblTotalPnL, int(총손익금액))
-            self.gui_set_color(self.lblPnLRate, float(총손익율))
-
-            gm.손익목록.update_table_widget(self.tblProfitLoss, stretch=True)
-
-        except Exception as e:
-            logging.error(f'손익정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
-
     def gui_fx갱신_매매정보(self):
         try:
-            매입, 매도 = gm.매매목록.sum(column=['매수금액', '매도금액'])
-            건수 = gm.매매목록.len()
-            self.lblMonBuy.setText(f"{int(매입):,}")
-            self.lblMonSell.setText(f"{int(매도):,}")
-            self.lblMonCount.setText(f"{건수}")
             gm.매매목록.update_table_widget(self.tblMonitor, stretch=True)
 
         except Exception as e:
@@ -787,13 +754,14 @@ class GUI(QMainWindow, form_class):
             self.lblConcBuy.setText(f"{매수금액:,}")
             self.lblConcSell.setText(f"{매도금액:,}")
             self.lblConcFee.setText(f"{제비용:,}")
-            self.lblConcCount.setText(f"{gm.체결목록.len(filter={'매도수량': ('==', '@매수수량')})}") # 다른 컬럼과 비교시 @ 를 앞에 붙인다.
+            #self.lblConcCount.setText(f"{gm.체결목록.len(filter={'매도수량': ('==', '@매수수량')})}") # 다른 컬럼과 비교시 @ 를 앞에 붙인다.
+            self.lblConcCount.setText(f"{gm.체결목록.len(filter={'매도수량': ('>', 0)})}") # 다른 컬럼과 비교시 @ 를 다른 컬럼명 앞에 붙인다. @매수수량
             손익율 = round(손익금액 / 매수금액 * 100, 2) if 매수금액 else 0
             self.gui_set_color(self.lblConcProfit, 손익금액)
             self.gui_set_color(self.lblConcProfitRate, 손익율)
             logging.debug(f"체결목록 합산: 매수금액={매수금액}, 매도금액={매도금액}, 손익금액={손익금액}, 제비용={제비용}")
-            if gm.체결목록.len(filter={'매도수량': ('!=', '@매수수량')}) > 0:
-                gm.체결목록.set(filter={'매도수량': ('!=', '@매수수량')}, data={'손익금액': 0, '손익율': 0})
+            # if gm.체결목록.len(filter={'매도수량': ('!=', '@매수수량')}) > 0:
+            #     gm.체결목록.set(filter={'매도수량': ('!=', '@매수수량')}, data={'손익금액': 0, '손익율': 0})
 
             #self.tblConclusion.clearContents()
             gm.체결목록.update_table_widget(self.tblConclusion)

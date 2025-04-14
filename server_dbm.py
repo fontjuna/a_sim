@@ -7,10 +7,12 @@ import os
 
 class DBMServer:
     def __init__(self):
-        self.daily_db = None
-        self.daily_cursor = None
         self.db = None
         self.cursor = None
+        self.daily_db = None
+        self.daily_cursor = None
+        self.fee_rate = 0.00015
+        self.tax_rate = 0.0015
 
         self.init_db()
 
@@ -47,50 +49,38 @@ class DBMServer:
         # self.daily_db.row_factory = sqlite3.Row # 직렬화 에러
         self.cursor = self.db.cursor()
 
+        # trades 테이블
+        sql = self.create_table_sql(dc.ddb.TRD_TABLE_NAME, dc.ddb.TRD_COLUMNS)
+        self.cursor.execute(sql)
+        for index in dc.ddb.TRD_INDEXES.values():
+            self.cursor.execute(index)
+
         # Conclusion Table
         sql = self.create_table_sql(dc.ddb.CONC_TABLE_NAME, dc.ddb.CONC_COLUMNS)
         self.cursor.execute(sql)
         for index in dc.ddb.CONC_INDEXES.values():
             self.cursor.execute(index)
 
-        # 모니터 테이블
-        sql = self.create_table_sql(dc.ddb.MON_TABLE_NAME, dc.ddb.MON_COLUMNS)
-        self.cursor.execute(sql)
-        for index in dc.ddb.MON_INDEXES.values():
-            self.cursor.execute(index)
-
-        # 손익 테이블
-        sql = self.create_table_sql(dc.ddb.PRO_TABLE_NAME, dc.ddb.PRO_COLUMNS)
-        self.cursor.execute(sql)
-        for index in dc.ddb.PRO_INDEXES.values():
-            self.cursor.execute(index)
-            
-        self.cleanup_old_data()
+        #self.cleanup_old_data()
 
         self.db.commit()
 
-        # 매일 생성 디비
-        db_daily = f'abc_{datetime.now().strftime("%Y%m%d")}.db'
-        path_daily = os.path.join(get_path(dc.fp.DB_PATH), db_daily)
-        self.daily_db = sqlite3.connect(path_daily)
-        # 아래 람다식은 튜플로 받은 레코드를 딕셔너리로 변환하는 함수
-        self.daily_db.row_factory = lambda cursor, row: { col[0]: row[idx] for idx, col in enumerate(cursor.description)}
-        # self.daily_db.row_factory = sqlite3.Row # 직렬화 에러
-        self.daily_cursor = self.daily_db.cursor()
+        # # 매일 생성 디비
+        # db_daily = f'abc_{datetime.now().strftime("%Y%m%d")}.db'
+        # path_daily = os.path.join(get_path(dc.fp.DB_PATH), db_daily)
+        # self.daily_db = sqlite3.connect(path_daily)
+        # # 아래 람다식은 튜플로 받은 레코드를 딕셔너리로 변환하는 함수
+        # self.daily_db.row_factory = lambda cursor, row: { col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+        # # self.daily_db.row_factory = sqlite3.Row # 직렬화 에러
+        # self.daily_cursor = self.daily_db.cursor()
 
-        # 주문 테이블
-        sql = self.create_table_sql(dc.ddb.ORD_TABLE_NAME, dc.ddb.ORD_COLUMNS)
-        self.daily_cursor.execute(sql)
-        for index in dc.ddb.ORD_INDEXES.values():
-            self.daily_cursor.execute(index)
+        # # 주문 테이블
+        # sql = self.create_table_sql(dc.ddb.ORD_TABLE_NAME, dc.ddb.ORD_COLUMNS)
+        # self.daily_cursor.execute(sql)
+        # for index in dc.ddb.ORD_INDEXES.values():
+        #     self.daily_cursor.execute(index)
 
-        # 체결 테이블
-        sql = self.create_table_sql(dc.ddb.TRD_TABLE_NAME, dc.ddb.TRD_COLUMNS)
-        self.daily_cursor.execute(sql)
-        for index in dc.ddb.TRD_INDEXES.values():
-            self.daily_cursor.execute(index)
-
-        self.daily_db.commit()
+        # self.daily_db.commit()
 
     # 테이블 생성 SQL문 생성 함수
     def create_table_sql(self, table_name, fields, pk_columns=None):
@@ -153,6 +143,92 @@ class DBMServer:
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)
 
+    def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno,  st_no, st_name, st_buy):
+        """체결 정보를 데이터베이스에 저장하고 손익 계산"""
+        table = dc.ddb.CONC_TABLE_NAME
+        record = None
+        dt = datetime.now().strftime("%Y%m%d")
+        tm = datetime.now().strftime("%H%M%S")
+        전략 = f'전략{st_no:02d}'
+
+        def new_record():
+            return { '전략': 전략, '종목번호': code, '종목명': name, '매수일자': dt, '매수시간': tm, '매수수량': qty, '매수가': price, '매수금액': amount, \
+                '매도수량': 0, '매수전략': st_buy, '전략명칭': st_name, }
+
+        try:
+            # 1. 대상 레코드 준비 (기존 레코드 찾기 또는 새 레코드 생성)
+            if kind == '매수':
+                # 미매도된 레코드 조회
+                sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND 매수수량 > 매도수량 ORDER BY 매수일자 DESC, 매수시간 DESC LIMIT 1"
+                result = self.execute_query(sql, db='db', params=(code,))
+                
+                if result:
+                    record = result[0]
+                    record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
+                else:
+                    # 신규 레코드
+                    record = new_record()
+                    record['매수번호'] = ordno
+            
+            elif kind == '매도':
+                # 매도 기록 확인
+                sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
+                result = self.execute_query(sql, db='db', params=(dt, ordno))
+                
+                if result:
+                    record = result[0]
+                else:
+                    # 미매도 매수 레코드 확인
+                    sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND 매수수량 > 매도수량 ORDER BY 매수일자 ASC, 매수시간 ASC LIMIT 1"
+                    result = self.execute_query(sql, db='db', params=(code,))
+                    
+                    if result:
+                        record = result[0]
+                    else:
+                        # 신규 레코드 (매수 기록 없는 경우 자동 생성)
+                        record = new_record()
+
+                # 매도 처리용 기존 매수가 결정
+                buy_price = record.get('매수가', price)
+                
+                # v. 매도 정보 업데이트
+                record['매도번호'] = ordno
+                record['매도일자'] = dt
+                record['매도시간'] = tm
+                
+                # z. 매도 금액, 손익 정보 업데이트
+                record['매도수량'] = qty
+                record['매도가'] = price
+                record['매도금액'] = amount
+                
+                # 손익 계산
+                buy_amount = qty * buy_price  # 매도수량 * 매수가
+                buy_fee = int(buy_amount * self.fee_rate / 10) * 10
+                sell_fee = int(amount * self.fee_rate / 10) * 10
+                tax = int(amount * self.tax_rate)
+                total_fee = buy_fee + sell_fee + tax
+                profit = amount - buy_amount - total_fee
+                profit_rate = (profit / buy_amount) * 100 if buy_amount > 0 else 0
+                
+                record['제비용'] = total_fee
+                record['손익금액'] = profit
+                record['손익율'] = round(profit_rate, 2)
+                
+                # 매수 수량보다 매도 수량이 많은 경우 매수 수량도 갱신
+                # 이경우는 해당 매수가 없었던 경우
+                if record.get('매수수량', 0) < qty:
+                    record['매수수량'] = qty
+                    record['매수가'] = price
+                    record['매수금액'] = amount
+            
+            # 3. 최종 데이터베이스 업데이트 (한 번만 수행)
+            self.table_upsert('db', table, record)
+            
+            return True
+        except Exception as e:
+            logging.error(f"upsert_conclusion error: {e}", exc_info=True)
+            return False
+        
     def conclusion_upsert_buy(self, row):
         try:
             columns = ','.join(row.keys())

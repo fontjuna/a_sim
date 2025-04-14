@@ -29,6 +29,8 @@ class Admin:
         gm.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
+        la.set_var('dbm', 'fee_rate', gm.수수료율)
+        la.set_var('dbm', 'tax_rate', gm.세금율)
 
     def get_login_info(self):
         accounts = gm.api.GetLoginInfo('ACCNO')
@@ -168,35 +170,23 @@ class Admin:
 
         전략 = f'전략{idx:02d}'
         전략명칭 = gm.전략쓰레드[idx].전략명칭
+        매수전략 = gm.전략쓰레드[idx].매수전략
         name = gm.api.GetMasterCodeName(code)
         주문유형 = dc.fid.주문유형FID[ordtype]
         kind = msg if msg else 주문유형
-        job = {"구분": kind, "전략": 전략, "전략명칭": 전략명칭, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
+        job = {"구분": kind, "전략": 전략, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
         self.send_status_msg('주문내용', job)
 
         rqname = f'{전략}_{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
         key = f'{code}_{주문유형.lstrip("신규")}'
         gm.주문목록.set(key=key, data={'상태': '전송', '요청명': rqname})
-        cmd = {
-            'rqname': rqname,
-            'screen': screen,
-            'accno': accno,
-            'ordtype': ordtype,
-            'code': code,
-            'hoga': hoga,
-            'quantity': quantity,
-            'price': price,
-            'ordno': ordno
-        }
+        cmd = { 'rqname': rqname, 'screen': screen, 'accno': accno, 'ordtype': ordtype, 'code': code, 'hoga': hoga, 'quantity': quantity, 'price': price, 'ordno': ordno }
         if gm.잔고목록.in_key(code):
             gm.잔고목록.set(key=code, data={'주문가능수량': 0})
+        dict_data = { '전략번호': idx, '전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
+                     '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
+        self.dbm_order_upsert(dict_data)
         success = gm.api.SendOrder(**cmd)
-
-        cmd['idx'] = idx
-        cmd['name'] = name
-        cmd['ordtype'] = 주문유형
-        #logging.info(f'cmd : {cmd}')
-        self.dbm_order_upsert(**cmd)
 
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
 
@@ -224,9 +214,6 @@ class Admin:
             job = {'msg': args}
         elif order=='상태바':
             job = {'msg': args}
-
-        if order == '주문내용':
-            la.work('dbm', 'table_upsert', db='db', table='monitor', dict_data=args)
 
         if gm.config.gui_on:
             gm.qwork['msg'].put(Work(order=order, job=job))
@@ -574,23 +561,10 @@ class Admin:
         except Exception as e:
             logging.error(f'예수금 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def pri_fx얻기_손익목록(self, date_text):
-        try:
-            gm.손익목록.delete()
-            la.work('dbm', 'calculate_profit_for_date', date=date_text, fee_rate=gm.수수료율, tax_rate=gm.세금율)
-            dict_list = la.answer('dbm', 'get_profit_by_date', date_text)
-            if dict_list is not None and len(dict_list) > 0:
-                gm.손익목록.set(data=dict_list)
-                logging.info(f"손익목록 얻기 완료: data count={gm.손익목록.len()}")
-            else:
-                logging.warning(f'손익목록 얻기 실패: date:{date_text}, dict_list:{dict_list}')
-        except Exception as e:
-            logging.error(f'손익목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
-
     def pri_fx얻기_매매목록(self, date_text):
         try:
             gm.매매목록.delete()
-            dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.MON_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
             #logging.debug(f'매매목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
             if dict_list is not None and len(dict_list) > 0:
                 gm.매매목록.set(data=dict_list)
@@ -936,24 +910,8 @@ class Admin:
 
                 gm.잔고목록.set(key=code, data=data)
 
-                conclusion_row = {'전략': 전략, '종목번호': code, '종목명': name, '매수수량': qty, '매수가': price, '매수금액': amount, '매수일자': dc.td.ToDay, '매수시간': 매매시간, \
-                            '매수번호': order_no, '매수전략': 전략정의['매수전략'], '전략명칭': 전략정의['전략명칭']}
-                la.work('dbm', 'conclusion_upsert_buy', row=conclusion_row)
             except Exception as e:
                 logging.error(f"매수 처리중 오류 발생: {code} {name} ***")
-
-        def sell_conclution():
-            try:
-                row = gm.잔고목록.get(key=code)
-                if row:
-                    conclusion_row = { k: row[k] for k in gm.tbl.hd체결목록['컬럼'] if k in row }
-                    conclusion_row.update({'매도일자': dc.td.ToDay, '매도시간': 매매시간, '매도번호': order_no, '체결가': price, '체결량': qty, '체결누계금액': amount, \
-                                            '매도가': price, '매도수량': qty, '매도금액': amount, '단위체결량': 단위체결량, '단위체결가': 단위체결가, '수수료율': gm.수수료율, '거래세율': gm.세금율})
-                    la.work('dbm', 'conclusion_upsert_sell', row=conclusion_row)
-                else:
-                    logging.error(f"잔고목록 조회 오류: {code} {name} 잔고 목록이 없습니다. ***")
-            except Exception as e:
-                logging.error(f"매도 처리중 오류 발생: {code} {name} ***")
 
         try:
             msg = {'구분': f'{kind}체결', '전략': 전략, '전략명칭': 전략명칭, '종목코드': code, '종목명': name,\
@@ -962,7 +920,6 @@ class Admin:
                 buy_conclution()
                 msg.update({'매수수량': 단위체결량, '매수가': 단위체결가, '매수금액': 단위체결가 * 단위체결량})
             elif kind == '매도':
-                sell_conclution()
                 msg.update({'매도수량': 단위체결량, '매도가': 단위체결가, '매도금액': 단위체결가 * 단위체결량})
 
             self.send_status_msg('주문내용', msg)
@@ -992,8 +949,8 @@ class Admin:
             else:
                 if gm.잔고목록.in_key(code):
                     gm.잔고목록.set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량, '주문가능수량': 주문가능수량, '현재가': 현재가})
-            dictFID['주문상태'] = '잔고'
-            self.dbm_trade_upsert(dictFID)
+            # dictFID['주문상태'] = '잔고'
+            # self.dbm_trade_upsert(dictFID)
             msg = f"잔고변경 : {code} {dictFID['종목명']} 보유수량:{보유수량}주 매입단가:{매입단가}원 매입금액:{보유수량 * 매입단가}원 주문가능수량:{주문가능수량}주"
             logging.info(msg)
             logging.debug(f'잔고 dictFID:\n{tabulate(pd.DataFrame([dictFID]), headers="keys", showindex=True, numalign="right")}')
@@ -1006,30 +963,30 @@ class Admin:
         la.work('dbm', 'stop')
         time.sleep(0.1)  # 마지막 메시지 처리를 위한 대기
 
-    def dbm_order_upsert(self, idx, code, name, quantity, price, ordtype, hoga, screen, rqname, accno, ordno):
+    def dbm_order_upsert(self, dict_data):
         try:
-            dict_data = {
-                '전략번호': idx,
-                '종목코드': code,
-                '종목명': name,
-                '주문수량': quantity,
-                '주문가격': price,
-                '주문유형': ordtype,
-                '호가구분': hoga,
-                '화면번호': screen,
-                '요청명': rqname,
-                '계좌번호': accno,
-                '주문번호': ordno
-            }
-            la.work('dbm', 'table_upsert', db='daily', table='orders', dict_data=dict_data)
+            la.work('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
         except Exception as e:
             logging.error(f"dbm_order_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
-            logging.info(f'dbm_order_upsert: {ordtype} 주문번호={ordno} {code} {name} 수량:{quantity} 주문가격:{price} {"시장가" if hoga == "03" else "지정가"}')
 
     def dbm_trade_upsert(self, dictFID):
         try:
             dict_data = {key: dictFID[key] for key in dc.ddb.TRD_COLUMN_NAMES if key in dictFID}
-            la.work('dbm', 'table_upsert', db='daily', table='trades', dict_data=dict_data)
+            la.work('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
+
+            if dictFID['주문상태'] == '체결':
+                kind = dictFID['주문구분']
+                code = dictFID['종목코드']
+                name = dictFID['종목명']
+                qty = dictFID['체결량']
+                price = dictFID['체결가']
+                amount = dictFID['체결누계금액']
+                st_no = dictFID['전략번호']
+                st_name = dictFID['전략명칭']
+                ordno = dictFID['주문번호']
+                st_buy = dictFID['매수전략']
+
+                la.work('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_no, st_name, st_buy)
         except Exception as e:
             logging.error(f"dbm_trade_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
 

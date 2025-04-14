@@ -105,7 +105,7 @@ class Work:
 
 ## Define Constants *************************************************************************
 @dataclass
-class FieldsAttributes: # 데이터베이스 필드 정의
+class FieldsAttributes: # 데이터베이스 필드 속성
     name: str
     type: str
     default: any = None
@@ -118,9 +118,8 @@ class FieldsAttributes: # 데이터베이스 필드 정의
     check: str = None
 
 @dataclass
-class DataBaseFields:
+class DataBaseFields:   # 데이터베이스 필드 정의
     id = FieldsAttributes(name='id', type='INTEGER', primary=True, autoincrement=True)
-    포지션id = FieldsAttributes(name='포지션id', type='INTEGER', not_null=True, default=0)
     거래세 = FieldsAttributes(name='거래세', type='INTEGER', not_null=True, default=0)
     거래세율 = FieldsAttributes(name='거래세율', type='REAL', not_null=True, default=0.0)
     계좌번호 = FieldsAttributes(name='계좌번호', type='TEXT', not_null=True, default="''")
@@ -184,30 +183,23 @@ class DataBaseFields:
     호가구분 = FieldsAttributes(name='호가구분', type='TEXT', not_null=True, default="''")
     화면번호 = FieldsAttributes(name='화면번호', type='TEXT', not_null=True, default="''")
 
-class DataBaseColumns:
+class DataBaseColumns:  # 데이터베이스 컬럼 정의
     fd = DataBaseFields()
 
-    ORD_TABLE_NAME = 'orders'
-    ORD_COLUMNS = [fd.id, fd.전략번호, fd.종목코드, fd.종목명, fd.주문수량, fd.주문가격, fd.주문유형, fd.호가구분, fd.화면번호, fd.요청명, fd.계좌번호, fd.주문번호, fd.처리일시]
-    ORD_COLUMN_NAMES = [col.name for col in ORD_COLUMNS]
-    ORD_INDEXES = {
-        'idx_strategy': f"CREATE INDEX IF NOT EXISTS idx_strategy ON {ORD_TABLE_NAME}(전략번호)",
-        'idx_rqname': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_rqname ON {ORD_TABLE_NAME}(요청명)"
-    }
-
     TRD_TABLE_NAME = 'trades'
-    TRD_COLUMNS = [fd.id, fd.전략번호, fd.매도수구분, fd.주문구분, fd.주문상태, fd.주문번호, fd.종목코드, fd.종목명, fd.현재가, fd.주문수량, fd.주문가격, \
+    TRD_SELECT_DATE = f"SELECT * FROM {TRD_TABLE_NAME} WHERE DATE(처리일시) = ? ORDER BY 처리일시 ASC"
+    TRD_COLUMNS = [fd.id, fd.전략번호, fd.전략명칭, fd.주문구분, fd.주문상태, fd.주문번호, fd.종목코드, fd.종목명, fd.현재가, fd.주문수량, fd.주문가격, \
                     fd.미체결수량, fd.매매구분, fd.체결량, fd.체결가, fd.체결누계금액, fd.체결번호, fd.체결시간, fd.단위체결가, fd.단위체결량, fd.당일매매수수료, \
                         fd.당일매매세금, fd.원주문번호, fd.처리일시]
     TRD_COLUMN_NAMES = [col.name for col in TRD_COLUMNS]
     TRD_INDEXES = {
         'idx_ordno': f"CREATE INDEX IF NOT EXISTS idx_ordno ON {TRD_TABLE_NAME}(주문번호)",
-        'idx_strategy': f"CREATE INDEX IF NOT EXISTS idx_strategy ON {TRD_TABLE_NAME}(전략번호)",
-        'idx_kind_code': f"CREATE INDEX IF NOT EXISTS idx_kind_code ON {TRD_TABLE_NAME}(매도수구분, 종목코드)"
+        'idx_strategy': f"CREATE INDEX IF NOT EXISTS idx_strategy ON {TRD_TABLE_NAME}(전략명칭, 종목코드)",
+        'idx_kind_code': f"CREATE INDEX IF NOT EXISTS idx_kind_code ON {TRD_TABLE_NAME}(주문구분, 종목코드)"
     }
 
     CONC_TABLE_NAME = 'conclusion'
-    CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND 매수수량 = 매도수량 ORDER BY 매수일자, 매수시간 ASC"
+    CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND 매도수량 > 0 ORDER BY 매수일자, 매수시간 ASC"
     CONC_COLUMNS = [fd.id, fd.전략, fd.종목번호, fd.종목명, fd.손익금액, fd.손익율, fd.매수일자, fd.매수시간,\
                     fd.매수수량, fd.매수가, fd.매수금액, fd.매수번호, fd.매도일자, fd.매도시간, fd.매도수량,\
                     fd.매도가, fd.매도금액, fd.매도번호, fd.제비용, fd.매수전략, fd.전략명칭]
@@ -217,31 +209,8 @@ class DataBaseColumns:
         'idx_sellorder': f"CREATE INDEX IF NOT EXISTS idx_sellorder ON {CONC_TABLE_NAME}(매도일자, 매도번호)"
     }
 
-    MON_TABLE_NAME = 'monitor'
-    MON_SELECT_DATE = f"SELECT * FROM {MON_TABLE_NAME} WHERE DATE(처리일시) = ? ORDER BY 처리일시 ASC"
-    MON_COLUMNS = [fd.id, fd.구분, fd.전략, fd.전략명칭, fd.종목코드, fd.종목명, fd.주문수량, fd.주문가격, fd.매수수량, fd.매수가, fd.매수금액, \
-                   fd.매도수량, fd.매도가, fd.매도금액, fd.주문번호, fd.처리일시]
-    MON_COLUMN_NAMES = [col.name for col in MON_COLUMNS]
-    MON_INDEXES = {
-        'idx_datetime': f"CREATE INDEX IF NOT EXISTS idx_datetime ON {MON_TABLE_NAME}(처리일시)",
-        'idx_strategy': f"CREATE INDEX IF NOT EXISTS idx_strategy ON {MON_TABLE_NAME}(전략)",
-        'idx_code': f"CREATE INDEX IF NOT EXISTS idx_code ON {MON_TABLE_NAME}(종목코드)"
-    }
-
-    PRO_TABLE_NAME = 'profit'
-    PRO_SELECT_DATE = f"SELECT * FROM {PRO_TABLE_NAME} WHERE 매도일자 = ? ORDER BY 매도시간 ASC"
-    PRO_COLUMNS = [fd.id, fd.전략, fd.전략명칭, fd.종목코드, fd.종목명, fd.매수수량, fd.매수가, fd.매수금액, fd.매도수량, fd.매도가, fd.매도금액, \
-                   fd.매수수수료, fd.매도수수료, fd.거래세, fd.제비용, fd.손익금액, fd.손익율, fd.매수일자, fd.매수시간, fd.매도일자, fd.매도시간]
-    PRO_COLUMN_NAMES = [col.name for col in PRO_COLUMNS]
-    PRO_INDEXES = {
-        'idx_profit_sell_date': f"CREATE INDEX IF NOT EXISTS idx_profit_sell_date ON {PRO_TABLE_NAME}(매도일자)",
-        'idx_profit_buy_date': f"CREATE INDEX IF NOT EXISTS idx_profit_buy_date ON {PRO_TABLE_NAME}(매수일자)",
-        'idx_profit_strategy': f"CREATE INDEX IF NOT EXISTS idx_profit_strategy ON {PRO_TABLE_NAME}(전략)",
-        'idx_profit_code': f"CREATE INDEX IF NOT EXISTS idx_profit_code ON {PRO_TABLE_NAME}(종목코드)"
-    }
-
 @dataclass
-class FIDs:
+class FIDs:             # 실시간 조회 필드 아이디
     거래구분: dict = field(default_factory=lambda: {
         '지정가': '00',
         '시장가': '03',
@@ -381,7 +350,7 @@ class FIDs:
     })
 
 @dataclass
-class TimeDefinition:
+class TimeDefinition:   # 시간 정의
     WAIT_SEC: int = 10
     RUN_INTERVAL: int = 0.01
     TODAY: str = field(default_factory=lambda: datetime.now().strftime('%Y-%m-%d'))
@@ -389,7 +358,7 @@ class TimeDefinition:
     TOAST_TIME: int = 5000  # 밀리초
 
 @dataclass
-class ScreenNumber:
+class ScreenNumber:     # 화면번호
     화면: dict = field(default_factory=lambda: {
         '잔고합산': '1020', '잔고목록': '1030', '손익합산': '1040', '손익목록': '1050', '일지합산': '1060', '일지목록': '1070', '예수금': '1080',
         '검색00': '3300', '검색01': '3301', '검색02': '3302', '검색03': '3303', '검색04': '3304',  # 마지막 자리 전략번호
@@ -407,7 +376,7 @@ class ScreenNumber:
     })
 
 @dataclass
-class MarketStatus:
+class MarketStatus:     # 장 상태
     장종료 = '장 종료'
     장전시간외종가 = '장전 시간외 종가'
     장전동시호가 = '장전 동시호가'
@@ -419,7 +388,7 @@ class MarketStatus:
     장운영시간 = [장운영중, 장마감동시호가]
     주문가능시간 = [장전동시호가, 장운영중, 장마감동시호가]
 
-class FilePath:
+class FilePath:         # 파일 경로
     path = get_path()
 
     LOG_PATH = 'log'
@@ -451,7 +420,7 @@ class FilePath:
     image_file = os.path.join(get_path(IMAGE_PATH), "Liberanimo_only.png")
 
 @dataclass
-class Constants:
+class Constants:        # 상수 정의
     tax_rate = 0.0015
     fee_real = 0.0015
     fee_sim = 0.0035
@@ -610,7 +579,7 @@ log_config = {
 }
 
 @dataclass
-class DefineConstants:
+class DefineConstants:  # 글로벌 상수 정의
     const = Constants()
     fid = FIDs()
     td = TimeDefinition()
@@ -622,7 +591,7 @@ class DefineConstants:
 dc = DefineConstants()
 
 ## Define Clobal memory *************************************************************************
-class TableColumns:
+class TableColumns:     # 테이블 데이타 컬럼 정의
     hd잔고합산 = {
         '키': '순번',
         '정수': ['순번','총매입금액', '총평가금액', '추정예탁자산', '총평가손익금액'],
@@ -671,12 +640,11 @@ class TableColumns:
 
     hd매매목록 = {
         '키': '처리일시',
-        '정수': ['매수수량', '매수가', '매수금액', '매도수량', '매도가', '매도금액', '주문수량', '주문가격'],
+        '정수': ['현재가', '주문수량', '주문가격', '미체결수량', '체결량', '체결가', '체결누계금액'],
         '실수': [],
+        '컬럼': [ '주문구분', '주문상태', '종목코드', '종목명', '주문수량', '주문가격', '미체결수량', '체결량', '체결가', '체결누계금액',\
+                '매매구분', '주문번호', '원주문번호', '처리일시', '전략명칭']
     }
-    hd매매목록.update({
-        '컬럼': ['구분', '처리일시', '종목코드', '종목명'] + hd매매목록['정수'] + ['주문번호', '전략', '전략명칭']
-    })
 
     hd접수목록 = hd조건목록.copy()
     hd접수목록.update({'키': '주문번호'})
@@ -737,7 +705,7 @@ class TableColumns:
         }
 
 @dataclass
-class GlobalConfig:
+class GlobalConfig:     # 환경변수 정의
     sim_on = True
     gui_on = False
     ready = False
@@ -747,13 +715,13 @@ class GlobalConfig:
     ready = False
 
 @dataclass
-class GuiConfig:
+class GuiConfig:         # GUI 환경변수 정의
     list계좌콤보 = []
     list전략콤보 = []
     list전략튜플 = []
 
 @dataclass
-class GlobalMemory:
+class GlobalMemory:      # 글로벌 메모리 정의
     main = None
     gui = None
     api = None
@@ -803,7 +771,6 @@ class GlobalMemory:
     수수료율 = 0.0
     세금율 = 0.0
     holdings = {}
-
 gm = GlobalMemory()
 
 def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):
