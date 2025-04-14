@@ -1,6 +1,6 @@
 from public import dc, get_path
 from classes import la
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import sqlite3
 import os
@@ -59,17 +59,13 @@ class DBMServer:
         for index in dc.ddb.MON_INDEXES.values():
             self.cursor.execute(index)
 
-        # 포지션 테이블
-        sql = self.create_table_sql(dc.ddb.POS_TABLE_NAME, dc.ddb.POS_COLUMNS)
-        self.cursor.execute(sql)
-        for index in dc.ddb.POS_INDEXES.values():
-            self.cursor.execute(index)
-
         # 손익 테이블
-        sql = self.create_table_sql(dc.ddb.PLN_TABLE_NAME, dc.ddb.PLN_COLUMNS, dc.ddb.PLN_PK_COLUMNS)
+        sql = self.create_table_sql(dc.ddb.PRO_TABLE_NAME, dc.ddb.PRO_COLUMNS)
         self.cursor.execute(sql)
-        for index in dc.ddb.PLN_INDEXES.values():
+        for index in dc.ddb.PRO_INDEXES.values():
             self.cursor.execute(index)
+            
+        self.cleanup_old_data()
 
         self.db.commit()
 
@@ -93,7 +89,7 @@ class DBMServer:
         self.daily_cursor.execute(sql)
         for index in dc.ddb.TRD_INDEXES.values():
             self.daily_cursor.execute(index)
-            
+
         self.daily_db.commit()
 
     # 테이블 생성 SQL문 생성 함수
@@ -187,7 +183,7 @@ class DBMServer:
 
             all_trade = row['매도수량'] == db_row['매수수량']
 
-            매수수수료 = int(row['매수가'] * row['매수수량'] * row['수수료율'] / 10) * 10
+            매수수수료 = int(row['매수가'] * row['매도수량'] * row['수수료율'] / 10) * 10 # 매도 수량만큼 제비용 계산
             매도수수료 = int(row['매도금액'] * row['수수료율'] / 10) * 10
             거래세 = int(row['매도금액'] * row['거래세율'])
 
@@ -265,158 +261,258 @@ class DBMServer:
     def receive_current_price(self, code, dictFID):
         pass
 
-    def update_positions_and_profits(self):
-        """
-        포지션 및 손익 정보 업데이트 함수
-        
-        Returns:
-        --------
-        bool : 성공 여부
-        """
+    # 2. 오래된 데이터 정리 함수
+    def cleanup_old_data(self):
+        """monitor 테이블에서 3개월 이상 지난 데이터 삭제"""
         try:
-            # 클래스의 기존 커서 사용
-            cursor = self.cursor
+            # 현재 날짜로부터 3개월 이전 날짜 계산
+            three_months_ago = datetime.now() - timedelta(days=90)
+            date_str = three_months_ago.strftime('%Y-%m-%d')
             
-            # 트랜잭션 시작
-            self.db.begin()
+            # 3개월 이전 데이터 삭제
+            sql = f"DELETE FROM {dc.ddb.MON_TABLE_NAME} WHERE DATE(처리일시) < ?"
+            self.execute_query(sql, db='db', params=(date_str,))
             
-            # 미처리 매수 체결 처리
-            cursor.execute("""
-                SELECT * FROM monitor 
-                WHERE 구분 = '매수체결' AND id NOT IN (SELECT 매수ID FROM positions WHERE 매수ID IS NOT NULL)
-                ORDER BY 처리일시
-            """)
-            for 매수 in cursor.fetchall():
-                try:
-                    매수수수료 = int(매수['매수가'] * 매수['매수수량'] * 0.00015 / 10) * 10
-                    
-                    cursor.execute("""
-                        INSERT INTO positions 
-                        (전략명칭, 종목코드, 종목명, 매수일시, 매수수량, 매수가, 매수금액, 매수수수료, 매수주문번호, 매수ID)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (매수['전략명칭'], 매수['종목코드'], 매수['종목명'], 매수['처리일시'], 
-                        매수['매수수량'], 매수['매수가'], 매수['매수금액'], 매수수수료, 매수['주문번호'], 매수['id']))
-                except Exception as e:
-                    logging.error(f"매수 처리 중 오류 발생 (ID: {매수['id']}): {str(e)}")
-                    continue
+            deleted_rows = self.cursor.rowcount
+            logging.info(f"monitor 테이블에서 {date_str} 이전 데이터 {deleted_rows}건 삭제 완료")
             
-            # 미처리 매도 체결 처리
-            cursor.execute("""
-                SELECT * FROM monitor 
-                WHERE 구분 = '매도체결' AND id NOT IN (SELECT 매도ID FROM positions WHERE 매도ID IS NOT NULL)
-                ORDER BY 처리일시
-            """)
+            # 데이터베이스 최적화 (VACUUM)
+            self.execute_query("VACUUM", db='db')
             
-            for 매도 in cursor.fetchall():
-                try:
-                    remaining_sell_qty = 매도['매도수량']
-                    
-                    # 가장 오래된 미청산 포지션부터 매도처리
-                    while remaining_sell_qty > 0:
-                        cursor.execute("""
-                            SELECT * FROM positions 
-                            WHERE 종목코드 = ? AND (상태 = '보유중' OR 상태 = '부분청산')
-                            ORDER BY 매수일시 ASC LIMIT 1
-                        """, (매도['종목코드'],))
-                        
-                        포지션 = cursor.fetchone()
-                        if not 포지션:
-                            logging.warning(f"매도 처리 중 매칭되는 포지션 없음 (ID: {매도['id']}, 종목: {매도['종목코드']})")
-                            break
-                            
-                        # 매도 가능 수량 계산
-                        avail_qty = 포지션['매수수량'] - 포지션['매도수량']
-                        sell_qty = min(avail_qty, remaining_sell_qty)
-                        
-                        # 매도 수수료 및 거래세 계산
-                        매도비율 = sell_qty / 매도['매도수량']
-                        현재매도금액 = 매도['매도금액'] * 매도비율
-                        매도수수료 = int(현재매도금액 * 0.00015 / 10) * 10
-                        거래세 = int(현재매도금액 * 0.0023)
-                        
-                        # 해당 매수 비율 계산
-                        매수비율 = sell_qty / 포지션['매수수량']
-                        해당매수금액 = 포지션['매수금액'] * 매수비율
-                        해당매수수수료 = 포지션['매수수수료'] * 매수비율
-                        
-                        # 손익 계산
-                        제비용 = 해당매수수수료 + 매도수수료 + 거래세
-                        손익금액 = 현재매도금액 - 해당매수금액 - 제비용
-                        손익율 = round(손익금액 / 해당매수금액 * 100, 2)
-                        
-                        # 포지션 상태 업데이트
-                        상태 = '청산완료' if sell_qty == avail_qty else '부분청산'
-                        
-                        cursor.execute("""
-                            UPDATE positions SET 
-                                매도수량 = 매도수량 + ?,
-                                매도가 = CASE 
-                                    WHEN 매도수량 = 0 THEN ?
-                                    ELSE (매도금액 + ?) / (매도수량 + ?)
-                                END,
-                                매도금액 = 매도금액 + ?,
-                                매도수수료 = 매도수수료 + ?,
-                                거래세 = 거래세 + ?,
-                                제비용 = 제비용 + ?,
-                                손익금액 = 손익금액 + ?,
-                                손익율 = CASE 
-                                    WHEN ? = '청산완료' THEN 
-                                        (매도금액 + ? - 매수금액 - 제비용 - ?) * 100 / 매수금액
-                                    ELSE 
-                                        (손익금액 + ?) * 100 / 매수금액
-                                END,
-                                상태 = ?,
-                                매도일시 = CASE WHEN 상태 = '보유중' THEN ? ELSE 매도일시 END,
-                                매도주문번호 = CASE WHEN 매도주문번호 IS NULL THEN ? ELSE 매도주문번호 || ',' || ? END,
-                                매도ID = CASE WHEN 매도ID IS NULL THEN ? ELSE 매도ID || ',' || ? END
-                            WHERE 포지션ID = ?
-                        """, (sell_qty, 매도['매도가'], 현재매도금액, sell_qty, 현재매도금액, 
-                            매도수수료, 거래세, 매도수수료 + 거래세, 손익금액, 상태, 현재매도금액, 제비용, 
-                            손익금액, 상태, 매도['처리일시'], 매도['주문번호'], 매도['주문번호'], 
-                            str(매도['id']), str(매도['id']), 포지션['포지션ID']))
-                        
-                        # 일별 손익 업데이트
-                        매도일자 = 매도['처리일시'].split()[0]  # 날짜 부분만 추출
-                        
-                        try:
-                            cursor.execute("""
-                                INSERT INTO profitloss 
-                                (날짜, 종목코드, 종목명, 전략명칭, 매수수량, 매수금액, 매도수량, 매도금액, 제비용, 손익금액, 손익율)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (매도일자, 매도['종목코드'], 매도['종목명'], 매도['전략명칭'], 
-                                sell_qty, 해당매수금액, sell_qty, 현재매도금액, 제비용, 손익금액, 손익율))
-                        except Exception as e:
-                            # 중복 키 오류 처리
-                            if "UNIQUE constraint failed" in str(e):
-                                cursor.execute("""
-                                    UPDATE profitloss SET
-                                        매수수량 = 매수수량 + ?,
-                                        매수금액 = 매수금액 + ?,
-                                        매도수량 = 매도수량 + ?,
-                                        매도금액 = 매도금액 + ?,
-                                        제비용 = 제비용 + ?,
-                                        손익금액 = 매도금액 + ? - 매수금액 - ? - 제비용 - ?,
-                                        손익율 = (매도금액 + ? - 매수금액 - ? - 제비용 - ?) * 100 / (매수금액 + ?)
-                                    WHERE 날짜 = ? AND 종목코드 = ? AND 전략명칭 = ?
-                                """, (sell_qty, 해당매수금액, sell_qty, 현재매도금액, 제비용, 
-                                    현재매도금액, 해당매수금액, 제비용, 현재매도금액, 해당매수금액, 제비용, 해당매수금액,
-                                    매도일자, 매도['종목코드'], 매도['전략명칭']))
-                            else:
-                                logging.error(f"손익 업데이트 중 오류 발생: {str(e)}")
-                        
-                        # 남은 매도 수량 감소
-                        remaining_sell_qty -= sell_qty
-                except Exception as e:
-                    logging.error(f"매도 처리 중 오류 발생 (ID: {매도['id']}): {str(e)}")
-                    continue
-            
-            # 모든 처리가 성공적으로 완료되면 커밋
-            self.db.commit()
-            logging.info("포지션 및 손익 업데이트 완료")
-            return True
-        
         except Exception as e:
-            # 전체 프로세스에서 오류 발생 시 롤백
-            logging.error(f"포지션 및 손익 업데이트 중 오류 발생: {str(e)}")
+            logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)
+
+
+    # 3. 특정 날짜의 손익 계산 함수
+    def calculate_profit_for_date(self, date, fee_rate=None, tax_rate=None):
+        """특정 날짜의 매도건에 대한 손익 계산 및 profit 테이블에 저장"""
+        try:
+            # 해당 날짜의 매도체결 데이터 조회
+            sell_sql = f"""
+                SELECT *
+                FROM {dc.ddb.MON_TABLE_NAME}
+                WHERE DATE(처리일시) = ? AND 구분 = '매도체결'
+                ORDER BY 처리일시 ASC
+            """
+            sells = self.execute_query(sell_sql, db='db', params=(date,))
+            
+            if not sells:
+                logging.info(f"{date} 날짜에 매도체결 데이터가 없습니다.")
+                return []
+            
+            # 이미 처리된 매도 기록인지 확인 및 삭제
+            self.execute_query(
+                f"DELETE FROM {dc.ddb.PRO_TABLE_NAME} WHERE 매도일자 = ?", 
+                db='db', 
+                params=(date,)
+            )
+            
+            profit_records = []
+            
+            for sell in sells:
+                # 해당 매도건에 대한 매수 데이터 조회 (동일 전략, 동일 종목)
+                buy_sql = f"""
+                    SELECT *
+                    FROM {dc.ddb.MON_TABLE_NAME}
+                    WHERE 전략 = ? AND 종목코드 = ? AND 구분 = '매수체결' AND 매수수량 > 0
+                    ORDER BY 처리일시 ASC
+                """
+                buys = self.execute_query(
+                    buy_sql, 
+                    db='db', 
+                    params=(sell['전략'], sell['종목코드'])
+                )
+                
+                if not buys:
+                    logging.warning(f"매도체결(id:{sell['id']})에 대응하는 매수체결 데이터가 없습니다.")
+                    continue
+                
+                # 매수금액과 매수수량 합계 계산
+                total_buy_amount = 0
+                total_buy_quantity = 0
+                
+                for buy in buys:
+                    # 매수수량이 매도수량을 충족할 때까지만 계산
+                    if total_buy_quantity >= sell['매도수량']:
+                        break
+                    
+                    buy_quantity = min(buy['매수수량'], sell['매도수량'] - total_buy_quantity)
+                    # 매수가 * 실제 사용되는 매수수량
+                    buy_amount = buy['매수가'] * buy_quantity
+                    
+                    total_buy_quantity += buy_quantity
+                    total_buy_amount += buy_amount
+                
+                # 평균 매수가 계산
+                avg_buy_price = total_buy_amount / total_buy_quantity if total_buy_quantity > 0 else 0
+                
+                # 비용 계산
+                sell_amount = sell['매도가'] * sell['매도수량']
+                buy_commission = int(total_buy_amount * fee_rate / 10) * 10
+                sell_commission = int(sell_amount * fee_rate / 10) * 10
+                tax = int(sell_amount * tax_rate)
+                total_expense = buy_commission + sell_commission + tax
+                
+                # 손익 및 손익률 계산
+                profit = sell_amount - total_buy_amount - total_expense
+                profit_rate = (profit / total_buy_amount) * 100 if total_buy_amount > 0 else 0
+                
+                # 날짜와 시간 분리
+                earliest_buy_time = buys[0]['처리일시'] if buys else ''
+                earliest_buy_date = earliest_buy_time.split(' ')[0] if ' ' in earliest_buy_time else ''
+                earliest_buy_time_only = earliest_buy_time.split(' ')[1] if ' ' in earliest_buy_time else ''
+                
+                sell_datetime = sell['처리일시']
+                sell_date = sell_datetime.split(' ')[0] if ' ' in sell_datetime else ''
+                sell_time_only = sell_datetime.split(' ')[1] if ' ' in sell_datetime else ''
+                
+                # profit 테이블에 데이터 저장
+                profit_data = {
+                    '전략': sell['전략'],
+                    '전략명칭': sell['전략명칭'],
+                    '종목코드': sell['종목코드'],
+                    '종목명': sell['종목명'],
+                    '매수수량': total_buy_quantity,
+                    '매수가': avg_buy_price,
+                    '매수금액': total_buy_amount,
+                    '매도수량': sell['매도수량'],
+                    '매도가': sell['매도가'],
+                    '매도금액': sell_amount,
+                    '매수수수료': buy_commission,
+                    '매도수수료': sell_commission,
+                    '거래세': tax,
+                    '제비용': total_expense,
+                    '손익금액': profit,
+                    '손익율': profit_rate,
+                    '매수일자': earliest_buy_date,
+                    '매수시간': earliest_buy_time_only,
+                    '매도일자': sell_date,
+                    '매도시간': sell_time_only
+                }
+                
+                self.table_upsert(db='db', table=dc.ddb.PRO_TABLE_NAME, dict_data=profit_data)
+                profit_records.append(profit_data)
+                
+            self.db.commit()
+            logging.info(f"{date} 날짜의 손익 계산 완료")
+            return profit_records
+            
+        except Exception as e:
+            logging.error(f"손익 계산 중 오류 발생: {e}", exc_info=True)
             self.db.rollback()
-            return False
+            return []
+
+    # 4. 손익 조회 함수
+    def get_profit_by_date(self, date):
+        """특정 날짜의 손익 데이터 조회"""
+        try:
+            sql = dc.ddb.PRO_SELECT_DATE
+            result = self.execute_query(sql, db='db', params=(date,))
+            return result
+        except Exception as e:
+            logging.error(f"손익 조회 중 오류 발생: {e}", exc_info=True)
+            return []
+
+    # 5-1. 날짜별 전체 손익 집계 함수
+    def get_profit_total_summary_by_date(self, date):
+        """특정 날짜의 전체 손익 집계 데이터 조회"""
+        try:
+            # 해당 날짜의 전체 집계 조회 - 인덱스를 활용하도록 쿼리 최적화
+            sql = f"""
+                SELECT 
+                    COUNT(*) as 총매매건수,
+                    SUM(매수금액) as 총매수금액,
+                    SUM(매도금액) as 총매도금액,
+                    SUM(제비용) as 총제비용,
+                    SUM(손익금액) as 총손익금액,
+                    CASE 
+                        WHEN SUM(매수금액) > 0 THEN (SUM(손익금액) / SUM(매수금액)) * 100 
+                        ELSE 0 
+                    END as 총수익율
+                FROM {dc.ddb.PRO_TABLE_NAME}
+                WHERE 매도일자 = ?
+            """
+            result = self.execute_query(sql, db='db', params=(date,))
+            return result[0] if result else {}
+            
+        except Exception as e:
+            logging.error(f"전체 손익 집계 중 오류 발생: {e}", exc_info=True)
+            return {}
+
+    # 5-2. 날짜별 전략별 손익 집계 함수
+    def get_profit_strategy_summary_by_date(self, date):
+        """특정 날짜의 전략별 손익 집계 데이터 조회"""
+        try:
+            # 전략별 집계 조회 - 인덱스를 활용하도록 쿼리 최적화
+            sql = f"""
+                SELECT 
+                    전략,
+                    전략명칭,
+                    COUNT(*) as 매매건수,
+                    SUM(매수금액) as 매수금액,
+                    SUM(매도금액) as 매도금액,
+                    SUM(제비용) as 제비용,
+                    SUM(손익금액) as 손익금액,
+                    CASE 
+                        WHEN SUM(매수금액) > 0 THEN (SUM(손익금액) / SUM(매수금액)) * 100 
+                        ELSE 0 
+                    END as 수익율
+                FROM {dc.ddb.PRO_TABLE_NAME}
+                WHERE 매도일자 = ?
+                GROUP BY 전략, 전략명칭
+                ORDER BY 손익금액 DESC
+            """
+            result = self.execute_query(sql, db='db', params=(date,))
+            return result
+            
+        except Exception as e:
+            logging.error(f"전략별 손익 집계 중 오류 발생: {e}", exc_info=True)
+            return []
+
+    # 5-3. 날짜별 종목별 손익 집계 함수
+    def get_profit_stock_summary_by_date(self, date):
+        """특정 날짜의 종목별 손익 집계 데이터 조회"""
+        try:
+            # 종목별 집계 조회 - 인덱스를 활용하도록 쿼리 최적화
+            sql = f"""
+                SELECT 
+                    종목코드,
+                    종목명,
+                    COUNT(*) as 매매건수,
+                    SUM(매수금액) as 매수금액,
+                    SUM(매도금액) as 매도금액,
+                    SUM(제비용) as 제비용,
+                    SUM(손익금액) as 손익금액,
+                    CASE 
+                        WHEN SUM(매수금액) > 0 THEN (SUM(손익금액) / SUM(매수금액)) * 100 
+                        ELSE 0 
+                    END as 수익율
+                FROM {dc.ddb.PRO_TABLE_NAME}
+                WHERE 매도일자 = ?
+                GROUP BY 종목코드, 종목명
+                ORDER BY 손익금액 DESC
+            """
+            result = self.execute_query(sql, db='db', params=(date,))
+            return result
+            
+        except Exception as e:
+            logging.error(f"종목별 손익 집계 중 오류 발생: {e}", exc_info=True)
+            return []
+
+    # 5-4. 날짜별 모든 손익 집계 함수 (이전 함수 호환성 유지)
+    def get_profit_summary_by_date(self, date):
+        """특정 날짜의 모든 손익 집계 데이터 조회 (이전 함수 호환성 유지)"""
+        try:
+            return {
+                'total': self.get_profit_total_summary_by_date(date),
+                'by_strategy': self.get_profit_strategy_summary_by_date(date),
+                'by_stock': self.get_profit_stock_summary_by_date(date)
+            }
+        except Exception as e:
+            logging.error(f"손익 집계 중 오류 발생: {e}", exc_info=True)
+            return {
+                'total': {},
+                'by_strategy': [],
+                'by_stock': []
+            }
+    

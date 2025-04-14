@@ -1173,7 +1173,7 @@ class WorkerManager:
         # 결과 대기
         start_time = time.time()
         while task_id not in self.result_dicts[process_name]:
-            if time.time() - start_time > 10.0:
+            if time.time() - start_time > 20.0:
                 logging.warning(f"프로세스 호출 타임아웃: {process_name}.{method_name}")
                 return None
             time.sleep(0.001)

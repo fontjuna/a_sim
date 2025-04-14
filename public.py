@@ -120,7 +120,7 @@ class FieldsAttributes: # 데이터베이스 필드 정의
 @dataclass
 class DataBaseFields:
     id = FieldsAttributes(name='id', type='INTEGER', primary=True, autoincrement=True)
-    포지션id = FieldsAttributes(name='포지션id', type='INTEGER', primary=True, autoincrement=True)
+    포지션id = FieldsAttributes(name='포지션id', type='INTEGER', not_null=True, default=0)
     거래세 = FieldsAttributes(name='거래세', type='INTEGER', not_null=True, default=0)
     거래세율 = FieldsAttributes(name='거래세율', type='REAL', not_null=True, default=0.0)
     계좌번호 = FieldsAttributes(name='계좌번호', type='TEXT', not_null=True, default="''")
@@ -213,13 +213,14 @@ class DataBaseColumns:
                     fd.매도가, fd.매도금액, fd.매도번호, fd.제비용, fd.매수전략, fd.전략명칭]
     CONC_COLUMN_NAMES = [col.name for col in CONC_COLUMNS]
     CONC_INDEXES = {
-        'idx_dateorder': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_dateorder ON {CONC_TABLE_NAME}(매수일자, 매수번호)",
-        'idx_datetimecode': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_datetimecode ON {CONC_TABLE_NAME}(매수일자, 매수시간, 종목번호)"
+        'idx_buyorder': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_buyorder ON {CONC_TABLE_NAME}(매수일자, 매수번호)",
+        'idx_sellorder': f"CREATE INDEX IF NOT EXISTS idx_sellorder ON {CONC_TABLE_NAME}(매도일자, 매도번호)"
     }
 
     MON_TABLE_NAME = 'monitor'
     MON_SELECT_DATE = f"SELECT * FROM {MON_TABLE_NAME} WHERE DATE(처리일시) = ? ORDER BY 처리일시 ASC"
-    MON_COLUMNS = [fd.id, fd.구분, fd.전략, fd.전략명칭, fd.종목코드, fd.종목명, fd.주문수량, fd.주문가격, fd.매수수량, fd.매수가, fd.매수금액, fd.매도수량, fd.매도가, fd.매도금액, fd.주문번호, fd.처리일시]
+    MON_COLUMNS = [fd.id, fd.구분, fd.전략, fd.전략명칭, fd.종목코드, fd.종목명, fd.주문수량, fd.주문가격, fd.매수수량, fd.매수가, fd.매수금액, \
+                   fd.매도수량, fd.매도가, fd.매도금액, fd.주문번호, fd.처리일시]
     MON_COLUMN_NAMES = [col.name for col in MON_COLUMNS]
     MON_INDEXES = {
         'idx_datetime': f"CREATE INDEX IF NOT EXISTS idx_datetime ON {MON_TABLE_NAME}(처리일시)",
@@ -227,23 +228,16 @@ class DataBaseColumns:
         'idx_code': f"CREATE INDEX IF NOT EXISTS idx_code ON {MON_TABLE_NAME}(종목코드)"
     }
 
-    POS_TABLE_NAME = 'position'
-    POS_COLUMNS = [fd.포지션id, fd.전략명칭, fd.종목코드, fd.종목명, fd.매수일시, fd.매수수량, fd.매수가, fd.매수금액, fd.수수료율, fd.거래세율,\
-                    fd.매도일시, fd.매도수량, fd.매도가, fd.매도금액, fd.매수수수료, fd.매도수수료, fd.거래세, fd.제비용, fd.손익금액, fd.손익율,\
-                    fd.상태, fd.매수주문번호, fd.매도주문번호]
-    POS_COLUMN_NAMES = [col.name for col in POS_COLUMNS]
-    POS_INDEXES = {
-        'idx_datetime': f"CREATE INDEX IF NOT EXISTS idx_datetime ON {POS_TABLE_NAME}(매도일시)",
-        'idx_strategy': f"CREATE INDEX IF NOT EXISTS idx_strategy_code ON {POS_TABLE_NAME}(전략명칭, 종목코드)",
-        'idx_code': f"CREATE INDEX IF NOT EXISTS idx_code ON {POS_TABLE_NAME}(종목코드)"
-    }
-
-    PLN_TABLE_NAME = 'profitloss'
-    PLN_COLUMNS = [fd.처리일시, fd.종목코드, fd.종목명, fd.전략명칭, fd.매수수량, fd.매수금액, fd.매도수량, fd.매도금액, fd.제비용, fd.손익금액, fd.손익율]
-    PLN_COLUMN_NAMES = [col.name for col in PLN_COLUMNS]
-    PLN_PK_COLUMNS = [fd.처리일시.name, fd.종목코드.name, fd.전략명칭.name]
-    PLN_INDEXES = {
-        'idx_code': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_code ON {PLN_TABLE_NAME}(종목코드)",
+    PRO_TABLE_NAME = 'profit'
+    PRO_SELECT_DATE = f"SELECT * FROM {PRO_TABLE_NAME} WHERE 매도일자 = ? ORDER BY 매도시간 ASC"
+    PRO_COLUMNS = [fd.id, fd.전략, fd.전략명칭, fd.종목코드, fd.종목명, fd.매수수량, fd.매수가, fd.매수금액, fd.매도수량, fd.매도가, fd.매도금액, \
+                   fd.매수수수료, fd.매도수수료, fd.거래세, fd.제비용, fd.손익금액, fd.손익율, fd.매수일자, fd.매수시간, fd.매도일자, fd.매도시간]
+    PRO_COLUMN_NAMES = [col.name for col in PRO_COLUMNS]
+    PRO_INDEXES = {
+        'idx_profit_sell_date': f"CREATE INDEX IF NOT EXISTS idx_profit_sell_date ON {PRO_TABLE_NAME}(매도일자)",
+        'idx_profit_buy_date': f"CREATE INDEX IF NOT EXISTS idx_profit_buy_date ON {PRO_TABLE_NAME}(매수일자)",
+        'idx_profit_strategy': f"CREATE INDEX IF NOT EXISTS idx_profit_strategy ON {PRO_TABLE_NAME}(전략)",
+        'idx_profit_code': f"CREATE INDEX IF NOT EXISTS idx_profit_code ON {PRO_TABLE_NAME}(종목코드)"
     }
 
 @dataclass
@@ -667,12 +661,12 @@ class TableColumns:
     })
 
     hd손익목록 = {
-        '키': '처리일시',
-        '정수': ['매수수량', '매수가', '매수금액', '매도수량', '매도가', '매도금액', '주문수량', '주문가격'],
-        '실수': [],
+        '키': '매수시간',
+        '정수': ['매수수량', '매수금액', '매도수량', '매도금액', '제비용', '손익금액'],
+        '실수': ['손익율'],
     }
     hd손익목록.update({
-        '컬럼': ['구분', '처리일시', '종목코드', '종목명'] + hd손익목록['정수'] + ['주문번호', '전략', '전략명칭']
+        '컬럼': ['매수시간', '종목코드', '종목명'] + hd손익목록['정수'] + ['손익율', '전략', '전략명칭']
     })
 
     hd매매목록 = {

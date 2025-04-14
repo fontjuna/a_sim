@@ -369,7 +369,7 @@ class OnReceiveRealData(QThread):
                 }
                 gm.admin.on_fx실시간_주식체결(**job)
 
-                if self._stop_event.wait(timeout=0.3/cnt):
+                if self._stop_event.wait(timeout=1.0/cnt):
                     return
 
     def stop(self):
@@ -479,15 +479,15 @@ class SIMServer():
         self.tr_condition_list = []
         cond_thread[screen] = OnReceiveRealCondition(cond_name, cond_index)
         cond_thread[screen].start()
-        logging.debug(cond_thread)
+        logging.debug(f'추가후: {cond_thread}')
         return self.tr_condition_list
 
     def SendConditionStop(self, screen, cond_name, cond_index):
         global cond_thread
         cond_thread[screen].stop()
-        logging.debug(cond_thread)
+        logging.debug(f'삭제전: {cond_thread}')
         del cond_thread[screen]
-        logging.debug(cond_thread)
+        logging.debug(f'삭제후: {cond_thread}')
         return 0
 
     # 주문 관련 메서드 --------------------------------------------------------------------------------------------------

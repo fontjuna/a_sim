@@ -100,6 +100,10 @@ class GUI(QMainWindow, form_class):
             self.dtMonitor.setCalendarPopup(True)
             self.dtMonitor.setDate(today)
 
+            self.dtProfitLoss.setMaximumDate(today)
+            self.dtProfitLoss.setCalendarPopup(True)
+            self.dtProfitLoss.setDate(today)
+
             statusBar = QStatusBar()
             self.setStatusBar(statusBar)
             self.lbl0 = QLabel(" "*5)
@@ -141,6 +145,7 @@ class GUI(QMainWindow, form_class):
             self.btnDeposit.clicked.connect(self.gui_deposit_load)                      # 예수금 로드
             self.btnLoadConclusion.clicked.connect(self.gui_conclusion_load)            # 체결목록 로드
             self.btnLoadMonitor.clicked.connect(self.gui_load_monitor)                  # 당일 매매 목록 로드
+            self.btnLoadProfitLoss.clicked.connect(self.gui_load_profit_loss)            # 손익 목록 로드
 
             self.rbInfo.toggled.connect(lambda: self.gui_log_level_set('INFO', self.rbInfo.isChecked()))
             self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
@@ -664,11 +669,16 @@ class GUI(QMainWindow, form_class):
 
     def gui_fx갱신_손익정보(self):
         try:
-            # 손익합산 업데이트
-            #self.gui_set_color(self.lblProfitLoss, gm.l2손익합산)
+            총매수금액, 총매도금액, 총제비용, 총손익금액 = gm.손익목록.sum(column=['매수금액', '매도금액', '제비용', '손익금액'])
+            총매매건수 = gm.손익목록.len()
+            총손익율 = round(총손익금액 / 총매수금액 * 100, 2) if 총매수금액 else 0
+            self.lblProfitBuy.setText(f"{int(총매수금액):,}")
+            self.lblProfitSell.setText(f"{int(총매도금액):,}")
+            self.lblProfitFee.setText(f"{int(총제비용):,}")
+            self.lblProfitCount.setText(f"{총매매건수}")
+            self.gui_set_color(self.lblTotalPnL, int(총손익금액))
+            self.gui_set_color(self.lblPnLRate, float(총손익율))
 
-            # 손익목록 업데이트
-            #self.tblProfitLoss.clearContents()
             gm.손익목록.update_table_widget(self.tblProfitLoss, stretch=True)
 
         except Exception as e:

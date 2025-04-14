@@ -118,7 +118,7 @@ class Strategy:
             return False, {}, f"종목코드없음 : {code} "
         name = self.dict종목정보.get(code, next='종목명')
 
-        logging.debug(f'매수조건 확인 시작: rqname={rqname} code={code} name={name} price={price}')
+        #logging.debug(f'매수조건 확인 시작: rqname={rqname} code={code} name={name} price={price}')
 
         남은횟수 = self.get_strategy_remain_count()
         if 남은횟수 <= 0: return False, {}, f"전략별 매수 횟수 제한 {code} {name} 남은횟수={남은횟수}회/매수횟수={self.체결횟수} 회 초과"
@@ -184,10 +184,11 @@ class Strategy:
 
     def order_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         is_ok, send_data, reason = self.is_buy(code, rqname, price) # rqname : 전략
-        logging.info(f'매수: {self.전략} - {reason}\nsend_data={send_data}')
         if is_ok:
+            logging.info(f'매수결정: {self.전략} - {reason}\nsend_data={send_data}')
             la.work('aaa', 'com_SendOrder', self.전략번호, **send_data)
         else:
+            logging.info(f'매수안함: {self.전략} - {reason} send_data={send_data}')
             key = f'{code}_매수'
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)
@@ -303,17 +304,20 @@ class Strategy:
     def order_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
         is_ok, send_data, reason = self.is_sell(row, sell_condition)
         if reason not in ["조건없음", "장 운영시간이 아님"]:
-            logging.info(f'매도: {self.전략} - {reason}\nsend_data={send_data}')
+            logging.info(f'매도결정: {self.전략} - {reason}\nsend_data={send_data}')
         if is_ok:
             if isinstance(send_data, list):
+                logging.debug(f'** 복수 매도 주문목록 **: {send_data}')
                 for data in send_data:
                     la.work('aaa', 'com_SendOrder', self.전략번호, **data)
             else:
                 la.work('aaa', 'com_SendOrder', self.전략번호, **send_data)
         else:
+            #logging.info(f'매도안함: {self.전략} - {reason}\nsend_data={send_data}')
             key = f'{row["종목번호"]}_매도'
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)
+            gm.잔고목록.set(key=row['종목번호'], data={'주문가능수량': row['보유수량']})
 
         return is_ok, send_data, reason
 
@@ -471,11 +475,11 @@ class Strategy:
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
                     la.work('aaa', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                    logging.debug(f'매도 조건 추가: {self.전략} ** {code} {종목명}')
-                else:
-                    logging.debug(f'매도 조건 이미 있음: {self.전략} ** {code} {종목명}')
+                #    logging.debug(f'매도 조건 추가: {self.전략} ** {code} {종목명}')
+                #else:
+                #    logging.debug(f'매도 조건 이미 있음: {self.전략} ** {code} {종목명}')
                     
-                gm.잔고목록.set(key=code, data={'주문가능수량': 0})
+                gm.잔고목록.set(key=code, data={'주문가능수량': 0}) # 취소될 경우도 있으니 SendOrder 에서 처리
 
             else: # if kind == '매수':
                 if gm.잔고목록.in_key(code): 
@@ -488,12 +492,14 @@ class Strategy:
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
                     la.work('aaa', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                    logging.debug(f'매수 조건 추가: {self.전략} ** {code} {종목명}')
-                else:
-                    logging.debug(f'매수 조건 이미 있음: {self.전략} ** {code} {종목명}')
+                #    logging.debug(f'매수 조건 추가: {self.전략} ** {code} {종목명}')
+                #else:
+                #    logging.debug(f'매수 조건 이미 있음: {self.전략} ** {code} {종목명}')
 
                 if code not in gm.dict조건종목감시:
                     self.cdn_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
+
+            logging.info(f'{kind}편입 : {self.전략} {self.전략명칭} {code} {종목명}')
            
             data={'키': key, '구분': kind, '상태': '대기', '전략': self.전략, '종목코드': code, '종목명': 종목명, '전략매도': True}
             gm.주문목록.set(key=key, data=data) # 아래 보다 먼저 실행 해야 함
@@ -506,8 +512,6 @@ class Strategy:
             else:
                 gm.dict주문대기종목.set(key=code, value={'idx': self.전략번호, 'kind': kind})
   
-            logging.info(f'{kind}편입 : {self.전략} {self.전략명칭} {code} {종목명}')
-  
         except Exception as e:
             logging.error(f'{kind}조건 편입 처리 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
@@ -516,11 +520,12 @@ class Strategy:
             name = la.answer('api', 'GetMasterCodeName', code=code)
             if kind == '매도':
                 if gm.매도조건목록.in_key(code):
+                    logging.info(f'{kind}이탈 : {self.전략} {self.전략명칭} {code} {name}')
                     success = gm.매도조건목록.delete(key=code)
                 return
 
             if gm.매수조건목록.in_key(code):
-                logging.info(f'{kind}이탈: {self.전략} {self.전략명칭} {code} {name}')
+                logging.info(f'{kind}이탈 : {self.전략} {self.전략명칭} {code} {name}')
                 success = gm.매수조건목록.delete(key=code)
 
             # 실시간 감시 해지하지 않는다.
@@ -544,7 +549,7 @@ class Strategy:
             fids = "10"  # 현재가
             la.work('api', 'SetRealReg', screen=dc.scr.화면[self.전략], code_list=codes, fid_list=fids, opt_type=search_flag)
             gm.dict조건종목감시.update({code: fids for code in condition_list})
-            logging.debug(f'실시간 감시 요청: {gm.dict조건종목감시.keys()}')
+            #logging.debug(f'실시간 감시 요청: {gm.dict조건종목감시.keys()}')
         except Exception as e:
             logging.error(f'종목 검색 요청 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
