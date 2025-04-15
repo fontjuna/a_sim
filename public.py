@@ -756,6 +756,8 @@ class GlobalMemory:      # 글로벌 메모리 정의
     # 서버 호출 제한 체크
     req = None # 요청 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (CommRqData + CommKwRqData + SendCondition 포함) - 1 초마다 리셋 됨
     ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨
+    ct = None # 카운터 전략별, 종목별 매수 횟수 제한
+    
     strategy_row = None
     basic_strategy = None
     전략설정 = None # json

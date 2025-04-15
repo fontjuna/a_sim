@@ -1440,3 +1440,87 @@ def process_worker_main(name, target_info, task_queue, result_dict):
 # 전역 관리자 인스턴스
 la = WorkerManager()
 
+class CounterTicker:
+    """
+    쓰레드 안전한, 전략별 종목 매수 횟수 카운터 클래스
+    날짜가 변경되면 자동으로 카운터를 초기화합니다.
+    """
+    STRATEGY_CODE = "000000"        # 전략 자체 카운터 코드
+    WHOLE_TICKER_CODE = "999999"    # 전체 종목 카운터 코드
+    DEFAULT_STRATEGY_LIMIT = 1000   # 전략 자체 기본 제한
+    DEFAULT_TICKER_LIMIT = 10       # 종목 기본 제한
+    DEFAULT_DATA = { "date": dc.td.ToDay, "data": {} } # data = { strategy: {code: { name: "", limit: 0, count: 0 }, ... } } 
+   
+    def __init__(self, file_name="counter_data.json"):
+        data_path = get_path('db')
+        self.file_path = os.path.join(data_path, file_name)
+        self.lock = threading.RLock()
+        self.data = {}
+        self.whole_count = self.DEFAULT_STRATEGY_LIMIT
+        self.load_data()
+    
+    def load_data(self):
+        with self.lock:
+            success, loaded_data = load_json(self.file_path, self.DEFAULT_DATA)
+            if success:
+                saved_date = loaded_data.get("date", "")
+                self.data = loaded_data.get("data", {})
+                if saved_date != dc.td.ToDay: self.data = {}
+    
+    def save_data(self):
+        with self.lock:
+            save_obj = { "date": dc.td.ToDay, "data": self.data }
+            success, _ = save_json(self.file_path, save_obj)
+            return success
+    
+    def set_strategy(self, strategy, name, strategy_limit=None, ticker_limit=None):
+        with self.lock:
+            update = False
+            if strategy not in self.data: 
+                self.data[strategy] = {}
+                self.data[strategy][self.STRATEGY_CODE] = { "name": name, "limit": strategy_limit if strategy_limit is not None else self.DEFAULT_STRATEGY_LIMIT, "count": 0 }
+                self.data[strategy][self.WHOLE_TICKER_CODE] = { "name": name, "limit": ticker_limit if ticker_limit is not None else self.DEFAULT_TICKER_LIMIT, "count": 0 }
+                update = True
+            else:
+                if self.data[strategy][self.STRATEGY_CODE]["name"] != name:
+                    self.data[strategy][self.STRATEGY_CODE]["name"] = name
+                    update = True
+                if strategy_limit is not None:
+                    if self.data[strategy][self.STRATEGY_CODE]["limit"] != strategy_limit:
+                        self.data[strategy][self.STRATEGY_CODE] = { "limit": strategy_limit, "count": 0 }
+                        update = True
+                if ticker_limit is not None:
+                    if self.data[strategy][self.WHOLE_TICKER_CODE]["limit"] != ticker_limit:
+                        self.data[strategy][self.WHOLE_TICKER_CODE] = { "limit": ticker_limit, "count": 0 }
+                        update = True
+            if update: self.save_data()
+    
+    def set_batch(self, strategy, data):
+        with self.lock:
+            for code, name in data.items():
+                self.set(strategy, code, name)
+            self.save_data()
+
+    def set(self, strategy, code, name, limit=0):
+        with self.lock:
+            self.data[strategy][code] = { "name": name, "limit": limit, "count": 0 }
+            self.save_data()
+
+    def set_add(self, strategy, code):
+        with self.lock:
+            self.data[strategy][code]["count"] += 1
+            self.data[strategy][self.STRATEGY_CODE]["count"] += 1
+            self.save_data()
+    
+    def get(self, strategy, code, name=None):
+        with self.lock:
+            if code not in self.data[strategy]:
+                self.set(strategy, code, name if name is not None else "")
+            if self.data[strategy][self.STRATEGY_CODE]["count"] >= self.data[strategy][self.STRATEGY_CODE]["limit"]:
+                return False
+            ticker_info = self.data[strategy][code]
+            ticker_limit = ticker_info["limit"] if ticker_info["limit"] > 0 else self.data[strategy][self.WHOLE_TICKER_CODE]["limit"]
+            if ticker_info["count"] >= ticker_limit:
+                return False
+            return True
+    

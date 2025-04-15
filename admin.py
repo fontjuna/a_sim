@@ -1,5 +1,5 @@
 from public import gm, dc, Work,load_json, save_json
-from classes import TableManager, TimeLimiter, ThreadSafeDict, la
+from classes import TableManager, TimeLimiter, ThreadSafeDict, la, CounterTicker
 from strategy import Strategy
 from tabulate import tabulate
 from datetime import datetime
@@ -27,6 +27,7 @@ class Admin:
     def set_globals(self):
         gm.req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
         gm.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
+        gm.ct = CounterTicker()
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
         la.set_var('dbm', 'fee_rate', gm.수수료율)
@@ -455,6 +456,7 @@ class Admin:
                 save_json(dc.fp.holdings_file, gm.holdings)
 
             def save_counter(dict_list):
+                data = {}
                 for item in dict_list:
                     전일가 = gm.api.GetMasterLastPrice(item['종목번호'])
                     gm.dict종목정보.set(item['종목번호'], {'종목명': item['종목명'], '전일가': 전일가, "현재가": 0})
@@ -471,8 +473,8 @@ class Admin:
                     종목제한 = 전략정의.get('종목제한', 0)
                     gm.json_counter_tickers.setdefault(item['전략'], {})
 
-                    gm.json_counter_tickers[item['전략']].setdefault(item['종목번호'], {'종목명': item['종목명'], '종목제한': 종목제한, '종목잔회': 종목제한})
-                save_json(dc.fp.counter_tickers_file, gm.json_counter_tickers)
+                    data[item['종목번호']] = item['종목명']
+                gm.ct.set_batch(item['전략'], data)
 
             logging.debug(f'dict_list ={dict_list}')
             if dict_list:
@@ -894,17 +896,8 @@ class Admin:
                     gm.holdings[code] = data
                     save_json(dc.fp.holdings_file, gm.holdings)
 
-                    # 종목 매수제한 기록
-                    set_dict = gm.json_counter_tickers.setdefault(전략, {전략: {}}).setdefault(code, {'종목명': name, '종목제한': 전략정의['종목제한'], '종목잔회': 전략정의['종목제한']})
-                    set_dict['종목잔회'] -= 1
-                    gm.json_counter_tickers[전략][code].update(set_dict)
-                    self.json_save_counter_tickers(gm.json_counter_tickers)
-
-                    # 전략 체결횟수 기록
-                    set_dict = gm.json_counter_strategy.setdefault(전략, {'전략명칭': 전략정의['전략명칭'], '체결횟수': 전략정의['체결횟수'], '남은횟수': 전략정의['체결횟수']})
-                    set_dict['남은횟수'] -= 1
-                    gm.json_counter_strategy[전략].update(set_dict)
-                    self.json_save_counter_strategy(gm.json_counter_strategy)
+                    # 매수 제한 기록
+                    gm.ct.set_add(전략, code)
 
                     logging.info(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
 
@@ -978,9 +971,9 @@ class Admin:
                 kind = dictFID['주문구분']
                 code = dictFID['종목코드']
                 name = dictFID['종목명']
-                qty = dictFID['체결량']
-                price = dictFID['체결가']
-                amount = dictFID['체결누계금액']
+                qty = abs(int(dictFID['체결량'] or 0))
+                price = abs(int(dictFID['체결가'] or 0))
+                amount = abs(int(dictFID['체결누계금액'] or 0))
                 st_no = dictFID['전략번호']
                 st_name = dictFID['전략명칭']
                 ordno = dictFID['주문번호']

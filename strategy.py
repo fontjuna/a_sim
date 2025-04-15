@@ -82,31 +82,6 @@ class Strategy:
         except Exception as e:
             logging.error(f'딕셔너리 변환 오류: {self.전략} - {type(e).__name__} - {e}', exc_info=True)
 
-    def get_ticker_remain_count(self, code, name):
-        try:
-            gm.json_counter_tickers.setdefault(self.전략, {})
-            dict종목 = gm.json_counter_tickers[self.전략].setdefault(code, {'종목명': name, '종목제한': self.종목제한, '종목잔회': self.종목제한})
-            if self.종목제한 != dict종목.get('종목제한', 0):
-                dict종목['종목제한'] = self.종목제한
-                dict종목['종목잔회'] = self.종목제한
-                gm.json_counter_tickers[self.전략][code].update({'종목제한': self.종목제한, '종목잔회': self.종목제한})
-            return dict종목.get('종목잔회', 0)
-
-        except Exception as e:
-            logging.error(f'종목잔회 조회 오류: {self.전략} - {type(e).__name__} - {e}', exc_info=True)
-            return 0
-
-    def get_strategy_remain_count(self):
-        try:
-            dict전략 = gm.json_counter_strategy.setdefault(self.전략, {'전략명칭': self.전략명칭, '체결횟수': self.체결횟수, '남은횟수': self.체결횟수})
-            체결횟수 = dict전략.get('체결횟수', 0)
-            if self.체결횟수 != 체결횟수 or self.전략명칭 != dict전략.get('전략명칭', ''):
-                gm.json_counter_strategy[self.전략].update({'전략명칭': self.전략명칭, '체결횟수': self.체결횟수, '남은횟수': self.체결횟수})
-            return gm.json_counter_strategy.get(self.전략, {}).get('남은횟수', 0)
-        except Exception as e:
-            logging.error(f'남은횟수 조회 오류: {self.전략} - {type(e).__name__} - {e}', exc_info=True)
-            return 0
-
     def is_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         """매수 조건 충족 여부를 확인하는 메소드"""
         if not gm.config.sim_on:
@@ -118,15 +93,13 @@ class Strategy:
             return False, {}, f"종목코드없음 : {code} "
         name = self.dict종목정보.get(code, next='종목명')
 
-        #logging.debug(f'매수조건 확인 시작: rqname={rqname} code={code} name={name} price={price}')
-
-        남은횟수 = self.get_strategy_remain_count()
-        if 남은횟수 <= 0: return False, {}, f"전략별 매수 횟수 제한 {code} {name} 남은횟수={남은횟수}회/매수횟수={self.체결횟수} 회 초과"
+        if not gm.ct.get(self.전략, "000000", self.매수전략): 
+            return False, {}, f"전략별 매수 횟수 제한 {code} {name} 매수횟수={self.체결횟수} 회 초과"
 
         if self.중복매수금지 and gm.잔고목록.in_key(code): return False, {}, f"보유 종목 재매수 금지 ({code} {name})"
 
-        종목잔회 = self.get_ticker_remain_count(code, name)
-        if 종목잔회 <= 0: return False, {}, f"종목별 매수 횟수 제한 {code} {name} 남은횟수={종목잔회}회/종목제한{self.종목제한} 회 초과"
+        if not gm.ct.get(self.전략, code, name): 
+            return False, {}, f"종목별 매수 횟수 제한 {code} {name} 종목제한{self.종목제한} 회 초과"
 
         if gm.잔고목록.len(filter={'전략': self.전략}) >= self.보유제한:
             return False, {}, f"보유 종목수 제한 {code} {name} \
@@ -362,9 +335,8 @@ class Strategy:
             msg = self.cdn_fx체크_전략매매()
             if msg: return msg
             self.cdn_fx실행_전략매매시작()
-            gm.json_counter_strategy.setdefault(self.전략, {'전략명칭': self.전략명칭, '체결횟수': self.체결횟수, '남은횟수': self.체결횟수})
-            if gm.json_counter_strategy[self.전략]['전략명칭'] == self.전략명칭:
-                gm.json_counter_strategy[self.전략] = {'전략명칭': self.전략명칭, '체결횟수': self.체결횟수, '남은횟수': self.체결횟수}
+
+            gm.ct.set_strategy(self.전략, self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
             if gm.config.gui_on: 
                 gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any(gm.매수문자열들) or any(gm.매도문자열들)}))
