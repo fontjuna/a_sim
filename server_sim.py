@@ -8,7 +8,8 @@ import threading
 
 real_thread = {}
 cond_thread = {}
-cond_data_list =  [('079', '전고돌파3분5억-매수'), ('080', '전고돌파3분5억-매도'), ('024', '1분10억'), ('076', '1분10억-매도'), ('073', '3분30억전고돌파-매수'), ('077', '3분30억전고돌파-매수')]
+cond_data_list =  [('079', '전고돌파3분5억-매수'), ('080', '전고돌파3분5억-매도'), ('073', '3분30억전고돌파-매수'), ('077', '3분30억전고돌파-매도'), ('075', '장시작3분-매수'),\
+                    ('074', '장시작3분-매도'), ('024', '1분10억'), ('076', '1분10억-매도'), ('004', '돌파4시간3분5억-매수'), ('006', '돌파4시간3분5억-매도')]
 price_dict = {}
 
 #init_logger() #멀티프로세스에서는 정의 해야함
@@ -368,7 +369,7 @@ class OnReceiveRealData(QThread):
                 }
                 gm.admin.on_fx실시간_주식체결(**job)
 
-                if self._stop_event.wait(timeout=0.3/cnt):
+                if self._stop_event.wait(timeout=1.0/cnt):
                     return
 
     def stop(self):
@@ -478,15 +479,15 @@ class SIMServer():
         self.tr_condition_list = []
         cond_thread[screen] = OnReceiveRealCondition(cond_name, cond_index)
         cond_thread[screen].start()
-        logging.debug(cond_thread)
+        logging.debug(f'추가후: {cond_thread}')
         return self.tr_condition_list
 
     def SendConditionStop(self, screen, cond_name, cond_index):
         global cond_thread
         cond_thread[screen].stop()
-        logging.debug(cond_thread)
+        logging.debug(f'삭제전: {cond_thread}')
         del cond_thread[screen]
-        logging.debug(cond_thread)
+        logging.debug(f'삭제후: {cond_thread}')
         return 0
 
     # 주문 관련 메서드 --------------------------------------------------------------------------------------------------

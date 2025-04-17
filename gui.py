@@ -96,6 +96,10 @@ class GUI(QMainWindow, form_class):
             self.dtConclusion.setCalendarPopup(True)
             self.dtConclusion.setDate(today)
 
+            self.dtMonitor.setMaximumDate(today)
+            self.dtMonitor.setCalendarPopup(True)
+            self.dtMonitor.setDate(today)
+
             statusBar = QStatusBar()
             self.setStatusBar(statusBar)
             self.lbl0 = QLabel(" "*5)
@@ -119,8 +123,6 @@ class GUI(QMainWindow, form_class):
             self.cbAccounts.currentIndexChanged.connect(self.gui_account_changed)       # 계좌 변경 선택
             self.cbCondition.currentIndexChanged.connect(self.gui_strategy_changed)     # 검색식 변경 선택
             self.btnReloadAccount.clicked.connect(self.gui_account_reload)              # 계좌 재로드
-            self.btnLoadProfitLoss.clicked.connect(self.gui_load_profit_loss)           # 당일 매매 손익 로드
-            self.btnProfitLoss.clicked.connect(self.gui_load_profit_loss)               # 당일 매매 손익 로드
 
             self.tblStrategy.clicked.connect(lambda x: self.gui_set_strategy(x.row()))  # 전략설정 선택
             self.btnLoadCondition.clicked.connect(self.gui_strategy_reload)             # 검색식 재로드
@@ -138,6 +140,7 @@ class GUI(QMainWindow, form_class):
             self.btnLoadDaily.clicked.connect(self.gui_daily_load)                      # 매매일지 로드
             self.btnDeposit.clicked.connect(self.gui_deposit_load)                      # 예수금 로드
             self.btnLoadConclusion.clicked.connect(self.gui_conclusion_load)            # 체결목록 로드
+            self.btnLoadMonitor.clicked.connect(self.gui_load_monitor)                  # 당일 매매 목록 로드
 
             self.rbInfo.toggled.connect(lambda: self.gui_log_level_set('INFO', self.rbInfo.isChecked()))
             self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
@@ -412,11 +415,11 @@ class GUI(QMainWindow, form_class):
         else:
             logging.warning('계좌를 선택하세요')
 
-    def gui_load_profit_loss(self):
-        self.btnLoadProfitLoss.setEnabled(False)
-        gm.admin.pri_fx얻기_손익목록()
-        self.gui_fx갱신_손익정보()
-        self.btnLoadProfitLoss.setEnabled(True)
+    def gui_load_monitor(self):
+        self.btnLoadMonitor.setEnabled(False)
+        gm.admin.pri_fx얻기_매매목록(self.dtMonitor.date().toString("yyyy-MM-dd"))
+        self.gui_fx갱신_매매정보()
+        self.btnLoadMonitor.setEnabled(True)
 
     def gui_daily_load(self):
         self.btnLoadDaily.setEnabled(False)
@@ -653,17 +656,12 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'전략정의 채움 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_fx갱신_손익정보(self):
+    def gui_fx갱신_매매정보(self):
         try:
-            # 손익합산 업데이트
-            self.gui_set_color(self.lblProfitLoss, gm.l2손익합산)
-
-            # 손익목록 업데이트
-            #self.tblProfitLoss.clearContents()
-            gm.손익목록.update_table_widget(self.tblProfitLoss, stretch=True)
+            gm.매매목록.update_table_widget(self.tblMonitor, stretch=True)
 
         except Exception as e:
-            logging.error(f'손익정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.error(f'매매정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_set_color(self, label, value):
         try:
@@ -683,6 +681,7 @@ class GUI(QMainWindow, form_class):
 
     def gui_fx갱신_목록테이블(self):
         try:
+            self.gui_set_color(self.lblProfitLoss, gm.l2손익합산)
             row = gm.잔고합산.get(key=0)
             if row is None: row = {}
             self.lblBuy.setText(f"{int(row.get('총매입금액', 0)):,}")
@@ -755,13 +754,14 @@ class GUI(QMainWindow, form_class):
             self.lblConcBuy.setText(f"{매수금액:,}")
             self.lblConcSell.setText(f"{매도금액:,}")
             self.lblConcFee.setText(f"{제비용:,}")
-            self.lblConcCount.setText(f"{gm.체결목록.len(filter={'매도수량': ('==', '@매수수량')})}") # 다른 컬럼과 비교시 @ 를 앞에 붙인다.
+            #self.lblConcCount.setText(f"{gm.체결목록.len(filter={'매도수량': ('==', '@매수수량')})}") # 다른 컬럼과 비교시 @ 를 앞에 붙인다.
+            self.lblConcCount.setText(f"{gm.체결목록.len(filter={'매도수량': ('>', 0)})}") # 다른 컬럼과 비교시 @ 를 다른 컬럼명 앞에 붙인다. @매수수량
             손익율 = round(손익금액 / 매수금액 * 100, 2) if 매수금액 else 0
             self.gui_set_color(self.lblConcProfit, 손익금액)
             self.gui_set_color(self.lblConcProfitRate, 손익율)
             logging.debug(f"체결목록 합산: 매수금액={매수금액}, 매도금액={매도금액}, 손익금액={손익금액}, 제비용={제비용}")
-            if gm.체결목록.len(filter={'매도수량': ('!=', '@매수수량')}) > 0:
-                gm.체결목록.set(filter={'매도수량': ('!=', '@매수수량')}, data={'손익금액': 0, '손익율': 0})
+            # if gm.체결목록.len(filter={'매도수량': ('!=', '@매수수량')}) > 0:
+            #     gm.체결목록.set(filter={'매도수량': ('!=', '@매수수량')}, data={'손익금액': 0, '손익율': 0})
 
             #self.tblConclusion.clearContents()
             gm.체결목록.update_table_widget(self.tblConclusion)
@@ -820,12 +820,15 @@ class GUI(QMainWindow, form_class):
             logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_fx게시_주문내용(self, msg):
-        current_time = datetime.now().strftime("%H:%M:%S")
+        current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         self.txtOrder.append(f"[{current_time}] {msg}")
         self.txtOrder.moveCursor(QTextCursor.End)
 
     def gui_fx게시_검색내용(self, msg):
+        if msg == '':
+            self.txtCondition.clear()
+            return
         current_time = datetime.now().strftime("%H:%M:%S")
-        self.txtCondition.append(f"[{current_time}] {msg}")
+        self.txtCondition.append(f"{current_time} {msg}")
         self.txtCondition.moveCursor(QTextCursor.End)
 
