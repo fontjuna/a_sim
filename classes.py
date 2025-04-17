@@ -1502,6 +1502,8 @@ class CounterTicker:
             self.save_data()
 
     def set(self, strategy, code, name, limit=0):
+        if strategy not in self.data:
+            self.set_strategy(strategy, name)
         with self.lock:
             self.data[strategy][code] = { "name": name, "limit": limit, "count": 0 }
             self.save_data()

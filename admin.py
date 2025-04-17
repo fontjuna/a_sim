@@ -221,35 +221,6 @@ class Admin:
 
     # json 파일 사용 메소드 -----------------------------------------------------------------------------------------
 
-    def json_load_counter_tickers(self) -> dict:
-        result, data = load_json(dc.fp.counter_tickers_file, {'today': dc.td.ToDay})
-        if result:
-            logging.debug(f'보유 종목 매수횟수 설정 JSON 파일을 로드 했습니다. data count={len(data)}')
-        if data.get('today', '') != dc.td.ToDay:
-            data = {'today': dc.td.ToDay}
-        return data
-
-    def json_save_counter_tickers(self, tickers) -> bool:
-        result, data = save_json(dc.fp.counter_tickers_file, tickers)
-        if result:
-            logging.debug(f'보유 종목 매수횟수 설정 파일을 저장 했습니다. data count={len(data)}')
-        return result
-
-    def json_load_counter_strategy(self) -> dict:
-        result, data = load_json(dc.fp.counter_strategy_file, {'today': dc.td.ToDay})
-        if result:
-            logging.debug(f'전략 매수횟수 설정 JSON 파일을 로드 했습니다. data count={len(data)}')
-        if data.get('today', '') != dc.td.ToDay:
-            data = {'today': dc.td.ToDay}
-        gm.json_counter_strategy_file = data
-        return data
-
-    def json_save_counter_strategy(self, strategy) -> bool:
-        result, data = save_json(dc.fp.counter_strategy_file, strategy)
-        if result:
-            logging.debug(f'전략 매수횟수 설정 파일을 저장 했습니다. data count={len(data)}')
-        return result
-
     def json_load_define_sets(self):
         try:
             result, data = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
@@ -690,19 +661,14 @@ class Admin:
     def cdn_fx실행_전략매매(self):
         try:
             self.cdn_fx준비_전략매매()
-            #gm.매수조건목록.delete()
-            #gm.매도조건목록.delete()
-            #gm.dict조건종목감시 = {}  # {'종목번호': [fid1, fid2, fid3, ...]}
             gm.매수문자열들 = [""] * 6     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
             gm.매도문자열들 = [""] * 6     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
             msgs = ''
-            #la.work('aaa', 'send_status_msg', '검색내용', args='')
             for i in range(1, 6):
                 if not gm.전략설정[i]['전략적용']: continue
                 msg = la.answer(f'전략{i:02d}', 'cdn_fx실행_전략매매')
                 logging.debug(f'전략{i:02d} msg={msg}')
                 if msg:
-                    # la.work(f'전략{i:02d}', 'cdn_fx실행_전략마무리')
                     msgs += f'\n{msg}' if msgs else msg
             if msgs: gm.toast.toast(msgs, duration=3000) #dc.TOAST_TIME
             if gm.config.gui_on: 
@@ -716,11 +682,10 @@ class Admin:
             for i in range(1, 6):
                 la.work(f'전략{i:02d}', 'cdn_fx실행_전략마무리')
                 la.stop_worker(f'전략{i:02d}')
-                #gm.전략쓰레드[i] = None
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()
-            la.work('aaa', 'send_status_msg', '검색내용', args='')
+            self.send_status_msg('검색내용', args='')
         except Exception as e:
             logging.error(f'전략매매 중지 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -738,7 +703,7 @@ class Admin:
             주문수량 = dictFID['주문수량']
             미체결수량 = dictFID['미체결수량']
 
-            data={'키': f'{key}취소', '구분': kind, '상태': '요청', '전략': origin_row['전략'], '종목코드': code, '종목명': name}
+            data={'키': f'{key}', '구분': kind, '상태': '취소요청', '전략': origin_row['전략'], '종목코드': code, '종목명': name}
             gm.주문목록.set(key=key, data=data)
             #gm.전략쓰레드[idx].order_cancel(kind, order_no, code)
             la.work(f'전략{idx:02d}', 'order_cancel', kind, order_no, code)
