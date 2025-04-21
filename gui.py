@@ -775,7 +775,6 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'변수 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
 
-
     def gui_var_save(self):
         try:
             name = self.ledVarName.text().strip()
@@ -960,7 +959,7 @@ class GUI(QMainWindow, form_class):
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
             self.lbl2.setText('연결됨' if gm.api.connected else '끊어짐')
             self.lbl2.setStyleSheet("color: green;" if gm.api.connected else "color: red;")
-            self.lbl4.setText(la.answer('aaa', 'com_market_status'))
+            self.lbl4.setText(la.answer('admin', 'com_market_status'))
 
             # 큐 메시지 처리
             while not gm.qwork['msg'].empty():

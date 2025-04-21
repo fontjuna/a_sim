@@ -33,8 +33,8 @@ class Admin:
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
         gm.cdt = ChartData()
+        la.register('cdt', gm.cdt, use_thread=True, use_process=False)
         gm.scm = ScriptManager()
-
         la.set_var('dbm', 'fee_rate', gm.수수료율)
         la.set_var('dbm', 'tax_rate', gm.세금율)
 
@@ -145,7 +145,7 @@ class Admin:
     def com_SendRequest(self, rqname, trcode, input, output, next='0', screen=None, form='dict_list', timeout=5):
         if not self.com_request_time_check(kind='request'): return [], False
         try:
-            logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} input={input} output={output} next={next} screen={screen} form={form} timeout={timeout}')
+            logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} \ninput={input} \noutput={output} \nnext={next} screen={screen} form={form} timeout={timeout}')
             args = {
                 'rqname': rqname,
                 'trcode': trcode,
@@ -335,7 +335,7 @@ class Admin:
                     row['현재가'] = 현재가
                     la.work(f'전략{data["idx"]:02d}', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
-            gm.cdt.update_price(code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
+            la.work('cdt', 'update_price', code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
 
         try:
             #la.work('dbm', 'receive_current_price', code=code, dictFID=dictFID) # 큐 과부하 일어남 (현재 암무 처리 않고 호출만 함으로써 과부하로 에러 남 )

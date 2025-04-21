@@ -113,7 +113,7 @@ class DBMServer:
             'result': result,
             'error': error
         }
-        la.work('aaa', order, **work)
+        la.work('admin', order, **work)
 
     def execute_query(self, sql, db='daily', params=None):
         try:
@@ -306,6 +306,6 @@ class DBMServer:
             logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)
 
     def get_minute_data(self, code, tick=3, all=False):
-        df = la.answer('aaa', 'dbm_get_minute_data', code=code, tick=tick, all=all)
+        df = la.answer('admin', 'dbm_get_minute_data', code=code, tick=tick, all=all)
         return df
 

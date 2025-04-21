@@ -85,7 +85,7 @@ class Strategy:
     def is_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         """매수 조건 충족 여부를 확인하는 메소드"""
         if not gm.config.sim_on:
-            status_market = la.answer('aaa', 'com_market_status')
+            status_market = la.answer('admin', 'com_market_status')
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
         if not code:
@@ -160,7 +160,7 @@ class Strategy:
         is_ok, send_data, reason = self.is_buy(code, rqname, price) # rqname : 전략
         if is_ok:
             logging.info(f'매수결정: {self.전략} - {reason}\nsend_data={send_data}')
-            la.work('aaa', 'com_SendOrder', self.전략번호, **send_data)
+            la.work('admin', 'com_SendOrder', self.전략번호, **send_data)
         else:
             logging.info(f'매수안함: {self.전략} - {reason} send_data={send_data}')
             key = f'{code}_매수'
@@ -173,7 +173,7 @@ class Strategy:
         """매도 조건 충족 여부를 확인하는 메소드"""
         try:
             if not gm.config.sim_on:
-                status_market = la.answer('aaa', 'com_market_status')
+                status_market = la.answer('admin', 'com_market_status')
                 if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
             code = row.get('종목번호', '')          # 종목번호 ='999999' 일 때 당일청산 매도
@@ -289,9 +289,9 @@ class Strategy:
             if isinstance(send_data, list):
                 logging.debug(f'** 복수 매도 주문목록 **: {send_data}')
                 for data in send_data:
-                    la.work('aaa', 'com_SendOrder', self.전략번호, **data)
+                    la.work('admin', 'com_SendOrder', self.전략번호, **data)
             else:
-                la.work('aaa', 'com_SendOrder', self.전략번호, **send_data)
+                la.work('admin', 'com_SendOrder', self.전략번호, **send_data)
         else:
             #logging.info(f'매도안함: {self.전략} - {reason}\nsend_data={send_data}')
             key = f'{row["종목번호"]}_매도'
@@ -317,7 +317,7 @@ class Strategy:
                 'ordno': order_no
             }
             logging.debug(f'주문취소: {self.전략} - {order_no} {send_data}')
-            la.work('aaa', 'com_SendOrder', self.전략번호, **send_data)
+            la.work('admin', 'com_SendOrder', self.전략번호, **send_data)
         except Exception as e:
             logging.error(f'주문취소 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -365,7 +365,7 @@ class Strategy:
                     logging.info(f'전략 실행 - {self.전략} : {self.전략명칭} {trade_type}전략={condition}')
                     for code in condition_list:
                         self.cdn_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
-                    la.work('aaa', 'send_status_msg', '검색내용', args=f'{self.전략} {trade_type} {condition}')
+                    la.work('admin', 'send_status_msg', '검색내용', args=f'{self.전략} {trade_type} {condition}')
                 else:
                     logging.warning(f'전략 실행 실패 - 전략={self.전략} 전략명칭={self.전략명칭} {trade_type}전략={condition}') # 같은 조건 1분 제한 조건 위반
 
@@ -419,7 +419,7 @@ class Strategy:
         condition_list = []
         try:
             job = {'screen': screen, 'cond_name': cond_name, 'cond_index': cond_index, 'search': 1}
-            condition_list, bool_ok = la.answer('aaa', 'com_SendCondition', **job)
+            condition_list, bool_ok = la.answer('admin', 'com_SendCondition', **job)
             return condition_list, bool_ok
         except Exception as e:
             logging.error(f'조건 검색 요청 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -453,7 +453,7 @@ class Strategy:
 
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
-                    la.work('aaa', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
+                    la.work('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
                 #    logging.debug(f'매도 조건 추가: {self.전략} ** {code} {종목명}')
                 #else:
                 #    logging.debug(f'매도 조건 이미 있음: {self.전략} ** {code} {종목명}')
@@ -470,7 +470,7 @@ class Strategy:
                 
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
-                    la.work('aaa', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
+                    la.work('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
                 #    logging.debug(f'매수 조건 추가: {self.전략} ** {code} {종목명}')
                 #else:
                 #    logging.debug(f'매수 조건 이미 있음: {self.전략} ** {code} {종목명}')

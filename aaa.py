@@ -27,7 +27,10 @@ class Main:
         self.app = QApplication(sys.argv)
         args = [arg.lower() for arg in sys.argv]
         gm.config.gui_on = 'off' not in args
-        gm.config.sim_on = 'sim' in args    
+        gm.config.sim_on = 'sim' in args            # 시뮬레이션 (전체)
+        gm.config.sim_real_only = 'sim2' in args    # 시뮬레이션 (실시간처리만)
+        if gm.config.sim_real_only:
+            gm.config.sim_on = True
         logging.info(f"### {'GUI' if gm.config.gui_on else 'CONSOLE'} Mode 로 시작 합니다. ###")
 
     def show_splash(self):
@@ -74,7 +77,7 @@ class Main:
             gm.gui = GUI() if gm.config.gui_on else None
             la.register('api', gm.api, use_thread=False)
             la.work('api', 'CommConnect', block=False)
-            la.register('aaa', gm.admin, use_thread=False)
+            la.register('admin', gm.admin, use_thread=False)
             la.register('dbm', DBMServer, use_process=True) # 직렬화 문제로 인스턴스를 넘기지 못함, 클래스를 넘겨서 프로세스내에서 인스턴스 생성
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
         except Exception as e:
@@ -93,7 +96,7 @@ class Main:
                 if la.answer('api', 'api_connected'): break
                 time.sleep(0.1)
             logging.debug(f'***** {gm.api.name.upper()} connected *****')
-            la.work('aaa', 'init')
+            la.work('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
             if gm.config.gui_on: gm.gui.init()
             logging.debug('prepare : gui 초기화 완료')
@@ -107,7 +110,7 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            la.work('aaa', 'trade_start')
+            la.work('admin', 'trade_start')
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):

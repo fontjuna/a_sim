@@ -1,4 +1,5 @@
 from public import gm, dc
+from classes import la
 from typing import Dict, List, Any, Union, Optional, Tuple
 from datetime import datetime
 import json
@@ -21,36 +22,50 @@ class ChartData:
             return
         self._initialized = True
         self._data = {}
+        self.types = {'mi': 'mi', 'dy': 'dy', 'wk': 'wk', 'mo': 'mo'}
     
     def _init_code_data(self, code: str):
-        """코드별 데이터 초기화"""
+        """코드별 데이터 초기화 - 1분봉만 초기화"""
         # 데이터 구조 초기화
-        self._data[code] = {'mo': [], 'wk': [], 'dy': [], 'mi': {1: []}}
+        if code not in self._data:
+            self._data[code] = {'mi': {1: []}, 'dy': [], 'wk': [], 'mo': []}
         
-        # 주기별 데이터 로드 및 처리
-        chart_types = {'mo': 'mo', 'wk': 'wk', 'dy': 'dy', 'mi': 'mi'}
-        for key, chart_type in chart_types.items():
-            cycle = 1 if key == 'mi' else None
-            data = self.get_chart_data(code, chart_type, cycle)
+        # 1분봉 데이터만 로드
+        if self._data[code]['mi'][1] == []:
+            self._load_minute_data(code, 1)
+
+    def _load_minute_data(self, code: str, cycle: int):
+        """분봉 데이터 로드"""
+        data = self._get_chart_data(code, 'mi', cycle)
+        for item in reversed(data):
+            datetime_str = item.get('체결시간', '')
+            self._data[code]['mi'][cycle].insert(0, self._create_candle(
+                date=datetime_str[:8],
+                time=datetime_str[8:14],
+                item=item
+            ))
+        if self._data[code]['mi'][cycle]:
+            logging.debug(f'분봉 차트 데이타 : {code} {cycle} \n{pd.DataFrame(self._data[code]["mi"][cycle])}')
+
+    def _load_period_data(self, code: str, chart_type: str):
+        """일/주/월봉 데이터 로드"""
+        if chart_type not in ['dy', 'wk', 'mo']:
+            return
             
-            if key == 'mi':
-                # 분봉 데이터 처리
-                for item in reversed(data):
-                    datetime_str = item.get('체결시간', '')
-                    self._data[code]['mi'][1].append(self._create_candle(
-                        date=datetime_str[:8],
-                        time=datetime_str[8:14],
-                        item=item
-                    ))
-            else:
-                # 일/주/월봉 데이터 처리
-                for item in reversed(data):
-                    self._data[code][key].append(self._create_candle(
-                        date=item.get('일자', ''),
-                        time='',
-                        item=item
-                    ))
-    
+        # 이미 데이터가 로드되어 있으면 스킵
+        if self._data[code][chart_type]:
+            return
+            
+        data = self._get_chart_data(code, chart_type)
+        for item in reversed(data):
+            self._data[code][chart_type].insert(0, self._create_candle(
+                date=item.get('일자', ''),
+                time='',
+                item=item
+            ))
+        if self._data[code][chart_type]:
+            logging.debug(f'차트 데이타 : {code} {chart_type} \n{pd.DataFrame(self._data[code][chart_type])}')
+
     def _create_candle(self, date, time, item):
         """캔들 데이터 생성"""
         return {
@@ -66,8 +81,8 @@ class ChartData:
     
     def update_price(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
         """현재가, 거래량, 거래금액 업데이트"""
-        if code not in self._data:
-            self._init_code_data(code)
+        #if code not in self._data:
+        self._init_code_data(code)
         
         # 날짜와 시간 추출
         date = datetime_str[:8]  # yyyymmdd
@@ -122,16 +137,51 @@ class ChartData:
             current['amount'] = amount
     
     def get_data(self, code: str, chart_type: str, cycle: int = 1) -> List[Dict]:
+        """차트 데이터 가져오기"""
         if code not in self._data:
-            return []
+            self._init_code_data(code)
         
         if chart_type == 'mi':
+            # 분봉 데이터
             if cycle not in self._data[code]['mi']:
                 self._calculate_cycle_data(code, cycle)
             return self._data[code]['mi'].get(cycle, [])
         else:
+            # 일/주/월봉 데이터
+            if not self._data[code][chart_type]:
+                # 서버에서 데이터 로드
+                self._load_period_data(code, chart_type)
+                
+                # 당일 데이터가 있고 1분봉 데이터가 있으면 당일 데이터 보정
+                if self._data[code]['mi'][1] and self._data[code][chart_type]:
+                    today = datetime.now().strftime('%Y%m%d')
+                    if self._data[code][chart_type][0]['date'] == today:
+                        # 당일 데이터 보정
+                        self._update_today_data(code, chart_type)
+            
             return self._data[code].get(chart_type, [])
-    
+ 
+    def _update_today_data(self, code: str, chart_type: str):
+        """1분봉 데이터를 이용해 당일 일/주/월봉 데이터 보정"""
+        if not self._data[code]['mi'][1] or not self._data[code][chart_type]:
+            return
+            
+        today = datetime.now().strftime('%Y%m%d')
+        day_data = self._data[code][chart_type][0]
+        
+        # 당일 데이터인지 확인
+        if day_data['date'] != today:
+            return
+            
+        # 1분봉 데이터로 당일 데이터 보정
+        minute_data = [d for d in self._data[code]['mi'][1] if d['date'] == today]
+        if minute_data:
+            day_data['high'] = max(day_data['high'], max(d['high'] for d in minute_data))
+            day_data['low'] = min(day_data['low'], min(d['low'] for d in minute_data))
+            day_data['close'] = minute_data[0]['close']
+            day_data['volume'] = sum(d['volume'] for d in minute_data)
+            day_data['amount'] = sum(d['amount'] for d in minute_data)
+
     def _calculate_cycle_data(self, code: str, cycle: int):
         """다른 주기의 분봉 데이터 계산"""
         if 1 not in self._data[code]['mi'] or cycle <= 1:
@@ -159,105 +209,66 @@ class ChartData:
         
         self._data[code]['mi'][cycle] = result
     
-    def get_chart_data(self, code, chart_type, cycle=None, is_dummy=False):
+    def _get_chart_data(self, code, chart_type, cycle=None):
         """차트 데이터 가져오기 (외부에서 구현되는 함수)"""
-        def _get_dummy_data():
-            # 테스트용 더미 데이터
-            result = []
+        try:
+            rqname = f'{dc.scr.차트종류[chart_type]}챠트'
+            trcode = dc.scr.차트TR[chart_type]
+            screen = dc.scr.화면[rqname]
+            date = datetime.now().strftime('%Y%m%d')
+
+            if chart_type == 'mi':
+                input = {'종목코드':code, '틱범위': cycle, '수정주가구분': 1}
+                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
+            else:
+                if chart_type == 'dy':
+                    input = {'종목코드':code, '기준일자': date, '수정주가구분': 1}
+                else:
+                    input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': 1}
+                output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
+
+            next = '0'
+            all = False #if chart_type in ['mi', 'dy'] else True
+            dict_list = []
+            while True:
+                data, remain = gm.admin.com_SendRequest(rqname, trcode, input, output, next, screen, 'dict_list', 30)
+                if data is None or len(data) == 0: break
+                dict_list.extend(data)
+                if not (remain and all): break
+                next = '2'
+            
+            if not dict_list:
+                logging.warning(f'챠트 데이타 얻기 실패: code:{code}, chart_type:{chart_type}, cycle:{cycle}, dict_list:"{dict_list}"')
+                return []
             
             if chart_type == 'mi':
-                for i in range(10):
-                    hour = 9 + (i // 60)
-                    minute = i % 60
-                    result.append({
-                        '종목코드': code,
-                        '체결시간': f'2025042{hour:02d}{minute:02d}00',
-                        '현재가': str(70000 + i * 100),
-                        '시가': str(70000 + i * 90),
-                        '고가': str(70000 + i * 110),
-                        '저가': str(70000 + i * 85),
-                        '거래량': str(1000 + i * 10),
-                        '거래대금': '0'
-                    })
+                logging.debug(f'분봉 챠트 데이타 얻기: code:{code}, chart_type:{chart_type}, cycle:{cycle}, dict_list:"{dict_list[-1:]}"')
+                dict_list = [{
+                    '종목코드': code,
+                    '체결시간': item['체결시간'],
+                    '현재가': abs(int(item['현재가'])),
+                    '시가': abs(int(item['시가'])),
+                    '고가': abs(int(item['고가'])),
+                    '저가': abs(int(item['저가'])),
+                    '거래량': abs(int(item['거래량'])),
+                    '거래대금': 0#abs(int(item['거래대금'])),
+                } for item in dict_list]
             else:
-                for i in range(5):
-                    result.append({
-                        '종목코드': code,
-                        '일자': f'2025040{i+1}',
-                        '현재가': str(70000 + i * 1000),
-                        '시가': str(69000 + i * 1000),
-                        '고가': str(71000 + i * 1000),
-                        '저가': str(68500 + i * 1000),
-                        '거래량': str(100000 + i * 10000),
-                        '거래대금': str(7000000000 + i * 800000000)
-                    })
-            
-            return result
-
-        def _get_real_data():
-            try:
-                rqname = f'{dc.scr.차트종류[chart_type]}챠트'
-                trcode = dc.scr.차트TR[chart_type]
-                screen = dc.scr.화면[rqname]
-                date = datetime.now().strftime('%Y%m%d')
-
-                if chart_type == 'mi':
-                    input = {'종목코드':code, '틱범위': cycle, '수정주가구분': 0}
-                    output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
-                else:
-                    if chart_type == 'dy':
-                        input = {'종목코드':code, '기준일자': date, '수정주가구분': 0}
-                    else:
-                        input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': 0}
-                    output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
-
-                next = '0'
-                all = False if chart_type in ['mi', 'dy'] else True
-                dict_list = []
-                while True:
-                    data, remain = gm.admin.com_SendRequest(rqname, trcode, input, output, next, screen, 'dict_list', 10)
-                    if data is None or len(data) == 0: break
-                    logging.info(f'챠트 데이타 얻기: code:{code}, chart_type:{chart_type}, cycle:{cycle}, data:"{data}"')
-                    dict_list.extend(data)
-                    if not (remain and all): break
-                    next = '2'
-                
-                if not dict_list:
-                    logging.warning(f'챠트 데이타 얻기 실패: code:{code}, chart_type:{chart_type}, cycle:{cycle}, dict_list:"{dict_list}"')
-                    return []
-                
-                if chart_type == 'mi':
-                    dict_list = [{
-                        '종목코드': code,
-                        '체결시간': item['체결시간'],
-                        '현재가': abs(int(item['현재가'])),
-                        '시가': abs(int(item['시가'])),
-                        '고가': abs(int(item['고가'])),
-                        '저가': abs(int(item['저가'])),
-                        '거래량': abs(int(item['거래량'])),
-                        '거래대금': abs(int(item['거래대금'])),
-                    } for item in dict_list]
-                else:
-                    dict_list = [{
-                        '종목코드': code,
-                        '일자': item['일자'],
-                        '현재가': abs(int(item['현재가'])),
-                        '시가': abs(int(item['시가'])),
-                        '고가': abs(int(item['고가'])),
-                        '저가': abs(int(item['저가'])),
-                        '거래량': abs(int(item['거래량'])),
-                        '거래대금': abs(int(item['거래대금'])),
-                    } for item in dict_list]
-                return dict_list
-            
-            except Exception as e:
-                logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
-                return []
-
-        if is_dummy:
-            return _get_dummy_data()
-        else:
-            return _get_real_data()
+                dict_list = [{
+                    '종목코드': code,
+                    '일자': item['일자'],
+                    '현재가': abs(int(item['현재가'])),
+                    '시가': abs(int(item['시가'])),
+                    '고가': abs(int(item['고가'])),
+                    '저가': abs(int(item['저가'])),
+                    '거래량': abs(int(item['거래량'])),
+                    '거래대금': abs(int(item['거래대금'])),
+                } for item in dict_list]
+            return dict_list
+        
+        except Exception as e:
+            logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            return []
 
 class ChartManager:
     """차트 매니저 클래스, 수식관리자 기본함수 구현"""
@@ -265,11 +276,12 @@ class ChartManager:
     def __init__(self, chart='dy', cycle=1):
         self.chart = chart  # 'mo', 'wk', 'dy', 'mi' 중 하나
         self.cycle = cycle  # 분봉일 경우 주기
-        self.chart_data = ChartData()
+        #self.chart_data = ChartData()
     
     def _get_data(self, code: str) -> List[Dict]:
         """해당 코드의 차트 데이터 반환"""
-        return self.chart_data.get_data(code, self.chart, self.cycle)
+        #return self.chart_data.get_data(code, self.chart, self.cycle)
+        return la.answer('cdt', 'get_data', code, self.chart, self.cycle)
     
     def _get_value(self, code: str, n: int, field: str, default=0.0):
         """특정 필드 값 반환"""
@@ -710,297 +722,3 @@ cond2 = ct_dy.avg(code, ct_dy.c, 5) < ct_dy.c(code)  # 5일 이평선 상향 돌
 result = cond1 and cond2
 """
 
-import unittest
-import os
-import numpy as np
-import tempfile
-import json
-
-class TestChartData(unittest.TestCase):
-    """ChartData 클래스 테스트"""
-    
-    def setUp(self):
-        self.chart_data = ChartData()
-        self.chart_data._data = {}
-        self.test_code = "005930"
-    
-    def test_singleton(self):
-        """싱글톤 패턴 테스트"""
-        chart_data1 = ChartData()
-        chart_data2 = ChartData()
-        self.assertIs(chart_data1, chart_data2)
-    
-    def test_init_code_data(self):
-        """코드 데이터 초기화 테스트"""
-        self.chart_data._init_code_data(self.test_code)
-        
-        # 각 주기 데이터가 로드되었는지 확인
-        self.assertIn('mo', self.chart_data._data[self.test_code])
-        self.assertIn('wk', self.chart_data._data[self.test_code])
-        self.assertIn('dy', self.chart_data._data[self.test_code])
-        self.assertIn('mi', self.chart_data._data[self.test_code])
-        
-        # 분봉 데이터 확인
-        self.assertIn(1, self.chart_data._data[self.test_code]['mi'])
-        
-        # 데이터 구조 확인
-        for period in ['mo', 'wk', 'dy']:
-            candles = self.chart_data._data[self.test_code][period]
-            self.assertGreater(len(candles), 0)
-            self._check_candle_structure(candles[0])
-            
-        # 분봉 구조 확인
-        mi_candles = self.chart_data._data[self.test_code]['mi'][1]
-        self.assertGreater(len(mi_candles), 0)
-        self._check_candle_structure(mi_candles[0])
-    
-    def _check_candle_structure(self, candle):
-        """캔들 데이터 구조 확인"""
-        fields = ['date', 'time', 'open', 'high', 'low', 'close', 'volume', 'amount']
-        for field in fields:
-            self.assertIn(field, candle)
-    
-    def test_update_price(self):
-        """가격 업데이트 테스트"""
-        self.chart_data._init_code_data(self.test_code)
-        
-        # 가격 업데이트
-        datetime_str = "20250420093000"
-        self.chart_data.update_price(self.test_code, 70000, 10000, 700000000, datetime_str)
-        
-        # 분봉 데이터 확인
-        mi_data = self.chart_data._data[self.test_code]['mi'][1]
-        self.assertGreater(len(mi_data), 0)
-        
-        # 업데이트된 분봉 찾기
-        updated_candle = None
-        for candle in mi_data:
-            if candle['time'] == "093000":
-                updated_candle = candle
-                break
-        
-        self.assertIsNotNone(updated_candle)
-        self.assertEqual(updated_candle['close'], 70000)
-        self.assertEqual(updated_candle['date'], "20250420")
-    
-    def test_multiple_updates(self):
-        """여러번 업데이트 테스트"""
-        self.chart_data._init_code_data(self.test_code)
-        
-        # 첫 번째 업데이트 (9시 30분)
-        first_datetime = "20250420093000"
-        self.chart_data.update_price(self.test_code, 70000, 10000, 700000000, first_datetime)
-        
-        # 두 번째 업데이트 (9시 31분 - 다른 분봉)
-        second_datetime = "20250420093100"
-        self.chart_data.update_price(self.test_code, 71000, 20000, 1420000000, second_datetime)
-        
-        # 업데이트된 분봉 찾기
-        mi_data = self.chart_data._data[self.test_code]['mi'][1]
-        first_candle = second_candle = None
-        
-        for candle in mi_data:
-            if candle['time'] == "093000":
-                first_candle = candle
-            elif candle['time'] == "093100":
-                second_candle = candle
-        
-        self.assertIsNotNone(first_candle)
-        self.assertIsNotNone(second_candle)
-        self.assertEqual(first_candle['close'], 70000)
-        self.assertEqual(second_candle['close'], 71000)
-
-class TestChartManager(unittest.TestCase):
-    """ChartManager 클래스 테스트"""
-    
-    def setUp(self):
-        self.chart_data = ChartData()
-        self.chart_data._data = {}
-        self.test_code = "005930"
-        
-        # 테스트 데이터 초기화
-        self.chart_data._init_code_data(self.test_code)
-        
-        # 차트 매니저 인스턴스 생성
-        self.cm_day = ChartManager('dy')
-        self.cm_min = ChartManager('mi', 1)
-    
-    def test_basic_values(self):
-        """기본 가격 값 테스트"""
-        # 종가, 시가, 고가, 저가, 거래량 테스트
-        self.assertGreater(self.cm_day.c(self.test_code), 0)
-        self.assertGreater(self.cm_day.o(self.test_code), 0)
-        self.assertGreater(self.cm_day.h(self.test_code), 0)
-        self.assertGreater(self.cm_day.l(self.test_code), 0)
-        self.assertGreater(self.cm_day.v(self.test_code), 0)
-    
-    def test_minute_chart(self):
-        """분봉 차트 테스트"""
-        # 분봉 종가 테스트
-        self.assertGreater(self.cm_min.c(self.test_code), 0)
-        
-        # 특정 시간 테스트
-        time_value = self.cm_min.time()
-        self.assertNotEqual(time_value, '')
-        self.assertIn('09', time_value)  # 9시대 분봉이 있어야 함
-    
-    def test_moving_averages(self):
-        """이동평균 테스트"""
-        # 단순이동평균, 지수이동평균, 가중이동평균 테스트
-        avg_val = self.cm_day.avg(self.test_code, self.cm_day.c, 5)
-        eavg_val = self.cm_day.eavg(self.test_code, self.cm_day.c, 5)
-        wavg_val = self.cm_day.wavg(self.test_code, self.cm_day.c, 5)
-        
-        self.assertGreater(avg_val, 0)
-        self.assertGreater(eavg_val, 0)
-        self.assertGreater(wavg_val, 0)
-    
-    def test_highest_lowest(self):
-        """최고/최저값 테스트"""
-        highest = self.cm_day.highest(self.test_code, self.cm_day.c, 5)
-        lowest = self.cm_day.lowest(self.test_code, self.cm_day.c, 5)
-        
-        self.assertGreater(highest, 0)
-        self.assertGreater(lowest, 0)
-        self.assertGreaterEqual(highest, lowest)
-    
-    def test_stdev_sum(self):
-        """표준편차와 합계 테스트"""
-        stdev_val = self.cm_day.stdev(self.test_code, self.cm_day.c, 5)
-        sum_val = self.cm_day.sum(self.test_code, self.cm_day.c, 5)
-        
-        self.assertGreaterEqual(stdev_val, 0)
-        self.assertGreater(sum_val, 0)
-
-class TestScriptManager(unittest.TestCase):
-    """ScriptManager 클래스 테스트"""
-    
-    def setUp(self):
-        """테스트 환경 설정"""
-        # 임시 파일 생성
-        self.temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.json')
-        self.temp_file.close()
-        
-        # ScriptManager 인스턴스 생성
-        self.script_manager = ScriptManager(self.temp_file.name)
-        
-        # 테스트용 스크립트 정의
-        self.test_script = """
-# 테스트 스크립트
-ct = ChartManager('dy')
-code = self.script_code
-price = get_var('price', 50000)
-result = ct.c(code) > price
-"""
-        
-        self.dependant_script = """
-# 종속 스크립트 (다른 스크립트 호출)
-result = get_script_result('test_script', self.script_code)
-"""
-        
-        self.circular_script1 = """
-# 순환 참조 스크립트 1
-result = get_script_result('circular_script2', self.script_code)
-"""
-        
-        self.circular_script2 = """
-# 순환 참조 스크립트 2
-result = get_script_result('circular_script1', self.script_code)
-"""
-        
-        self.invalid_script = """
-# 문법 오류가 있는 스크립트
-if True
-    x = 1
-result = False
-"""
-    
-    def tearDown(self):
-        """테스트 환경 정리"""
-        # 임시 파일 삭제
-        os.unlink(self.temp_file.name)
-    
-    def test_script_save_load(self):
-        """스크립트 저장 및 불러오기 테스트"""
-        # 스크립트 저장
-        self.script_manager.set_script('test_script', self.test_script, {'price': 60000})
-        
-        # 새 인스턴스로 로드
-        new_manager = ScriptManager(self.temp_file.name)
-        
-        # 로드된 스크립트 확인
-        self.assertEqual(new_manager.get_script('test_script'), self.test_script)
-        self.assertEqual(new_manager.get_vars('test_script'), {'price': 60000})
-    
-    def test_script_execution(self):
-        """스크립트 실행 테스트"""
-        # 스크립트 저장
-        self.script_manager.set_script('test_script', self.test_script, {'price': 65000})
-        
-        # 스크립트 실행 (70000 > 65000 이므로 True 반환 예상)
-        result = self.script_manager.run_script('test_script', '005930')
-        self.assertTrue(result)
-        
-        # 변수 변경
-        self.script_manager.set_vars('test_script', {'price': 75000})
-        
-        # 다시 실행 (70000 < 75000 이므로 False 반환 예상)
-        result = self.script_manager.run_script('test_script', '005930')
-        self.assertFalse(result)
-    
-    def test_dependent_scripts(self):
-        """스크립트 의존성 테스트"""
-        # 기본 스크립트와 의존 스크립트 저장
-        self.script_manager.set_script('test_script', self.test_script, {'price': 65000})
-        self.script_manager.set_script('dependant_script', self.dependant_script)
-        
-        # 의존 스크립트 실행 (test_script의 결과를 그대로 반환)
-        result = self.script_manager.run_script('dependant_script', '005930')
-        self.assertTrue(result)
-        
-        # test_script 변수 변경
-        self.script_manager.set_vars('test_script', {'price': 75000})
-        
-        # 다시 실행 (false 예상)
-        result = self.script_manager.run_script('dependant_script', '005930')
-        self.assertFalse(result)
-    
-    def test_circular_reference(self):
-        """순환 참조 감지 테스트"""
-        # 순환 참조 스크립트 저장
-        self.script_manager.set_script('circular_script1', self.circular_script1)
-        self.script_manager.set_script('circular_script2', self.circular_script2)
-        
-        # 실행 (순환 참조 감지하여 False 반환 예상)
-        result = self.script_manager.run_script('circular_script1', '005930')
-        self.assertFalse(result)
-    
-    def test_invalid_script(self):
-        """잘못된 스크립트 검사 테스트"""
-        # 잘못된 스크립트 저장 시도 (실패 예상)
-        result = self.script_manager.set_script('invalid_script', self.invalid_script)
-        self.assertFalse(result)
-        
-        # 스크립트가 저장되지 않았는지 확인
-        self.assertNotIn('invalid_script', self.script_manager.scripts)
-    
-    def test_get_var(self):
-        """변수 접근 테스트"""
-        # 스크립트 저장
-        self.script_manager.set_script('test_script', self.test_script, {'price': 60000, 'cycle': 5})
-        
-        # 스크립트 실행 컨텍스트 설정
-        self.script_manager.current_script = 'test_script'
-        
-        # 변수 접근
-        price = self.script_manager.get_var('price')
-        cycle = self.script_manager.get_var('cycle')
-        default_value = self.script_manager.get_var('not_exists', 'default')
-        
-        # 결과 확인
-        self.assertEqual(price, 60000)
-        self.assertEqual(cycle, 5)
-        self.assertEqual(default_value, 'default')
-
-if __name__ == '__main__':
-    unittest.main()

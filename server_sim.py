@@ -1,10 +1,14 @@
-from classes import la, gm
-from public import hoga
+from classes import la
+from public import hoga, dc, gm
+from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtCore import QThread
 import logging
 import time
 import random
 import threading
+import pythoncom
+import pandas as pd
+import copy
 
 real_thread = {}
 cond_thread = {}
@@ -356,6 +360,9 @@ class OnReceiveRealData(QThread):
                     '종목명': sim.ticker.get(code, {}).get('종목명', ''),
                     '현재가': current_price,
                     '등락율': round((current_price - sim.ticker[code]['전일가']) / sim.ticker[code]['전일가'] * 100, 2),
+                    '누적거래량': 500000,
+                    '누적거래대금': 78452100,
+                    '체결시간': time.strftime('%Y%m%d%H%M%S', time.localtime()),
                 }
 
                 # 포트폴리오 업데이트
@@ -396,6 +403,28 @@ class SIMServer():
 
         self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
 
+        self.real = gm.config.sim_real_only
+        if self.real: self.api_init()
+
+    def api_init(self):
+        try:
+            logging.debug(f'{self.name} api_init start')
+            self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+            self._set_signal_slots()
+            logging.debug(f'{self.name} api_init end: ocx={self.ocx}')
+        except Exception as e:
+            logging.error(f"API 초기화 오류: {type(e).__name__} - {e}")
+
+    def _set_signal_slots(self):
+        self.ocx.OnEventConnect.connect(self.OnEventConnect)
+        self.ocx.OnReceiveConditionVer.connect(self.OnReceiveConditionVer)
+        self.ocx.OnReceiveTrCondition.connect(self.OnReceiveTrCondition)
+        self.ocx.OnReceiveTrData.connect(self.OnReceiveTrData)
+        #self.ocx.OnReceiveRealData.connect(self.OnReceiveRealData)
+        #self.ocx.OnReceiveChejanData.connect(self.OnReceiveChejanData)
+        #self.ocx.OnReceiveRealCondition.connect(self.OnReceiveRealCondition)
+        self.ocx.OnReceiveMsg.connect(self.OnReceiveMsg)
+
     def stop(self):
         # 1. 먼저 모든 쓰레드에 종료 신호
         all_threads = [*real_thread.values(), *cond_thread.values()]
@@ -420,6 +449,12 @@ class SIMServer():
         return self.connected
 
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
+        if self.real:
+            return self.real_request(rqname, trcode, input, output, next, screen, form, timeout)
+        else:
+            return self.sim_request(rqname, trcode, input, output, next, screen, form, timeout)
+
+    def sim_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         self.tr_result = []
         self.tr_remained = False
         if rqname == '잔고합산':
@@ -430,9 +465,103 @@ class SIMServer():
             self.tr_result = holdings
         return self.tr_result, self.tr_remained
 
+    def real_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
+        try:
+            self.tr_coulmns = output   # []
+            self.tr_result_format = form # 'df' or 'dict_list'
+            self.tr_received = False
+            self.tr_remained = False
+            self.tr_result = []
+
+            screen = dc.화면[rqname] if not screen else screen
+            for key, value in input.items(): self.SetInputValue(key, value)
+            ret = self.CommRqData(rqname, trcode, next, screen)
+            logging.warning(f"** TR 요청 결과 **: {rqname} {trcode} {screen} ret={ret} 결과={'정상' if ret==0 else ret}")
+
+            start_time = time.time()
+            while not self.tr_received:
+                pythoncom.PumpWaitingMessages()
+                if time.time() - start_time > timeout:
+                    logging.warning(f"Timeout while waiting for {rqname} data")
+                    return None, False
+
+            return self.tr_result, self.tr_remained
+
+        except Exception as e:
+            logging.error(f"TR 요청 오류: {type(e).__name__} - {e}")
+            return None, False
+
+    def SetInputValue(self, id, value):
+        self.ocx.dynamicCall("SetInputValue(QString, QString)", id, value)
+
+    def OnReceiveTrData(self, screen, rqname, trcode, record, next):
+        if screen.startswith('4') or screen.startswith('55'):
+            pass
+            try:
+                #logging.debug(f'OnReceiveTrData: screen={screen}, rqname={rqname}, trcode={trcode}, record={record}, next={next}')
+                data = rqname.split('_')
+                code = data[1]
+                order_no = self.GetCommData(trcode, rqname, 0, '주문번호')
+                result = {
+                    'code': code,
+                    'name': self.GetMasterCodeName(code),
+                    'order_no': order_no,
+                    'screen': screen,
+                    'rqname': rqname,
+                }
+                gm.admin.on_fx수신_주문결과TR(**result)
+
+            except Exception as e:
+                logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
+
+        else:
+            try:
+                self.tr_remained = next == '2'
+                rows = self.GetRepeatCnt(trcode, rqname)
+                if rows == 0: rows = 1
+
+                data_list = []
+                is_dict = self.tr_result_format == 'dict_list'
+                for row in range(rows):
+                    row_data = {} if is_dict else []
+                    for column in self.tr_coulmns:
+                        data = self.GetCommData(trcode, rqname, row, column)
+                        if is_dict: row_data[column] = data
+                        else: row_data.append(data)
+                    # [{}] 또는 [[]]로 되는것 방지 - 이것은 []로 리턴되어야 검사시 False 가 됨
+                    if any(row_data.values() if is_dict else row_data):
+                        data_list.append(row_data)
+
+                if is_dict:
+                    self.tr_result = copy.deepcopy(data_list)
+                else:
+                    df = pd.DataFrame(data=data_list, columns=self.tr_coulmns)
+                    self.tr_result = df
+
+                #logging.debug(f'TR 수신 데이타: {self.tr_result}')
+                self.tr_received = True
+
+            except Exception as e:
+                logging.error(f"TR 수신 오류: {type(e).__name__} - {e}")
+
+    def OnEventConnect(self, code):
+        logging.debug(f'OnEventConnect: code={code}')
+        self.connected = code == 0
+        logging.debug(f'Login {"Success" if self.connected else "Failed"}')
+
     def CommConnect(self, block=True):
         logging.debug(f'CommConnect: block={block}')
-        self.connected = True
+        if self.real:
+            self.real_CommConnect(block)
+        else:
+            self.connected = True
+
+    def real_CommConnect(self, block=True):
+        logging.debug(f'CommConnect: block={block}')
+        self.ocx.dynamicCall("CommConnect()")
+        if block:
+            while not self.connected:
+                pythoncom.PumpWaitingMessages()
 
     # 추가 메서드 --------------------------------------------------------------------------------------------------
     def set_log_level(self, level):
@@ -465,16 +594,48 @@ class SIMServer():
                 del real_thread[screen]
 
     # 조건 관련 메서드 --------------------------------------------------------------------------------------------------
+    def OnReceiveConditionVer(self, ret, msg):
+        logging.debug(f'ret={ret}, msg={msg}')
+        self.strategy_loaded = ret == 1
+
+    def OnReceiveTrCondition(self, screen, code_list, cond_name, cond_index, next):
+        #logging.debug(f'screen={screen}, code_list={code_list}, cond_name={cond_name}, cond_index={cond_index}, next={next}')
+        codes = code_list.split(';')[:-1]
+        self.tr_condition_list = codes
+        self.tr_condition_loaded = True
+
     def GetConditionLoad(self, block=True):
-        self.strategy_loaded = True
+        if self.real:
+            self.real_GetConditionLoad(block)
+        else:
+            self.strategy_loaded = True
         return self.strategy_loaded
+
+    def real_GetConditionLoad(self, block=True):
+        self.strategy_loaded = False
+        result = self.ocx.dynamicCall("GetConditionLoad()")  # result = ling 1: 성공, 0: 실패
+        logging.debug(f'전략 요청 : {"성공" if result==1 else "실패"}')
+        if block:
+            while not self.strategy_loaded:
+                pythoncom.PumpWaitingMessages()
 
     def GetConditionNameList(self):
         logging.debug('')
-        return cond_data_list
+        if not self.real:
+            return cond_data_list
+        else:
+            data = self.ocx.dynamicCall("GetConditionNameList()")
+            conditions = data.split(";")[:-1]
+            cond_data_list = []
+            for condition in conditions:
+                cond_index, cond_name = condition.split('^')
+                cond_data_list.append((cond_index, cond_name))
+            return cond_data_list
 
     def SendCondition(self, screen, cond_name, cond_index, search, block=True):
         global cond_thread
+        if self.real:
+            self.real_SendCondition(screen, cond_name, cond_index, search, block)
         self.tr_condition_loaded = True
         self.tr_condition_list = []
         cond_thread[screen] = OnReceiveRealCondition(cond_name, cond_index)
@@ -482,13 +643,47 @@ class SIMServer():
         logging.debug(f'추가후: {cond_thread}')
         return self.tr_condition_list
 
+    def real_SendCondition(self, screen, cond_name, cond_index, search, block=True, timeout=5):
+        try:
+            if block is True:
+                self.tr_condition_loaded = False
+
+            success = self.ocx.dynamicCall("SendCondition(QString, QString, int, int)", screen, cond_name, cond_index, search)
+            logging.debug(f'전략 요청: screen={screen}, name={cond_name}, index={cond_index}, search={search}, 결과={"성공" if success else "실패"}')
+
+            if success: # 1: 성공, 0: 실패
+                if block is True:
+                    start_time = time.time()
+                    while not self.tr_condition_loaded:
+                        pythoncom.PumpWaitingMessages()
+                        if time.time() - start_time > timeout:
+                            logging.warning(f'조건 검색 시간 초과: {screen} {cond_name} {cond_index} {search}')
+                            return False
+                    data = self.tr_condition_list # 성공시 리스트
+                else:
+                    data = False # 비동기 요청 시
+            else:
+                data = success # 실패시 해당 값
+
+        except Exception as e:
+            logging.error(f"SendCondition 오류: {type(e).__name__} - {e}")
+
+        finally:
+            return data
+
     def SendConditionStop(self, screen, cond_name, cond_index):
         global cond_thread
+        if self.real:
+            self.real_SendConditionStop(screen, cond_name, cond_index)
         cond_thread[screen].stop()
         logging.debug(f'삭제전: {cond_thread}')
         del cond_thread[screen]
         logging.debug(f'삭제후: {cond_thread}')
         return 0
+
+    def real_SendConditionStop(self, screen, cond_name, cond_index):
+        logging.debug(f'전략 중지: screen={screen}, name={cond_name}, index={cond_index}')
+        self.ocx.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, cond_index)
 
     # 주문 관련 메서드 --------------------------------------------------------------------------------------------------
     def SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno):
@@ -562,16 +757,46 @@ class SIMServer():
 
     # 즉답 관련 메서드 --------------------------------------------------------------------------------------------------
     def GetLoginInfo(self, kind):
-        logging.debug(f'******GetLoginInfo: kind={kind}')
-        if kind == "ACCNO":
-            return ['8095802711']
+        if self.real:
+            return self.real_GetLoginInfo(kind)
         else:
-            return '1'
+            logging.debug(f'******GetLoginInfo: kind={kind}')
+            if kind == "ACCNO":
+                return ['8095802711']
+            else:
+                return '1'
+
+    def real_GetLoginInfo(self, kind):
+        data = self.ocx.dynamicCall("GetLoginInfo(QString)", kind)
+        logging.debug(f'**************GetLoginInfo: kind={kind}, data={data}')
+        if kind == "ACCNO":
+            return data.split(';')[:-1]
+        else:
+            return data
+
     def GetMasterCodeName(self, code):
-        data = sim.ticker.get(code, {}).get('종목명', '')
+        data = self.ocx.dynamicCall("GetMasterCodeName(QString)", code) if self.real else sim.ticker.get(code, {}).get('종목명', '')
         return data
+    
     def GetMasterLastPrice(self, code):
-        data = sim.ticker.get(code, {}).get('전일가', 0)
+        data = self.ocx.dynamicCall("GetMasterLastPrice(QString)", code) if self.real else sim.ticker.get(code, {}).get('전일가', 0)
+        data = int(data) if data else 0
         return data
+
+    def OnReceiveMsg(self, screen, rqname, trcode, msg):
+        logging.info(f'screen={screen}, rqname={rqname}, trcode={trcode}, msg={msg}')
+
+    def CommRqData(self, rqname, trcode, next, screen):
+        ret = self.ocx.dynamicCall("CommRqData(QString, QString, int, QString)", rqname, trcode, next, screen)
+        return ret
+
+    def GetCommData(self, trcode, rqname, index, item):
+        data = self.ocx.dynamicCall("GetCommData(QString, QString, int, QString)", trcode, rqname, index, item)
+        data = data.strip() if type(data) == str else data
+        return data
+
+    def GetRepeatCnt(self, trcode, rqname):
+        count = self.ocx.dynamicCall("GetRepeatCnt(QString, QString)", trcode, rqname)
+        return count
 
 

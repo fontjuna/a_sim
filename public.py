@@ -749,6 +749,7 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
 class GlobalConfig:     # 환경변수 정의
     sim_on = True
     gui_on = False
+    sim_real_only = False
     ready = False
     log_level = logging.DEBUG
     server = '1'
