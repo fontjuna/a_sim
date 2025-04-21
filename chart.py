@@ -23,6 +23,9 @@ class ChartData:
         self._initialized = True
         self._data = {}
         self.types = {'mi': 'mi', 'dy': 'dy', 'wk': 'wk', 'mo': 'mo'}
+        self._loading_states = {}
+        import threading
+        self._lock = threading.Lock()
     
     def _init_code_data(self, code: str):
         """코드별 데이터 초기화 - 1분봉만 초기화"""
@@ -34,37 +37,84 @@ class ChartData:
         if self._data[code]['mi'][1] == []:
             self._load_minute_data(code, 1)
 
+    def _is_loading(self, code: str, chart_type: str, cycle: int = None):
+        """특정 차트 데이터가 현재 로딩 중인지 확인"""
+        key = f"{code}:{chart_type}"
+        if cycle is not None:
+            key += f":{cycle}"
+        return self._loading_states.get(key, False)
+
+    def _set_loading_state(self, code: str, chart_type: str, cycle: int = None, state: bool = True):
+        """차트 데이터 로딩 상태 설정"""
+        key = f"{code}:{chart_type}"
+        if cycle is not None:
+            key += f":{cycle}"
+        self._loading_states[key] = state
+
     def _load_minute_data(self, code: str, cycle: int):
-        """분봉 데이터 로드"""
-        data = self._get_chart_data(code, 'mi', cycle)
-        for item in reversed(data):
-            datetime_str = item.get('체결시간', '')
-            self._data[code]['mi'][cycle].insert(0, self._create_candle(
-                date=datetime_str[:8],
-                time=datetime_str[8:14],
-                item=item
-            ))
-        if self._data[code]['mi'][cycle]:
-            logging.debug(f'분봉 차트 데이타 : {code} {cycle} \n{pd.DataFrame(self._data[code]["mi"][cycle])}')
+        """분봉 데이터 로드 (로딩 상태 관리 추가)"""
+        # 이미 로딩 중이면 건너뜀
+        if self._is_loading(code, 'mi', cycle):
+            logging.debug(f'분봉 차트 데이터 이미 로딩 중: {code} {cycle}')
+            return
+        
+        # 로딩 상태 설정
+        with self._lock:
+            if self._is_loading(code, 'mi', cycle):  # 더블 체크
+                return
+            self._set_loading_state(code, 'mi', cycle, True)
+        
+        try:
+            data = self._get_chart_data(code, 'mi', cycle)
+            for item in data:
+                datetime_str = item.get('체결시간', '')
+                self._data[code]['mi'][cycle].append(self._create_candle(
+                    date=datetime_str[:8],
+                    time=datetime_str[8:14],
+                    item=item
+                ))
+            if self._data[code]['mi'][cycle]:
+                logging.debug(f'분봉 차트 데이터 로드 완료: {code} {cycle} \n{pd.DataFrame(self._data[code]["mi"][cycle])}')
+        except Exception as e:
+            logging.error(f'분봉 차트 데이터 로드 오류: {code} {cycle} - {e}')
+            # 오류 발생 시 데이터 초기화
+            self._data[code]['mi'][cycle] = []
+        finally:
+            # 로딩 상태 해제
+            self._set_loading_state(code, 'mi', cycle, False)
 
     def _load_period_data(self, code: str, chart_type: str):
-        """일/주/월봉 데이터 로드"""
+        """일/주/월봉 데이터 로드 (로딩 상태 관리 추가)"""
         if chart_type not in ['dy', 'wk', 'mo']:
             return
-            
-        # 이미 데이터가 로드되어 있으면 스킵
-        if self._data[code][chart_type]:
+        
+        # 이미 데이터가 로드되어 있거나 로딩 중이면 건너뜀
+        if self._data[code][chart_type] or self._is_loading(code, chart_type):
             return
-            
-        data = self._get_chart_data(code, chart_type)
-        for item in reversed(data):
-            self._data[code][chart_type].insert(0, self._create_candle(
-                date=item.get('일자', ''),
-                time='',
-                item=item
-            ))
-        if self._data[code][chart_type]:
-            logging.debug(f'차트 데이타 : {code} {chart_type} \n{pd.DataFrame(self._data[code][chart_type])}')
+        
+        # 로딩 상태 설정
+        with self._lock:
+            if self._data[code][chart_type] or self._is_loading(code, chart_type):  # 더블 체크
+                return
+            self._set_loading_state(code, chart_type, state=True)
+        
+        try:
+            data = self._get_chart_data(code, chart_type)
+            for item in data:
+                self._data[code][chart_type].append(self._create_candle(
+                    date=item.get('일자', ''),
+                    time='',
+                    item=item
+                ))
+            if self._data[code][chart_type]:
+                logging.debug(f'차트 데이터 로드 완료: {code} {chart_type}\n{pd.DataFrame(self._data[code][chart_type])}')
+        except Exception as e:
+            logging.error(f'차트 데이터 로드 오류: {code} {chart_type} - {e}')
+            # 오류 발생 시 데이터 초기화
+            self._data[code][chart_type] = []
+        finally:
+            # 로딩 상태 해제
+            self._set_loading_state(code, chart_type, state=False)
 
     def _create_candle(self, date, time, item):
         """캔들 데이터 생성"""
@@ -137,19 +187,31 @@ class ChartData:
             current['amount'] = amount
     
     def get_data(self, code: str, chart_type: str, cycle: int = 1) -> List[Dict]:
-        """차트 데이터 가져오기"""
+        """차트 데이터 가져오기 (로딩 상태 관리 추가)"""
+        # 코드가 없으면 초기화
         if code not in self._data:
-            self._init_code_data(code)
+            with self._lock:
+                if code not in self._data:  # 더블 체크
+                    self._init_code_data(code)
         
         if chart_type == 'mi':
             # 분봉 데이터
             if cycle not in self._data[code]['mi']:
-                self._calculate_cycle_data(code, cycle)
+                with self._lock:
+                    if cycle not in self._data[code]['mi']:  # 더블 체크
+                        self._data[code]['mi'][cycle] = []
+                        if cycle > 1 and self._data[code]['mi'][1]:
+                            # 1분봉 데이터가 있으면 계산
+                            self._calculate_cycle_data(code, cycle)
+                        else:
+                            # 없으면 서버에서 로드
+                            self._load_minute_data(code, cycle)
+                            
             return self._data[code]['mi'].get(cycle, [])
         else:
             # 일/주/월봉 데이터
             if not self._data[code][chart_type]:
-                # 서버에서 데이터 로드
+                # 서버에서 데이터 로드 (이미 로딩 중이면 _load_period_data 내에서 처리)
                 self._load_period_data(code, chart_type)
                 
                 # 당일 데이터가 있고 1분봉 데이터가 있으면 당일 데이터 보정
@@ -160,7 +222,7 @@ class ChartData:
                         self._update_today_data(code, chart_type)
             
             return self._data[code].get(chart_type, [])
- 
+        
     def _update_today_data(self, code: str, chart_type: str):
         """1분봉 데이터를 이용해 당일 일/주/월봉 데이터 보정"""
         if not self._data[code]['mi'][1] or not self._data[code][chart_type]:
@@ -242,7 +304,7 @@ class ChartData:
                 return []
             
             if chart_type == 'mi':
-                logging.debug(f'분봉 챠트 데이타 얻기: code:{code}, chart_type:{chart_type}, cycle:{cycle}, dict_list:"{dict_list[-1:]}"')
+                #logging.debug(f'분봉 챠트 데이타 얻기: code:{code}, chart_type:{chart_type}, cycle:{cycle}, dict_list:"{dict_list[-1:]}"')
                 dict_list = [{
                     '종목코드': code,
                     '체결시간': item['체결시간'],
@@ -608,28 +670,6 @@ class ScriptManager:
             self.execution_stack = old_stack if 'old_stack' in locals() else []
             return False
     
-    def get_script_result(self, script_name: str, code: str):
-        """
-        다른 스크립트의 결과 가져오기
-        (스크립트 내에서 다른 스크립트 호출 시 사용)
-        """
-        # 순환 참조 검사
-        if script_name in self.execution_stack:
-            print(f"순환 참조 감지: {' -> '.join(self.execution_stack)} -> {script_name}")
-            return False
-            
-        # 캐시 확인
-        cache_key = (script_name, code)
-        if cache_key in self.result_cache:
-            return self.result_cache[cache_key]
-            
-        # 스크립트 실행
-        result = self.run_script(script_name, code, is_sub_call=True)
-        
-        # 결과 캐싱
-        self.result_cache[cache_key] = result
-        return result
-    
     def run_script(self, name: str, code: str, is_sub_call: bool = False):
         """
         스크립트 실행
@@ -640,15 +680,14 @@ class ScriptManager:
         - is_sub_call: 다른 스크립트에서 호출한 것인지 여부
         
         Returns:
-        - boolean: 스크립트 실행 결과
+        - tuple: (성공 여부, 오류 유형, 결과값 또는 오류 메시지)
         """
         if name not in self.scripts:
-            return False
+            return (False, "script_not_found", f"스크립트 '{name}'을 찾을 수 없습니다")
             
         # 이미 실행 중인 스크립트라면 순환 참조로 간주
         if name in self.execution_stack:
-            print(f"순환 참조 감지: {' -> '.join(self.execution_stack)} -> {name}")
-            return False
+            return (False, "circular_reference", f"순환 참조 감지: {' -> '.join(self.execution_stack)} -> {name}")
             
         # 이전 상태 저장
         prev_script = self.current_script
@@ -674,6 +713,13 @@ class ScriptManager:
             exec(self.scripts[name]['script'], globals_dict, local_vars)
             
             # 반환값 확인 (result 변수 값)
+            if 'result' not in local_vars:
+                # 결과 변수가 없음
+                self.execution_stack.pop()
+                self.current_script = prev_script
+                self.script_code = prev_code
+                return (False, "no_result_var", f"스크립트에 'result' 변수가 없습니다")
+                
             result = bool(local_vars.get('result', False))
                 
             # 실행 상태 복원
@@ -684,16 +730,60 @@ class ScriptManager:
             self.current_script = prev_script
             self.script_code = prev_code
             
-            return result
+            # 성공 여부와 결과를 함께 반환
+            return (True, "success", result)
+            
+        except SyntaxError as e:
+            # 문법 오류
+            self.execution_stack.pop()
+            self.current_script = prev_script
+            self.script_code = prev_code
+            return (False, "syntax_error", f"문법 오류: {e}")
+            
+        except NameError as e:
+            # 변수나 함수를 찾을 수 없음
+            self.execution_stack.pop()
+            self.current_script = prev_script
+            self.script_code = prev_code
+            return (False, "name_error", f"변수 또는 함수 오류: {e}")
             
         except Exception as e:
-            # 오류 발생 시 상태 복원
+            # 기타 오류
             self.execution_stack.pop()
             self.current_script = prev_script
             self.script_code = prev_code
             
             print(f"스크립트 '{name}' 실행 오류: {e}")
+            return (False, "runtime_error", f"실행 오류: {type(e).__name__} - {e}")
+
+    def get_script_result(self, script_name: str, code: str):
+        """
+        다른 스크립트의 결과 가져오기
+        (스크립트 내에서 다른 스크립트 호출 시 사용)
+        
+        Returns:
+        - boolean: 스크립트 실행 결과 (실패 시 False)
+        """
+        # 순환 참조 검사
+        if script_name in self.execution_stack:
+            print(f"순환 참조 감지: {' -> '.join(self.execution_stack)} -> {script_name}")
             return False
+            
+        # 캐시 확인
+        cache_key = (script_name, code)
+        if cache_key in self.result_cache:
+            return self.result_cache[cache_key]
+            
+        # 스크립트 실행
+        success, error_type, result = self.run_script(script_name, code, is_sub_call=True)
+        
+        if not success:
+            print(f"서브스크립트 '{script_name}' 실행 실패: {error_type} - {result}")
+            return False
+        
+        # 결과 캐싱
+        self.result_cache[cache_key] = result
+        return result
 
 # 스크립트 작성 예시 (사용자에게 제공할 템플릿)
 """
