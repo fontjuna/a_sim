@@ -71,7 +71,8 @@ class APIServer():
 
             screen = dc.화면[rqname] if not screen else screen
             for key, value in input.items(): self.SetInputValue(key, value)
-            self.CommRqData(rqname, trcode, next, screen)
+            ret = self.CommRqData(rqname, trcode, next, screen)
+            logging.warning(f"** TR 요청 결과 **: {rqname} {trcode} {screen} ret={ret}/ret_type={type(ret)}")
 
             start_time = time.time()
             while not self.tr_received:

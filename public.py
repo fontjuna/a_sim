@@ -361,6 +361,7 @@ class TimeDefinition:   # 시간 정의
 class ScreenNumber:     # 화면번호
     화면: dict = field(default_factory=lambda: {
         '잔고합산': '1020', '잔고목록': '1030', '손익합산': '1040', '손익목록': '1050', '일지합산': '1060', '일지목록': '1070', '예수금': '1080',
+        '틱봉챠트': '1110', '분봉챠트': '1120', '일봉챠트': '1130', '주봉챠트': '1140', '월봉챠트': '1150', '년봉챠트': '1160',
         '검색00': '3300', '검색01': '3301', '검색02': '3302', '검색03': '3303', '검색04': '3304',  # 마지막 자리 전략번호
         '검색05': '3305', '검색06': '3306', '검색07': '3307', '검색08': '3308', '검색09': '3309',  # 마지막 자리 전략번호
         '전략01': '4111', '전략02': '4211', '전략03': '4311', '전략04': '4411', '전략05': '4511',  # 두번째 자리 전략번호
@@ -374,7 +375,12 @@ class ScreenNumber:     # 화면번호
     화면번호: dict = field(default_factory=lambda: {
         '8811': '신규매수', '8812': '신규매도', '5511': '매수취소', '5512': '매도취소', '6611': '매수정정', '6612': '매도정정', '7711': '수동매수', '7712': '수동매도'
     })
-
+    차트종류: dict = field(default_factory=lambda: {
+        'mo': '월봉', 'wk': '주봉', 'dy': '일봉', 'mi': '분봉'
+    })
+    차트TR: dict = field(default_factory=lambda: {
+        'mo': 'opt10083', 'wk': 'opt10082', 'dy': 'opt10081', 'mi': 'opt10080'
+    })
 @dataclass
 class MarketStatus:     # 장 상태
     장종료 = '장 종료'
@@ -409,6 +415,7 @@ class FilePath:         # 파일 경로
     COUNTER_TICKERS_FILE = 'counter_tickers.json'
     COUNTER_STRATEGY_FILE = 'counter_strategy.json'
     CHARTS_FILE = 'charts.json'
+    SCRIPT_FILE = 'scripts.json'
 
     config_file = os.path.join(get_path(CONFIG_PATH), CONFIG_FILE)
     define_sets_file = os.path.join(get_path(CONFIG_PATH), DEFINE_SETS_FILE)
@@ -417,6 +424,7 @@ class FilePath:         # 파일 경로
     counter_tickers_file = os.path.join(get_path(DB_PATH), COUNTER_TICKERS_FILE)
     counter_strategy_file = os.path.join(get_path(DB_PATH), COUNTER_STRATEGY_FILE)
     charts_file = os.path.join(get_path(DB_PATH), CHARTS_FILE)
+    script_file = os.path.join(get_path(DB_PATH), SCRIPT_FILE)
     image_file = os.path.join(get_path(IMAGE_PATH), "Liberanimo_only.png")
 
 @dataclass
@@ -550,34 +558,6 @@ class Constants:        # 상수 정의
     list전일가대비 = ['현재가', '시가', '고가', '저가', '등락율']
     list양음가대비 = ['평가손익', '수익률(%)', '전일대비', '손익율', '당일매도손익', '손익금액', '수익률']
 
-log_config = {
-    'version': 1,
-    'formatters': {
-        'detailed': {
-            'format': '%(asctime)s.%(msecs)03d-%(levelname)s-[%(filename)s(%(lineno)d) / %(funcName)s] %(message)s',
-            'datefmt': '%Y-%m-%d %H:%M:%S'
-        }
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'detailed'
-        },
-        'file': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': "log_message",
-            'formatter': 'detailed',
-            'maxBytes': 1024 * 1024 * 1,
-            'backupCount': 9,
-            'encoding': 'utf-8'
-        }
-    },
-    'root': {
-        'handlers': ['console', 'file'],
-        'level': 'DEBUG'
-    }
-}
-
 @dataclass
 class DefineConstants:  # 글로벌 상수 정의
     const = Constants()
@@ -586,8 +566,34 @@ class DefineConstants:  # 글로벌 상수 정의
     scr = ScreenNumber()
     fp = FilePath()
     ms = MarketStatus()
-    log_config = log_config
     ddb = DataBaseColumns()
+    log_config = {
+        'version': 1,
+        'formatters': {
+            'detailed': {
+                'format': '%(asctime)s.%(msecs)03d-%(levelname)s-[%(filename)s(%(lineno)d) / %(funcName)s] %(message)s',
+                'datefmt': '%Y-%m-%d %H:%M:%S'
+            }
+        },
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+                'formatter': 'detailed'
+            },
+            'file': {
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': "log_message",
+                'formatter': 'detailed',
+                'maxBytes': 1024 * 1024 * 1,
+                'backupCount': 9,
+                'encoding': 'utf-8'
+            }
+        },
+        'root': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG'
+        }
+    }
 dc = DefineConstants()
 
 ## Define Clobal memory *************************************************************************
@@ -704,6 +710,41 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
             '헤더': ['전략명칭', '투자금액', '매수적용', '매수전략', '매도적용', '매도전략', '이익실현율', '이익보존율', '손실제한율', '감시적용', '감시시작율', '스탑주문율'],
         }
 
+    hd분봉챠트 = {
+        '키': '코드체결시간',
+        '정수': ['시가', '고가', '저가', '현재가', '거래량'],
+        '실수': [],
+        '컬럼': ['체결시간', '종목코드', '현재가', '시가', '고가', '저가', '거래량'],
+        '추가': ['코드체결시간', '종목명'],
+        '확장': ['코드체결시간', '체결시간', '종목코드', '종목명', '현재가', '시가', '고가', '저가', '거래량'],
+        '헤더': ['체결시간', '종목코드', '종목명', '현재가', '시가', '고가', '저가', '거래량'],
+    }
+
+    hd일봉챠트 = {
+        '키': '코드일자',
+        '정수': ['시가', '고가', '저가', '현재가', '거래량', '거래대금'],
+        '실수': [],
+        '컬럼': ['일자', '종목코드', '현재가', '시가', '고가', '저가', '거래량', '거래대금'],
+        '추가': ['코드일자', '종목명'],
+        '확장': ['코드일자', '일자',  '종목코드', '종목명', '현재가', '시가', '고가', '저가', '거래량', '거래대금'],
+        '헤더': ['일자', '종목코드', '종목명', '현재가', '시가', '고가', '저가', '거래량', '거래대금'],
+    }
+    hd주봉챠트 = hd일봉챠트.copy()
+    hd월봉챠트 = hd일봉챠트.copy()
+   
+    hd스크립트 = {
+        '키': '스크립트명',
+        '정수': [],
+        '실수': [],
+        '컬럼': ['스크립트명', '스크립트', '변수'],
+    }
+    hd스크립트변수 = {
+        '키': '변수명',
+        '정수': [],
+        '실수': ['값'],
+        '컬럼': ['변수명', '값'],
+    }
+
 @dataclass
 class GlobalConfig:     # 환경변수 정의
     sim_on = True
@@ -715,25 +756,22 @@ class GlobalConfig:     # 환경변수 정의
     ready = False
 
 @dataclass
-class GuiConfig:         # GUI 환경변수 정의
-    list계좌콤보 = []
-    list전략콤보 = []
-    list전략튜플 = []
-
-@dataclass
 class GlobalMemory:      # 글로벌 메모리 정의
     main = None
+    admin = None
     gui = None
     api = None
     dbm = None
-    admin = None
-    aaa = None
-    odr = None
-
+    cdt = None # 챠트 데이타
+    scm = None # 스크립트 매니저
+    
     toast = None
-    json_config = log_config
+    json_config = dc.log_config
     config = GlobalConfig()
-    gui = GuiConfig()
+
+    list계좌콤보 = []
+    list전략콤보 = []
+    list전략튜플 = []
 
     qwork = {} #QDict().qdict
     qanswer = {} #QDict().qanswer
@@ -751,6 +789,8 @@ class GlobalMemory:      # 글로벌 메모리 정의
     매매목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd매매목록))
     전략정의 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd전략정의))
     주문목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd주문목록))
+    스크립트 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd스크립트))
+    스크립트변수 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd스크립트변수))
     l2잔고합산_copy = None
     l2손익합산 = 0
     # 서버 호출 제한 체크
@@ -768,8 +808,8 @@ class GlobalMemory:      # 글로벌 메모리 정의
     dict조건종목감시 = {}
     dict종목정보 = None # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
     dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
-    json_counter_tickers = {}
-    json_counter_strategy = {}
+    #json_counter_tickers = {}
+    #json_counter_strategy = {}
     수수료율 = 0.0
     세금율 = 0.0
     holdings = {}

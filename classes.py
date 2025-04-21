@@ -2,11 +2,15 @@ from public import *
 from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QColor
+from datetime import datetime
 import threading
 import copy
 import time
 import logging
 import uuid
+import pandas as pd
+import numpy as np
+
 
 class ThreadSafeList:
     def __init__(self):
@@ -778,6 +782,8 @@ class TableManager:
 
     def _set_table_cell(self, table_widget, row, col, column, value):
         """테이블의 특정 셀에 값 설정"""
+        original_value = str(value)
+        
         # 숫자 형식화
         if column in self.int_columns and isinstance(value, int):
             display_value = f"{value:,}"
@@ -785,7 +791,13 @@ class TableManager:
             display_value = f"{value:,.2f}"
         else:
             display_value = str(value)
-        
+            # "스크립트" 컬럼의 경우 마지막 줄만 표시
+            if column == '스크립트' and '\n' in display_value:
+                lines = display_value.split('\n')
+                # 마지막 줄이 비어있으면 그 전 줄을 사용
+                last_line = lines[-1] if lines[-1].strip() else lines[-2] if len(lines) > 1 else lines[0]
+                display_value = last_line if last_line.strip() else "(빈 줄)"
+                
         # 기존 아이템 재사용
         existing_item = table_widget.item(row, col)
         if existing_item:
@@ -793,9 +805,11 @@ class TableManager:
             if existing_item.text() == display_value:
                 return
             existing_item.setText(display_value)
+            existing_item.setData(Qt.UserRole, original_value)
             cell_item = existing_item
         else:
             cell_item = QTableWidgetItem(display_value)
+            cell_item.setData(Qt.UserRole, original_value)
             table_widget.setItem(row, col, cell_item)
         
         # 정렬 설정
@@ -868,6 +882,123 @@ class WorkerThread(QThread):
             logging.error(f"메서드 실행 오류: {e}", exc_info=True)
             if callback:
                 callback(None)
+
+# 워커 프로세스 클래스 - 외부에 독립 함수로 정의 (모듈 레벨)
+def worker_process(name, target_info, task_queue, result_dict):
+    """프로세스 워커 메인 함수"""
+    try:
+        # 커스텀 로거 초기화
+        import logging
+        init_logger()
+        
+        # 타겟 클래스 동적 임포트
+        target_module, target_name = target_info
+        import importlib
+        module = importlib.import_module(target_module)
+        target_class = getattr(module, target_name)
+        
+        # 인스턴스 생성
+        target = target_class()
+        logging.info(f"프로세스 {name} 시작됨")
+
+        # 변수 접근/설정 메서드 추가
+        def _get_var(var_name):
+            """타겟 객체의 변수 값을 가져오는 내부 메서드"""
+            try:
+                return getattr(target, var_name, None)
+            except Exception as e:
+                logging.error(f"변수 접근 오류: {e}", exc_info=True)
+                return None
+                
+        def _set_var(var_name, value):
+            """타겟 객체의 변수 값을 설정하는 내부 메서드"""
+            try:
+                setattr(target, var_name, value)
+                return True
+            except Exception as e:
+                logging.error(f"변수 설정 오류: {e}", exc_info=True)
+                return None
+                
+        # 특수 메서드 등록
+        target._get_var = _get_var
+        target._set_var = _set_var
+                
+        # 작업 처리 루프
+        import time
+        last_cleanup_time = time.time()
+        processed_count = 0
+        processed_count_1000 = 0
+
+        while True:
+            # 주기적으로 큐 상태 확인 및 로깅
+            current_time = time.time()
+            if current_time - last_cleanup_time > 300:  # 5분마다 확인
+                queue_size = len(task_queue)
+                if queue_size > 200:
+                    logging.warning(f"프로세스 {name} 큐 크기: {queue_size}")
+                last_cleanup_time = current_time
+
+            # 작업이 있는지 확인
+            if len(task_queue) == 0:
+                time.sleep(0.001)  # 0.01초에서 0.001초로 변경하여 응답성 개선
+                continue
+
+            # 큐가 너무 크면 오래된 작업 건너뛰기 (선택적)
+            if len(task_queue) > 100:
+                # 처리할 수 있는 작업 수 제한
+                max_to_process = 50
+                old_tasks = len(task_queue) - max_to_process
+                if old_tasks > 0:
+                    logging.warning(f"프로세스 {name} 큐가 너무 큽니다. {old_tasks}개 작업 건너뜀.")
+                    # 가장 오래된 작업들 제거
+                    for _ in range(old_tasks):
+                        if len(task_queue) > 0:
+                            old_task = task_queue.pop(0)
+                            # 결과 처리를 위해 오류 상태로 응답
+                            task_id = old_task.get('task_id')
+                            if task_id:
+                                result_dict[task_id] = {'status': 'error', 'error': "큐 과부하로 작업 취소됨"}
+                        
+            # 작업 가져오기
+            task = task_queue.pop(0)
+            
+            # 종료 명령 확인
+            if task.get('command') == 'stop':
+                break
+                
+            # 작업 처리
+            task_id = task.get('task_id')
+            method_name = task.get('method')
+            args = task.get('args', ())
+            kwargs = task.get('kwargs', {})
+            
+            # 메서드 찾기
+            method = getattr(target, method_name, None)
+            if not method:
+                result_dict[task_id] = {'status': 'error', 'error': f"메서드 없음: {method_name}"}
+                continue
+                
+            # 메서드 실행
+            try:
+                result = method(*args, **kwargs)
+                result_dict[task_id] = {'status': 'success', 'result': result}
+
+            except Exception as e:
+                logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+                result_dict[task_id] = {'status': 'error', 'error': str(e)}
+
+            processed_count += 1
+            if processed_count % 5000 == 0:
+                import gc
+                gc.collect()
+                if processed_count % 50000 == 0:
+                    logging.info(f"프로세스 {name} 처리 횟수: {processed_count}")
+                    processed_count = 0
+
+    except Exception as e:
+        logging.error(f"프로세스 {name} 오류: {e}", exc_info=True)
+    finally:
+        logging.info(f"프로세스 {name} 종료")
 
 # 워커 관리자
 class WorkerManager:
@@ -1135,7 +1266,7 @@ class WorkerManager:
         # 프로세스 시작
         from multiprocessing import Process
         process = Process(
-            target=process_worker_main,
+            target=worker_process,
             args=(name, (target_module, target_name), self.task_queues[name], self.result_dicts[name]),
             daemon=True
         )
@@ -1320,123 +1451,6 @@ class WorkerManager:
         if process_name in self.task_queues and len(self.task_queues[process_name]) > 100:
             logging.warning(f"프로세스 {process_name} 큐 크기: {len(self.task_queues[process_name])}")
             
-# 클래스 외부에 독립 함수로 정의 (모듈 레벨)
-def process_worker_main(name, target_info, task_queue, result_dict):
-    """프로세스 워커 메인 함수"""
-    try:
-        # 커스텀 로거 초기화
-        import logging
-        init_logger()
-        
-        # 타겟 클래스 동적 임포트
-        target_module, target_name = target_info
-        import importlib
-        module = importlib.import_module(target_module)
-        target_class = getattr(module, target_name)
-        
-        # 인스턴스 생성
-        target = target_class()
-        logging.info(f"프로세스 {name} 시작됨")
-
-        # 변수 접근/설정 메서드 추가
-        def _get_var(var_name):
-            """타겟 객체의 변수 값을 가져오는 내부 메서드"""
-            try:
-                return getattr(target, var_name, None)
-            except Exception as e:
-                logging.error(f"변수 접근 오류: {e}", exc_info=True)
-                return None
-                
-        def _set_var(var_name, value):
-            """타겟 객체의 변수 값을 설정하는 내부 메서드"""
-            try:
-                setattr(target, var_name, value)
-                return True
-            except Exception as e:
-                logging.error(f"변수 설정 오류: {e}", exc_info=True)
-                return None
-                
-        # 특수 메서드 등록
-        target._get_var = _get_var
-        target._set_var = _set_var
-                
-        # 작업 처리 루프
-        import time
-        last_cleanup_time = time.time()
-        processed_count = 0
-        processed_count_1000 = 0
-
-        while True:
-            # 주기적으로 큐 상태 확인 및 로깅
-            current_time = time.time()
-            if current_time - last_cleanup_time > 300:  # 5분마다 확인
-                queue_size = len(task_queue)
-                if queue_size > 200:
-                    logging.warning(f"프로세스 {name} 큐 크기: {queue_size}")
-                last_cleanup_time = current_time
-
-            # 작업이 있는지 확인
-            if len(task_queue) == 0:
-                time.sleep(0.001)  # 0.01초에서 0.001초로 변경하여 응답성 개선
-                continue
-
-            # 큐가 너무 크면 오래된 작업 건너뛰기 (선택적)
-            if len(task_queue) > 100:
-                # 처리할 수 있는 작업 수 제한
-                max_to_process = 50
-                old_tasks = len(task_queue) - max_to_process
-                if old_tasks > 0:
-                    logging.warning(f"프로세스 {name} 큐가 너무 큽니다. {old_tasks}개 작업 건너뜀.")
-                    # 가장 오래된 작업들 제거
-                    for _ in range(old_tasks):
-                        if len(task_queue) > 0:
-                            old_task = task_queue.pop(0)
-                            # 결과 처리를 위해 오류 상태로 응답
-                            task_id = old_task.get('task_id')
-                            if task_id:
-                                result_dict[task_id] = {'status': 'error', 'error': "큐 과부하로 작업 취소됨"}
-                        
-            # 작업 가져오기
-            task = task_queue.pop(0)
-            
-            # 종료 명령 확인
-            if task.get('command') == 'stop':
-                break
-                
-            # 작업 처리
-            task_id = task.get('task_id')
-            method_name = task.get('method')
-            args = task.get('args', ())
-            kwargs = task.get('kwargs', {})
-            
-            # 메서드 찾기
-            method = getattr(target, method_name, None)
-            if not method:
-                result_dict[task_id] = {'status': 'error', 'error': f"메서드 없음: {method_name}"}
-                continue
-                
-            # 메서드 실행
-            try:
-                result = method(*args, **kwargs)
-                result_dict[task_id] = {'status': 'success', 'result': result}
-
-            except Exception as e:
-                logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-                result_dict[task_id] = {'status': 'error', 'error': str(e)}
-
-            processed_count += 1
-            if processed_count % 5000 == 0:
-                import gc
-                gc.collect()
-                if processed_count % 50000 == 0:
-                    logging.info(f"프로세스 {name} 처리 횟수: {processed_count}")
-                    processed_count = 0
-
-    except Exception as e:
-        logging.error(f"프로세스 {name} 오류: {e}", exc_info=True)
-    finally:
-        logging.info(f"프로세스 {name} 종료")
-
 # 전역 관리자 인스턴스
 la = WorkerManager()
 
@@ -1445,8 +1459,6 @@ class CounterTicker:
     쓰레드 안전한, 전략별 종목 매수 횟수 카운터 클래스
     날짜가 변경되면 자동으로 카운터를 초기화합니다.
     """
-    STRATEGY_CODE = "000000"        # 전략 자체 카운터 코드
-    WHOLE_TICKER_CODE = "999999"    # 전체 종목 카운터 코드
     DEFAULT_STRATEGY_LIMIT = 1000   # 전략 자체 기본 제한
     DEFAULT_TICKER_LIMIT = 10       # 종목 기본 제한
     DEFAULT_DATA = { "date": dc.td.ToDay, "data": {} } # data = { strategy: {code: { name: "", limit: 0, count: 0 }, ... } } 
@@ -1478,20 +1490,23 @@ class CounterTicker:
             update = False
             if strategy not in self.data: 
                 self.data[strategy] = {}
-                self.data[strategy][self.STRATEGY_CODE] = { "name": name, "limit": strategy_limit if strategy_limit is not None else self.DEFAULT_STRATEGY_LIMIT, "count": 0 }
-                self.data[strategy][self.WHOLE_TICKER_CODE] = { "name": name, "limit": ticker_limit if ticker_limit is not None else self.DEFAULT_TICKER_LIMIT, "count": 0 }
+                self.data[strategy]["000000"] = { 
+                    "name": name, 
+                    "all": ticker_limit if ticker_limit is not None else self.DEFAULT_TICKER_LIMIT, 
+                    "limit": strategy_limit if strategy_limit is not None else self.DEFAULT_STRATEGY_LIMIT, 
+                    "count": 0 }
                 update = True
             else:
-                if self.data[strategy][self.STRATEGY_CODE]["name"] != name:
-                    self.data[strategy][self.STRATEGY_CODE]["name"] = name
+                if self.data[strategy]["000000"]["name"] != name:
+                    self.data[strategy]["000000"]["name"] = name
                     update = True
                 if strategy_limit is not None:
-                    if self.data[strategy][self.STRATEGY_CODE]["limit"] != strategy_limit:
-                        self.data[strategy][self.STRATEGY_CODE] = { "limit": strategy_limit, "count": 0 }
+                    if self.data[strategy]["000000"]["limit"] != strategy_limit:
+                        self.data[strategy]["000000"].update({ "limit": strategy_limit, "count": 0 })
                         update = True
                 if ticker_limit is not None:
-                    if self.data[strategy][self.WHOLE_TICKER_CODE]["limit"] != ticker_limit:
-                        self.data[strategy][self.WHOLE_TICKER_CODE] = { "limit": ticker_limit, "count": 0 }
+                    if self.data[strategy]["000000"]["all"] != ticker_limit:
+                        self.data[strategy]["000000"].update({ "all": ticker_limit, "count": 0 })
                         update = True
             if update: self.save_data()
     
@@ -1511,18 +1526,16 @@ class CounterTicker:
     def set_add(self, strategy, code):
         with self.lock:
             self.data[strategy][code]["count"] += 1
-            self.data[strategy][self.STRATEGY_CODE]["count"] += 1
+            self.data[strategy]["000000"]["count"] += 1
             self.save_data()
     
     def get(self, strategy, code, name=None):
         with self.lock:
             if code not in self.data[strategy]:
                 self.set(strategy, code, name if name is not None else "")
-            if self.data[strategy][self.STRATEGY_CODE]["count"] >= self.data[strategy][self.STRATEGY_CODE]["limit"]:
+            if self.data[strategy]["000000"]["count"] >= self.data[strategy]["000000"]["limit"]:
                 return False
             ticker_info = self.data[strategy][code]
-            ticker_limit = ticker_info["limit"] if ticker_info["limit"] > 0 else self.data[strategy][self.WHOLE_TICKER_CODE]["limit"]
-            if ticker_info["count"] >= ticker_limit:
-                return False
-            return True
+            ticker_limit = ticker_info["limit"] if ticker_info["limit"] > 0 else self.data[strategy]["000000"]["all"]
+            return ticker_info["count"] < ticker_limit
     

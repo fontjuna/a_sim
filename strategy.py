@@ -96,10 +96,10 @@ class Strategy:
         if not gm.ct.get(self.전략, "000000", self.매수전략): 
             return False, {}, f"전략별 매수 횟수 제한 {code} {name} 매수횟수={self.체결횟수} 회 초과"
 
-        if self.중복매수금지 and gm.잔고목록.in_key(code): return False, {}, f"보유 종목 재매수 금지 ({code} {name})"
-
         if not gm.ct.get(self.전략, code, name): 
             return False, {}, f"종목별 매수 횟수 제한 {code} {name} 종목제한{self.종목제한} 회 초과"
+
+        if self.중복매수금지 and gm.잔고목록.in_key(code): return False, {}, f"보유 종목 재매수 금지 ({code} {name})"
 
         if gm.잔고목록.len(filter={'전략': self.전략}) >= self.보유제한:
             return False, {}, f"보유 종목수 제한 {code} {name} \
@@ -134,7 +134,8 @@ class Strategy:
 
             # 호가구분과 가격 설정
             if self.매수지정가:
-                send_data['price'] = hoga(price, self.매수호가)
+                price = hoga(price, self.매수호가)
+                send_data['price'] = price
 
             # 수량 계산
             if self.투자금:
@@ -211,8 +212,14 @@ class Strategy:
             if gm.config.sim_on and (수익률 > 30 or 수익률 < -30):
                 return False, {}, f"시뮬레이션 비정상 수익률: {code} {종목명} 매입가={매입가} 현재가={현재가} 수익률={수익률}"
 
-            if self.로스컷 and self.로스컷율 + gm.잔고목록.sum(filter={'전략': self.전략}, columns='수익률(%)') <= 0:
+            if self.로스컷 and self.로스컷율 != 0:
                 send_list = []
+                매입금액, 평가손익 = gm.잔고목록.sum(filter={'전략': self.전략}, columns=['매입금액', '평가손익'])
+                수익율 = (평가손익 / 매입금액) * 100 if 매입금액 > 0 else 0
+
+                if self.로스컷율 > 0 and 수익율 <= self.로스컷율 or self.로스컷율 < 0 and 수익율 >= self.로스컷율: 
+                    return False, {}, f"로스컷: 전략={self.전략} 수익율={수익율} 로스컷율={self.로스컷율}"
+                
                 rows = gm.잔고목록.get(filter={'전략': self.전략})
                 if self.로스컷시장가:
                     send_list = [{**send_data, 'code': row['종목번호'], 'price': 0, 'quantity': row['보유수량'], 'msg': '로스컷장'} for row in rows]
@@ -576,7 +583,8 @@ class Strategy:
                     start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.start_time}", '%Y-%m-%d %H:%M')
                     delay_ms = int((start_time - now).total_seconds() * 1000)
                     self.start_timer = QTimer()
-                    self.start_timer.timeout.connect(lambda: self.cdn_fx실행_전략매매())
+                    #self.start_timer.timeout.connect(lambda: self.cdn_fx실행_전략매매())
+                    self.start_timer.timeout.connect(lambda: gm.toast.toast(f'{self.전략} 전략을 시작합니다. {self.start_time} {current}'))
                     self.start_timer.setSingleShot(True)
                     self.start_timer.start(delay_ms)
 

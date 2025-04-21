@@ -1,13 +1,14 @@
 from public import get_path, gm, dc, save_json, load_json, hoga
 from classes import la
-from PyQt5.QtWidgets import QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox
+from PyQt5.QtWidgets import QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox, QTableWidget, QTableWidgetItem
 from PyQt5.QtGui import QIcon, QTextCursor
-from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate
+from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate, Qt
 from PyQt5 import uic
 from datetime import datetime, timedelta
 from queue import Queue
 import logging
 import os
+import json
 
 form_class = uic.loadUiType(os.path.join(get_path(dc.fp.RESOURCE_PATH), "aaa.ui"))[0]
 
@@ -100,6 +101,13 @@ class GUI(QMainWindow, form_class):
             self.dtMonitor.setCalendarPopup(True)
             self.dtMonitor.setDate(today)
 
+            self.tblScript.setColumnCount(3)
+            self.tblScript.setHorizontalHeaderLabels(['이름', '스크립트', '변수'])
+            self.btnScriptSave.setEnabled(False)
+
+            self.tblScriptVar.setColumnCount(2)
+            self.tblScriptVar.setHorizontalHeaderLabels(['변수명', '값'])
+
             statusBar = QStatusBar()
             self.setStatusBar(statusBar)
             self.lbl0 = QLabel(" "*5)
@@ -151,6 +159,16 @@ class GUI(QMainWindow, form_class):
             self.leTrCode.editingFinished.connect(self.gui_tr_code_changed)             # 종목코드 변경
             self.tblBalanceHeld.cellClicked.connect(self.gui_balance_held_select)       # 잔고목록 선택
             self.tblReceiptList.cellClicked.connect(self.gui_receipt_list_select)       # 주문목록 선택
+
+            # 스크립트
+            self.tblScript.clicked.connect(lambda x: self.gui_script_select(x.row()))  # 스크립트 선택
+            self.btnScriptNew.clicked.connect(self.gui_script_new)
+            self.btnScriptDel.clicked.connect(self.gui_script_delete)
+            self.btnScriptChk.clicked.connect(self.gui_script_check)
+            self.btnScriptSave.clicked.connect(self.gui_script_save)
+            self.tblScriptVar.clicked.connect(lambda x: self.gui_var_select(x.row()))  # 변수 선택
+            self.btnVarDel.clicked.connect(self.gui_var_delete)
+            self.btnVarSave.clicked.connect(self.gui_var_save)
 
             self.gui_tabs_init()
 
@@ -629,11 +647,150 @@ class GUI(QMainWindow, form_class):
         # 주문 전송
         gm.admin.com_SendOrder(전략번호, **send_data)
 
+    def gui_script_show(self):
+        try:
+            gm.스크립트.update_table_widget(self.tblScript)
+        except Exception as e:
+            logging.error(f'스크립트 표시 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_script_select(self, row_index):
+        try:
+            self.btnScriptSave.setEnabled(False)
+            name = self.tblScript.item(row_index, 0).text()
+
+            sctipt_item = self.tblScript.item(row_index, 1)
+            script = sctipt_item.data(Qt.UserRole) if sctipt_item.data(Qt.UserRole) else sctipt_item.text()
+
+            vars_item = self.tblScript.item(row_index, 2)
+            vars = vars_item.data(Qt.UserRole) if vars_item.data(Qt.UserRole) else vars_item.text()
+
+            self.ledScriptName.setText(name)
+            self.txtScript.setText(script)
+            try:
+                vars_dict = json.loads(vars)
+            except Exception as e:
+                vars_dict = {}
+            self.tblScriptVar.setRowCount(len(vars_dict))
+            dict_list = []
+            for i, (key, value) in enumerate(vars_dict.items()) :
+              dict_list.append({'변수명': key, '값': value})
+            self.tblScriptVar.setRowCount(len(dict_list))
+            gm.스크립트변수.set(data=dict_list)
+
+        except Exception as e:
+            logging.error(f'스크립트 선택 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_script_new(self):
+        self.btnScriptSave.setEnabled(True)
+        self.ledScriptName.setText('')
+        self.txtScript.setText('')
+        self.tblScriptVar.setRowCount(0)
+
+    def gui_script_delete(self):
+        try:
+            name = self.ledScriptName.text().strip()
+            if not name:
+                QMessageBox.warning(self, '알림', '삭제할 스크립트명을 확인 하세요.')
+                return
+
+            reply = QMessageBox.question(self, '삭제 확인',
+                                        f'{name} 스크립트를 삭제하시겠습니까?',
+                                        QMessageBox.Yes | QMessageBox.No,
+                                        QMessageBox.No)
+
+            if reply == QMessageBox.Yes:
+                # 설정 삭제
+                result = gm.스크립트.delete(key=name)
+                if result:
+                    gm.스크립트.update_table_widget(self.tblScript)
+                    #msg = '스크립트가 삭제되었습니다.'
+                #else: msg = '스크립트가 삭제되지 않았습니다.'
+                #QMessageBox.information(self, '알림', msg)
+
+        except Exception as e:
+            logging.error(f'스크립트 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_script_check(self):
+        try:
+            name = self.ledScriptName.text().strip()
+            script = self.txtScript.toPlainText().strip()
+            if gm.scm.check_script(name, script):
+                QMessageBox.information(self, '알림', '스크립트에 이상이 없습니다.')
+                self.btnScriptSave.setEnabled(True)
+            else:
+                QMessageBox.critical(self, '에러', '스크립트에 이상이 있습니다.')
+                self.btnScriptSave.setEnabled(False)
+        except Exception as e:
+            logging.error(f'스크립트 확인 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_script_save(self):
+        try:
+            name = self.ledScriptName.text().strip()
+            script = self.txtScript.toPlainText().strip()
+            vars = {}
+            for row in range(self.tblScriptVar.rowCount()):
+                key = self.tblScriptVar.item(row, 0).text().strip()
+                value = self.tblScriptVar.item(row, 1).text()
+                vars[key] = float(value) if value else 0.0
+            gm.scm.set_script(name, script)
+            gm.scm.set_vars(name, vars)
+            gm.스크립트.set(key=name, data={'스크립트': script, '변수': json.dumps(vars)})
+            gm.스크립트.update_table_widget(self.tblScript)
+        except Exception as e:
+            logging.error(f'스크립트 저장 오류: {type(e).__name__} - {e}', exc_info=True)
+        finally:
+            self.btnScriptSave.setEnabled(False)
+    
+    def gui_var_select(self, row_index):
+        try:
+            name = self.tblScriptVar.item(row_index, 0).text()
+            value = self.tblScriptVar.item(row_index, 1).text()
+            self.ledVarName.setText(name)
+            self.ledVarValue.setText(value)
+        except Exception as e:
+            logging.error(f'변수 선택 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_var_delete(self):
+        try:
+            name = self.ledVarName.text().strip()
+            if not name:
+                QMessageBox.warning(self, '알림', '삭제할 변수명을 확인 하세요.')
+                return
+
+            reply = QMessageBox.question(self, '삭제 확인',
+                                        f'{name} 변수를 삭제하시겠습니까?',
+                                        QMessageBox.Yes | QMessageBox.No,
+                                        QMessageBox.No)
+
+            if reply == QMessageBox.Yes:
+                # 설정 삭제
+                result = gm.스크립트변수.delete(key=name)
+                if result:
+                    gm.스크립트변수.update_table_widget(self.tblScriptVar)
+                #if result:
+                #    msg = '변수가 삭제되었습니다.'
+                #else: msg = '변수가 삭제되지 않았습니다.'
+                #QMessageBox.information(self, '알림', msg)
+
+        except Exception as e:
+            logging.error(f'변수 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
+
+
+    def gui_var_save(self):
+        try:
+            name = self.ledVarName.text().strip()
+            value = self.ledVarValue.text().strip()
+            gm.스크립트변수.set(key=name, data={'변수명': name, '값': value})
+            gm.스크립트변수.update_table_widget(self.tblScriptVar)
+        
+        except Exception as e:
+            logging.error(f'변수 저장 오류: {type(e).__name__} - {e}', exc_info=True)
+    
     # 화면 갱신 -----------------------------------------------------------------------------------------------------------------
     def gui_fx채움_계좌콤보(self):
         try:
             self.cbAccounts.clear()
-            self.cbAccounts.addItems([account for account in gm.gui.list계좌콤보 if account.strip()])
+            self.cbAccounts.addItems([account for account in gm.list계좌콤보 if account.strip()])
             self.cbAccounts.setCurrentIndex(0)
         except Exception as e:
             logging.error(f'계좌콤보 채움 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -642,7 +799,7 @@ class GUI(QMainWindow, form_class):
         try:
             self.cbCondition.clear()
             self.cbCondition.addItem(dc.const.NON_STRATEGY)  # 선택없음 추가
-            self.cbCondition.addItems([strategy for strategy in gm.gui.list전략콤보 if strategy.strip()])
+            self.cbCondition.addItems([strategy for strategy in gm.list전략콤보 if strategy.strip()])
             self.cbCondition.setCurrentIndex(0)
         except Exception as e:
             logging.error(f'조건콤보 채움 오류: {type(e).__name__} - {e}', exc_info=True)

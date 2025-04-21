@@ -1,12 +1,14 @@
 from public import gm, dc, Work,load_json, save_json
 from classes import TableManager, TimeLimiter, ThreadSafeDict, la, CounterTicker
 from strategy import Strategy
+from chart import ChartData, ScriptManager
 from tabulate import tabulate
 from datetime import datetime
 from PyQt5.QtCore import QTimer
 import logging
 import pandas as pd
 import time
+import json
 
 class Admin:
     def __init__(self):
@@ -30,13 +32,16 @@ class Admin:
         gm.ct = CounterTicker()
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
+        gm.cdt = ChartData()
+        gm.scm = ScriptManager()
+
         la.set_var('dbm', 'fee_rate', gm.수수료율)
         la.set_var('dbm', 'tax_rate', gm.세금율)
 
     def get_login_info(self):
         accounts = gm.api.GetLoginInfo('ACCNO')
         logging.debug(f'GetLoginInfo Accounts: {accounts}')
-        gm.gui.list계좌콤보 = accounts
+        gm.list계좌콤보 = accounts
         gm.config.account = accounts[0]
 
         gm.config.server = gm.api.GetLoginInfo('GetServerGubun')
@@ -57,15 +62,23 @@ class Admin:
         gm.체결목록 = TableManager(gm.tbl.hd체결목록)
         gm.전략정의 = TableManager(gm.tbl.hd전략정의)
         gm.주문목록 = TableManager(gm.tbl.hd주문목록)
+        gm.스크립트 = TableManager(gm.tbl.hd스크립트)
+        gm.스크립트변수 = TableManager(gm.tbl.hd스크립트변수)
+        scripts = gm.scm.scripts.copy()
+        dict_data = []
+        for k, v in scripts.items():
+            dict_data.append({'스크립트명': k, '스크립트': v.get('script', '').strip(), '변수': json.dumps(v.get('vars', {}))})
+        gm.스크립트.set(data=dict_data)
+        gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
 
     def get_conditions(self):
         try:
             loaded = gm.api.GetConditionLoad()
             if loaded: # sucess=1, fail=0
-                gm.gui.list전략튜플 = gm.api.GetConditionNameList()
-                logging.debug(f'전략 로드 : {gm.gui.list전략튜플}')
-                gm.gui.list전략콤보 = [condition[0] + ' : ' + condition[1] for condition in gm.gui.list전략튜플]
-                logging.info(f'전략 로드 : 총 {len(gm.gui.list전략콤보)}개의 전략이 있습니다.')
+                gm.list전략튜플 = gm.api.GetConditionNameList()
+                logging.debug(f'전략 로드 : {gm.list전략튜플}')
+                gm.list전략콤보 = [condition[0] + ' : ' + condition[1] for condition in gm.list전략튜플]
+                logging.info(f'전략 로드 : 총 {len(gm.list전략콤보)}개의 전략이 있습니다.')
             else:
                 logging.error(f'전략 로드 실패')
         except Exception as e:
@@ -130,7 +143,7 @@ class Admin:
         return True
 
     def com_SendRequest(self, rqname, trcode, input, output, next='0', screen=None, form='dict_list', timeout=5):
-        if not self.com_request_time_check(kind='request'): return [], 0
+        if not self.com_request_time_check(kind='request'): return [], False
         try:
             logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} input={input} output={output} next={next} screen={screen} form={form} timeout={timeout}')
             args = {
@@ -143,10 +156,7 @@ class Admin:
                 'form': form if form else 'dict_list',
                 'timeout': timeout if timeout else 5
             }
-            result = gm.api.api_request(**args)
-            data, remain = result
-            # logging.debug(f'com_SendRequest 결과: {result}')
-            return data, remain
+            return gm.api.api_request(**args)
         except Exception as e:
             logging.error(f'com_SendRequest 오류: {e}')
             return [], False
@@ -325,10 +335,10 @@ class Admin:
                     row['현재가'] = 현재가
                     la.work(f'전략{data["idx"]:02d}', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
+            gm.cdt.update_price(code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
 
         try:
             #la.work('dbm', 'receive_current_price', code=code, dictFID=dictFID) # 큐 과부하 일어남 (현재 암무 처리 않고 호출만 함으로써 과부하로 에러 남 )
-
             if gm.잔고목록.in_key(code):
                 row = gm.잔고목록.get(key=code)
                 if not row: return
@@ -440,9 +450,6 @@ class Admin:
                         item['전략명칭'] = "기본전략"
                         gm.잔고목록.set(key=item['종목번호'], data=item)
                         전략정의 = gm.전략정의.get(key="기본전략")
-
-                    종목제한 = 전략정의.get('종목제한', 0)
-                    gm.json_counter_tickers.setdefault(item['전략'], {})
 
                     data[item['종목번호']] = item['종목명']
                 gm.ct.set_batch(item['전략'], data)
@@ -814,8 +821,6 @@ class Admin:
 
                 if sec > 0:
                     QTimer.singleShot(sec * 1000, lambda idx=전략번호, kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(idx, kind, origin_row, dictFID))
-            else:
-                raise Exception(f"주문목록에 존재하지 않는 주문구분입니다. {row['구분']} {code} {name}")
 
         except Exception as e:
             logging.error(f"접수 오류: {type(e).__name__} - {e}", exc_info=True)
@@ -955,3 +960,4 @@ class Admin:
     def dbm_fx실시간_수신데이타(self, data):
         # 디비에서 작업결과를 실시간으로 내보내는걸 수신 (예: 차트 분석 후 매매 신호)
         pass
+
