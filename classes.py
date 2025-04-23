@@ -274,6 +274,9 @@ class TableManager:
         # 문자열 처리
         if isinstance(value, str):
             value = value.strip()
+            if column not in self.int_columns + self.float_columns:
+                return value
+            
             # 쉼표가 포함된 숫자 문자열 처리
             if any(c.isdigit() for c in value):
                 value = value.replace(',', '')
@@ -827,7 +830,7 @@ class TableManager:
                     cell_item.setForeground(self.color_positive)  # 양수는 적색
                 else:
                     cell_item.setForeground(self.color_zero)      # 0은 검정색
-
+                
 # 워커 쓰레드 클래스
 class WorkerThread(QThread):
     taskReceived = pyqtSignal(str, str, object, object)

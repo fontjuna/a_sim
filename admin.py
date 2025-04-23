@@ -145,7 +145,7 @@ class Admin:
     def com_SendRequest(self, rqname, trcode, input, output, next='0', screen=None, form='dict_list', timeout=5):
         if not self.com_request_time_check(kind='request'): return [], False
         try:
-            logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} \ninput={input} \noutput={output} \nnext={next} screen={screen} form={form} timeout={timeout}')
+            logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} input={input} next={next} screen={screen} form={form} timeout={timeout}')
             args = {
                 'rqname': rqname,
                 'trcode': trcode,
@@ -320,6 +320,43 @@ class Admin:
 
     def on_fx실시간_주식체결(self, code, rtype, dictFID): # 실시간 시세 감시, 시장 체결데이타 분석 재료, 종목의 누적 거래향
         if not gm.config.ready: return
+        def update_price():
+            try:
+                rqname = '분봉챠트'
+                trcode = '10080'
+                screen = dc.scr.화면[rqname]
+                input = {'종목코드':code, '틱범위': 1, '수정주가구분': 1}
+                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
+                next = '0'
+                dict_list = []
+                while True:
+                    data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen, 'dict_list', 5)
+                    if data is None or len(data) == 0: break
+                    dict_list.extend(data)
+                    if not remain: break
+                    next = '2'
+                
+                if not dict_list:
+                    logging.warning(f'챠트 데이타 얻기 실패: code:{code}, dict_list:"{dict_list}"')
+                    return []
+                
+                dict_list = [{
+                    '종목코드': code,
+                    '체결시간': item['체결시간'],
+                    '현재가': abs(int(item['현재가'])),
+                    '시가': abs(int(item['시가'])),
+                    '고가': abs(int(item['고가'])),
+                    '저가': abs(int(item['저가'])),
+                    '거래량': abs(int(item['거래량'])),
+                    '거래대금': 0#abs(int(item['거래대금'])),
+                } for item in dict_list]
+                logging.debug(f'챠트 데이타 얻기: code:{code}, dict_list:"{pd.DataFrame(dict_list)}"')
+                return dict_list
+            
+            except Exception as e:
+                logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+                return []
+
 
         if gm.dict종목정보.contains(code):
             현재가 = abs(int(dictFID['현재가']))
@@ -335,7 +372,8 @@ class Admin:
                     row['현재가'] = 현재가
                     la.work(f'전략{data["idx"]:02d}', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
-            la.work('cdt', 'update_price', code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
+            #la.work('cdt', 'update_price', code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
+            #update_price()
 
         try:
             #la.work('dbm', 'receive_current_price', code=code, dictFID=dictFID) # 큐 과부하 일어남 (현재 암무 처리 않고 호출만 함으로써 과부하로 에러 남 )

@@ -96,6 +96,8 @@ class Main:
                 if la.answer('api', 'api_connected'): break
                 time.sleep(0.1)
             logging.debug(f'***** {gm.api.name.upper()} connected *****')
+            if gm.config.sim_real_only:
+                la.work('api', 'set_tickers')
             la.work('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
             if gm.config.gui_on: gm.gui.init()

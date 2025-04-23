@@ -660,22 +660,25 @@ class GUI(QMainWindow, form_class):
 
             sctipt_item = self.tblScript.item(row_index, 1)
             script = sctipt_item.data(Qt.UserRole) if sctipt_item.data(Qt.UserRole) else sctipt_item.text()
-
-            vars_item = self.tblScript.item(row_index, 2)
-            vars = vars_item.data(Qt.UserRole) if vars_item.data(Qt.UserRole) else vars_item.text()
+            vars = self.tblScript.item(row_index, 2)
 
             self.ledScriptName.setText(name)
             self.txtScript.setText(script)
             try:
-                vars_dict = json.loads(vars)
+                vars_dict = json.loads(vars.text())
+                logging.debug(f'스크립트 변수: {vars_dict}')
             except Exception as e:
                 vars_dict = {}
+                logging.error(f'스크립트 변수 파싱 오류: {type(e).__name__} - {e}', exc_info=True)
             self.tblScriptVar.setRowCount(len(vars_dict))
             dict_list = []
             for i, (key, value) in enumerate(vars_dict.items()) :
               dict_list.append({'변수명': key, '값': value})
             self.tblScriptVar.setRowCount(len(dict_list))
             gm.스크립트변수.set(data=dict_list)
+            gm.스크립트변수.update_table_widget(self.tblScriptVar)
+            self.ledVarName.setText('')
+            self.ledVarValue.setText('')
 
         except Exception as e:
             logging.error(f'스크립트 선택 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -781,6 +784,8 @@ class GUI(QMainWindow, form_class):
             value = self.ledVarValue.text().strip()
             gm.스크립트변수.set(key=name, data={'변수명': name, '값': value})
             gm.스크립트변수.update_table_widget(self.tblScriptVar)
+            self.ledVarName.setText('')
+            self.ledVarValue.setText('')
         
         except Exception as e:
             logging.error(f'변수 저장 오류: {type(e).__name__} - {e}', exc_info=True)

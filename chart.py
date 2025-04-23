@@ -293,7 +293,7 @@ class ChartData:
             all = False #if chart_type in ['mi', 'dy'] else True
             dict_list = []
             while True:
-                data, remain = gm.admin.com_SendRequest(rqname, trcode, input, output, next, screen, 'dict_list', 30)
+                data, remain = la.answer('admin', 'com_SendRequest', rqname, trcode, input, output, next, screen, 'dict_list', 5)
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
                 if not (remain and all): break
@@ -338,7 +338,6 @@ class ChartManager:
     def __init__(self, chart='dy', cycle=1):
         self.chart = chart  # 'mo', 'wk', 'dy', 'mi' 중 하나
         self.cycle = cycle  # 분봉일 경우 주기
-        #self.chart_data = ChartData()
     
     def _get_data(self, code: str) -> List[Dict]:
         """해당 코드의 차트 데이터 반환"""
@@ -586,11 +585,6 @@ class ScriptManager:
             name = self.current_script
         return self.scripts.get(name, {}).get('vars', {})
     
-    def get_var(self, var_name, default=None):
-        """현재 실행 중인 스크립트의 특정 변수 가져오기"""
-        vars_dict = self.get_vars(self.current_script)
-        return vars_dict.get(var_name, default)
-    
     def set_vars(self, name: str, vars: dict):
         """스크립트 변수 설정"""
         if name in self.scripts:
@@ -598,6 +592,11 @@ class ScriptManager:
             self.save_script()
             return True
         return False
+    
+    def get_var(self, var_name, default=None):
+        """현재 실행 중인 스크립트의 특정 변수 가져오기"""
+        vars_dict = self.get_vars(self.current_script)
+        return vars_dict.get(var_name, default)
     
     def save_script(self):
         """스크립트를 JSON 파일로 저장"""
@@ -625,15 +624,15 @@ class ScriptManager:
         try:
             compile(script, "<string>", "exec")
         except SyntaxError as e:
-            print(f"문법 오류: {e}")
+            logging.debug(f"문법 오류: {e}")
             return False
         except Exception as e:
-            print(f"스크립트 오류 발생: {e}")
+            logging.debug(f"스크립트 오류 발생: {e}")
             return False
             
         # result 변수 사용 여부 확인
         if "result = " not in script and "result=" not in script:
-            print("오류: 스크립트의 마지막에 'result = 불리언_값'으로 결과를 저장해야 합니다.")
+            logging.debug("오류: 스크립트의 마지막에 'result = 불리언_값'으로 결과를 저장해야 합니다.")
             return False
         
         # 의존성 검사를 위한 테스트 실행
@@ -664,7 +663,7 @@ class ScriptManager:
             return True
             
         except Exception as e:
-            print(f"의존성 검사 오류: {e}")
+            logging.debug(f"의존성 검사 오류: {e}")
             # 원래 상태로 복원
             self.current_script = old_current if 'old_current' in locals() else ""
             self.execution_stack = old_stack if 'old_stack' in locals() else []
@@ -753,7 +752,7 @@ class ScriptManager:
             self.current_script = prev_script
             self.script_code = prev_code
             
-            print(f"스크립트 '{name}' 실행 오류: {e}")
+            logging.debug(f"스크립트 '{name}' 실행 오류: {e}")
             return (False, "runtime_error", f"실행 오류: {type(e).__name__} - {e}")
 
     def get_script_result(self, script_name: str, code: str):
@@ -766,7 +765,7 @@ class ScriptManager:
         """
         # 순환 참조 검사
         if script_name in self.execution_stack:
-            print(f"순환 참조 감지: {' -> '.join(self.execution_stack)} -> {script_name}")
+            logging.debug(f"순환 참조 감지: {' -> '.join(self.execution_stack)} -> {script_name}")
             return False
             
         # 캐시 확인
@@ -778,7 +777,7 @@ class ScriptManager:
         success, error_type, result = self.run_script(script_name, code, is_sub_call=True)
         
         if not success:
-            print(f"서브스크립트 '{script_name}' 실행 실패: {error_type} - {result}")
+            logging.debug(f"서브스크립트 '{script_name}' 실행 실패: {error_type} - {result}")
             return False
         
         # 결과 캐싱

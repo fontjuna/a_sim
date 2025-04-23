@@ -72,11 +72,14 @@ class APIServer():
             screen = dc.화면[rqname] if not screen else screen
             for key, value in input.items(): self.SetInputValue(key, value)
             ret = self.CommRqData(rqname, trcode, next, screen)
-            logging.warning(f"** TR 요청 결과 **: {rqname} {trcode} {screen} ret={ret}/ret_type={type(ret)}")
+            #logging.warning(f"** TR 요청 결과 **: {rqname} {trcode} {screen} ret={ret}/ret_type={type(ret)}")
 
             start_time = time.time()
             while not self.tr_received:
-                pythoncom.PumpWaitingMessages()
+                for _ in range(10):
+                    pythoncom.PumpWaitingMessages()
+                    if self.tr_received: break
+                time.sleep(0.01)
                 if time.time() - start_time > timeout:
                     logging.warning(f"Timeout while waiting for {rqname} data")
                     return None, False
@@ -261,7 +264,8 @@ class APIServer():
                     dictFID[key] = data.strip() if type(data) == str else data
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
-                if rtype == '주식체결': gm.admin.on_fx실시간_주식체결(**job)
+                if rtype == '주식체결': 
+                    gm.admin.on_fx실시간_주식체결(**job)
                 elif rtype == '장시작시간': gm.admin.on_fx실시간_장운영감시(**job)
 
         except Exception as e:
@@ -290,7 +294,7 @@ class APIServer():
     # 즉답 관련 메소드 ---------------------------------------------------------------------------------------------
     def GetLoginInfo(self, kind):
         data = self.ocx.dynamicCall("GetLoginInfo(QString)", kind)
-        logging.debug(f'**************GetLoginInfo: kind={kind}, data={data}')
+        #logging.debug(f'kind={kind}, data={data}')
         if kind == "ACCNO":
             return data.split(';')[:-1]
         else:

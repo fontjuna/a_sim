@@ -15,6 +15,8 @@ cond_thread = {}
 cond_data_list =  [('079', '전고돌파3분5억-매수'), ('080', '전고돌파3분5억-매도'), ('073', '3분30억전고돌파-매수'), ('077', '3분30억전고돌파-매도'), ('075', '장시작3분-매수'),\
                     ('074', '장시작3분-매도'), ('024', '1분10억'), ('076', '1분10억-매도'), ('004', '돌파4시간3분5억-매수'), ('006', '돌파4시간3분5억-매도')]
 price_dict = {}
+real_tickers = set()
+ready_tickers = False
 
 #init_logger() #멀티프로세스에서는 정의 해야함
 class SimData:
@@ -309,6 +311,9 @@ class OnReceiveRealCondition(QThread):
 
     def run(self):
         while self.is_running:
+            if not gm.config.ready:
+                time.sleep(0.01)
+                continue
             code = random.choice(list(sim.ticker.keys()))
             type = random.choice(['D', 'I'])
 
@@ -329,7 +334,7 @@ class OnReceiveRealCondition(QThread):
                 if code in self.current_stocks:
                     self.current_stocks.remove(code)
 
-            interval = random.uniform(0.5, 5)
+            interval = random.uniform(0.3, 3)
             if self._stop_event.wait(timeout=interval): break
 
     def stop(self):
@@ -344,10 +349,12 @@ class OnReceiveRealData(QThread):
         self._stop_event = threading.Event()
 
     def run(self):
-        cnt = len(sim.ticker.keys())
         while self.is_running:
+            if not gm.config.ready:
+                time.sleep(0.01)
+                continue
             # 모든 종목에 대해 가격 업데이트
-            for code in sim.ticker.keys():
+            for code in list(sim.ticker.keys()): 
                 if not self.is_running:
                     break
                 # 시뮬레이터에서 현재가 계산
@@ -376,7 +383,7 @@ class OnReceiveRealData(QThread):
                 }
                 gm.admin.on_fx실시간_주식체결(**job)
 
-                if self._stop_event.wait(timeout=1.0/cnt):
+                if self._stop_event.wait(timeout=0.02/len(sim.ticker)):
                     return
 
     def stop(self):
@@ -402,9 +409,11 @@ class SIMServer():
         self.tr_condition_list = None       # OnReceiveTrCondition에서 리스트 담기
 
         self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
-
         self.real = gm.config.sim_real_only
-        if self.real: self.api_init()
+        if self.real: 
+            self.api_init()
+        else:
+            ready_tickers = True
 
     def api_init(self):
         try:
@@ -414,6 +423,21 @@ class SIMServer():
             logging.debug(f'{self.name} api_init end: ocx={self.ocx}')
         except Exception as e:
             logging.error(f"API 초기화 오류: {type(e).__name__} - {e}")
+
+    def set_tickers(self):
+        codes = self.GetCodeListByMarket('NXT')
+        selected_codes = random.sample(codes, 30)
+        logging.debug(f'len={len(selected_codes)} codes={selected_codes}')
+
+        sim.ticker = {}
+        for code in selected_codes:
+            sim.ticker[code] = {
+                '종목명': self.GetMasterCodeName(code),
+                '전일가': self.GetMasterLastPrice(code),
+            }
+        sim._initialize_data()
+        global ready_tickers
+        ready_tickers = True
 
     def _set_signal_slots(self):
         self.ocx.OnEventConnect.connect(self.OnEventConnect)
@@ -476,7 +500,7 @@ class SIMServer():
             screen = dc.화면[rqname] if not screen else screen
             for key, value in input.items(): self.SetInputValue(key, value)
             ret = self.CommRqData(rqname, trcode, next, screen)
-            logging.warning(f"** TR 요청 결과 **: {rqname} {trcode} {screen} ret={ret} 결과={'정상' if ret==0 else ret}")
+            #logging.warning(f"** TR 요청 결과 **: {rqname} {trcode} {screen} ret={ret} 결과={'정상' if ret==0 else ret}")
 
             start_time = time.time()
             while not self.tr_received:
@@ -575,9 +599,12 @@ class SIMServer():
 
     def SetRealReg(self, screen, code_list, fid_list, opt_type):
         global real_thread
-        thread = OnReceiveRealData()
-        real_thread[screen] = thread
-        thread.start()
+        if screen not in real_thread:
+            thread = OnReceiveRealData()
+            real_thread[screen] = thread
+            thread.start()
+        codes = code_list.split(';')[:-1]
+        real_tickers.update(codes)
         return 0
 
     def SetRealRemove(self, screen, del_code):
@@ -768,7 +795,7 @@ class SIMServer():
 
     def real_GetLoginInfo(self, kind):
         data = self.ocx.dynamicCall("GetLoginInfo(QString)", kind)
-        logging.debug(f'**************GetLoginInfo: kind={kind}, data={data}')
+        #logging.debug(f'**************GetLoginInfo: kind={kind}, data={data}')
         if kind == "ACCNO":
             return data.split(';')[:-1]
         else:
@@ -799,4 +826,15 @@ class SIMServer():
         count = self.ocx.dynamicCall("GetRepeatCnt(QString, QString)", trcode, rqname)
         return count
 
+    def GetCodeListByMarket(self, market):
+        """
+        시장별 상장된 종목코드를 반환하는 메서드
+        :param market: str 
+                    0: 코스피, 3: ELW, 4: 뮤추얼펀드 5: 신주인수권 6: 리츠
+                    8: ETF, 9: 하이일드펀드, 10: 코스닥, 30: K-OTC, 50: 코넥스(KONEX)
+        :return: 종목코드 리스트 예: ["000020", "000040", ...]
+        """
+        data = self.ocx.dynamicCall("GetCodeListByMarket(QString)", market)
+        tokens = data.split(';')[:-1]
+        return tokens
 
