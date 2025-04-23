@@ -695,6 +695,10 @@ class GUI(QMainWindow, form_class):
             if not name:
                 QMessageBox.warning(self, '알림', '삭제할 스크립트명을 확인 하세요.')
                 return
+            
+            if not gm.스크립트.in_key(name):
+                QMessageBox.warning(self, '알림', '스크립트가 존재하지 않습니다.')
+                return
 
             reply = QMessageBox.question(self, '삭제 확인',
                                         f'{name} 스크립트를 삭제하시겠습니까?',
@@ -706,9 +710,13 @@ class GUI(QMainWindow, form_class):
                 result = gm.스크립트.delete(key=name)
                 if result:
                     gm.스크립트.update_table_widget(self.tblScript)
-                    #msg = '스크립트가 삭제되었습니다.'
-                #else: msg = '스크립트가 삭제되지 않았습니다.'
-                #QMessageBox.information(self, '알림', msg)
+                    self.txtScript.setText('')
+                    self.tblScriptVar.clearContents()
+                    gm.스크립트변수.delete()
+                    gm.스크립트변수.update_table_widget(self.tblScriptVar)
+                    self.ledVarName.setText('')
+                    self.ledVarValue.setText('')
+                    gm.scm.delete_script(name)
 
         except Exception as e:
             logging.error(f'스크립트 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -770,11 +778,9 @@ class GUI(QMainWindow, form_class):
                 result = gm.스크립트변수.delete(key=name)
                 if result:
                     gm.스크립트변수.update_table_widget(self.tblScriptVar)
-                #if result:
-                #    msg = '변수가 삭제되었습니다.'
-                #else: msg = '변수가 삭제되지 않았습니다.'
-                #QMessageBox.information(self, '알림', msg)
-
+                    self.ledVarName.setText('')
+                    self.ledVarValue.setText('')
+                
         except Exception as e:
             logging.error(f'변수 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
 
