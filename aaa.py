@@ -4,7 +4,7 @@ from gui import GUI
 from server_api import APIServer
 from server_sim import SIMServer
 from server_dbm import DBMServer
-from classes import Toast, la
+from classes import Toast, la, ProcessManager
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QPixmap, QGuiApplication
@@ -70,6 +70,7 @@ class Main:
 
     def set_proc(self):
         try:
+            gm.pm = ProcessManager()
             gm.toast = Toast()
             gm.main = self
             gm.admin = Admin()
@@ -78,7 +79,10 @@ class Main:
             la.register('api', gm.api, use_thread=False)
             la.work('api', 'CommConnect', block=False)
             la.register('admin', gm.admin, use_thread=False)
-            la.register('dbm', DBMServer, use_process=True) # 직렬화 문제로 인스턴스를 넘기지 못함, 클래스를 넘겨서 프로세스내에서 인스턴스 생성
+            gm.admin_proxy = gm.pm.register_process('admin', gm.admin)
+            gm.dbm_proxy = gm.pm.register_process('dbm', DBMServer)
+            gm.dbm_proxy.set_admin_proxy()
+            #la.register('dbm', DBMServer, use_process=True) # 직렬화 문제로 인스턴스를 넘기지 못함, 클래스를 넘겨서 프로세스내에서 인스턴스 생성
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -139,7 +143,8 @@ class Main:
     def cleanup(self):
         try:
             la.is_shutting_down = True
-            la.stop_worker('dbm')
+            #la.stop_worker('dbm')
+            gm.pm.stop_process('dbm')
             for t in gm.전략쓰레드:
                 la.stop_worker(t.name)
             la.stop_worker('api')
@@ -153,6 +158,8 @@ class Main:
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support() # 없으면 실행파일(exe)로 실행시 DBMServer멀티프로세스 생성시 프로그램 리셋되어 시작 반복 하는 것 방지
+    #from classes import init_process_manager
+    #pm = init_process_manager()
     try:
         logging.info(f"{'#'*10} LIBERANIMO logiacl intelligence enhanced robo aotonomic investment management operations START {'#'*10}")
         main = Main()

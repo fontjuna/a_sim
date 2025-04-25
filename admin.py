@@ -35,8 +35,10 @@ class Admin:
         gm.cdt = ChartData()
         la.register('cdt', gm.cdt, use_thread=False)
         gm.scm = ScriptManager()
-        la.set_var('dbm', 'fee_rate', gm.수수료율)
-        la.set_var('dbm', 'tax_rate', gm.세금율)
+        #la.set_var('dbm', 'fee_rate', gm.수수료율)
+        #la.set_var('dbm', 'tax_rate', gm.세금율)
+        gm.dbm_proxy.set_var('fee_rate', gm.수수료율)
+        gm.dbm_proxy.set_var('tax_rate', gm.세금율)
 
     def get_login_info(self):
         accounts = gm.api.GetLoginInfo('ACCNO')
@@ -425,6 +427,7 @@ class Admin:
             #la.work('cdt', 'update_price', code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
             #self.update_price(code)
             #la.work('dbm', 'update_minute_data', code, dictFID)
+            gm.dbm_proxy.update_minute_data(code, dictFID)
 
         try:
             #la.work('dbm', 'receive_current_price', code=code, dictFID=dictFID) # 큐 과부하 일어남 (현재 암무 처리 않고 호출만 함으로써 과부하로 에러 남 )
@@ -673,7 +676,8 @@ class Admin:
     def pri_fx얻기_매매목록(self, date_text):
         try:
             gm.매매목록.delete()
-            dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
+            #dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.dbm_proxy.execute_query(sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
             #logging.debug(f'매매목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
             if dict_list is not None and len(dict_list) > 0:
                 gm.매매목록.set(data=dict_list)
@@ -686,7 +690,8 @@ class Admin:
     def pri_fx얻기_체결목록(self, date_text):
         try:
             gm.체결목록.delete()
-            dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
+            #dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.dbm_proxy.execute_query(sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
             #logging.debug(f'체결목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
             if dict_list is not None and len(dict_list) > 0:
                 gm.체결목록.set(data=dict_list)
@@ -1052,19 +1057,22 @@ class Admin:
     # dbm 처리 메소드 -----------------------------------------------------------------------------------------------
 
     def dbm_stop(self):
-        la.work('dbm', 'stop')
+        #la.work('dbm', 'stop')
+        gm.dbm_proxy.stop()
         time.sleep(0.1)  # 마지막 메시지 처리를 위한 대기
 
     def dbm_order_upsert(self, dict_data):
         try:
-            la.work('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
+            #la.work('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
+            gm.dbm_proxy.table_upsert(db='db', table='trades', dict_data=dict_data)
         except Exception as e:
             logging.error(f"dbm_order_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
 
     def dbm_trade_upsert(self, dictFID):
         try:
             dict_data = {key: dictFID[key] for key in dc.ddb.TRD_COLUMN_NAMES if key in dictFID}
-            la.work('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
+            #la.work('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
+            gm.dbm_proxy.table_upsert(db='db', table='trades', dict_data=dict_data)
 
             if dictFID['주문상태'] == '체결':
                 kind = dictFID['주문구분']
@@ -1078,7 +1086,8 @@ class Admin:
                 ordno = dictFID['주문번호']
                 st_buy = dictFID['매수전략']
 
-                la.work('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_no, st_name, st_buy)
+                #la.work('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_no, st_name, st_buy)
+                gm.dbm_proxy.upsert_conclusion(kind, code, name, qty, price, amount, ordno, st_no, st_name, st_buy)
         except Exception as e:
             logging.error(f"dbm_trade_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
 

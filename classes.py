@@ -11,7 +11,6 @@ import uuid
 import pandas as pd
 import numpy as np
 
-
 class ThreadSafeList:
     def __init__(self):
         self.list = []
@@ -886,123 +885,6 @@ class WorkerThread(QThread):
             if callback:
                 callback(None)
 
-# 워커 프로세스 클래스 - 외부에 독립 함수로 정의 (모듈 레벨)
-def worker_process(name, target_info, task_queue, result_dict):
-    """프로세스 워커 메인 함수"""
-    try:
-        # 커스텀 로거 초기화
-        import logging
-        init_logger()
-        
-        # 타겟 클래스 동적 임포트
-        target_module, target_name = target_info
-        import importlib
-        module = importlib.import_module(target_module)
-        target_class = getattr(module, target_name)
-        
-        # 인스턴스 생성
-        target = target_class()
-        logging.info(f"프로세스 {name} 시작됨")
-
-        # 변수 접근/설정 메서드 추가
-        def _get_var(var_name):
-            """타겟 객체의 변수 값을 가져오는 내부 메서드"""
-            try:
-                return getattr(target, var_name, None)
-            except Exception as e:
-                logging.error(f"변수 접근 오류: {e}", exc_info=True)
-                return None
-                
-        def _set_var(var_name, value):
-            """타겟 객체의 변수 값을 설정하는 내부 메서드"""
-            try:
-                setattr(target, var_name, value)
-                return True
-            except Exception as e:
-                logging.error(f"변수 설정 오류: {e}", exc_info=True)
-                return None
-                
-        # 특수 메서드 등록
-        target._get_var = _get_var
-        target._set_var = _set_var
-                
-        # 작업 처리 루프
-        import time
-        last_cleanup_time = time.time()
-        processed_count = 0
-        processed_count_1000 = 0
-
-        while True:
-            # 주기적으로 큐 상태 확인 및 로깅
-            current_time = time.time()
-            if current_time - last_cleanup_time > 300:  # 5분마다 확인
-                queue_size = len(task_queue)
-                if queue_size > 200:
-                    logging.warning(f"프로세스 {name} 큐 크기: {queue_size}")
-                last_cleanup_time = current_time
-
-            # 작업이 있는지 확인
-            if len(task_queue) == 0:
-                time.sleep(0.001)  # 0.01초에서 0.001초로 변경하여 응답성 개선
-                continue
-
-            # 큐가 너무 크면 오래된 작업 건너뛰기 (선택적)
-            if len(task_queue) > 100:
-                # 처리할 수 있는 작업 수 제한
-                max_to_process = 50
-                old_tasks = len(task_queue) - max_to_process
-                if old_tasks > 0:
-                    logging.warning(f"프로세스 {name} 큐가 너무 큽니다. {old_tasks}개 작업 건너뜀.")
-                    # 가장 오래된 작업들 제거
-                    for _ in range(old_tasks):
-                        if len(task_queue) > 0:
-                            old_task = task_queue.pop(0)
-                            # 결과 처리를 위해 오류 상태로 응답
-                            task_id = old_task.get('task_id')
-                            if task_id:
-                                result_dict[task_id] = {'status': 'error', 'error': "큐 과부하로 작업 취소됨"}
-                        
-            # 작업 가져오기
-            task = task_queue.pop(0)
-            
-            # 종료 명령 확인
-            if task.get('command') == 'stop':
-                break
-                
-            # 작업 처리
-            task_id = task.get('task_id')
-            method_name = task.get('method')
-            args = task.get('args', ())
-            kwargs = task.get('kwargs', {})
-            
-            # 메서드 찾기
-            method = getattr(target, method_name, None)
-            if not method:
-                result_dict[task_id] = {'status': 'error', 'error': f"메서드 없음: {method_name}"}
-                continue
-                
-            # 메서드 실행
-            try:
-                result = method(*args, **kwargs)
-                result_dict[task_id] = {'status': 'success', 'result': result}
-
-            except Exception as e:
-                logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-                result_dict[task_id] = {'status': 'error', 'error': str(e)}
-
-            processed_count += 1
-            if processed_count % 5000 == 0:
-                import gc
-                gc.collect()
-                if processed_count % 50000 == 0:
-                    logging.info(f"프로세스 {name} 처리 횟수: {processed_count}")
-                    processed_count = 0
-
-    except Exception as e:
-        logging.error(f"프로세스 {name} 오류: {e}", exc_info=True)
-    finally:
-        logging.info(f"프로세스 {name} 종료")
-
 # 워커 관리자
 class WorkerManager:
     def __init__(self):
@@ -1010,16 +892,13 @@ class WorkerManager:
         self.targets = {}  # name -> target object
 
         self.manager = None
-        self.processes = {} # name -> process info
         self.task_queues = {} # name -> manager.list
         self.result_dicts = {} # name -> manager.dict
 
         self.is_shutting_down = False
 
-    def register(self, name, target_class=None, use_thread=True, use_process=False):
-        if use_process:
-            return self._register_process(name, target_class)
-        elif use_thread:
+    def register(self, name, target_class=None, use_thread=True):
+        if use_thread:
             target = target_class() if isinstance(target_class, type) else target_class
             worker = WorkerThread(name, target)
             worker.start()
@@ -1041,31 +920,6 @@ class WorkerManager:
             logging.debug(f"워커 종료: {worker_name} (쓰레드)")
             return True
             
-        # 프로세스 워커 중지
-        elif worker_name in self.task_queues:
-            logging.info(f"프로세스 {worker_name} 종료 중...")
-            
-            # 종료 명령 전송
-            if worker_name in self.task_queues:
-                self.task_queues[worker_name].append({'command': 'stop'})
-            
-            # 프로세스 종료 대기
-            process = self.processes[worker_name].get('process')
-            if process:
-                process.join(2.0)
-                if process.is_alive():
-                    process.terminate()
-            
-            # 정리
-            if worker_name in self.task_queues:
-                del self.task_queues[worker_name]
-            if worker_name in self.result_dicts:
-                del self.result_dicts[worker_name]
-            del self.processes[worker_name]
-            
-            logging.info(f"프로세스 {worker_name} 종료 완료")
-            return True
-            
         # 메인 쓰레드 워커 제거
         elif worker_name in self.targets:
             self.targets.pop(worker_name, None)
@@ -1081,10 +935,6 @@ class WorkerManager:
 
         logging.info("모든 워커 중지 중...")
         for name in list(self.workers.keys()):
-            self.stop_worker(name)
-            
-        # 모든 프로세스 워커 중지
-        for name in list(self.processes.keys()):
             self.stop_worker(name)
             
         # 모든 메인 쓰레드 워커 제거
@@ -1104,10 +954,6 @@ class WorkerManager:
         """워커의 변수 값을 가져오는 함수"""
         if self.is_shutting_down:
             return None
-            
-        # 프로세스인 경우
-        if worker_name in self.processes:
-            return self._process_call_sync(worker_name, '_get_var', [var_name], {})
             
         # 워커 찾기
         if worker_name not in self.workers and worker_name not in self.targets:
@@ -1135,10 +981,6 @@ class WorkerManager:
         if self.is_shutting_down:
             return False
             
-        # 프로세스인 경우
-        if worker_name in self.processes:
-            return self._process_call_sync(worker_name, '_set_var', [var_name, value], {}) is not None
-            
         # 워커 찾기
         if worker_name not in self.workers and worker_name not in self.targets:
             logging.error(f"워커 없음: {worker_name}")
@@ -1164,10 +1006,6 @@ class WorkerManager:
         """동기식 함수 호출"""
         if self.is_shutting_down:
             return None
-        
-        # 프로세스인 경우
-        if worker_name in self.processes:
-            return self._process_call_sync(worker_name, method_name, args, kwargs)
         
         # 워커 찾기
         if worker_name not in self.workers and worker_name not in self.targets:
@@ -1212,10 +1050,6 @@ class WorkerManager:
         if self.is_shutting_down:
             return None
         
-        # 프로세스인 경우
-        if worker_name in self.processes:
-            return self._process_call_async(worker_name, method_name, args, kwargs, callback)
-        
         # 워커 찾기
         if worker_name not in self.workers and worker_name not in self.targets:
             logging.error(f"워커 없음: {worker_name}")
@@ -1244,218 +1078,622 @@ class WorkerManager:
         task_data = (args, kwargs)
         worker.taskReceived.emit(task_id, method_name, task_data, callback)
         return True
+la = WorkerManager()
 
-    def _register_process(self, name, target_class):
-        """프로세스 워커 등록"""
-        # 공유 객체 생성
-        if not self.manager:
-            from multiprocessing import Manager
-            self.manager = Manager()
+import multiprocessing as mp
+import uuid
+import time
+import pickle
+import logging
+import inspect
+import threading
+import importlib
+from functools import wraps
 
-        self.task_queues[name] = self.manager.list()
-        self.result_dicts[name] = self.manager.dict()
+class ProcessProxy:
+    """
+    원격 프로세스 호출을 위한 프록시 클래스
+    일반 클래스의 메서드 호출을 프로세스 간 통신으로 변환
+    """
+    def __init__(self, process_id, pm):
+        self.process_id = process_id
+        self.pm = pm
+        self._methods_cache = {}
 
-        # 프로세스 정보 저장
-        self.processes[name] = {
-            'callbacks': {},  # task_id -> callback
-            'events': {},     # task_id -> event
-            'status': 'running'  # 프로세스 상태: connecting, running, stopping
+    def __getattr__(self, name):
+        """동적으로 메서드 호출을 가로채서 RPC로 변환"""
+        if name in self._methods_cache:
+            return self._methods_cache[name]
+        
+        # 동기 메서드 생성
+        def sync_method(*args, **kwargs):
+            return self.pm.call_sync(self.process_id, name, args, kwargs)
+        
+        # 비동기 메서드 생성
+        def async_method(*args, **kwargs):
+            callback = kwargs.pop('callback', None)
+            return self.pm.call_async(self.process_id, name, args, kwargs, callback)
+        
+        # 메서드 캐싱
+        self._methods_cache[name] = sync_method
+        self._methods_cache[f"{name}_async"] = async_method
+        
+        return sync_method
+    
+    def get_var(self, var_name):
+        """변수 값 가져오기"""
+        return self.pm.call_sync(self.process_id, '_get_var', [var_name], {})
+    
+    def set_var(self, var_name, value):
+        """변수 값 설정하기"""
+        return self.pm.call_sync(self.process_id, '_set_var', [var_name, value], {})
+
+def worker_process(
+    process_id, 
+    target_info, 
+    request_queue, 
+    response_dict, 
+    process_registry, 
+    callbacks_dict
+):
+    """
+    워커 프로세스 메인 함수
+    프로세스가 독립적으로 실행되며 request_queue를 통해 요청 처리
+    """
+    try:
+        # 대상 클래스 인스턴스화
+        if isinstance(target_info, tuple):
+            # 모듈과 클래스 이름으로 부터 클래스 로드
+            module_name, class_name = target_info
+            module = importlib.import_module(module_name)
+            target_class = getattr(module, class_name)
+            target = target_class()
+        else:
+            # 직접 객체 전달 (피클링 가능한 객체여야 함)
+            target = target_info
+        
+        logging.info(f"프로세스 {process_id} 시작됨 ({type(target).__name__})")
+        
+        # 헬퍼 메서드 추가
+        def _get_var(var_name):
+            """변수 값 가져오기"""
+            try:
+                return getattr(target, var_name, None)
+            except Exception as e:
+                logging.error(f"변수 접근 오류: {e}", exc_info=True)
+                return None
+        
+        def _set_var(var_name, value):
+            """변수 값 설정하기"""
+            try:
+                setattr(target, var_name, value)
+                return True
+            except Exception as e:
+                logging.error(f"변수 설정 오류: {e}", exc_info=True)
+                return False
+        
+        # 특수 메서드 등록
+        target._get_var = _get_var
+        target._set_var = _set_var
+        
+        # 프로세스 매니저 참조 생성
+        target._pm = ProcessManagerClient(
+            process_id, 
+            process_registry, 
+            request_queue, 
+            response_dict, 
+            callbacks_dict
+        )
+        
+        # 메시지 처리 루프
+        while True:
+            # 요청 대기
+            if len(request_queue) == 0:
+                time.sleep(0.001)
+                continue
+            
+            # 요청 처리
+            request = request_queue.pop(0)
+            
+            # 종료 명령 확인
+            if request.get('command') == 'stop':
+                logging.info(f"프로세스 {process_id} 종료 요청 받음")
+                break
+            
+            # 요청 데이터 파싱
+            task_id = request.get('task_id')
+            method_name = request.get('method')
+            args = request.get('args', ())
+            kwargs = request.get('kwargs', {})
+            caller_id = request.get('caller_id')
+            
+            # 응답 처리용 함수
+            def send_response(status, result=None, error=None):
+                response_dict[task_id] = {
+                    'status': status,
+                    'result': result,
+                    'error': error,
+                    'caller_id': caller_id
+                }
+            
+            # 메서드 찾기 및 실행
+            method = getattr(target, method_name, None)
+            if not method:
+                send_response('error', error=f"메서드 없음: {method_name}")
+                continue
+            
+            # 메서드 실행
+            try:
+                result = method(*args, **kwargs)
+                send_response('success', result=result)
+            except Exception as e:
+                logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+                send_response('error', error=str(e))
+    
+    except Exception as e:
+        logging.error(f"프로세스 {process_id} 실행 오류: {e}", exc_info=True)
+    
+    finally:
+        logging.info(f"프로세스 {process_id} 종료됨")
+
+class ProcessManagerClient:
+    """
+    프로세스 내에서 다른 프로세스의 메서드를 호출하기 위한 클라이언트
+    각 워커 프로세스 내부에서 사용됨
+    """
+    def __init__(self, process_id, process_registry, request_queue, response_dict, callbacks_dict):
+        self.process_id = process_id
+        self.process_registry = process_registry
+        self.request_queue = request_queue
+        self.response_dict = response_dict
+        self.callbacks_dict = callbacks_dict
+        self.proxies = {}  # 프로세스 ID -> 프록시 객체
+    
+    def get_proxy(self, process_id):
+        """다른 프로세스에 대한 프록시 가져오기"""
+        if process_id not in self.proxies:
+            # 프로세스가 존재하는지 확인
+            if process_id not in self.process_registry:
+                logging.error(f"프로세스 없음: {process_id}")
+                return None
+            
+            class RemoteProcessProxy:
+                def __init__(self, pid, client):
+                    self.pid = pid
+                    self.client = client
+                    self._methods_cache = {}
+                
+                def __getattr__(self, name):
+                    if name in self._methods_cache:
+                        return self._methods_cache[name]
+                    
+                    # 동기 메서드
+                    def sync_method(*args, **kwargs):
+                        return self.client.call_sync(self.pid, name, args, kwargs)
+                    
+                    # 비동기 메서드
+                    def async_method(*args, **kwargs):
+                        callback = kwargs.pop('callback', None)
+                        return self.client.call_async(self.pid, name, args, kwargs, callback)
+                    
+                    # 메서드 캐싱
+                    self._methods_cache[name] = sync_method
+                    self._methods_cache[f"{name}_async"] = async_method
+                    
+                    return sync_method
+                
+                def get_var(self, var_name):
+                    return self.client.call_sync(self.pid, '_get_var', [var_name], {})
+                
+                def set_var(self, var_name, value):
+                    return self.client.call_sync(self.pid, '_set_var', [var_name, value], {})
+            
+            self.proxies[process_id] = RemoteProcessProxy(process_id, self)
+        
+        return self.proxies[process_id]
+    
+    def call_sync(self, target_id, method_name, args, kwargs):
+        """동기식 원격 호출"""
+        # 대상 프로세스 확인
+        if target_id not in self.process_registry:
+            logging.error(f"프로세스 없음: {target_id}")
+            return None
+        
+        # 작업 ID 생성
+        task_id = str(uuid.uuid4())
+        
+        # 요청 데이터 생성
+        request = {
+            'task_id': task_id,
+            'method': method_name,
+            'args': args,
+            'kwargs': kwargs,
+            'caller_id': self.process_id
         }
-        logging.info(f"프로세스 {name} 연결 중...")
+        
+        # 요청 전송 (대상 프로세스의 요청 큐에 추가)
+        target_request_queue = self.process_registry[target_id]['request_queue']
+        target_request_queue.append(request)
+        
+        # 응답 대기
+        target_response_dict = self.process_registry[target_id]['response_dict']
+        start_time = time.time()
+        while task_id not in target_response_dict:
+            if time.time() - start_time > 10.0:  # 10초 타임아웃
+                logging.warning(f"호출 타임아웃: {target_id}.{method_name}")
+                return None
+            time.sleep(0.001)
+        
+        # 응답 처리
+        response = target_response_dict[task_id]
+        del target_response_dict[task_id]  # 응답 제거
+        
+        if response['status'] == 'success':
+            return response['result']
+        else:
+            logging.error(f"원격 호출 오류: {response.get('error')}")
+            return None
+    
+    def call_async(self, target_id, method_name, args, kwargs, callback=None):
+        """비동기식 원격 호출"""
+        # 대상 프로세스 확인
+        if target_id not in self.process_registry:
+            logging.error(f"프로세스 없음: {target_id}")
+            return False
+        
+        # 작업 ID 생성
+        task_id = str(uuid.uuid4())
+        
+        # 콜백 등록
+        if callback:
+            self.callbacks_dict[task_id] = callback
+        
+        # 요청 데이터 생성
+        request = {
+            'task_id': task_id,
+            'method': method_name,
+            'args': args,
+            'kwargs': kwargs,
+            'caller_id': self.process_id
+        }
+        
+        # 요청 전송
+        target_request_queue = self.process_registry[target_id]['request_queue']
+        target_request_queue.append(request)
+        
+        # 비동기 응답 처리를 위한 스레드 시작
+        if callback:
+            def wait_for_response():
+                target_response_dict = self.process_registry[target_id]['response_dict']
+                start_time = time.time()
+                while task_id not in target_response_dict:
+                    if time.time() - start_time > 10.0:  # 10초 타임아웃
+                        logging.warning(f"비동기 호출 타임아웃: {target_id}.{method_name}")
+                        cb = self.callbacks_dict.pop(task_id, None)
+                        if cb:
+                            cb(None)
+                        return
+                    time.sleep(0.001)
+                
+                # 응답 처리
+                response = target_response_dict[task_id]
+                del target_response_dict[task_id]  # 응답 제거
+                
+                # 콜백 실행
+                cb = self.callbacks_dict.pop(task_id, None)
+                if cb:
+                    if response['status'] == 'success':
+                        cb(response['result'])
+                    else:
+                        logging.error(f"비동기 호출 오류: {response.get('error')}")
+                        cb(None)
+            
+            # 응답 대기 스레드 시작
+            threading.Thread(target=wait_for_response, daemon=True).start()
+        
+        return True
 
-        target_module = target_class.__module__
-        target_name = target_class.__name__
-
+class ProcessManager:
+    """
+    멀티프로세스 관리자
+    프로세스 생성, 종료 및 프로세스 간 통신 관리
+    """
+    def __init__(self):
+        self.manager = mp.Manager()
+        self.processes = {}  # 프로세스 ID -> 프로세스 정보
+        self.process_registry = self.manager.dict()  # 프로세스 ID -> 프로세스 정보 (공유 객체)
+        self.main_process_id = "main"  # 메인 프로세스 ID
+        self.callbacks = {}  # 태스크 ID -> 콜백 함수
+        
+        # 메인 프로세스 요청 큐 및 응답 딕셔너리 생성
+        self.request_queue = self.manager.list()
+        self.response_dict = self.manager.dict()
+        self.callbacks_dict = self.manager.dict()  # 콜백 공유 딕셔너리
+        
+        # 메인 프로세스 정보 등록
+        self.process_registry[self.main_process_id] = {
+            'request_queue': self.request_queue,
+            'response_dict': self.response_dict,
+            'status': 'running'
+        }
+        
+        # 요청 처리 스레드 시작
+        self.running = True
+        self.request_thread = threading.Thread(target=self._process_requests, daemon=True)
+        self.request_thread.start()
+        
+        logging.info("프로세스 매니저 초기화 완료")
+    
+    def _process_requests(self):
+        """메인 프로세스 요청 처리 스레드"""
+        while self.running:
+            # 요청이 있는지 확인
+            if len(self.request_queue) == 0:
+                time.sleep(0.001)
+                continue
+            
+            # 요청 처리
+            request = self.request_queue.pop(0)
+            
+            # 요청 정보 파싱
+            task_id = request.get('task_id')
+            method_name = request.get('method')
+            args = request.get('args', ())
+            kwargs = request.get('kwargs', {})
+            caller_id = request.get('caller_id')
+            
+            # 메서드 매핑 및 실행
+            if method_name == '_get_process_list':
+                # 프로세스 목록 반환
+                result = list(self.processes.keys())
+                self.response_dict[task_id] = {
+                    'status': 'success',
+                    'result': result,
+                    'caller_id': caller_id
+                }
+            elif method_name == '_get_process_info':
+                # 프로세스 정보 반환
+                process_id = args[0] if args else None
+                if process_id in self.processes:
+                    info = {
+                        'status': self.processes[process_id].get('status', 'unknown'),
+                        'pid': self.processes[process_id].get('process_obj').pid if self.processes[process_id].get('process_obj') else None
+                    }
+                    self.response_dict[task_id] = {
+                        'status': 'success',
+                        'result': info,
+                        'caller_id': caller_id
+                    }
+                else:
+                    self.response_dict[task_id] = {
+                        'status': 'error',
+                        'error': f"프로세스 없음: {process_id}",
+                        'caller_id': caller_id
+                    }
+            elif method_name == '_call_process':
+                # 다른 프로세스 호출 (브릿지)
+                target_id = args[0] if len(args) > 0 else None
+                target_method = args[1] if len(args) > 1 else None
+                target_args = args[2] if len(args) > 2 else ()
+                target_kwargs = args[3] if len(args) > 3 else {}
+                
+                if not target_id or not target_method:
+                    self.response_dict[task_id] = {
+                        'status': 'error',
+                        'error': "대상 프로세스나 메서드가 지정되지 않았습니다",
+                        'caller_id': caller_id
+                    }
+                elif target_id not in self.process_registry:
+                    self.response_dict[task_id] = {
+                        'status': 'error',
+                        'error': f"프로세스 없음: {target_id}",
+                        'caller_id': caller_id
+                    }
+                else:
+                    # 콜백 함수 생성
+                    def bridge_callback(result):
+                        self.response_dict[task_id] = {
+                            'status': 'success',
+                            'result': result,
+                            'caller_id': caller_id
+                        }
+                    
+                    # 대상 프로세스에 요청 전달
+                    self.call_async(target_id, target_method, target_args, target_kwargs, bridge_callback)
+            else:
+                # 알 수 없는 메서드
+                self.response_dict[task_id] = {
+                    'status': 'error',
+                    'error': f"알 수 없는 메서드: {method_name}",
+                    'caller_id': caller_id
+                }
+            
+            # 응답 콜백 처리
+            self._check_callbacks()
+    
+    def _check_callbacks(self):
+        """응답 콜백 처리"""
+        for task_id in list(self.callbacks.keys()):
+            # 응답이 있는지 확인
+            if task_id in self.response_dict:
+                response = self.response_dict[task_id]
+                del self.response_dict[task_id]
+                
+                # 콜백 실행
+                callback = self.callbacks.pop(task_id)
+                if callback:
+                    if response['status'] == 'success':
+                        callback(response['result'])
+                    else:
+                        callback(None)
+    
+    def register_process(self, process_id, target_class_or_object):
+        """새 프로세스 등록 및 시작"""
+        if process_id in self.processes:
+            logging.warning(f"프로세스 {process_id}가 이미 존재합니다")
+            return None
+        
+        # 공유 객체 생성
+        request_queue = self.manager.list()
+        response_dict = self.manager.dict()
+        
+        # 프로세스 정보 등록
+        self.process_registry[process_id] = {
+            'request_queue': request_queue,
+            'response_dict': response_dict,
+            'status': 'starting'
+        }
+        
+        # 대상 클래스 정보 준비
+        if inspect.isclass(target_class_or_object):
+            target_info = (target_class_or_object.__module__, target_class_or_object.__name__)
+        else:
+            target_info = target_class_or_object
+        
         # 프로세스 시작
-        from multiprocessing import Process
-        process = Process(
+        process = mp.Process(
             target=worker_process,
-            args=(name, (target_module, target_name), self.task_queues[name], self.result_dicts[name]),
+            args=(process_id, target_info, request_queue, response_dict, 
+                self.process_registry, self.callbacks_dict),
             daemon=True
         )
         process.start()
         
         # 프로세스 정보 저장
-        self.processes[name]['process'] = process
-        self.processes[name]['status'] = 'running'
-
-        logging.debug(f"프로세스 등록: {name} (PID: {process.pid})")
-        return self
+        self.processes[process_id] = {
+            'process_obj': process,
+            'request_queue': request_queue,
+            'response_dict': response_dict,
+            'status': 'running'
+        }
         
-    def _process_call_sync(self, process_name, method_name, args, kwargs):
-        """프로세스 동기식 호출"""
-        if self.is_shutting_down:
+        logging.info(f"프로세스 {process_id} 등록 완료 (PID: {process.pid})")
+        
+        # 프록시 객체 생성 및 반환
+        return ProcessProxy(process_id, self)
+    
+    def get_proxy(self, process_id):
+        """기존 프로세스에 대한 프록시 가져오기"""
+        if process_id not in self.processes and process_id != self.main_process_id:
+            logging.error(f"프로세스 없음: {process_id}")
             return None
         
-        process_info = self.processes.get(process_name)
-        if not process_info:
-            if not self.is_shutting_down:
-                logging.error(f"프로세스 없음: {process_name}")
+        return ProcessProxy(process_id, self)
+    
+    def stop_process(self, process_id):
+        """프로세스 중지"""
+        if process_id not in self.processes:
+            logging.warning(f"프로세스 없음: {process_id}")
+            return False
+        
+        # 프로세스에 종료 명령 전송
+        self.processes[process_id]['request_queue'].append({'command': 'stop'})
+        
+        # 프로세스 종료 대기
+        process = self.processes[process_id]['process_obj']
+        process.join(2.0)
+        if process.is_alive():
+            process.terminate()
+            process.join(1.0)
+        
+        # 프로세스 정보 제거
+        del self.process_registry[process_id]
+        del self.processes[process_id]
+        
+        logging.info(f"프로세스 {process_id} 종료 완료")
+        return True
+    
+    def stop_all(self):
+        """모든 프로세스 중지"""
+        self.running = False
+        
+        # 모든 프로세스 중지
+        for process_id in list(self.processes.keys()):
+            self.stop_process(process_id)
+        
+        # 요청 처리 스레드 종료 대기
+        if self.request_thread.is_alive():
+            self.request_thread.join(2.0)
+        
+        # 메인 프로세스 정보 제거
+        if self.main_process_id in self.process_registry:
+            del self.process_registry[self.main_process_id]
+        
+        # Manager 종료
+        try:
+            self.manager.shutdown()
+        except:
+            pass
+        
+        logging.info("모든 프로세스 종료 완료")
+    
+    def call_sync(self, process_id, method_name, args, kwargs):
+        """동기식 원격 호출"""
+        # 대상 프로세스 확인
+        if process_id not in self.process_registry:
+            logging.error(f"프로세스 없음: {process_id}")
             return None
         
-        # 태스크 ID 생성
+        # 작업 ID 생성
         task_id = str(uuid.uuid4())
         
-        # 작업 전송
-        self.task_queues[process_name].append({
+        # 요청 데이터 생성
+        request = {
             'task_id': task_id,
             'method': method_name,
             'args': args,
-            'kwargs': kwargs
-        })
-
-        # 결과 대기
+            'kwargs': kwargs,
+            'caller_id': self.main_process_id
+        }
+        
+        # 요청 전송
+        self.process_registry[process_id]['request_queue'].append(request)
+        
+        # 응답 대기
+        target_response_dict = self.process_registry[process_id]['response_dict']
         start_time = time.time()
-        while task_id not in self.result_dicts[process_name]:
-            if time.time() - start_time > 20.0:
-                logging.warning(f"프로세스 호출 타임아웃: {process_name}.{method_name}")
+        while task_id not in target_response_dict:
+            if time.time() - start_time > 10.0:  # 10초 타임아웃
+                logging.warning(f"호출 타임아웃: {process_id}.{method_name}")
                 return None
             time.sleep(0.001)
-            
-        # 결과 처리
-        result = self.result_dicts[process_name][task_id]
-        del self.result_dicts[process_name][task_id] # 결과 정리
-
-        if result['status'] == 'success':
-            return result['result']
+        
+        # 응답 처리
+        response = target_response_dict[task_id]
+        del target_response_dict[task_id]  # 응답 제거
+        
+        if response['status'] == 'success':
+            return response['result']
         else:
+            logging.error(f"원격 호출 오류: {response.get('error')}")
             return None
-        
-    def _process_call_async(self, process_name, method_name, args, kwargs, callback):
-        """프로세스 비동기식 호출"""
-        if self.is_shutting_down:
-            return None
-        
-        process_info = self.processes.get(process_name)
-        if not process_info:
-            if not self.is_shutting_down:
-                logging.error(f"프로세스 없음: {process_name}")
+    
+    def call_async(self, process_id, method_name, args, kwargs, callback=None):
+        """비동기식 원격 호출"""
+        # 대상 프로세스 확인
+        if process_id not in self.process_registry:
+            logging.error(f"프로세스 없음: {process_id}")
             return False
         
-        # 큐 크기 확인
-        if process_name in self.task_queues and len(self.task_queues[process_name]) > 1000:
-            logging.warning(f"프로세스 {process_name} 큐가 가득 찼습니다. 작업 건너뜀.")
-            if callback:
-                callback(None)
-            return False
-        
-        # 태스크 ID 생성
+        # 작업 ID 생성
         task_id = str(uuid.uuid4())
         
-        # 콜백 등록 (있는 경우)
+        # 콜백 등록
         if callback:
-            process_info['callbacks'][task_id] = callback
-            
-            # 콜백 타임스탬프 추가
-            if 'callback_times' not in process_info:
-                process_info['callback_times'] = {}
-            process_info['callback_times'][task_id] = time.time()
-            
-            # 결과 대기 스레드
-            def wait_for_result():
-                try:
-                    # 결과 대기
-                    start_time = time.time()
-                    while task_id not in self.result_dicts[process_name]:
-                        if time.time() - start_time > 5.0:  # 5초 타임아웃
-                            if callback:
-                                callback(None)
-                            process_info['callbacks'].pop(task_id, None)
-                            process_info.get('callback_times', {}).pop(task_id, None)
-                            return
-                        time.sleep(0.001)
-                    
-                    # 결과 처리
-                    result = self.result_dicts[process_name][task_id]
-                    del self.result_dicts[process_name][task_id]  # 결과 정리
-                    
-                    # 콜백 호출
-                    cb = process_info['callbacks'].pop(task_id, None)
-                    if cb:
-                        process_info.get('callback_times', {}).pop(task_id, None)
-                        if result['status'] == 'success':
-                            cb(result['result'])
-                        else:
-                            cb(None)
-                except Exception as e:
-                    logging.error(f"결과 처리 오류: {e}")
-                    cb = process_info['callbacks'].pop(task_id, None)
-                    process_info.get('callback_times', {}).pop(task_id, None)
-                    if cb:
-                        cb(None)
-            
-            # 결과 대기 스레드 시작
-            import threading
-            threading.Thread(target=wait_for_result, daemon=True).start()
+            self.callbacks[task_id] = callback
         
-        # 작업 전송
-        self.task_queues[process_name].append({
+        # 요청 데이터 생성
+        request = {
             'task_id': task_id,
             'method': method_name,
             'args': args,
-            'kwargs': kwargs
-        })
+            'kwargs': kwargs,
+            'caller_id': self.main_process_id
+        }
         
-        # 주기적으로 자원 정리 (예: 매 100번째 호출마다)
-        if hasattr(self, '_async_call_count'):
-            self._async_call_count += 1
-            if self._async_call_count % 100 == 0:
-                self.cleanup_resources(process_name)
-        else:
-            self._async_call_count = 1
-        
+        # 요청 전송
+        self.process_registry[process_id]['request_queue'].append(request)
         return True
-
-    # WorkerManager 클래스에 큐 정리 메서드 추가
-    def cleanup_resources(self, process_name=None):
-        """더 이상 필요하지 않은 자원 정리"""
-        if process_name:
-            self._cleanup_process_resources(process_name)
-        else:
-            # 모든 프로세스 자원 정리
-            for name in list(self.processes.keys()):
-                self._cleanup_process_resources(name)
-                
-    def _cleanup_process_resources(self, process_name):
-        """특정 프로세스의 자원 정리"""
-        if process_name not in self.processes:
-            return
-            
-        process_info = self.processes[process_name]
-        
-        # 오래된 콜백 정리
-        current_time = time.time()
-        old_callbacks = []
-        
-        for task_id, callback_time in process_info.get('callback_times', {}).items():
-            if current_time - callback_time > 30:  # 30초 이상 된 콜백은 제거
-                old_callbacks.append(task_id)
-                
-        for task_id in old_callbacks:
-            process_info['callbacks'].pop(task_id, None)
-            process_info.get('callback_times', {}).pop(task_id, None)
-            
-        # 결과 딕셔너리 정리 (오래된 결과 제거)
-        if process_name in self.result_dicts:
-            # 복사본 만들어서 순회
-            task_ids = list(self.result_dicts[process_name].keys())
-            old_results = []
-            
-            for task_id in task_ids:
-                # 필요한 경우 결과의 나이를 추적하는 로직 추가
-                if task_id not in process_info['callbacks']:
-                    old_results.append(task_id)
-                    
-            for task_id in old_results:
-                if task_id in self.result_dicts[process_name]:
-                    self.result_dicts[process_name].pop(task_id, None)
-                
-        # 큐 크기 확인 및 로깅
-        if process_name in self.task_queues and len(self.task_queues[process_name]) > 100:
-            logging.warning(f"프로세스 {process_name} 큐 크기: {len(self.task_queues[process_name])}")
-            
-# 전역 관리자 인스턴스
-la = WorkerManager()
 
 class CounterTicker:
     """

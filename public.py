@@ -761,14 +761,18 @@ class GlobalConfig:     # 환경변수 정의
 
 @dataclass
 class GlobalMemory:      # 글로벌 메모리 정의
+    
     main = None
     admin = None
     gui = None
     api = None
-    dbm = None
     cdt = None # 챠트 데이타
     scm = None # 스크립트 매니저
     
+    pm = None # 프로세스 매니저
+    dbm_proxy = None # 데이타베이스 프록시
+    admin_proxy = None # 관리자 프록시
+
     toast = None
     json_config = dc.log_config
     config = GlobalConfig()
@@ -812,8 +816,6 @@ class GlobalMemory:      # 글로벌 메모리 정의
     dict조건종목감시 = {}
     dict종목정보 = None # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
     dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
-    #json_counter_tickers = {}
-    #json_counter_strategy = {}
     수수료율 = 0.0
     세금율 = 0.0
     holdings = {}
