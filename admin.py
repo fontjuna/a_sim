@@ -33,7 +33,7 @@ class Admin:
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
         gm.cdt = ChartData()
-        la.register('cdt', gm.cdt, use_thread=True, use_process=False)
+        la.register('cdt', gm.cdt, use_thread=False)
         gm.scm = ScriptManager()
         la.set_var('dbm', 'fee_rate', gm.수수료율)
         la.set_var('dbm', 'tax_rate', gm.세금율)
@@ -201,6 +201,91 @@ class Admin:
 
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
 
+    def com_get_chart_data(self, code, cycle, tick=None):
+        """서버에서 차트 데이터 가져오기 (기존 코드 유지, 데드락 방지 추가)"""
+        # 이미 요청 중인지 확인하여 데드락 방지
+        # request_key = f"{code}_{cycle}_{tick}"
+
+        try:
+            # current_time = time.time()
+            
+            # if hasattr(self, '_active_requests') and request_key in self._active_requests:
+            #     last_request_time = self._active_requests[request_key]
+            #     # 5초 이상 경과한 요청은 타임아웃으로 간주하고 재시도
+            #     if current_time - last_request_time < 5.0:
+            #         logging.debug(f"이미 요청 중인 데이터: {request_key}")
+            #         return []
+            
+            # # 요청 시작 시간 기록
+            # if not hasattr(self, '_active_requests'):
+            #     self._active_requests = {}
+            # self._active_requests[request_key] = current_time
+            
+            # 이하 원래 코드
+            rqname = f'{dc.scr.차트종류[cycle]}챠트'
+            trcode = dc.scr.챠트TR[cycle]
+            screen = dc.scr.화면[rqname]
+            date = datetime.now().strftime('%Y%m%d')
+
+            if cycle == 'mi':
+                input = {'종목코드':code, '틱범위': tick, '수정주가구분': 1}
+                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
+            else:
+                if cycle == 'dy':
+                    input = {'종목코드':code, '기준일자': date, '수정주가구분': 1}
+                else:
+                    input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': 1}
+                output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
+
+            next = '0'
+            all = False #if cycle in ['mi', 'dy'] else True
+            dict_list = []
+            while True:
+                data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen, 'dict_list', 2)
+                if data is None or len(data) == 0: break
+                dict_list.extend(data)
+                if not (remain and all): break
+                next = '2'
+            
+            if not dict_list:
+                logging.warning(f'챠트 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
+                return []
+            
+            logging.debug(f'차트 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list[:1]}"')
+            if cycle == 'mi':
+                dict_list = [{
+                    '종목코드': code,
+                    '체결시간': item['체결시간'],
+                    '현재가': abs(int(item['현재가'])),
+                    '시가': abs(int(item['시가'])),
+                    '고가': abs(int(item['고가'])),
+                    '저가': abs(int(item['저가'])),
+                    '거래량': abs(int(item['거래량'])),
+                    '거래대금': 0#abs(int(item['거래대금'])),
+                } for item in dict_list]
+            else:
+                dict_list = [{
+                    '종목코드': code,
+                    '일자': item['일자'],
+                    '현재가': abs(int(item['현재가'])),
+                    '시가': abs(int(item['시가'])),
+                    '고가': abs(int(item['고가'])),
+                    '저가': abs(int(item['저가'])),
+                    '거래량': abs(int(item['거래량'])),
+                    '거래대금': abs(int(item['거래대금'])),
+                } for item in dict_list]
+            
+            return dict_list
+            
+        except Exception as e:
+            logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            return []
+        finally:
+            # 요청 완료 시 활성 요청 목록에서 제거
+            # if hasattr(self, '_active_requests') and request_key in self._active_requests:
+            #     del self._active_requests[request_key]
+            pass
+
     def com_market_status(self):
         now = datetime.now()
         time = int(now.strftime("%H%M%S"))
@@ -320,43 +405,6 @@ class Admin:
 
     def on_fx실시간_주식체결(self, code, rtype, dictFID): # 실시간 시세 감시, 시장 체결데이타 분석 재료, 종목의 누적 거래향
         if not gm.config.ready: return
-        def update_price():
-            try:
-                rqname = '분봉챠트'
-                trcode = '10080'
-                screen = dc.scr.화면[rqname]
-                input = {'종목코드':code, '틱범위': 1, '수정주가구분': 1}
-                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
-                next = '0'
-                dict_list = []
-                while True:
-                    data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen, 'dict_list', 5)
-                    if data is None or len(data) == 0: break
-                    dict_list.extend(data)
-                    if not remain: break
-                    next = '2'
-                
-                if not dict_list:
-                    logging.warning(f'챠트 데이타 얻기 실패: code:{code}, dict_list:"{dict_list}"')
-                    return []
-                
-                dict_list = [{
-                    '종목코드': code,
-                    '체결시간': item['체결시간'],
-                    '현재가': abs(int(item['현재가'])),
-                    '시가': abs(int(item['시가'])),
-                    '고가': abs(int(item['고가'])),
-                    '저가': abs(int(item['저가'])),
-                    '거래량': abs(int(item['거래량'])),
-                    '거래대금': 0#abs(int(item['거래대금'])),
-                } for item in dict_list]
-                logging.debug(f'챠트 데이타 얻기: code:{code}, dict_list:"{pd.DataFrame(dict_list)}"')
-                return dict_list
-            
-            except Exception as e:
-                logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
-                return []
-
 
         if gm.dict종목정보.contains(code):
             현재가 = abs(int(dictFID['현재가']))
@@ -372,8 +420,11 @@ class Admin:
                     row['현재가'] = 현재가
                     la.work(f'전략{data["idx"]:02d}', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
+            #gm.cdt.queue_update(code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
+            #la.work('cdt', 'queue_update', code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
             #la.work('cdt', 'update_price', code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
-            #update_price()
+            #self.update_price(code)
+            #la.work('dbm', 'update_minute_data', code, dictFID)
 
         try:
             #la.work('dbm', 'receive_current_price', code=code, dictFID=dictFID) # 큐 과부하 일어남 (현재 암무 처리 않고 호출만 함으로써 과부하로 에러 남 )
@@ -392,6 +443,43 @@ class Admin:
             logging.error(f'실시간 주식체결 오류: {type(e).__name__} - {e}', exc_info=True)
 
     # 업데이트  -------------------------------------------------------------------------------------------
+    def update_price(self, code):
+        try:
+            rqname = '분봉챠트'
+            trcode = dc.scr.챠트TR[rqname]
+            screen = dc.scr.화면[rqname]
+            input = {'종목코드':code, '틱범위': 1, '수정주가구분': 1}
+            output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
+            next = '0'
+            dict_list = []
+            #while True:
+            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen, 'dict_list', 2)
+            #if data is None or len(data) == 0: break
+            dict_list.extend(data)
+            #if not remain: break
+            next = '2'
+        
+            if not dict_list:
+                logging.warning(f'챠트 데이타 얻기 실패: code:{code}, dict_list:"{dict_list}"')
+                return []
+            
+            dict_list = [{
+                '종목코드': code,
+                '체결시간': item['체결시간'],
+                '현재가': abs(int(item['현재가'])),
+                '시가': abs(int(item['시가'])),
+                '고가': abs(int(item['고가'])),
+                '저가': abs(int(item['저가'])),
+                '거래량': abs(int(item['거래량'])),
+                '거래대금': 0#abs(int(item['거래대금'])),
+            } for item in dict_list]
+            logging.debug(f'챠트 데이타 얻기: code:{code} dict_list:\n{pd.DataFrame(dict_list)}')
+            return dict_list
+        
+        except Exception as e:
+            logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            return []
+
     def pri_fx얻기_잔고합산(self):
         try:
             gm.잔고합산.delete()
@@ -490,6 +578,9 @@ class Admin:
                         전략정의 = gm.전략정의.get(key="기본전략")
 
                     data[item['종목번호']] = item['종목명']
+                    #self.update_price(item['종목번호'])
+                    #gm.cdt.queue_update(item['종목번호'], 0, 0, 0, '')
+                    #la.work('cdt', 'queue_update', item['종목번호'], 0, 0, 0, '')
                 gm.ct.set_batch(item['전략'], data)
 
             logging.debug(f'dict_list ={dict_list}')

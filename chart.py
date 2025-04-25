@@ -6,305 +6,443 @@ import json
 import numpy as np
 import pandas as pd
 import logging
-
+from threading import Lock, Thread
+import time
+import ast
+import traceback
+import re
+import math
+import queue
 class ChartData:
+
     """차트 데이터를 관리하는 싱글톤 클래스"""
     _instance = None
+    _lock = Lock()  # 멀티스레드 환경을 위한 락
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(ChartData, cls).__new__(cls)
-            cls._instance._data = {}
+            cls._instance._data = {}  # {code: {cycle: data}}
+            cls._instance._requests = {}  # {code: timestamp} - 요청 중복 방지용
+            cls._instance._is_working = False
+            cls._instance._update_queue = queue.Queue()  # 가격 업데이트 큐
+            cls._instance._worker_thread = None #threading.Thread(target=cls._worker_process)
+            cls._instance._running = False
         return cls._instance
     
     def __init__(self):
         if hasattr(self, "_initialized"):
             return
         self._initialized = True
-        self._data = {}
-        self.types = {'mi': 'mi', 'dy': 'dy', 'wk': 'wk', 'mo': 'mo'}
-        self._loading_states = {}
-        import threading
-        self._lock = threading.Lock()
-    
-    def _init_code_data(self, code: str):
-        """코드별 데이터 초기화 - 1분봉만 초기화"""
-        # 데이터 구조 초기화
-        if code not in self._data:
-            self._data[code] = {'mi': {1: []}, 'dy': [], 'wk': [], 'mo': []}
-        
-        # 1분봉 데이터만 로드
-        if self._data[code]['mi'][1] == []:
-            self._load_minute_data(code, 1)
+        self._start_worker()
 
-    def _is_loading(self, code: str, chart_type: str, cycle: int = None):
-        """특정 차트 데이터가 현재 로딩 중인지 확인"""
-        key = f"{code}:{chart_type}"
-        if cycle is not None:
-            key += f":{cycle}"
-        return self._loading_states.get(key, False)
-
-    def _set_loading_state(self, code: str, chart_type: str, cycle: int = None, state: bool = True):
-        """차트 데이터 로딩 상태 설정"""
-        key = f"{code}:{chart_type}"
-        if cycle is not None:
-            key += f":{cycle}"
-        self._loading_states[key] = state
-
-    def _load_minute_data(self, code: str, cycle: int):
-        """분봉 데이터 로드 (로딩 상태 관리 추가)"""
-        # 이미 로딩 중이면 건너뜀
-        if self._is_loading(code, 'mi', cycle):
-            logging.debug(f'분봉 차트 데이터 이미 로딩 중: {code} {cycle}')
-            return
+    def _start_worker(self):
+        """업데이트 워커 스레드 시작"""
+        if self._worker_thread is not None and self._worker_thread.is_alive():
+            return  # 이미 실행 중이면 무시
         
-        # 로딩 상태 설정
-        with self._lock:
-            if self._is_loading(code, 'mi', cycle):  # 더블 체크
-                return
-            self._set_loading_state(code, 'mi', cycle, True)
-        
-        try:
-            data = self._get_chart_data(code, 'mi', cycle)
-            for item in data:
-                datetime_str = item.get('체결시간', '')
-                self._data[code]['mi'][cycle].append(self._create_candle(
-                    date=datetime_str[:8],
-                    time=datetime_str[8:14],
-                    item=item
-                ))
-            if self._data[code]['mi'][cycle]:
-                logging.debug(f'분봉 차트 데이터 로드 완료: {code} {cycle} \n{pd.DataFrame(self._data[code]["mi"][cycle])}')
-        except Exception as e:
-            logging.error(f'분봉 차트 데이터 로드 오류: {code} {cycle} - {e}')
-            # 오류 발생 시 데이터 초기화
-            self._data[code]['mi'][cycle] = []
-        finally:
-            # 로딩 상태 해제
-            self._set_loading_state(code, 'mi', cycle, False)
-
-    def _load_period_data(self, code: str, chart_type: str):
-        """일/주/월봉 데이터 로드 (로딩 상태 관리 추가)"""
-        if chart_type not in ['dy', 'wk', 'mo']:
-            return
-        
-        # 이미 데이터가 로드되어 있거나 로딩 중이면 건너뜀
-        if self._data[code][chart_type] or self._is_loading(code, chart_type):
-            return
-        
-        # 로딩 상태 설정
-        with self._lock:
-            if self._data[code][chart_type] or self._is_loading(code, chart_type):  # 더블 체크
-                return
-            self._set_loading_state(code, chart_type, state=True)
-        
-        try:
-            data = self._get_chart_data(code, chart_type)
-            for item in data:
-                self._data[code][chart_type].append(self._create_candle(
-                    date=item.get('일자', ''),
-                    time='',
-                    item=item
-                ))
-            if self._data[code][chart_type]:
-                logging.debug(f'차트 데이터 로드 완료: {code} {chart_type}\n{pd.DataFrame(self._data[code][chart_type])}')
-        except Exception as e:
-            logging.error(f'차트 데이터 로드 오류: {code} {chart_type} - {e}')
-            # 오류 발생 시 데이터 초기화
-            self._data[code][chart_type] = []
-        finally:
-            # 로딩 상태 해제
-            self._set_loading_state(code, chart_type, state=False)
-
-    def _create_candle(self, date, time, item):
-        """캔들 데이터 생성"""
-        return {
-            'date': date,
-            'time': time,
-            'open': abs(int(item.get('시가', '0'))),
-            'high': abs(int(item.get('고가', '0'))),
-            'low': abs(int(item.get('저가', '0'))),
-            'close': abs(int(item.get('현재가', '0'))),
-            'volume': abs(int(item.get('거래량', '0'))),
-            'amount': abs(int(item.get('거래대금', '0')))
-        }
+        self._running = True
+        self._worker_thread = Thread(target=self._update_worker, daemon=True)
+        self._worker_thread.start()
+        logging.info("차트 데이터 업데이트 워커 스레드 시작")
     
-    def update_price(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """현재가, 거래량, 거래금액 업데이트"""
-        #if code not in self._data:
-        self._init_code_data(code)
-        
-        # 날짜와 시간 추출
-        date = datetime_str[:8]  # yyyymmdd
-        time = datetime_str[8:14]  # hhmmss
-        
-        self._update_minute_data(code, time, date, price, volume, amount)
-        self._update_daily_data(code, date, price, volume, amount)
+    def _stop_worker(self):
+        """업데이트 워커 스레드 중지"""
+        self._running = False
+        if self._worker_thread is not None:
+            self._worker_thread.join(timeout=2.0)  # 최대 2초 대기
+            if self._worker_thread.is_alive():
+                logging.warning("업데이트 워커 스레드 종료 대기 시간 초과")
+            self._worker_thread = None
     
-    def _update_minute_data(self, code: str, time: str, date: str, price: int, volume: int, amount: int):
-        """1분봉 데이터 업데이트"""
-        if 1 not in self._data[code]['mi']:
-            self._data[code]['mi'][1] = []
-        
-        # 새 분봉 또는 기존 분봉 업데이트
-        if not self._data[code]['mi'][1] or self._is_new_minute(time, self._data[code]['mi'][1][0]['time']):
-            # 새 분봉 추가
-            new_candle = {
-                'date': date, 'time': time,
-                'open': price, 'high': price, 'low': price, 'close': price,
-                'volume': volume, 'amount': amount
-            }
-            self._data[code]['mi'][1].insert(0, new_candle)
-        else:
-            # 현재 분봉 업데이트
-            current = self._data[code]['mi'][1][0]
-            current['high'] = max(current['high'], price)
-            current['low'] = min(current['low'], price)
-            current['close'] = price
-            current['volume'] = volume
-            current['amount'] = amount
-    
-    def _is_new_minute(self, current_time: str, last_time: str) -> bool:
-        return current_time[:4] != last_time[:4]
-    
-    def _update_daily_data(self, code: str, date: str, price: int, volume: int, amount: int):
-        """일봉 데이터 업데이트"""
-        if not self._data[code]['dy'] or self._data[code]['dy'][0]['date'] != date:
-            # 새 일봉 추가
-            new_day = {
-                'date': date, 'time': '',
-                'open': price, 'high': price, 'low': price, 'close': price,
-                'volume': volume, 'amount': amount
-            }
-            self._data[code]['dy'].insert(0, new_day)
-        else:
-            # 현재 일봉 업데이트
-            current = self._data[code]['dy'][0]
-            current['high'] = max(current['high'], price)
-            current['low'] = min(current['low'], price)
-            current['close'] = price
-            current['volume'] = volume
-            current['amount'] = amount
-    
-    def get_data(self, code: str, chart_type: str, cycle: int = 1) -> List[Dict]:
-        """차트 데이터 가져오기 (로딩 상태 관리 추가)"""
-        # 코드가 없으면 초기화
-        if code not in self._data:
-            with self._lock:
-                if code not in self._data:  # 더블 체크
-                    self._init_code_data(code)
-        
-        if chart_type == 'mi':
-            # 분봉 데이터
-            if cycle not in self._data[code]['mi']:
-                with self._lock:
-                    if cycle not in self._data[code]['mi']:  # 더블 체크
-                        self._data[code]['mi'][cycle] = []
-                        if cycle > 1 and self._data[code]['mi'][1]:
-                            # 1분봉 데이터가 있으면 계산
-                            self._calculate_cycle_data(code, cycle)
-                        else:
-                            # 없으면 서버에서 로드
-                            self._load_minute_data(code, cycle)
-                            
-            return self._data[code]['mi'].get(cycle, [])
-        else:
-            # 일/주/월봉 데이터
-            if not self._data[code][chart_type]:
-                # 서버에서 데이터 로드 (이미 로딩 중이면 _load_period_data 내에서 처리)
-                self._load_period_data(code, chart_type)
+    def _update_worker(self):
+        """업데이트 큐에서 요청을 읽어 처리하는 워커 스레드"""
+        while self._running:
+            try:
+                # 큐에서 요청 가져오기 (최대 0.1초 대기)
+                try:
+                    if self._is_working: 
+                        time.sleep(0.01)
+                        continue
+                    update_params = self._update_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue  # 큐가 비어있으면 다음 반복으로
                 
-                # 당일 데이터가 있고 1분봉 데이터가 있으면 당일 데이터 보정
-                if self._data[code]['mi'][1] and self._data[code][chart_type]:
-                    today = datetime.now().strftime('%Y%m%d')
-                    if self._data[code][chart_type][0]['date'] == today:
-                        # 당일 데이터 보정
-                        self._update_today_data(code, chart_type)
+                # 업데이트 요청 처리
+                try:
+                    code, price, volume, amount, datetime_str = update_params
+                    self.update_price(code, price, volume, amount, datetime_str)
+                except Exception as e:
+                    logging.error(f"차트 데이터 업데이트 오류: {e}", exc_info=True)
+                finally:
+                    # 작업 완료 표시
+                    self._update_queue.task_done()
             
-            return self._data[code].get(chart_type, [])
+            except Exception as e:
+                logging.error(f"업데이트 워커 스레드 오류: {e}", exc_info=True)
+                time.sleep(0.01)  # 오류 발생 시 잠시 대기
+    
+    def queue_update(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
+        """가격 업데이트 요청을 큐에 추가 (외부에서 호출하는 메서드)"""
+        self._update_queue.put((code, price, volume, amount, datetime_str))
         
-    def _update_today_data(self, code: str, chart_type: str):
-        """1분봉 데이터를 이용해 당일 일/주/월봉 데이터 보정"""
-        if not self._data[code]['mi'][1] or not self._data[code][chart_type]:
-            return
-            
-        today = datetime.now().strftime('%Y%m%d')
-        day_data = self._data[code][chart_type][0]
-        
-        # 당일 데이터인지 확인
-        if day_data['date'] != today:
-            return
-            
-        # 1분봉 데이터로 당일 데이터 보정
-        minute_data = [d for d in self._data[code]['mi'][1] if d['date'] == today]
-        if minute_data:
-            day_data['high'] = max(day_data['high'], max(d['high'] for d in minute_data))
-            day_data['low'] = min(day_data['low'], min(d['low'] for d in minute_data))
-            day_data['close'] = minute_data[0]['close']
-            day_data['volume'] = sum(d['volume'] for d in minute_data)
-            day_data['amount'] = sum(d['amount'] for d in minute_data)
+        # 워커 스레드가 실행 중이 아니면 시작
+        if not self._running or self._worker_thread is None or not self._worker_thread.is_alive():
+            self._start_worker()
 
-    def _calculate_cycle_data(self, code: str, cycle: int):
-        """다른 주기의 분봉 데이터 계산"""
-        if 1 not in self._data[code]['mi'] or cycle <= 1:
+    def update_price(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
+        """실시간 가격 정보 업데이트 (사용 빈도 최적화 버전)"""
+        try:
+            self._is_working = True
+            # 해당 종목 차트 데이터가 없으면 초기화 (1분봉과 일봉 함께 로드)
+            if code not in self._data:
+                self._init_chart_data(code)
+            
+            # 1분봉 업데이트
+            minute_data = self._data[code].get('mi1', [])
+            
+            datetime_str = datetime.now().strftime('%Y%m%d%H%M%S')
+
+            # 데이터가 없거나 새로운 분에 진입한 경우 새 봉 생성
+            if not minute_data or self._is_new_minute(minute_data[0]['체결시간'], datetime_str):
+                # 새로운 1분봉 추가
+                new_candle = {
+                    '종목코드': code,
+                    '체결시간': datetime_str[:12] + '00',  # 분 단위로 맞춤
+                    '현재가': price,
+                    '시가': price,
+                    '고가': price,
+                    '저가': price,
+                    '거래량': volume,
+                    '거래대금': amount
+                }
+                minute_data.insert(0, new_candle)
+            else:
+                # 기존 1분봉 업데이트
+                current = minute_data[0]
+                current['현재가'] = price
+                current['고가'] = max(current['고가'], price)
+                current['저가'] = min(current['저가'], price)
+                current['거래량'] = volume
+                current['거래대금'] = amount
+            
+            # 업데이트된 데이터 저장
+            self._data[code]['mi1'] = minute_data
+            
+            # 가장 많이 사용하는 3분봉과 일부 다른 주기 업데이트
+            # 사용 빈도에 따라 선택적으로 업데이트
+            # 3분봉은 항상 업데이트 (80% 사용 빈도)
+            self._update_minute_chart(code, 3, datetime_str)
+            
+            # 다른 주기 분봉 업데이트 (필요한 경우에만)
+            current_minute = int(datetime_str[8:10]) * 60 + int(datetime_str[10:12])
+            # 5분이 시작될 때만 5분봉 업데이트 (리소스 최적화)
+            if current_minute % 5 == 0 and 'mi5' in self._data.get(code, {}):
+                self._update_minute_chart(code, 5, datetime_str)
+            # 10분이 시작될 때만 10분봉 업데이트
+            if current_minute % 10 == 0 and 'mi10' in self._data.get(code, {}):
+                self._update_minute_chart(code, 10, datetime_str)
+            # 15분이 시작될 때만 15분봉 업데이트
+            if current_minute % 15 == 0 and 'mi15' in self._data.get(code, {}):
+                self._update_minute_chart(code, 15, datetime_str)
+            # 30분이 시작될 때만 30분봉 업데이트
+            if current_minute % 30 == 0 and 'mi30' in self._data.get(code, {}):
+                self._update_minute_chart(code, 30, datetime_str)
+            # 60분이 시작될 때만 60분봉 업데이트
+            if current_minute % 60 == 0 and 'mi60' in self._data.get(code, {}):
+                self._update_minute_chart(code, 60, datetime_str)
+            # 일봉 업데이트 (당일 데이터) - 19% 사용 빈도
+            if 'dy' in self._data.get(code, {}):
+                self._update_day_chart(code, price, volume, amount, datetime_str)
+        except Exception as e:
+            logging.error(f"차트 데이터 업데이트 오류: {e}", exc_info=True)
+        finally:
+            self._is_working = False
+
+    def _init_chart_data(self, code: str):
+        """종목코드에 대한 차트 데이터 초기화 (1분봉과 일봉 함께 요청)"""
+        self._data[code] = {}
+        
+        # 서버에서 기본 데이터 가져오기 (중복 요청 방지)
+        current_time = time.time()
+        if code in self._requests and current_time - self._requests[code] < 1.0:
+            # 최근 1초 내에 요청된 경우 중복 요청 방지
+            logging.debug(f"중복 요청 방지: {code}")
             return
         
-        mi_1 = self._data[code]['mi'][1]
-        result = []
+        self._requests[code] = current_time
         
-        for i in range(0, len(mi_1), cycle):
-            chunk = mi_1[i:i+cycle]
-            if not chunk:
-                continue
+        # 1분봉과 일봉 데이터를 동시에 가져오기
+        minute_data = self._get_chart_data(code, 'mi', 1)
+        day_data = self._get_chart_data(code, 'dy')
+        
+        # 데이터 저장
+        if minute_data:
+            self._data[code]['mi1'] = minute_data
+            # 1분봉 데이터로부터 3분봉 즉시 생성 (가장 많이 사용하는 주기)
+            self._data[code]['mi3'] = self._aggregate_minute_data(minute_data, 3)
+            
+        if day_data:
+            self._data[code]['dy'] = day_data
+    
+    def _is_new_minute(self, last_time: str, current_time: str) -> bool:
+        """새로운 분봉이 시작되었는지 확인"""
+        # 시간 형식: YYYYMMDDHHmm
+        if len(last_time) >= 12 and len(current_time) >= 12:
+            return last_time[:12] != current_time[:12]
+        return True
+    
+    def _update_minute_chart(self, code: str, tick: int, datetime_str: str):
+        """특정 tick 주기의 분봉 업데이트 (항상 1분봉 데이터로부터 생성)"""
+        # 1분봉 데이터 필요
+        minute_data = self._data[code].get('mi1', [])
+        if not minute_data:
+            return
+        
+        tick_key = f'mi{tick}'
+        
+        # 새 틱 차트 생성 필요 여부 확인
+        if not datetime_str:
+            datetime_str = datetime.now().strftime('%Y%m%d%H%M%S')
+
+        current_minute = int(datetime_str[8:10]) * 60 + int(datetime_str[10:12])
+        is_new_tick = current_minute % tick == 0
+        
+        # 3분봉 특별 처리 (가장 많이 사용하는 주기)
+        is_three_minute = (tick == 3)
+        
+        # 해당 틱 데이터가 없으면 1분봉으로부터 생성 (서버 요청 최소화)
+        if tick_key not in self._data[code]:
+            self._data[code][tick_key] = self._aggregate_minute_data(minute_data, tick)
+        elif is_new_tick and datetime_str[12:14] == '00':  # 정확히 틱 시작점
+            # 기존 데이터 있고 새 틱 시작이면 새 봉 추가
+            current = minute_data[0]
+            tick_data = self._data[code][tick_key]
             
             new_candle = {
-                'date': chunk[0]['date'],
-                'time': chunk[0]['time'],
-                'open': chunk[0]['open'],
-                'high': max(c['high'] for c in chunk),
-                'low': min(c['low'] for c in chunk),
-                'close': chunk[-1]['close'] if len(chunk) > 1 else chunk[0]['close'],
-                'volume': sum(c['volume'] for c in chunk),
-                'amount': sum(c['amount'] for c in chunk)
+                '종목코드': code,
+                '체결시간': datetime_str[:12] + '00',
+                '현재가': current['현재가'],
+                '시가': current['시가'],
+                '고가': current['고가'],
+                '저가': current['저가'],
+                '거래량': current['거래량'],
+                '거래대금': current['거래대금']
             }
-            result.insert(0, new_candle)
-        
-        self._data[code]['mi'][cycle] = result
+            tick_data.insert(0, new_candle)
+            self._data[code][tick_key] = tick_data
+        else:
+            # 현재 진행 중인 틱 업데이트
+            if self._data[code][tick_key]:
+                current_minute = int(datetime_str[8:10]) * 60 + int(datetime_str[10:12])
+                tick_start = (current_minute // tick) * tick
+                tick_time = datetime_str[:8] + f"{tick_start//60:02d}{tick_start%60:02d}00"
+                
+                # 최신 틱 찾기
+                for i, candle in enumerate(self._data[code][tick_key]):
+                    if candle['체결시간'] == tick_time:
+                        # 현재 틱 업데이트
+                        current = minute_data[0]
+                        candle['현재가'] = current['현재가']
+                        candle['고가'] = max(candle['고가'], current['현재가'])
+                        candle['저가'] = min(candle['저가'], current['현재가'])
+                        # 거래량은 누적값이므로 정확한 업데이트가 필요
+                        if is_three_minute:  # 3분봉은 중요하므로 정확한 거래량 계산
+                            # 1분봉 데이터에서 현재 틱에 해당하는 기간의 거래량 합산
+                            total_volume = 0
+                            for j in range(min(tick, len(minute_data))):
+                                m_time = minute_data[j]['체결시간']
+                                m_minute = int(m_time[8:10]) * 60 + int(m_time[10:12])
+                                if tick_start <= m_minute < tick_start + tick:
+                                    total_volume += minute_data[j]['거래량']
+                            candle['거래량'] = total_volume
+                        break
     
-    def _get_chart_data(self, code, chart_type, cycle=None):
-        """차트 데이터 가져오기 (외부에서 구현되는 함수)"""
+    def _update_day_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
+        """일봉 데이터 업데이트 (당일)"""
+        day_key = 'dy'
+        today = datetime_str[:8]  # YYYYMMDD
+        
+        # 일봉 데이터 확인
+        if day_key not in self._data[code] or not self._data[code][day_key]:
+            # 서버에서 일봉 데이터 가져오기
+            day_data = self._get_chart_data(code, 'dy')
+            if day_data:
+                self._data[code][day_key] = day_data
+            else:
+                return
+        
+        # 당일 데이터 업데이트
+        day_data = self._data[code][day_key]
+        
+        # 최신 일봉이 당일인지 확인
+        if day_data and day_data[0]['일자'] == today:
+            current = day_data[0]
+            current['현재가'] = price
+            current['고가'] = max(current['고가'], price)
+            current['저가'] = min(current['저가'], price)
+            current['거래량'] = volume
+            current['거래대금'] = amount
+        elif day_data:
+            # 당일 데이터 없으면 추가
+            new_day = {
+                '종목코드': code,
+                '일자': today,
+                '현재가': price,
+                '시가': price,
+                '고가': price,
+                '저가': price,
+                '거래량': volume,
+                '거래대금': amount
+            }
+            day_data.insert(0, new_day)
+    
+    def _aggregate_minute_data(self, minute_data: list, tick: int) -> list:
+        """1분봉 데이터를 특정 tick으로 집계"""
+        if not minute_data:
+            return []
+        
+        result = []
+        # 최근 데이터부터 처리 (인덱스 0이 최신)
+        grouped_data = {}
+        
+        for candle in minute_data:
+            dt_str = candle['체결시간']
+            if len(dt_str) < 12:
+                continue
+                
+            dt = datetime.strptime(dt_str[:12], '%Y%m%d%H%M')
+            # tick 단위로 그룹화 (예: 5분봉이면 5의 배수 시간대로)
+            minute = dt.hour * 60 + dt.minute
+            tick_start = (minute // tick) * tick
+            group_dt = dt.replace(hour=tick_start // 60, minute=tick_start % 60)
+            group_key = group_dt.strftime('%Y%m%d%H%M')
+            
+            if group_key not in grouped_data:
+                grouped_data[group_key] = {
+                    '종목코드': candle['종목코드'],
+                    '체결시간': group_key + '00',
+                    '현재가': candle['현재가'],
+                    '시가': candle['현재가'],
+                    '고가': candle['현재가'],
+                    '저가': candle['현재가'],
+                    '거래량': candle['거래량'],
+                    '거래대금': candle.get('거래대금', 0)
+                }
+            else:
+                group = grouped_data[group_key]
+                group['현재가'] = candle['현재가']  # 마지막 값이 종가
+                group['고가'] = max(group['고가'], candle['고가'])
+                group['저가'] = min(group['저가'], candle['저가'])
+                # 첫 값을 시가로 유지 (이미 설정됨)
+        
+        # 정렬하여 결과 반환 (최신이 먼저)
+        result = list(grouped_data.values())
+        result.sort(key=lambda x: x['체결시간'], reverse=True)
+        return result
+    
+    def get_chart_data(self, code: str, cycle: str, tick: int = None) -> list:
+        """특정 종목, 주기의 차트 데이터 반환 (외부용)
+        사용 빈도를 고려한 최적화:
+        - 분봉(mi)은 1분봉에서 파생 (서버 요청 최소화)
+        - 일봉(dy)은 1분봉 요청 시 함께 처리
+        - 주봉(wk)과 월봉(mo)은 요청 시에만 서버에 요청
+        """
+        with self._lock:
+            # 분봉의 경우 특별 처리
+            if cycle == 'mi':
+                cycle_key = f'mi{tick}'
+                
+                # 데이터가 없으면 기본 데이터 먼저 가져옴
+                if code not in self._data:
+                    self._init_chart_data(code)  # 1분봉과 일봉 데이터 함께 가져옴
+                
+                # 1분봉 데이터는 있지만 요청한 tick의 분봉이 없는 경우
+                if code in self._data and 'mi1' in self._data[code] and cycle_key not in self._data[code]:
+                    # 분봉 데이터는 1분봉으로부터 생성 (서버 요청 없음)
+                    minute_data = self._data[code]['mi1']
+                    self._data[code][cycle_key] = self._aggregate_minute_data(minute_data, tick)
+            
+            # 일봉의 경우
+            elif cycle == 'dy':
+                # 데이터가 없으면 기본 데이터 가져옴
+                if code not in self._data:
+                    self._init_chart_data(code)
+                
+                # 일봉 데이터가 없으면 개별 요청
+                if code in self._data and 'dy' not in self._data[code]:
+                    day_data = self._get_chart_data(code, 'dy')
+                    if day_data:
+                        self._data[code]['dy'] = day_data
+            
+            # 주봉/월봉은 요청 시에만 서버에 요청 (드물게 사용됨)
+            elif cycle in ['wk', 'mo']:
+                if code not in self._data:
+                    self._data[code] = {}
+                
+                if cycle not in self._data[code]:
+                    data = self._get_chart_data(code, cycle)
+                    if data:
+                        self._data[code][cycle] = data
+            
+            # 데이터 반환 (cycle_key가 없을 경우 빈 리스트 반환)
+            cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
+            return self._data.get(code, {}).get(cycle_key, [])
+    
+    def _get_chart_data(self, code, cycle, tick=None):
+        """서버에서 차트 데이터 가져오기 (기존 코드 유지, 데드락 방지 추가)"""
+        #dict_list = la.answer('admin', 'com_get_chart_data', code, cycle, tick)
+        dict_list = gm.admin.com_get_chart_data(code, cycle, tick)
+        return dict_list
+        # 이미 요청 중인지 확인하여 데드락 방지
+        request_key = f"{code}_{cycle}_{tick}"
         try:
-            rqname = f'{dc.scr.차트종류[chart_type]}챠트'
-            trcode = dc.scr.차트TR[chart_type]
+            current_time = time.time()
+            
+            if hasattr(self, '_active_requests') and request_key in self._active_requests:
+                last_request_time = self._active_requests[request_key]
+                # 5초 이상 경과한 요청은 타임아웃으로 간주하고 재시도
+                if current_time - last_request_time < 5.0:
+                    logging.debug(f"이미 요청 중인 데이터: {request_key}")
+                    return []
+            
+            # 요청 시작 시간 기록
+            if not hasattr(self, '_active_requests'):
+                self._active_requests = {}
+            self._active_requests[request_key] = current_time
+            
+            # 이하 원래 코드
+            rqname = f'{dc.scr.차트종류[cycle]}챠트'
+            trcode = dc.scr.챠트TR[cycle]
             screen = dc.scr.화면[rqname]
             date = datetime.now().strftime('%Y%m%d')
 
-            if chart_type == 'mi':
-                input = {'종목코드':code, '틱범위': cycle, '수정주가구분': 1}
+            if cycle == 'mi':
+                input = {'종목코드':code, '틱범위': tick, '수정주가구분': 1}
                 output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
             else:
-                if chart_type == 'dy':
+                if cycle == 'dy':
                     input = {'종목코드':code, '기준일자': date, '수정주가구분': 1}
                 else:
                     input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': 1}
                 output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
 
+            logging.debug(f'분봉 챠트 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}')
             next = '0'
-            all = False #if chart_type in ['mi', 'dy'] else True
+            all = False #if cycle in ['mi', 'dy'] else True
             dict_list = []
             while True:
-                data, remain = la.answer('admin', 'com_SendRequest', rqname, trcode, input, output, next, screen, 'dict_list', 5)
+                data, remain = gm.admin.com_SendRequest(rqname, trcode, input, output, next, screen, 'dict_list', 5)
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
                 if not (remain and all): break
                 next = '2'
             
             if not dict_list:
-                logging.warning(f'챠트 데이타 얻기 실패: code:{code}, chart_type:{chart_type}, cycle:{cycle}, dict_list:"{dict_list}"')
+                logging.warning(f'챠트 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
                 return []
             
-            if chart_type == 'mi':
-                #logging.debug(f'분봉 챠트 데이타 얻기: code:{code}, chart_type:{chart_type}, cycle:{cycle}, dict_list:"{dict_list[-1:]}"')
+            if cycle == 'mi':
                 dict_list = [{
                     '종목코드': code,
                     '체결시간': item['체결시간'],
@@ -326,32 +464,111 @@ class ChartData:
                     '거래량': abs(int(item['거래량'])),
                     '거래대금': abs(int(item['거래대금'])),
                 } for item in dict_list]
+            
             return dict_list
-        
+            
         except Exception as e:
             logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
             return []
-
+        finally:
+            # 요청 완료 시 활성 요청 목록에서 제거
+            if hasattr(self, '_active_requests') and request_key in self._active_requests:
+                del self._active_requests[request_key]
+                
 class ChartManager:
-    """차트 매니저 클래스, 수식관리자 기본함수 구현"""
+    def __init__(self, cycle='dy', tick=1):
+        self.cycle = cycle  # 'mo', 'wk', 'dy', 'mi' 중 하나
+        self.tick = tick    # 분봉일 경우 주기
+        self.chart_data = ChartData()  # 싱글톤 인스턴스
+        self._data_cache = {}  # 종목별 데이터 캐시 {code: data}
     
-    def __init__(self, chart='dy', cycle=1):
-        self.chart = chart  # 'mo', 'wk', 'dy', 'mi' 중 하나
-        self.cycle = cycle  # 분봉일 경우 주기
+    def _get_data(self, code: str) -> list:
+        """해당 종목의 차트 데이터 가져오기 (캐싱)"""
+        if code not in self._data_cache:
+            # 데이터 가져오기
+            self._data_cache[code] = self._load_chart_data(code)
+        return self._data_cache[code]
     
-    def _get_data(self, code: str) -> List[Dict]:
-        """해당 코드의 차트 데이터 반환"""
-        #return self.chart_data.get_data(code, self.chart, self.cycle)
-        return la.answer('cdt', 'get_data', code, self.chart, self.cycle)
+    def _load_chart_data(self, code: str) -> list:
+        """차트 데이터 로드 및 변환"""
+        data = self.chart_data.get_chart_data(code, self.cycle, self.tick)
+        
+        # 데이터 변환 (API 형식 -> 내부 형식)
+        result = []
+        if self.cycle == 'mi':
+            for item in data:
+                result.append({
+                    'time': item['체결시간'],
+                    'open': item['시가'],
+                    'high': item['고가'],
+                    'low': item['저가'],
+                    'close': item['현재가'],
+                    'volume': item['거래량'],
+                    'amount': item.get('거래대금', 0)
+                })
+        else:
+            for item in data:
+                result.append({
+                    'date': item['일자'],
+                    'open': item['시가'],
+                    'high': item['고가'],
+                    'low': item['저가'],
+                    'close': item['현재가'],
+                    'volume': item['거래량'],
+                    'amount': item['거래대금']
+                })
+        return result
     
-    def _get_value(self, code: str, n: int, field: str, default=0.0):
-        """특정 필드 값 반환"""
+    def _get_value(self, code: str, n: int, key: str, default=0):
+        """지정된 위치(n)의 데이터 값 가져오기"""
         data = self._get_data(code)
-        if not data or len(data) <= n:
+        
+        # n이 데이터 범위를 벗어나면 기본값 반환
+        if not data or n >= len(data):
             return default
-        return data[n][field]
+        
+        item = data[n]
+        
+        # 키에 따라 적절한 값 반환
+        if key == 'open':
+            return item['open']
+        elif key == 'high':
+            return item['high']
+        elif key == 'low':
+            return item['low']
+        elif key == 'close':
+            return item['close']
+        elif key == 'volume':
+            return item['volume']
+        elif key == 'amount':
+            return item.get('amount', 0)
+        elif key == 'time' and self.cycle == 'mi':
+            return item.get('time', '')
+        elif key == 'date' and self.cycle != 'mi':
+            return item.get('date', '')
+        
+        return default
     
-    # 기본 값 반환 함수들
+    def _get_values(self, code: str, func, n: int, m: int = 0) -> list:
+        """지정된 함수를 통해 n개의 값을 배열로 가져오기"""
+        values = []
+        for i in range(m, m + n):
+            if callable(func):
+                values.append(func(code, i))
+            else:
+                # func가 함수가 아니면 그대로 사용 (상수값)
+                values.append(func)
+        return values
+    
+    def clear_cache(self, code: str = None):
+        """특정 코드 또는 전체 캐시 초기화"""
+        if code:
+            if code in self._data_cache:
+                del self._data_cache[code]
+        else:
+            self._data_cache.clear()
+    
+    # 기본 값 반환 함수들 - 기존 코드 유지
     def c(self, code: str, n: int = 0) -> float:
         """종가 반환"""
         return self._get_value(code, n, 'close')
@@ -378,7 +595,7 @@ class ChartManager:
     
     def time(self, n: int = 0) -> str:
         """시간 반환"""
-        if self.chart != 'mi':
+        if self.cycle != 'mi':
             return ''
         code = "005930"  # 테스트용 코드
         return self._get_value(code, n, 'time', '')
@@ -388,20 +605,6 @@ class ChartManager:
         return datetime.now().strftime('%Y%m%d')
     
     # 계산 함수들
-    def _get_values(self, code: str, a, n: int, m: int = 0) -> List:
-        """지정된 값들 반환"""
-        data = self._get_data(code)
-        if not data or len(data) < n + m:
-            return []
-        
-        values = []
-        if callable(a):
-            values = [a(code, i + m) for i in range(n)]
-        else:
-            values = [data[i+m].get(a, 0) for i in range(n) if i+m < len(data)]
-        
-        return values
-    
     def ma(self, code: str, a, n: int, m: int = 0, k: str = 'a') -> float:
         """이동평균 계산"""
         if k == 'a': return self.avg(code, a, n, m)
@@ -536,7 +739,7 @@ class ChartManager:
         
         return 0.0
 
-    # 추가할 수학 함수들
+    # 수학 함수들
     def min_value(self, a, b):
         """두 값 중 최소값 반환"""
         return min(a, b)
@@ -569,7 +772,7 @@ class ChartManager:
         except:
             return 0
     
-    def safe_div(self, a, b, default=0):
+    def div(self, a, b, default=0):
         """안전한 나눗셈 (0으로 나누기 방지)"""
         return a / b if b != 0 else default
     
@@ -840,212 +1043,152 @@ class ChartManager:
         return pattern_func(code, length)
                 
 class ScriptManager:
-    """스크립트 관리 및 실행 클래스 (개선 버전)
-    
-    스크립트 작성 제한 사항:
-    1. 스크립트에서는 외부 모듈 임포트 지원하지 않음 (np와 ChartManager만 기본 제공)
-    2. 스크립트의 마지막에 'result = 불리언_값'으로 결과 저장 필요
-    3. ChartManager 객체는 스크립트 내에서 직접 생성해야 함 (예: ct_dy = ChartManager('dy'))
-    4. 다른 스크립트 호출 시 get_script_result('스크립트명', 코드) 함수 사용
-    5. get_var('변수명')을 통해 현재 스크립트 변수에 접근 가능
-    """
-    
+    # 허용 모듈 리스트 (클래스 속성)
+    ALLOWED_MODULES = ['re', 'math', 'datetime', 'random', 'logging', 'json', 'collections']
     def __init__(self, script_file=dc.fp.script_file):
         self.script_file = script_file
         self.scripts = {}  # {name: {script: str, vars: dict}}
-        self.load_script()
-        
-        # 스크립트 실행 준비
-        self.script_code = ""
-        self.current_script = ""
-        self.execution_stack = []  # 스크립트 실행 스택 (순환 참조 방지)
-        self.result_cache = {}  # {(script_name, code): result} 형태의 캐시
-        
-        # 허용된 함수 및 패턴 목록
-        self._allowed_functions = self._get_allowed_functions()
-        self._allowed_patterns = [
-            r'[\+\-\*/<%=>&\|\^~!]',  # 기본 연산자
-            r'if\s+.*\s+else',         # 조건문
-            r'and|or|not',             # 논리 연산자
-            r'True|False|None',        # 상수
-            r'[\[\]{}(),.:;]',         # 구두점 및 기호
-            r'==|!=|<=|>=|<|>',        # 비교 연산자
-            r'"[^"]*"|\'[^\']*\'',     # 문자열
-            r'result\s*=',             # 결과 할당
-            r'[\d.]+',                 # 숫자
-            r'ct_\w+',                 # ChartManager 인스턴스
-            r'get_script_result',      # 스크립트 결과 가져오기
-            r'get_var',                # 변수 가져오기
-            r'ChartManager',           # ChartManager 클래스
-            r'np\.(?:array|mean|std|max|min|abs)',  # 허용된 numpy 함수
-        ]
+        self.chart_manager = None  # 실행 시 주입
+        self._load_scripts()
+        self._running_scripts = set()  # 실행 중인 스크립트 추적
     
-    def _get_allowed_functions(self):
-        """허용된 함수 목록 반환"""
-        # ChartManager의 메소드명 추출
-        chartmgr_methods = [method for method in dir(ChartManager) if not method.startswith('_') and callable(getattr(ChartManager, method))]
-        # 추가 허용 함수들
-        extra_functions = [ 'get_script_result', 'get_var' ]
-        # numpy 허용 함수들
-        numpy_functions = [ 'np.mean', 'np.std', 'np.max', 'np.min', 'np.abs', 'np.array', 'np.sum' ]
+    def _load_scripts(self):
+        """스크립트 파일에서 스크립트 로드"""
+        try:
+            with open(self.script_file, 'r', encoding='utf-8') as f:
+                self.scripts = json.load(f)
+            logging.info(f"스크립트 {len(self.scripts)}개 로드 완료")
+        except FileNotFoundError:
+            logging.warning(f"스크립트 파일 없음: {self.script_file}")
+            self.scripts = {}
+        except json.JSONDecodeError as e:
+            logging.error(f"스크립트 파일 형식 오류: {e}")
+            self.scripts = {}
+    
+    def _save_scripts(self):
+        """스크립트를 파일에 저장"""
+        try:
+            with open(self.script_file, 'w', encoding='utf-8') as f:
+                json.dump(self.scripts, f, ensure_ascii=False, indent=4)
+            logging.info(f"스크립트 {len(self.scripts)}개 저장 완료")
+            return True
+        except Exception as e:
+            logging.error(f"스크립트 저장 오류: {e}")
+            return False
+    
+    def set_scripts(self, scripts: dict):
+        """스크립트 전체 설정 및 저장"""
+        # 모든 스크립트 유효성 검사
+        valid_scripts = {}
+        for name, script_data in scripts.items():
+            if self.check_script(name, script_data.get('script', '')):
+                valid_scripts[name] = script_data
+            else:
+                logging.warning(f"유효하지 않은 스크립트: {name}")
         
-        return set(chartmgr_methods + extra_functions + numpy_functions)
+        self.scripts = valid_scripts
+        return self._save_scripts()
+    
+    def get_scripts(self):
+        """저장된 모든 스크립트 반환"""
+        return self.scripts
     
     def set_script(self, name: str, script: str, vars: dict = None):
-        """스크립트 저장"""
-        if not self.check_script(name, script):
+        """단일 스크립트 설정 및 저장"""
+        if not self.check_script(name, {'script': script, 'vars': vars}):
+            logging.warning(f"유효하지 않은 스크립트: {name}")
             return False
-            
+        
         self.scripts[name] = {
             'script': script,
             'vars': vars or {}
         }
-        self.save_script()
-        return True
+        return self._save_scripts()
     
-    def get_script(self, name: str = None):
-        """스크립트 가져오기"""
-        if name:
-            return self.scripts.get(name, {}).get('script', "")
-        else:
-            return self.scripts
+    def get_script(self, name: str):
+        """이름으로 스크립트 가져오기"""
+        return self.scripts.get(name, {})
+    
+    def check_script(self, name: str, script_data: dict = None) -> bool:
+        """스크립트 구문 및 실행 유효성 검사"""
+        if script_data is None:
+            script_data = self.scripts.get(name, {})
+
+        script = script_data.get('script', '')
+        vars_dict = script_data.get('vars', {})
+
+        if not script:
+            logging.warning(f"스크립트가 비어있음: {name}")
+            return False
         
-    def delete_script(self, name: str):
-        """스크립트 삭제"""
-        if name in self.scripts:
-            del self.scripts[name]
-            self.save_script()
-            return True
-        return False
-    
-    def get_vars(self, name: str = None):
-        """스크립트 변수 가져오기"""
-        if name is None:
-            name = self.current_script
-        return self.scripts.get(name, {}).get('vars', {})
-    
-    def set_vars(self, name: str, vars: dict):
-        """스크립트 변수 설정"""
-        if name in self.scripts:
-            self.scripts[name]['vars'] = vars
-            self.save_script()
-            return True
-        return False
-    
-    def get_var(self, var_name, default=None):
-        """현재 실행 중인 스크립트의 특정 변수 가져오기"""
-        vars_dict = self.get_vars(self.current_script)
-        return vars_dict.get(var_name, default)
-    
-    def save_script(self):
-        """스크립트를 JSON 파일로 저장"""
-        with open(self.script_file, 'w', encoding='utf-8') as f:
-            json.dump(self.scripts, f, ensure_ascii=False, indent=2)
-    
-    def load_script(self):
-        """JSON 파일에서 스크립트 로드"""
+        # 1. 구문 분석 검사
         try:
-            with open(self.script_file, 'r', encoding='utf-8') as f:
-                self.scripts = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.scripts = {}
-    
-    def check_script(self, name: str, script: str = None) -> bool:
-        """
-        스크립트 기본 안전 검사 및 모의 환경에서의 실행 테스트
-        
-        모의 ChartManager를 사용하여, 실제 차트 데이터 의존성 없이 스크립트 검증
-        타임아웃 설정으로 데드락 방지
-        """
-        if script is None:
-            if name not in self.scripts:
-                return False
-            script = self.scripts[name]['script']
-        
-        # 기본 문법 검사
-        try:
-            compile(script, "<string>", "exec")
+            ast.parse(script)
         except SyntaxError as e:
-            logging.debug(f"문법 오류: {e}")
-            return False
-        except Exception as e:
-            logging.debug(f"스크립트 오류 발생: {e}")
+            line_no = e.lineno
+            logging.error(f"구문 오류 ({name} 스크립트 {line_no}행): {e}")
             return False
         
-        # 결과 변수 사용 여부 확인
-        if "result = " not in script and "result=" not in script:
-            logging.debug("오류: 스크립트의 마지막에 'result = 불리언_값'으로 결과를 저장해야 합니다.")
+        # 2. 보안 검증 (금지된 구문 확인)
+        if self._has_forbidden_syntax(script):
+            logging.error(f"보안 위반 코드 포함 ({name} 스크립트)")
             return False
         
-        # 허용되지 않은 패턴 검사
-        import re
-        script_without_comments = re.sub(r'#.*$', '', script, flags=re.MULTILINE)
-        
-        # 금지된 모듈 임포트 패턴 검사
-        if re.search(r'import\s+', script_without_comments):
-            logging.debug("오류: 스크립트 내에서 모듈 임포트가 허용되지 않습니다.")
-            return False
-        
-        # 금지된 패턴 (eval, exec, globals 등) 검사
-        dangerous_patterns = [
-            r'eval\s*\(',
-            r'exec\s*\(',
-            r'globals\s*\(',
-            r'locals\s*\(',
-            r'__import__\s*\(',
-            r'open\s*\(',
-            r'file\s*\(',
-            r'compile\s*\(',
-            r'os\.',
-            r'sys\.',
-            r'subprocess\.',
-            r'importlib\.',
+        # 3. 가상 실행 테스트
+        return self._test_execute_script(name, script, vars_dict)
+    
+    def _has_forbidden_syntax(self, script: str) -> bool:
+        """금지된 구문이 있는지 확인"""
+        allowed_patterns = '|'.join(self.ALLOWED_MODULES)
+        forbidden_patterns = [
+            r'import\s+(?!(' + allowed_patterns + ')$)',  # 허용된 모듈만 임포트 가능
+            r'open\s*\(',  # 파일 열기 금지
+            r'exec\s*\(',  # exec() 사용 금지
+            r'eval\s*\(',  # eval() 사용 금지
+            r'__import__',  # __import__ 사용 금지
+            r'subprocess',  # subprocess 모듈 금지
+            r'os\.',  # os 모듈 사용 금지
+            r'sys\.',  # sys 모듈 사용 금지
+            r'while\s+.*:',  # while 루프 금지 (무한 루프 방지)
         ]
         
-        for pattern in dangerous_patterns:
-            if re.search(pattern, script_without_comments):
-                logging.debug(f"오류: 금지된 패턴 발견: {pattern}")
-                return False
-        
-        # 함수 호출 검사 - 스크립트에서 ChartManager와 허용된 함수만 사용하는지 확인
-        func_calls = re.findall(r'(\w+)\s*\(', script_without_comments)
-        allowed_names = list(self._allowed_functions) + ['self', 'ChartManager']
-        
-        for func in func_calls:
-            if func not in allowed_names:
-                logging.debug(f"오류: 허용되지 않은 함수 호출: {func}")
-                return False
-        
-        # 모의 환경에서 실행 테스트 (스크립트 로직 검증)
-        return self._test_script_with_mock(name, script)
-        
-    def _test_script_with_mock(self, name: str, script: str) -> bool:
-        """
-        모의 환경에서 스크립트 실행 테스트 (타임아웃 적용)
-        """
-        import threading
-        import time
-        
-        # 테스트 결과 저장용 딕셔너리
-        test_result = {'success': False, 'error': None}
-        
-        # 모의 ChartManager 클래스 정의 (실제 데이터 접근 없이 기본값 반환)
-        class MockChartManager:
-            def __init__(self, chart='dy', cycle=1):
-                self.chart = chart
-                self.cycle = cycle
+        for pattern in forbidden_patterns:
+            if re.search(pattern, script):
+                return True
+        return False
+    
+    def _safe_loop(self, iterable, func):
+        """안전한 루프 실행 함수"""
+        results = []
+        for item in iterable:
+            results.append(func(item))
+        return results
+    
+    def _create_test_chart_manager(self):
+        """테스트용 ChartManager 생성"""
+        class TestChartManager:
+            """테스트용 차트 매니저"""
+            def __init__(self):
+                self._test_data = {
+                    '005930': [  # 삼성전자 가상 데이터
+                        {'date': '20240101', 'open': 70000, 'high': 71000, 'low': 69000, 'close': 70500, 'volume': 1000000, 'amount': 70500000000},
+                        {'date': '20240102', 'open': 70500, 'high': 72000, 'low': 70000, 'close': 71000, 'volume': 1200000, 'amount': 85200000000},
+                        {'date': '20240103', 'open': 71000, 'high': 71500, 'low': 70000, 'close': 71200, 'volume': 900000, 'amount': 64080000000},
+                    ]
+                }
             
-            # 기본 값 반환 함수들
-            def c(self, code, n=0): return 10000.0
-            def o(self, code, n=0): return 9900.0
-            def h(self, code, n=0): return 10100.0
-            def l(self, code, n=0): return 9800.0
-            def v(self, code, n=0): return 10000
-            def a(self, code, n=0): return 100000000.0
-            def time(self, n=0): return '090000' if self.chart == 'mi' else ''
-            def today(self): return '20240423'
+            # ChartManager 메서드들 구현
+            def c(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('close', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
+            def o(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('open', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
+            def h(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('high', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
+            def l(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('low', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
+            def v(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('volume', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
+            def a(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('amount', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
+            def time(self, n=0): return '090000' if n == 0 else f"{90000 + n * 100:06d}"  # 테스트용 시간값
+            def today(self): return datetime.now().strftime('%Y%m%d')
             
             # 계산 함수들
+            def ma(self, code, a, n, m=0, k='a'): return 10000.0
             def avg(self, code, a, n, m=0): return 10000.0
             def eavg(self, code, a, n, m=0): return 10000.0
             def wavg(self, code, a, n, m=0): return 10000.0
@@ -1095,344 +1238,246 @@ class ScriptManager:
             def streak_count(self, code, condition_func): return 3
             def detect_pattern(self, code, pattern_func, length): return True
         
-        # 테스트 실행 함수
-        def run_test():
+        return TestChartManager()
+    
+    def _test_execute_script(self, name: str, script: str, vars_dict: dict = None) -> bool:
+        """테스트 환경에서 스크립트 실행 시도"""
+        try:
+            # 가상 환경에서 안전하게 실행
+            # 테스트용 ChartManager 생성
+            test_cm = self._create_test_chart_manager()
+            
+            # 테스트용 글로벌/로컬 환경 설정
+            globals_dict = {
+                # Python 내장 함수들
+                'range': range,
+                'len': len,
+                'int': int,
+                'float': float,
+                'str': str,
+                'bool': bool,
+                'max': max,
+                'min': min,
+                'sum': sum,
+                'abs': abs,
+                'all': all,
+                'any': any,
+                'round': round,
+                'sorted': sorted,
+                'enumerate': enumerate,
+                'zip': zip,
+                'list': list,
+                'dict': dict,
+                'set': set,
+                'tuple': tuple,
+                
+                # 모듈들
+                'math': math,
+                'logging': logging,
+                'datetime': datetime,
+                
+                # 차트 매니저
+                'ChartManager': lambda cycle='dy', tick=1: test_cm,
+                
+                'code': '005930',
+
+                # 유틸리티 함수
+                'loop': self._safe_loop,
+                'run_script': lambda sub_name: True
+            }
+                
+            # 변수 추가
+            for var_name, var_value in vars_dict.items():
+                globals_dict[var_name] = var_value
+            
+            
+            # 컴파일 및 제한된 실행
+            code_obj = compile(script, f"<script_{name}>", 'exec')
+            
+            # 실행 시간 제한
+            start_time = time.time()
+            locals_dict = {}
+            
             try:
-                # 글로벌 환경 준비 (모의 ChartManager 사용)
-                globals_dict = {
-                    'ChartManager': MockChartManager,
-                    'np': np,
-                    'self': self,
-                    'get_script_result': lambda script_name, code: True,  # 항상 True 반환
-                    'get_var': lambda var_name, default=None: default
-                }
-                
-                # 스크립트 실행
-                local_vars = {}
-                exec(script, globals_dict, local_vars)
-                
-                # 반환값 확인
-                if 'result' not in local_vars:
-                    test_result['error'] = "스크립트에 'result' 변수가 없습니다"
-                    return
-                
-                # 결과가 불리언 타입인지 확인
-                result = local_vars.get('result')
-                if not isinstance(result, bool):
-                    test_result['error'] = f"'result' 변수가 불리언 타입이 아닙니다: {type(result)}"
-                    return
-                    
-                # 테스트 성공
-                test_result['success'] = True
-                
+                exec(code_obj, globals_dict, locals_dict)
+                exec_time = time.time() - start_time
+                if exec_time > 0.1:  # 0.1초 초과 실행 시 경고
+                    logging.warning(f"스크립트 실행 시간 초과 ({name}): {exec_time:.4f}초")
+                return True
             except Exception as e:
-                test_result['error'] = f"테스트 실행 오류: {type(e).__name__} - {e}"
-        
-        # 타임아웃 설정 (초 단위)
-        timeout = 3
-        
-        # 스레드 생성 및 실행
-        test_thread = threading.Thread(target=run_test)
-        test_thread.daemon = True
-        test_thread.start()
-        
-        # 타임아웃 대기
-        test_thread.join(timeout)
-        
-        # 타임아웃 발생 확인
-        if test_thread.is_alive():
-            logging.debug(f"스크립트 테스트 타임아웃 (>{timeout}초)")
+                logging.error(f"스크립트 실행 오류 ({name}): {type(e).__name__} - {e}")
+                return False
+        except Exception as e:
+            logging.error(f"스크립트 테스트 중 예상치 못한 오류 ({name}): {e}")
             return False
-        
-        # 테스트 결과 확인
-        if not test_result['success']:
-            logging.debug(f"모의 환경 테스트 실패: {test_result['error']}")
-            return False
-        
-        # 모든 검사 통과
-        return True
-        
+    
     def run_script(self, name: str, code: str, is_sub_call: bool = False):
+        """스크립트 실행
+        name: 스크립트 이름
+        code: 종목코드
+        is_sub_call: 다른 스크립트에서 호출된 것인지 여부
+        
+        Returns: bool - 스크립트 실행 결과 (성공/실패)
         """
-        스크립트 실행 (개선 버전)
+        # 순환 참조 방지
+        script_key = f"{name}:{code}"
+        if script_key in self._running_scripts:
+            logging.warning(f"순환 참조 감지: {script_key}")
+            return False
         
-        Parameters:
-        - name: 실행할 스크립트 이름
-        - code: 종목 코드
-        - is_sub_call: 다른 스크립트에서 호출한 것인지 여부
-        
-        Returns:
-        - tuple: (성공 여부, 오류 유형, 결과값 또는 오류 메시지)
-            - 성공 여부: True/False
-            - 오류 유형: "success", "script_not_found", "circular_reference", "no_result_var", "syntax_error", "name_error", "runtime_error", "type_error"
-            - 결과값/메시지: 성공 시 불리언 결과값, 실패 시 오류 메시지
-        """
-        if name not in self.scripts:
-            return (False, "script_not_found", f"스크립트 '{name}'을 찾을 수 없습니다")
-            
-        # 이미 실행 중인 스크립트라면 순환 참조로 간주
-        if name in self.execution_stack:
-            return (False, "circular_reference", f"순환 참조 감지: {' -> '.join(self.execution_stack)} -> {name}")
-            
-        # 이전 상태 저장
-        prev_script = self.current_script
-        prev_code = self.script_code
-        
-        # 실행 환경 설정
-        self.current_script = name
-        self.script_code = code
-        self.execution_stack.append(name)
-        
-        # 글로벌 실행 환경 준비 (최소한의 필요한 함수만 제공)
-        globals_dict = {
-            'ChartManager': ChartManager,
-            'np': np,
-            'self': self,
-            'get_script_result': self.get_script_result,
-            'get_var': self.get_var
-        }
+        # 실행 중인 스크립트에 추가
+        self._running_scripts.add(script_key)
         
         try:
-            # 스크립트 실행
-            local_vars = {}
-            exec(self.scripts[name]['script'], globals_dict, local_vars)
+            # 스크립트 가져오기
+            script_data = self.get_script(name)
+            script = script_data.get('script', '')
+            vars_dict = script_data.get('vars', {})
             
-            # 반환값 확인 (result 변수 값)
-            if 'result' not in local_vars:
-                # 결과 변수가 없음
-                self.execution_stack.pop()
-                self.current_script = prev_script
-                self.script_code = prev_code
-                return (False, "no_result_var", f"스크립트에 'result' 변수가 없습니다")
+            if not script:
+                logging.warning(f"스크립트 없음: {name}")
+                self._running_scripts.remove(script_key)
+                return False
             
-            result = local_vars.get('result', None)
+            # 차트 매니저 생성 및 데이터 준비 상태 확인
+            if not self.chart_manager:
+                self.chart_manager = ChartManager()
             
-            # 결과가 불리언 타입인지 확인
-            if not isinstance(result, bool):
-                self.execution_stack.pop()
-                self.current_script = prev_script
-                self.script_code = prev_code
-                return (False, "type_error", f"'result' 변수가 불리언 타입이 아닙니다: {type(result)}")
+            # 차트 데이터 준비 상태 확인 (3분봉과 일봉 데이터가 있는지 확인)
+            chart_data = ChartData()  # 싱글톤이므로 항상 동일 인스턴스 반환
+            has_data = self._check_chart_data_ready(chart_data, code)
+            
+            if not has_data and not is_sub_call:
+                logging.warning(f"차트 데이터 준비되지 않음: {code}")
+                # 데이터 준비 시도
+                self._prepare_chart_data(chart_data, code)
+                # 다시 확인
+                has_data = self._check_chart_data_ready(chart_data, code)
+                if not has_data:
+                    logging.error(f"차트 데이터 준비 실패: {code}")
+                    self._running_scripts.remove(script_key)
+                    return False
+            
+            # 글로벌 환경 설정
+            globals_dict = {
+                # Python 내장 함수들
+                'range': range,
+                'len': len,
+                'int': int,
+                'float': float,
+                'str': str,
+                'bool': bool,
+                'max': max,
+                'min': min,
+                'sum': sum,
+                'abs': abs,
+                'all': all,
+                'any': any,
+                'round': round,
+                'sorted': sorted,
+                'enumerate': enumerate,
+                'zip': zip,
+                'list': list,
+                'dict': dict,
+                'set': set,
+                'tuple': tuple,
                 
-            # 실행 상태 복원
-            if not is_sub_call:
-                self.result_cache = {}  # 최상위 호출이 끝나면 캐시 초기화
+                # 모듈들
+                'math': math,
+                'logging': logging,
+                'datetime': datetime,
                 
-            self.execution_stack.pop()
-            self.current_script = prev_script
-            self.script_code = prev_code
+                # 차트 매니저
+                'ChartManager': ChartManager,
+                
+                # 유틸리티 함수
+                'loop': self._safe_loop,
+                'run_script': lambda sub_name: self.run_script(sub_name, code, True)
+            }
+                
+            # 변수 추가
+            for var_name, var_value in vars_dict.items():
+                globals_dict[var_name] = var_value
             
-            # 성공 여부와 결과를 함께 반환
-            return (True, "success", result)
+            # 컴파일 및 실행
+            code_obj = compile(script, f"<script_{name}>", 'exec')
+            locals_dict = {}
             
-        except SyntaxError as e:
-            # 문법 오류
-            self.execution_stack.pop()
-            self.current_script = prev_script
-            self.script_code = prev_code
-            return (False, "syntax_error", f"문법 오류: {e}")
+            # 실행 시간 측정
+            start_time = time.time()
             
-        except NameError as e:
-            # 변수나 함수를 찾을 수 없음
-            self.execution_stack.pop()
-            self.current_script = prev_script
-            self.script_code = prev_code
-            return (False, "name_error", f"변수 또는 함수 오류: {e}")
-            
+            try:
+                exec(code_obj, globals_dict, locals_dict)
+                exec_time = time.time() - start_time
+                
+                # 실행 시간이 너무 오래 걸리면 경고
+                if exec_time > 0.05:  # 50ms 이상 걸리면 경고
+                    logging.warning(f"스크립트 실행 시간 초과 ({name}:{code}): {exec_time:.4f}초")
+                
+                # 실행 결과 가져오기 (return 값)
+                result = locals_dict.get('result', True)
+                return bool(result)
+            except Exception as e:
+                if not is_sub_call:  # 하위 호출이 아닐 때만 상세 로깅
+                    tb = traceback.format_exc()
+                    logging.error(f"스크립트 실행 오류 ({name}:{code}): {type(e).__name__} - {e}\n{tb}")
+                else:
+                    logging.error(f"서브스크립트 실행 오류 ({name}:{code}): {type(e).__name__} - {e}")
+                return False
+        finally:
+            # 실행 완료 후 추적 목록에서 제거
+            self._running_scripts.remove(script_key)
+    
+    def _check_chart_data_ready(self, chart_data, code):
+        """차트 데이터가 준비되었는지 확인"""
+        if code not in chart_data._data:
+            return False
+        
+        # 3분봉과 일봉 데이터가 모두 있는지 확인 (가장 많이 사용하는 주기)
+        if 'mi3' not in chart_data._data[code] or 'dy' not in chart_data._data[code]:
+            return False
+        
+        # 데이터가 충분한지 확인 (빈 배열이 아닌지)
+        if not chart_data._data[code]['mi3'] or not chart_data._data[code]['dy']:
+            return False
+        
+        return True
+    
+    def _prepare_chart_data(self, chart_data, code):
+        """차트 데이터 준비"""
+        try:
+            # 1분봉과 일봉을 함께 가져오기 (내부적으로 3분봉도 생성됨)
+            chart_data.get_chart_data(code, 'mi', 1)
+            # 준비 완료까지 최대 1초 대기
+            max_wait = 1.0  # 1초
+            start_time = time.time()
+            while time.time() - start_time < max_wait:
+                if self._check_chart_data_ready(chart_data, code):
+                    return True
+                time.sleep(0.1)  # 100ms 대기
         except Exception as e:
-            # 기타 오류
-            self.execution_stack.pop()
-            self.current_script = prev_script
-            self.script_code = prev_code
-            
-            logging.debug(f"스크립트 '{name}' 실행 오류: {e}")
-            return (False, "runtime_error", f"실행 오류: {type(e).__name__} - {e}")
-                    
-    def get_script_result(self, script_name: str, code: str):
-        """
-        다른 스크립트의 결과 가져오기
-        (스크립트 내에서 다른 스크립트 호출 시 사용)
-        
-        Returns:
-        - boolean: 스크립트 실행 결과 (실패 시 False)
-        """
-        # 순환 참조 검사
-        if script_name in self.execution_stack:
-            logging.debug(f"순환 참조 감지: {' -> '.join(self.execution_stack)} -> {script_name}")
-            return False
-            
-        # 캐시 확인
-        cache_key = (script_name, code)
-        if cache_key in self.result_cache:
-            return self.result_cache[cache_key]
-            
-        # 스크립트 실행
-        success, error_type, result = self.run_script(script_name, code, is_sub_call=True)
-        
-        if not success:
-            logging.debug(f"서브스크립트 '{script_name}' 실행 실패: {error_type} - {result}")
-            return False
-        
-        # 결과 캐싱
-        self.result_cache[cache_key] = result
-        return result
+            logging.error(f"차트 데이터 준비 오류: {e}")
+        return False
 
-"""
-# 스크립트 실행을 위한 기본 설정
-# 'self.script_code'를 통해 종목 코드에 접근 가능
-# 'get_var(변수명, 기본값)'을 통해 변수에 접근 가능
-# 'get_script_result(스크립트명, 코드)'를 통해 다른 스크립트 결과 사용 가능
+"""        
+GOLDEN_CROSS_SCRIPT =
+# 차트 매니저 인스턴스 생성
+dy = ChartManager('dy')  # 일봉
 
-# ChartManager 인스턴스 생성 (필요한 차트 타입에 맞게 설정)
-ct_dy = ChartManager('dy')  # 일봉 차트
-ct_3m = ChartManager('mi', 3)  # 3분봉 차트
+# 단기 이동평균 계산
+short_ma = dy.ma(code, dy.c, short_period, 0, 'a')  # 5일 단순이동평균
+# 장기 이동평균 계산
+long_ma = dy.ma(code, dy.c, long_period, 0, 'a')   # 20일 단순이동평균
 
-# 변수 가져오기
-code = self.script_code
+# 골든 크로스 확인 (단기 이동평균이 장기 이동평균을 상향 돌파)
+is_golden_cross = dy.cross_up(code, 
+    lambda c, n: dy.ma(c, dy.c, short_period, n, 'a'), 
+    lambda c, n: dy.ma(c, dy.c, long_period, n, 'a'))
 
-# 기본 지표 계산
-ma5 = ct_dy.avg(code, ct_dy.c, 5)  # 5일 이동평균
-ma20 = ct_dy.avg(code, ct_dy.c, 20)  # 20일 이동평균
-current_price = ct_dy.c(code)  # 현재가
+# 결과 기록
+logging.debug(f"종목코드: {code}, 단기이평: {short_ma:.2f}, 장기이평: {long_ma:.2f}, 골든크로스: {is_golden_cross}")
 
-# 추가 기술 지표 계산
-rsi_value = ct_dy.rsi(code, 14)  # 14일 RSI
-bb_upper, bb_middle, bb_lower = ct_dy.bollinger_bands(code, 20, 2)  # 볼린저 밴드
-
-# 추세 확인
-uptrend = ct_dy.is_uptrend(code, 20)  # 20일 기준 상승 추세 여부
-downtrend = ct_dy.is_downtrend(code, 20)  # 20일 기준 하락 추세 여부
-
-# 캔들 패턴 확인
-hammer_detected = ct_dy.is_hammer(code)  # 망치형 캔들 확인
-doji_detected = ct_dy.is_doji(code)  # 도지 캔들 확인
-engulfing_bullish = ct_dy.is_engulfing(code, 0, True)  # 상승 포괄 패턴 확인
-
-# 추가 조건 계산
-price_above_ma20 = current_price > ma20  # 현재가가 20일 이평선 위에 있는지
-golden_cross = ct_dy.cross_up(ct_dy.c, lambda code, n: ct_dy.avg(code, ct_dy.c, 5, n), 
-                             lambda code, n: ct_dy.avg(code, ct_dy.c, 20, n))  # 5일선이 20일선 상향돌파
-
-# 다른 스크립트 결과 사용 예시
-# macd_signal = get_script_result('macd_signal', code)
-
-# 최종 매매 신호 결정 (예시)
-buy_signal = (uptrend and price_above_ma20 and (rsi_value < 70) and 
-              (hammer_detected or engulfing_bullish or golden_cross))
-sell_signal = downtrend and (rsi_value > 30) and current_price < bb_lower
-
-# 결과 저장 (반드시 불리언 값을 result 변수에 저장해야 함)
-result = buy_signal  # 매수 신호를 반환하는 경우
+# 결과 반환 (True이면 매수 신호)
+result = is_golden_cross
 """
 
-# 골든 크로스 확인 스크립트
-"""
-# 골든 크로스 감지 스크립트 (단기 이평선이 장기 이평선을 상향돌파)
-ct_dy = ChartManager('dy')
-code = self.script_code
-
-# 변수 가져오기
-short_period = get_var('short_period', 5)  # 기본값 5일
-long_period = get_var('long_period', 20)  # 기본값 20일
-
-# 단기, 장기 이동평균 계산
-short_ma = ct_dy.avg(code, ct_dy.c, short_period)
-long_ma = ct_dy.avg(code, ct_dy.c, long_period)
-prev_short_ma = ct_dy.avg(code, ct_dy.c, short_period, 1)
-prev_long_ma = ct_dy.avg(code, ct_dy.c, long_period, 1)
-
-# 골든 크로스 조건: 이전에는 단기선이 장기선보다 낮았고, 현재는 높음
-golden_cross = (prev_short_ma < prev_long_ma) and (short_ma > long_ma)
-
-result = golden_cross
-"""
-
-# RSI 과매수/과매도 판단 스크립트
-"""
-# RSI 기반 매매 신호 스크립트
-ct_dy = ChartManager('dy')
-code = self.script_code
-
-# 변수 가져오기
-rsi_period = get_var('rsi_period', 14)  # RSI 기간
-oversold = get_var('oversold', 30)      # 과매도 기준값
-overbought = get_var('overbought', 70)  # 과매수 기준값
-signal_type = get_var('signal_type', 'buy')  # 신호 타입 (buy 또는 sell)
-
-# RSI 계산
-rsi_value = ct_dy.rsi(code, rsi_period)
-
-# 신호 판단
-buy_signal = rsi_value < oversold   # 과매도 상태 (매수 신호)
-sell_signal = rsi_value > overbought  # 과매수 상태 (매도 신호)
-
-# 결과 반환 (signal_type에 따라 반환값 결정)
-if signal_type == 'buy':
-    result = buy_signal
-else:
-    result = sell_signal
-"""
-
-# 볼린저 밴드 돌파 스크립트
-"""
-# 볼린저 밴드 돌파 감지 스크립트
-ct_dy = ChartManager('dy')
-code = self.script_code
-
-# 변수 가져오기
-period = get_var('period', 20)       # 기간
-std_dev = get_var('std_dev', 2)      # 표준편차 배수
-signal_type = get_var('signal_type', 'breakthrough')  # 신호 타입
-
-# 볼린저 밴드 계산
-upper_band, middle_band, lower_band = ct_dy.bollinger_bands(code, period, std_dev)
-current_price = ct_dy.c(code)
-
-# 신호 판단
-upper_breakthrough = current_price > upper_band  # 상단 돌파
-lower_breakthrough = current_price < lower_band  # 하단 돌파
-prev_price = ct_dy.c(code, 1)
-reversal_up = (prev_price < lower_band) and (current_price > prev_price)  # 하단에서 반등
-reversal_down = (prev_price > upper_band) and (current_price < prev_price)  # 상단에서 반락
-
-# 결과 반환 (signal_type에 따라 반환값 결정)
-if signal_type == 'breakthrough_upper':
-    result = upper_breakthrough
-elif signal_type == 'breakthrough_lower':
-    result = lower_breakthrough
-elif signal_type == 'reversal_up':
-    result = reversal_up
-elif signal_type == 'reversal_down':
-    result = reversal_down
-else:  # 기본값: 아무 밴드든 돌파
-    result = upper_breakthrough or lower_breakthrough
-"""
-
-# MACD 신호 스크립트
-"""
-# MACD 신호선 교차 감지 스크립트
-ct_dy = ChartManager('dy')
-code = self.script_code
-
-# 변수 가져오기
-fast_period = get_var('fast_period', 12)
-slow_period = get_var('slow_period', 26)
-signal_period = get_var('signal_period', 9)
-signal_type = get_var('signal_type', 'buy')  # 'buy' 또는 'sell'
-
-# 현재 MACD 값 계산
-macd_line, signal_line, histogram = ct_dy.macd(code, fast_period, slow_period, signal_period)
-
-# 이전 MACD 값 계산
-prev_macd_line, prev_signal_line, prev_histogram = ct_dy.macd(code, fast_period, slow_period, signal_period, 1)
-
-# 신호 판단
-buy_signal = (prev_macd_line < prev_signal_line) and (macd_line > signal_line)  # 상향 교차 (매수)
-sell_signal = (prev_macd_line > prev_signal_line) and (macd_line < signal_line)  # 하향 교차 (매도)
-
-# 결과 반환
-if signal_type == 'buy':
-    result = buy_signal
-else:
-    result = sell_signal
-"""

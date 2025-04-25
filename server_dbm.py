@@ -13,6 +13,7 @@ class DBMServer:
         self.daily_cursor = None
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
+        self.dict_minute_data = {}
 
         self.init_db()
 
@@ -106,6 +107,27 @@ class DBMServer:
         if pk_columns:
             field_definitions.append(f"PRIMARY KEY ({', '.join(pk_columns)})")
         return f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(field_definitions)});"
+
+    # 2. 오래된 데이터 정리 함수
+    def cleanup_old_data(self):
+        """monitor 테이블에서 3개월 이상 지난 데이터 삭제"""
+        try:
+            # 현재 날짜로부터 3개월 이전 날짜 계산
+            three_months_ago = datetime.now() - timedelta(days=90)
+            date_str = three_months_ago.strftime('%Y-%m-%d')
+            
+            # 3개월 이전 데이터 삭제
+            sql = f"DELETE FROM {dc.ddb.MON_TABLE_NAME} WHERE DATE(처리일시) < ?"
+            self.execute_query(sql, db='db', params=(date_str,))
+            
+            deleted_rows = self.cursor.rowcount
+            logging.info(f"monitor 테이블에서 {date_str} 이전 데이터 {deleted_rows}건 삭제 완료")
+            
+            # 데이터베이스 최적화 (VACUUM)
+            self.execute_query("VACUUM", db='db')
+            
+        except Exception as e:
+            logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)
 
     def send_result(self, result, error=None):
         order = 'dbm_query_result'
@@ -228,84 +250,27 @@ class DBMServer:
             logging.error(f"upsert_conclusion error: {e}", exc_info=True)
             return False
         
-    def update_charts(self, params):
-        def make_time_frames(code, price, volume, timestamp, periods=[1,3,5]):
-            for period in periods:
-                period_key = timestamp.minute // period
-
-                query = "SELECT * FROM charts WHERE code=? AND period=? ORDER BY timestamp DESC LIMIT 1"
-                self.cursor.execute(query, (code, period_key))
-                last_data = self.cursor.fetchone()
-
-                if not last_data:
-                    data = {
-                        'code': code,
-                        'period': period_key,
-                        'open': price,
-                        'high': price,
-                        'low': price,
-                        'close': price,
-                        'volume': volume,
-                        'timestamp': timestamp
-                    }
-                else:
-                    data = last_data.copy()
-                    data.update({
-                        'high': max(last_data['high'], price),
-                        'low': min(last_data['low'], price),
-                        'close': price,
-                        'volume': last_data['volume'] + volume
-                    })
-
-                sql = "INSERT OR REPLACE INTO charts VALUES (?,?,?,?,?,?,?,?)"
-                self.execute_query(sql, 'daily', tuple(data.values()))
-        make_time_frames(params['code'], params['price'], params['volume'], params['stamp'])
-
-    def check_ma_down(self, params):
-        code, tick, ma = params['code'], params['tick'], params['ma']
-
-        query = """
-        SELECT * FROM charts
-        WHERE code=? AND period=?
-        ORDER BY timestamp DESC LIMIT 4
-        """
-        self.cursor.execute(query, (code, tick))
-        candles = self.cursor.fetchall()
-
-        if len(candles) < 4:
-            return False
-
-        last_prices = [c['close'] for c in candles]
-        is_three_up = all(last_prices[i] > last_prices[i-1] for i in range(1, 3))
-        is_current_down = last_prices[3] < last_prices[2]
-
-        return is_three_up and is_current_down
-
     def receive_current_price(self, code, dictFID):
         pass
-
-    # 2. 오래된 데이터 정리 함수
-    def cleanup_old_data(self):
-        """monitor 테이블에서 3개월 이상 지난 데이터 삭제"""
-        try:
-            # 현재 날짜로부터 3개월 이전 날짜 계산
-            three_months_ago = datetime.now() - timedelta(days=90)
-            date_str = three_months_ago.strftime('%Y-%m-%d')
-            
-            # 3개월 이전 데이터 삭제
-            sql = f"DELETE FROM {dc.ddb.MON_TABLE_NAME} WHERE DATE(처리일시) < ?"
-            self.execute_query(sql, db='db', params=(date_str,))
-            
-            deleted_rows = self.cursor.rowcount
-            logging.info(f"monitor 테이블에서 {date_str} 이전 데이터 {deleted_rows}건 삭제 완료")
-            
-            # 데이터베이스 최적화 (VACUUM)
-            self.execute_query("VACUUM", db='db')
-            
-        except Exception as e:
-            logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)
 
     def get_minute_data(self, code, tick=3, all=False):
         df = la.answer('admin', 'dbm_get_minute_data', code=code, tick=tick, all=all)
         return df
 
+    def update_minute_data(self, code, dictFID):
+        try:
+            if code not in self.dict_minute_data:
+                dict_data = la.answer('admin', 'com_get_chart_data', code=code, cycle='mi', tick=1)
+                if dict_data:
+                    logging.debug(f'update_minute_data: {code} {dict_data}')
+                    self.dict_minute_data[code] = dict_data
+                else:
+                    logging.error(f"update_minute_data error: {code} {dict_data}")
+            else:
+                dict_data = self.dict_minute_data[code]
+                logging.debug(f'already update_minute_data: {code} {dict_data}')
+
+            return dict_data
+        except Exception as e:
+            logging.error(f"update_minute_data exception: {e}", exc_info=True)
+            return None

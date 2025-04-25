@@ -72,14 +72,11 @@ class APIServer():
             screen = dc.화면[rqname] if not screen else screen
             for key, value in input.items(): self.SetInputValue(key, value)
             ret = self.CommRqData(rqname, trcode, next, screen)
-            #logging.warning(f"** TR 요청 결과 **: {rqname} {trcode} {screen} ret={ret}/ret_type={type(ret)}")
+            logging.warning(f"** TR 요청 결과 **: {rqname} {trcode} {screen} ret={ret}/ret_type={type(ret)}")
 
             start_time = time.time()
             while not self.tr_received:
-                for _ in range(10):
-                    pythoncom.PumpWaitingMessages()
-                    if self.tr_received: break
-                time.sleep(0.01)
+                pythoncom.PumpWaitingMessages()
                 if time.time() - start_time > timeout:
                     logging.warning(f"Timeout while waiting for {rqname} data")
                     return None, False
@@ -116,6 +113,7 @@ class APIServer():
 
     def SetInputValue(self, id, value):
         self.ocx.dynamicCall("SetInputValue(QString, QString)", id, value)
+        logging.debug(f'SetInputValue: id={id}, value={value}')
 
     # 요청 메서드(일회성 콜백 발생 ) ---------------------------------------------------------------------------------
     def CommConnect(self, block=True):
@@ -142,6 +140,7 @@ class APIServer():
 
     def CommRqData(self, rqname, trcode, next, screen):
         ret = self.ocx.dynamicCall("CommRqData(QString, QString, int, QString)", rqname, trcode, next, screen)
+        logging.debug(f'CommRqData: rqname={rqname}, trcode={trcode}, next={next}, screen={screen}, ret={ret}')
         return ret
 
     # 요청 메서드(실시간 콜백 발생 ) ---------------------------------------------------------------------------------

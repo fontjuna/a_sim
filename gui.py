@@ -684,7 +684,7 @@ class GUI(QMainWindow, form_class):
             logging.error(f'스크립트 선택 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_script_new(self):
-        self.btnScriptSave.setEnabled(True)
+        self.btnScriptSave.setEnabled(False)
         self.ledScriptName.setText('')
         self.txtScript.setText('')
         self.tblScriptVar.setRowCount(0)
@@ -725,11 +725,16 @@ class GUI(QMainWindow, form_class):
         try:
             name = self.ledScriptName.text().strip()
             script = self.txtScript.toPlainText().strip()
-            if gm.scm.check_script(name, script):
+            vars = {}
+            for row in range(self.tblScriptVar.rowCount()):
+                key = self.tblScriptVar.item(row, 0).text().strip()
+                value = self.tblScriptVar.item(row, 1).text()
+                vars[key] = float(value) if value else 0.0
+            if gm.scm.check_script(name, {'script': script, 'vars': vars}):
                 QMessageBox.information(self, '알림', '스크립트에 이상이 없습니다.')
                 self.btnScriptSave.setEnabled(True)
             else:
-                QMessageBox.critical(self, '에러', '스크립트에 이상이 있습니다.')
+                QMessageBox.critical(self, '에러', '스크립트 작성 에러!')
                 self.btnScriptSave.setEnabled(False)
         except Exception as e:
             logging.error(f'스크립트 확인 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -743,8 +748,7 @@ class GUI(QMainWindow, form_class):
                 key = self.tblScriptVar.item(row, 0).text().strip()
                 value = self.tblScriptVar.item(row, 1).text()
                 vars[key] = float(value) if value else 0.0
-            gm.scm.set_script(name, script)
-            gm.scm.set_vars(name, vars)
+            gm.scm.set_script(name, script, vars)
             gm.스크립트.set(key=name, data={'스크립트': script, '변수': json.dumps(vars)})
             gm.스크립트.update_table_widget(self.tblScript)
         except Exception as e:
