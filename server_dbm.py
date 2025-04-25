@@ -14,7 +14,6 @@ class DBMServer:
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
         self.dict_minute_data = {}
-        self.admin_proxy = None
 
         self.init_dbm()
 
@@ -37,6 +36,10 @@ class DBMServer:
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
         logging.debug(f'DBM 로그 레벨 설정: {level}')
+
+    def set_rate(self, fee_rate, tax_rate):
+        self.fee_rate = fee_rate
+        self.tax_rate = tax_rate    
 
     # 디비 초기화 --------------------------------------------------------------------------------------------------
     def init_dbm(self):
@@ -130,17 +133,13 @@ class DBMServer:
         except Exception as e:
             logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)
 
-    def set_admin_proxy(self):
-        self.admin_proxy = self._pm.get_proxy('admin')
-
     def send_result(self, result, error=None):
         order = 'dbm_query_result'
         work = {
             'result': result,
             'error': error
         }
-        #la.work('admin', order, **work)
-        self.admin_proxy.work(order, **work)
+        self.request_to_admin(order, **work)
 
     def execute_query(self, sql, db='daily', params=None):
         try:
@@ -259,23 +258,16 @@ class DBMServer:
         pass
 
     def get_minute_data(self, code, tick=3, all=False):
-        df = self.admin_proxy.dbm_get_minute_data(code=code, tick=tick, all=all)
+        df = self.request_to_admin('dbm_get_minute_data', code=code, tick=tick, all=all)
         return df
 
-    def update_minute_data(self, code, dictFID):
-        try:
-            if code not in self.dict_minute_data:
-                dict_data = self.admin_proxy.com_get_chart_data(code=code, cycle='mi', tick=1)
-                if dict_data:
-                    logging.debug(f'update_minute_data: {code} {dict_data}')
-                    self.dict_minute_data[code] = dict_data
-                else:
-                    logging.error(f"update_minute_data error: {code} {dict_data}")
-            else:
-                dict_data = self.dict_minute_data[code]
-                logging.debug(f'already update_minute_data: {code} {dict_data}')
+    def update_minute_data(self, code):
 
-            return dict_data
-        except Exception as e:
-            logging.error(f"update_minute_data exception: {e}", exc_info=True)
+        logging.debug(f'update_minute_data received: {code}')
+        data = self.request_to_admin('com_get_chart_data', code=code, cycle='mi', tick=1)
+        if data:
+            logging.debug(f'update_minute_data answer: {data[:1]}')
+            return data
+        else:
+            logging.error(f'update_minute_data error: {code}')
             return None

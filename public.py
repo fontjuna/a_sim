@@ -769,7 +769,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     cdt = None # 챠트 데이타
     scm = None # 스크립트 매니저
     
-    pm = None # 프로세스 매니저
+    ipc = None # 프로세스 매니저
     dbm_proxy = None # 데이타베이스 프록시
     admin_proxy = None # 관리자 프록시
 

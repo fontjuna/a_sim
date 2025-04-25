@@ -1,5 +1,5 @@
-from classes import la, Work
-from public import dc, gm, hoga
+from classes import la
+from public import Work, dc, gm, hoga
 from PyQt5.QtCore import QTimer
 from datetime import datetime
 import logging
