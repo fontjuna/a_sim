@@ -1133,10 +1133,11 @@ class CounterTicker:
                         update = True
             if update: self.save_data()
     
-    def set_batch(self, strategy, data):
+    def set_batch(self, data):
         with self.lock:
-            for code, name in data.items():
-                self.set(strategy, code, name)
+            for strategy, codes in data.items(): 
+                for code, name in codes.items():
+                    self.set(strategy, code, name)
             self.save_data()
 
     def set(self, strategy, code, name, limit=0):
@@ -1448,5 +1449,3 @@ def admin_listener_thread(admin_instance, input_queue, result_dict, callbacks):
    
    finally:
       logging.info("Admin 리스너 쓰레드 종료")
-
-#ipc = IPCManager()

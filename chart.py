@@ -13,281 +13,73 @@ import traceback
 import re
 import math
 import queue
-class ChartData:
+from typing import Dict, List, Any, Union, Optional, Tuple
+from datetime import datetime
+import time
+import logging
 
+class ChartData:
     """차트 데이터를 관리하는 싱글톤 클래스"""
     _instance = None
-    _lock = Lock()  # 멀티스레드 환경을 위한 락
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(ChartData, cls).__new__(cls)
             cls._instance._data = {}  # {code: {cycle: data}}
-            cls._instance._requests = {}  # {code: timestamp} - 요청 중복 방지용
-            cls._instance._is_working = False
-            cls._instance._update_queue = queue.Queue()  # 가격 업데이트 큐
-            cls._instance._worker_thread = None #threading.Thread(target=cls._worker_process)
-            cls._instance._running = False
+            cls._instance._active_requests = {}  # 활성 요청 추적
         return cls._instance
     
     def __init__(self):
         if hasattr(self, "_initialized"):
             return
         self._initialized = True
-        self._start_worker()
-
-    def _start_worker(self):
-        """업데이트 워커 스레드 시작"""
-        if self._worker_thread is not None and self._worker_thread.is_alive():
-            return  # 이미 실행 중이면 무시
-        
-        self._running = True
-        self._worker_thread = Thread(target=self._update_worker, daemon=True)
-        self._worker_thread.start()
-        logging.info("차트 데이터 업데이트 워커 스레드 시작")
     
-    def _stop_worker(self):
-        """업데이트 워커 스레드 중지"""
-        self._running = False
-        if self._worker_thread is not None:
-            self._worker_thread.join(timeout=2.0)  # 최대 2초 대기
-            if self._worker_thread.is_alive():
-                logging.warning("업데이트 워커 스레드 종료 대기 시간 초과")
-            self._worker_thread = None
-    
-    def _update_worker(self):
-        """업데이트 큐에서 요청을 읽어 처리하는 워커 스레드"""
-        while self._running:
-            try:
-                # 큐에서 요청 가져오기 (최대 0.1초 대기)
-                try:
-                    if self._is_working: 
-                        time.sleep(0.01)
-                        continue
-                    update_params = self._update_queue.get(timeout=0.1)
-                except queue.Empty:
-                    continue  # 큐가 비어있으면 다음 반복으로
-                
-                # 업데이트 요청 처리
-                try:
-                    code, price, volume, amount, datetime_str = update_params
-                    self.update_price(code, price, volume, amount, datetime_str)
-                except Exception as e:
-                    logging.error(f"차트 데이터 업데이트 오류: {e}", exc_info=True)
-                finally:
-                    # 작업 완료 표시
-                    self._update_queue.task_done()
-            
-            except Exception as e:
-                logging.error(f"업데이트 워커 스레드 오류: {e}", exc_info=True)
-                time.sleep(0.01)  # 오류 발생 시 잠시 대기
-    
-    def queue_update(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """가격 업데이트 요청을 큐에 추가 (외부에서 호출하는 메서드)"""
-        self._update_queue.put((code, price, volume, amount, datetime_str))
+    def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
+        """외부에서 차트 데이터 설정
         
-        # 워커 스레드가 실행 중이 아니면 시작
-        if not self._running or self._worker_thread is None or not self._worker_thread.is_alive():
-            self._start_worker()
-
-    def update_price(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """실시간 가격 정보 업데이트 (사용 빈도 최적화 버전)"""
-        try:
-            self._is_working = True
-            # 해당 종목 차트 데이터가 없으면 초기화 (1분봉과 일봉 함께 로드)
-            if code not in self._data:
-                self._init_chart_data(code)
-            
-            # 1분봉 업데이트
-            minute_data = self._data[code].get('mi1', [])
-            
-            datetime_str = datetime.now().strftime('%Y%m%d%H%M%S')
-
-            # 데이터가 없거나 새로운 분에 진입한 경우 새 봉 생성
-            if not minute_data or self._is_new_minute(minute_data[0]['체결시간'], datetime_str):
-                # 새로운 1분봉 추가
-                new_candle = {
-                    '종목코드': code,
-                    '체결시간': datetime_str[:12] + '00',  # 분 단위로 맞춤
-                    '현재가': price,
-                    '시가': price,
-                    '고가': price,
-                    '저가': price,
-                    '거래량': volume,
-                    '거래대금': amount
-                }
-                minute_data.insert(0, new_candle)
-            else:
-                # 기존 1분봉 업데이트
-                current = minute_data[0]
-                current['현재가'] = price
-                current['고가'] = max(current['고가'], price)
-                current['저가'] = min(current['저가'], price)
-                current['거래량'] = volume
-                current['거래대금'] = amount
-            
-            # 업데이트된 데이터 저장
-            self._data[code]['mi1'] = minute_data
-            
-            # 가장 많이 사용하는 3분봉과 일부 다른 주기 업데이트
-            # 사용 빈도에 따라 선택적으로 업데이트
-            # 3분봉은 항상 업데이트 (80% 사용 빈도)
-            self._update_minute_chart(code, 3, datetime_str)
-            
-            # 다른 주기 분봉 업데이트 (필요한 경우에만)
-            current_minute = int(datetime_str[8:10]) * 60 + int(datetime_str[10:12])
-            # 5분이 시작될 때만 5분봉 업데이트 (리소스 최적화)
-            if current_minute % 5 == 0 and 'mi5' in self._data.get(code, {}):
-                self._update_minute_chart(code, 5, datetime_str)
-            # 10분이 시작될 때만 10분봉 업데이트
-            if current_minute % 10 == 0 and 'mi10' in self._data.get(code, {}):
-                self._update_minute_chart(code, 10, datetime_str)
-            # 15분이 시작될 때만 15분봉 업데이트
-            if current_minute % 15 == 0 and 'mi15' in self._data.get(code, {}):
-                self._update_minute_chart(code, 15, datetime_str)
-            # 30분이 시작될 때만 30분봉 업데이트
-            if current_minute % 30 == 0 and 'mi30' in self._data.get(code, {}):
-                self._update_minute_chart(code, 30, datetime_str)
-            # 60분이 시작될 때만 60분봉 업데이트
-            if current_minute % 60 == 0 and 'mi60' in self._data.get(code, {}):
-                self._update_minute_chart(code, 60, datetime_str)
-            # 일봉 업데이트 (당일 데이터) - 19% 사용 빈도
-            if 'dy' in self._data.get(code, {}):
-                self._update_day_chart(code, price, volume, amount, datetime_str)
-        except Exception as e:
-            logging.error(f"차트 데이터 업데이트 오류: {e}", exc_info=True)
-        finally:
-            self._is_working = False
-
-    def _init_chart_data(self, code: str):
-        """종목코드에 대한 차트 데이터 초기화 (1분봉과 일봉 함께 요청)"""
-        self._data[code] = {}
-        
-        # 서버에서 기본 데이터 가져오기 (중복 요청 방지)
-        current_time = time.time()
-        if code in self._requests and current_time - self._requests[code] < 1.0:
-            # 최근 1초 내에 요청된 경우 중복 요청 방지
-            logging.debug(f"중복 요청 방지: {code}")
+        Args:
+            code: 종목코드
+            data: 차트 데이터 사전 리스트 (인덱스 0이 최근 데이터)
+            cycle: 주기 ('mi', 'dy', 'wk', 'mo')
+            tick: 분봉 주기 (cycle이 'mi'일 경우)
+        """
+        if not data:
             return
-        
-        self._requests[code] = current_time
-        
-        # 1분봉과 일봉 데이터를 동시에 가져오기
-        minute_data = self._get_chart_data(code, 'mi', 1)
-        day_data = self._get_chart_data(code, 'dy')
-        
-        # 데이터 저장
-        if minute_data:
-            self._data[code]['mi1'] = minute_data
-            # 1분봉 데이터로부터 3분봉 즉시 생성 (가장 많이 사용하는 주기)
-            self._data[code]['mi3'] = self._aggregate_minute_data(minute_data, 3)
             
-        if day_data:
-            self._data[code]['dy'] = day_data
+        cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
+        
+        if code not in self._data:
+            self._data[code] = {}
+        
+        self._data[code][cycle_key] = data
+        
+        # 3분봉 데이터 초기화 (1분봉으로부터 생성)
+        if cycle == 'mi' and tick == 1 and 'mi3' not in self._data[code]:
+            self._data[code]['mi3'] = self._aggregate_minute_data(data, 3)
     
-    def _is_new_minute(self, last_time: str, current_time: str) -> bool:
-        """새로운 분봉이 시작되었는지 확인"""
-        # 시간 형식: YYYYMMDDHHmm
-        if len(last_time) >= 12 and len(current_time) >= 12:
-            return last_time[:12] != current_time[:12]
-        return True
-    
-    def _update_minute_chart(self, code: str, tick: int, datetime_str: str):
-        """특정 tick 주기의 분봉 업데이트 (항상 1분봉 데이터로부터 생성)"""
-        # 1분봉 데이터 필요
-        minute_data = self._data[code].get('mi1', [])
-        if not minute_data:
+    def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
+        """실시간 가격 정보로 차트 데이터 업데이트
+        
+        Args:
+            code: 종목코드
+            price: 현재가
+            volume: 누적 거래량
+            amount: 누적 거래대금
+            datetime_str: 체결시간 ('yyyymmddhhmmss')
+        """
+        # 등록되지 않은 코드는 무시
+        if code not in self._data or 'mi1' not in self._data[code]:
             return
-        
-        tick_key = f'mi{tick}'
-        
-        # 새 틱 차트 생성 필요 여부 확인
-        if not datetime_str:
-            datetime_str = datetime.now().strftime('%Y%m%d%H%M%S')
-
-        current_minute = int(datetime_str[8:10]) * 60 + int(datetime_str[10:12])
-        is_new_tick = current_minute % tick == 0
-        
-        # 3분봉 특별 처리 (가장 많이 사용하는 주기)
-        is_three_minute = (tick == 3)
-        
-        # 해당 틱 데이터가 없으면 1분봉으로부터 생성 (서버 요청 최소화)
-        if tick_key not in self._data[code]:
-            self._data[code][tick_key] = self._aggregate_minute_data(minute_data, tick)
-        elif is_new_tick and datetime_str[12:14] == '00':  # 정확히 틱 시작점
-            # 기존 데이터 있고 새 틱 시작이면 새 봉 추가
-            current = minute_data[0]
-            tick_data = self._data[code][tick_key]
             
+        # 1분봉 업데이트
+        minute_data = self._data[code]['mi1']
+        
+        # 데이터가 없거나 새로운 분에 진입한 경우 새 봉 생성
+        if not minute_data or self._is_new_minute(minute_data[0]['체결시간'], datetime_str):
+            # 새로운 1분봉 추가
             new_candle = {
                 '종목코드': code,
-                '체결시간': datetime_str[:12] + '00',
-                '현재가': current['현재가'],
-                '시가': current['시가'],
-                '고가': current['고가'],
-                '저가': current['저가'],
-                '거래량': current['거래량'],
-                '거래대금': current['거래대금']
-            }
-            tick_data.insert(0, new_candle)
-            self._data[code][tick_key] = tick_data
-        else:
-            # 현재 진행 중인 틱 업데이트
-            if self._data[code][tick_key]:
-                current_minute = int(datetime_str[8:10]) * 60 + int(datetime_str[10:12])
-                tick_start = (current_minute // tick) * tick
-                tick_time = datetime_str[:8] + f"{tick_start//60:02d}{tick_start%60:02d}00"
-                
-                # 최신 틱 찾기
-                for i, candle in enumerate(self._data[code][tick_key]):
-                    if candle['체결시간'] == tick_time:
-                        # 현재 틱 업데이트
-                        current = minute_data[0]
-                        candle['현재가'] = current['현재가']
-                        candle['고가'] = max(candle['고가'], current['현재가'])
-                        candle['저가'] = min(candle['저가'], current['현재가'])
-                        # 거래량은 누적값이므로 정확한 업데이트가 필요
-                        if is_three_minute:  # 3분봉은 중요하므로 정확한 거래량 계산
-                            # 1분봉 데이터에서 현재 틱에 해당하는 기간의 거래량 합산
-                            total_volume = 0
-                            for j in range(min(tick, len(minute_data))):
-                                m_time = minute_data[j]['체결시간']
-                                m_minute = int(m_time[8:10]) * 60 + int(m_time[10:12])
-                                if tick_start <= m_minute < tick_start + tick:
-                                    total_volume += minute_data[j]['거래량']
-                            candle['거래량'] = total_volume
-                        break
-    
-    def _update_day_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """일봉 데이터 업데이트 (당일)"""
-        day_key = 'dy'
-        today = datetime_str[:8]  # YYYYMMDD
-        
-        # 일봉 데이터 확인
-        if day_key not in self._data[code] or not self._data[code][day_key]:
-            # 서버에서 일봉 데이터 가져오기
-            day_data = self._get_chart_data(code, 'dy')
-            if day_data:
-                self._data[code][day_key] = day_data
-            else:
-                return
-        
-        # 당일 데이터 업데이트
-        day_data = self._data[code][day_key]
-        
-        # 최신 일봉이 당일인지 확인
-        if day_data and day_data[0]['일자'] == today:
-            current = day_data[0]
-            current['현재가'] = price
-            current['고가'] = max(current['고가'], price)
-            current['저가'] = min(current['저가'], price)
-            current['거래량'] = volume
-            current['거래대금'] = amount
-        elif day_data:
-            # 당일 데이터 없으면 추가
-            new_day = {
-                '종목코드': code,
-                '일자': today,
+                '체결시간': datetime_str[:12] + '00',  # 분 단위로 맞춤
                 '현재가': price,
                 '시가': price,
                 '고가': price,
@@ -295,7 +87,64 @@ class ChartData:
                 '거래량': volume,
                 '거래대금': amount
             }
-            day_data.insert(0, new_day)
+            minute_data.insert(0, new_candle)
+        else:
+            # 기존 1분봉 업데이트
+            current = minute_data[0]
+            current['현재가'] = price
+            current['고가'] = max(current['고가'], price)
+            current['저가'] = min(current['저가'], price)
+            current['거래량'] = volume
+            current['거래대금'] = amount
+        
+        # 3분봉 업데이트
+        self._update_3minute_chart(code, datetime_str)
+        
+        # 일봉 업데이트 (있는 경우에만)
+        if 'dy' in self._data[code]:
+            self._update_day_chart(code, price, volume, amount, datetime_str)
+    
+    def get_chart_data(self, code: str, cycle: str, tick: int = None) -> list:
+        """특정 종목, 주기의 차트 데이터 반환
+        
+        Args:
+            code: 종목코드
+            cycle: 주기 ('mi', 'dy', 'wk', 'mo')
+            tick: 분봉 주기 (cycle이 'mi'일 경우)
+            
+        Returns:
+            list: 차트 데이터 사전 리스트 (인덱스 0이 최신)
+        """
+        # 등록되지 않은 코드면 빈 리스트 반환
+        if code not in self._data:
+            return []
+        
+        cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
+        
+        # 1분봉, 3분봉, 일봉은 있으면 바로 반환
+        if cycle_key in ['mi1', 'mi3', 'dy'] and cycle_key in self._data[code]:
+            return self._data[code][cycle_key]
+        
+        # 다른 분봉은 1분봉에서 생성
+        if cycle == 'mi' and 'mi1' in self._data[code]:
+            return self._aggregate_minute_data(self._data[code]['mi1'], tick)
+        
+        # 주봉, 월봉은 없으면 서버에서 가져오기
+        if cycle in ['wk', 'mo'] and cycle not in self._data[code]:
+            data = self._get_chart_data(code, cycle)
+            if data:
+                self.set_chart_data(code, data, cycle)
+                return data
+        
+        # 이미 데이터가 있으면 반환
+        return self._data.get(code, {}).get(cycle_key, [])
+    
+    def _is_new_minute(self, last_time: str, current_time: str) -> bool:
+        """새로운 분봉이 시작되었는지 확인"""
+        # 시간 형식: YYYYMMDDHHmm
+        if len(last_time) >= 12 and len(current_time) >= 12:
+            return last_time[:12] != current_time[:12]
+        return True
     
     def _aggregate_minute_data(self, minute_data: list, tick: int) -> list:
         """1분봉 데이터를 특정 tick으로 집계"""
@@ -341,63 +190,100 @@ class ChartData:
         result.sort(key=lambda x: x['체결시간'], reverse=True)
         return result
     
-    def get_chart_data(self, code: str, cycle: str, tick: int = None) -> list:
-        """특정 종목, 주기의 차트 데이터 반환 (외부용)
-        사용 빈도를 고려한 최적화:
-        - 분봉(mi)은 1분봉에서 파생 (서버 요청 최소화)
-        - 일봉(dy)은 1분봉 요청 시 함께 처리
-        - 주봉(wk)과 월봉(mo)은 요청 시에만 서버에 요청
-        """
-        with self._lock:
-            # 분봉의 경우 특별 처리
-            if cycle == 'mi':
-                cycle_key = f'mi{tick}'
-                
-                # 데이터가 없으면 기본 데이터 먼저 가져옴
-                if code not in self._data:
-                    self._init_chart_data(code)  # 1분봉과 일봉 데이터 함께 가져옴
-                
-                # 1분봉 데이터는 있지만 요청한 tick의 분봉이 없는 경우
-                if code in self._data and 'mi1' in self._data[code] and cycle_key not in self._data[code]:
-                    # 분봉 데이터는 1분봉으로부터 생성 (서버 요청 없음)
-                    minute_data = self._data[code]['mi1']
-                    self._data[code][cycle_key] = self._aggregate_minute_data(minute_data, tick)
+    def _update_3minute_chart(self, code: str, datetime_str: str):
+        """3분봉 업데이트"""
+        # 1분봉 데이터 필요
+        minute_data = self._data[code].get('mi1', [])
+        if not minute_data:
+            return
+        
+        # 새 3분봉 생성 필요 여부 확인
+        current_minute = int(datetime_str[8:10]) * 60 + int(datetime_str[10:12])
+        is_new_tick = current_minute % 3 == 0
+        
+        # 3분봉 데이터가 없으면 생성
+        if 'mi3' not in self._data[code]:
+            self._data[code]['mi3'] = self._aggregate_minute_data(minute_data, 3)
+        elif is_new_tick and datetime_str[12:14] == '00':  # 정확히 3분 시작점
+            # 새 3분봉 추가
+            current = minute_data[0]
+            tick_data = self._data[code]['mi3']
             
-            # 일봉의 경우
-            elif cycle == 'dy':
-                # 데이터가 없으면 기본 데이터 가져옴
-                if code not in self._data:
-                    self._init_chart_data(code)
+            new_candle = {
+                '종목코드': code,
+                '체결시간': datetime_str[:12] + '00',
+                '현재가': current['현재가'],
+                '시가': current['시가'],
+                '고가': current['고가'],
+                '저가': current['저가'],
+                '거래량': current['거래량'],
+                '거래대금': current['거래대금']
+            }
+            tick_data.insert(0, new_candle)
+        else:
+            # 현재 진행 중인 3분봉 업데이트
+            if self._data[code]['mi3']:
+                current_minute = int(datetime_str[8:10]) * 60 + int(datetime_str[10:12])
+                tick_start = (current_minute // 3) * 3
+                tick_time = datetime_str[:8] + f"{tick_start//60:02d}{tick_start%60:02d}00"
                 
-                # 일봉 데이터가 없으면 개별 요청
-                if code in self._data and 'dy' not in self._data[code]:
-                    day_data = self._get_chart_data(code, 'dy')
-                    if day_data:
-                        self._data[code]['dy'] = day_data
+                # 최신 3분봉 찾기
+                for i, candle in enumerate(self._data[code]['mi3']):
+                    if candle['체결시간'] == tick_time:
+                        # 현재 3분봉 업데이트
+                        current = minute_data[0]
+                        candle['현재가'] = current['현재가']
+                        candle['고가'] = max(candle['고가'], current['현재가'])
+                        candle['저가'] = min(candle['저가'], current['현재가'])
+                        
+                        # 3분봉 거래량 정확히 계산
+                        total_volume = 0
+                        for j in range(min(3, len(minute_data))):
+                            m_time = minute_data[j]['체결시간']
+                            m_minute = int(m_time[8:10]) * 60 + int(m_time[10:12])
+                            if tick_start <= m_minute < tick_start + 3:
+                                total_volume += minute_data[j]['거래량']
+                        candle['거래량'] = total_volume
+                        break
+    
+    def _update_day_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
+        """일봉 데이터 업데이트 (당일)"""
+        day_data = self._data[code].get('dy', [])
+        if not day_data:
+            return
             
-            # 주봉/월봉은 요청 시에만 서버에 요청 (드물게 사용됨)
-            elif cycle in ['wk', 'mo']:
-                if code not in self._data:
-                    self._data[code] = {}
-                
-                if cycle not in self._data[code]:
-                    data = self._get_chart_data(code, cycle)
-                    if data:
-                        self._data[code][cycle] = data
-            
-            # 데이터 반환 (cycle_key가 없을 경우 빈 리스트 반환)
-            cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
-            return self._data.get(code, {}).get(cycle_key, [])
+        today = datetime_str[:8]  # YYYYMMDD
+        
+        # 최신 일봉이 당일인지 확인
+        if day_data and day_data[0]['일자'] == today:
+            current = day_data[0]
+            current['현재가'] = price
+            current['고가'] = max(current['고가'], price)
+            current['저가'] = min(current['저가'], price)
+            current['거래량'] = volume
+            current['거래대금'] = amount
+        elif day_data:
+            # 당일 데이터 없으면 추가
+            new_day = {
+                '종목코드': code,
+                '일자': today,
+                '현재가': price,
+                '시가': price,
+                '고가': price,
+                '저가': price,
+                '거래량': volume,
+                '거래대금': amount
+            }
+            day_data.insert(0, new_day)
     
     def _get_chart_data(self, code, cycle, tick=None):
         """서버에서 차트 데이터 가져오기 (주봉과 월봉만 요청 할 것)"""
-
         # 이미 요청 중인지 확인하여 데드락 방지
         try:
             request_key = f"{code}_{cycle}_{tick}"
             current_time = time.time()
             
-            if hasattr(self, '_active_requests') and request_key in self._active_requests:
+            if request_key in self._active_requests:
                 last_request_time = self._active_requests[request_key]
                 # 5초 이상 경과한 요청은 타임아웃으로 간주하고 재시도
                 if current_time - last_request_time < 5.0:
@@ -405,10 +291,7 @@ class ChartData:
                     return []
             
             # 요청 시작 시간 기록
-            if not hasattr(self, '_active_requests'):
-                self._active_requests = {}
             self._active_requests[request_key] = current_time
-
             dict_list = la.answer('admin', 'com_get_chart_data', code, cycle, tick)
             return dict_list
         
@@ -417,7 +300,7 @@ class ChartData:
             return []
         finally:
             # 요청 완료 시 활성 요청 목록에서 제거
-            if hasattr(self, '_active_requests') and request_key in self._active_requests:
+            if request_key in self._active_requests:
                 del self._active_requests[request_key]
                 
 class ChartManager:

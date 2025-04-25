@@ -33,7 +33,7 @@ class Admin:
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
         gm.cdt = ChartData()
-        la.register('cdt', gm.cdt, use_thread=False)
+        la.register('cdt', gm.cdt, use_thread=True)
         gm.scm = ScriptManager()
         gm.ipc.request_to_dbm('set_rate', gm.수수료율, gm.세금율)
 
@@ -196,32 +196,17 @@ class Admin:
         dict_data = { '전략번호': idx, '전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
         self.dbm_order_upsert(dict_data)
-        self.com_get_chart_data(code, 'mi', '1')
-        self.com_get_chart_data(code, 'dy')
+        data = self.com_get_chart_data(code, 'mi', '1')
+        if data: la.work('cdt', 'set_chart_data', code, data, 'mi', 1)
+        data = self.com_get_chart_data(code, 'dy')
+        if data: la.work('cdt', 'set_chart_data', code, data, 'dy')
         success = gm.api.SendOrder(**cmd)
 
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
 
     def com_get_chart_data(self, code, cycle, tick=None):
         """서버에서 차트 데이터 가져오기 (기존 코드 유지, 데드락 방지 추가)"""
-        # 이미 요청 중인지 확인하여 데드락 방지
-        # request_key = f"{code}_{cycle}_{tick}"
-
         try:
-            # current_time = time.time()
-            
-            # if hasattr(self, '_active_requests') and request_key in self._active_requests:
-            #     last_request_time = self._active_requests[request_key]
-            #     # 5초 이상 경과한 요청은 타임아웃으로 간주하고 재시도
-            #     if current_time - last_request_time < 5.0:
-            #         logging.debug(f"이미 요청 중인 데이터: {request_key}")
-            #         return []
-            
-            # # 요청 시작 시간 기록
-            # if not hasattr(self, '_active_requests'):
-            #     self._active_requests = {}
-            # self._active_requests[request_key] = current_time
-            
             # 이하 원래 코드
             rqname = f'{dc.scr.차트종류[cycle]}챠트'
             trcode = dc.scr.챠트TR[cycle]
@@ -259,24 +244,24 @@ class Admin:
             if cycle == 'mi':
                 dict_list = [{
                     '종목코드': code,
-                    '체결시간': item['체결시간'],
-                    '현재가': abs(int(item['현재가'])),
-                    '시가': abs(int(item['시가'])),
-                    '고가': abs(int(item['고가'])),
-                    '저가': abs(int(item['저가'])),
-                    '거래량': abs(int(item['거래량'])),
-                    '거래대금': 0#abs(int(item['거래대금'])),
+                    '체결시간': item['체결시간'] if item['체결시간'] else datetime.now().strftime('%Y%m%d%H%M%S'),
+                    '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
+                    '시가': abs(int(item['시가'])) if item['시가'] else 0,
+                    '고가': abs(int(item['고가'])) if item['고가'] else 0,
+                    '저가': abs(int(item['저가'])) if item['저가'] else 0,
+                    '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
+                    '거래대금': 0,
                 } for item in dict_list]
             else:
                 dict_list = [{
                     '종목코드': code,
-                    '일자': item['일자'],
-                    '현재가': abs(int(item['현재가'])),
-                    '시가': abs(int(item['시가'])),
-                    '고가': abs(int(item['고가'])),
-                    '저가': abs(int(item['저가'])),
-                    '거래량': abs(int(item['거래량'])),
-                    '거래대금': abs(int(item['거래대금'])),
+                    '일자': item['일자'] if item['일자'] else datetime.now().strftime('%Y%m%d'),
+                    '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
+                    '시가': abs(int(item['시가'])) if item['시가'] else 0,
+                    '고가': abs(int(item['고가'])) if item['고가'] else 0,
+                    '저가': abs(int(item['저가'])) if item['저가'] else 0,
+                    '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
+                    '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
                 } for item in dict_list]
             
             return dict_list
@@ -284,11 +269,6 @@ class Admin:
         except Exception as e:
             logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
             return []
-        finally:
-            # 요청 완료 시 활성 요청 목록에서 제거
-            # if hasattr(self, '_active_requests') and request_key in self._active_requests:
-            #     del self._active_requests[request_key]
-            pass
 
     def com_market_status(self):
         now = datetime.now()
@@ -424,7 +404,7 @@ class Admin:
                     row['현재가'] = 현재가
                     la.work(f'전략{data["idx"]:02d}', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
-            #gm.cdt.update_price(code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
+            la.work('cdt', 'update_chart', code, 현재가, abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
             #gm.ipc.request_to_dbm('update_minute_data', code, dictFID)
 
         try:
@@ -577,10 +557,14 @@ class Admin:
                         gm.잔고목록.set(key=item['종목번호'], data=item)
                         전략정의 = gm.전략정의.get(key="기본전략")
 
-                    data[item['종목번호']] = item['종목명']
-                    self.com_get_chart_data(item['종목번호'], 'mi', 1)
-                    self.com_get_chart_data(item['종목번호'], 'dy')
-                gm.ct.set_batch(item['전략'], data)
+                    if item['전략'] not in data: data[item['전략']] = {}
+                    data[item['전략']][item['종목번호']] = item['종목명']
+
+                    chart_data = self.com_get_chart_data(item['종목번호'], 'mi', 1)
+                    if chart_data: la.work('cdt', 'set_chart_data', item['종목번호'], chart_data, 'mi', 1)
+                    chart_data = self.com_get_chart_data(item['종목번호'], 'dy')
+                    if chart_data: la.work('cdt', 'set_chart_data', item['종목번호'], chart_data, 'dy')
+                gm.ct.set_batch(data)
 
             logging.debug(f'dict_list ={dict_list}')
             if dict_list:
