@@ -196,6 +196,8 @@ class Admin:
         dict_data = { '전략번호': idx, '전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
         self.dbm_order_upsert(dict_data)
+        self.com_get_chart_data(code, 'mi', '1')
+        self.com_get_chart_data(code, 'dy')
         success = gm.api.SendOrder(**cmd)
 
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
@@ -225,15 +227,18 @@ class Admin:
             trcode = dc.scr.챠트TR[cycle]
             screen = dc.scr.화면[rqname]
             date = datetime.now().strftime('%Y%m%d')
-
             if cycle == 'mi':
-                input = {'종목코드':code, '틱범위': tick, '수정주가구분': 1}
+                if tick == None:
+                    tick = '1'
+                elif isinstance(tick, int):
+                    tick = str(tick)
+                input = {'종목코드':code, '틱범위': tick, '수정주가구분': "1"}
                 output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
             else:
                 if cycle == 'dy':
-                    input = {'종목코드':code, '기준일자': date, '수정주가구분': 1}
+                    input = {'종목코드':code, '기준일자': date, '수정주가구분': "1"}
                 else:
-                    input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': 1}
+                    input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': "1"}
                 output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
 
             next = '0'
@@ -419,6 +424,7 @@ class Admin:
                     row['현재가'] = 현재가
                     la.work(f'전략{data["idx"]:02d}', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
+            #gm.cdt.update_price(code, abs(int(dictFID['현재가'])), abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
             #gm.ipc.request_to_dbm('update_minute_data', code, dictFID)
 
         try:
@@ -573,6 +579,7 @@ class Admin:
 
                     data[item['종목번호']] = item['종목명']
                     self.com_get_chart_data(item['종목번호'], 'mi', 1)
+                    self.com_get_chart_data(item['종목번호'], 'dy')
                 gm.ct.set_batch(item['전략'], data)
 
             logging.debug(f'dict_list ={dict_list}')
@@ -995,6 +1002,7 @@ class Admin:
                     logging.info(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
 
                 gm.잔고목록.set(key=code, data=data)
+                #self.com_get_chart_data(code, 'mi', '1')
 
             except Exception as e:
                 logging.error(f"매수 처리중 오류 발생: {code} {name} ***")

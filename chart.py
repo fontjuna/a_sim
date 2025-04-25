@@ -390,13 +390,11 @@ class ChartData:
             return self._data.get(code, {}).get(cycle_key, [])
     
     def _get_chart_data(self, code, cycle, tick=None):
-        """서버에서 차트 데이터 가져오기 (기존 코드 유지, 데드락 방지 추가)"""
-        #dict_list = la.answer('admin', 'com_get_chart_data', code, cycle, tick)
-        dict_list = gm.admin.com_get_chart_data(code, cycle, tick)
-        return dict_list
+        """서버에서 차트 데이터 가져오기 (주봉과 월봉만 요청 할 것)"""
+
         # 이미 요청 중인지 확인하여 데드락 방지
-        request_key = f"{code}_{cycle}_{tick}"
         try:
+            request_key = f"{code}_{cycle}_{tick}"
             current_time = time.time()
             
             if hasattr(self, '_active_requests') and request_key in self._active_requests:
@@ -410,63 +408,10 @@ class ChartData:
             if not hasattr(self, '_active_requests'):
                 self._active_requests = {}
             self._active_requests[request_key] = current_time
-            
-            # 이하 원래 코드
-            rqname = f'{dc.scr.차트종류[cycle]}챠트'
-            trcode = dc.scr.챠트TR[cycle]
-            screen = dc.scr.화면[rqname]
-            date = datetime.now().strftime('%Y%m%d')
 
-            if cycle == 'mi':
-                input = {'종목코드':code, '틱범위': tick, '수정주가구분': 1}
-                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
-            else:
-                if cycle == 'dy':
-                    input = {'종목코드':code, '기준일자': date, '수정주가구분': 1}
-                else:
-                    input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': 1}
-                output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
-
-            logging.debug(f'분봉 챠트 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}')
-            next = '0'
-            all = False #if cycle in ['mi', 'dy'] else True
-            dict_list = []
-            while True:
-                data, remain = gm.admin.com_SendRequest(rqname, trcode, input, output, next, screen, 'dict_list', 5)
-                if data is None or len(data) == 0: break
-                dict_list.extend(data)
-                if not (remain and all): break
-                next = '2'
-            
-            if not dict_list:
-                logging.warning(f'챠트 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
-                return []
-            
-            if cycle == 'mi':
-                dict_list = [{
-                    '종목코드': code,
-                    '체결시간': item['체결시간'],
-                    '현재가': abs(int(item['현재가'])),
-                    '시가': abs(int(item['시가'])),
-                    '고가': abs(int(item['고가'])),
-                    '저가': abs(int(item['저가'])),
-                    '거래량': abs(int(item['거래량'])),
-                    '거래대금': 0#abs(int(item['거래대금'])),
-                } for item in dict_list]
-            else:
-                dict_list = [{
-                    '종목코드': code,
-                    '일자': item['일자'],
-                    '현재가': abs(int(item['현재가'])),
-                    '시가': abs(int(item['시가'])),
-                    '고가': abs(int(item['고가'])),
-                    '저가': abs(int(item['저가'])),
-                    '거래량': abs(int(item['거래량'])),
-                    '거래대금': abs(int(item['거래대금'])),
-                } for item in dict_list]
-            
+            dict_list = la.answer('admin', 'com_get_chart_data', code, cycle, tick)
             return dict_list
-            
+        
         except Exception as e:
             logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
             return []
