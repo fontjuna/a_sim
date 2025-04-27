@@ -196,10 +196,11 @@ class Admin:
         dict_data = { '전략번호': idx, '전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
         self.dbm_order_upsert(dict_data)
-        data = self.com_get_chart_data(code, 'mi', '1')
-        if data: la.work('cdt', 'set_chart_data', code, data, 'mi', 1)
-        data = self.com_get_chart_data(code, 'dy')
-        if data: la.work('cdt', 'set_chart_data', code, data, 'dy')
+        chart_data = self.com_get_chart_data(code, 'mi', '1')
+        if chart_data: la.work('cdt', 'set_chart_data', code, chart_data, 'mi', 1)
+        chart_data = self.com_get_chart_data(code, 'dy')
+        if chart_data: la.work('cdt', 'set_chart_data', code, chart_data, 'dy')
+
         success = gm.api.SendOrder(**cmd)
 
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
@@ -240,7 +241,7 @@ class Admin:
                 logging.warning(f'챠트 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
                 return []
             
-            logging.debug(f'차트 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:\n{pd.DataFrame(dict_list)}')
+            logging.debug(f'차트 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:{dict_list[:1]}')
             if cycle == 'mi':
                 dict_list = [{
                     '종목코드': code,
@@ -494,14 +495,12 @@ class Admin:
             output = gm.tbl.hd잔고목록['컬럼']
             next = '0'
             screen = dc.scr.화면[rqname]
-            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
-            logging.debug(f'잔고목록 얻기: data count={len(data)}, remain={remain}')
-            dict_list.extend(data)
-            while remain:
-                next = '2'
+            while True:
                 data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
-                logging.debug(f'잔고목록 얻기 2: data count={len(data)}, remain={remain}')
+                logging.debug(f'잔고목록 얻기: data count={len(data)}, remain={remain}')
                 dict_list.extend(data)
+                if not remain: break
+                next = '2'
 
             def get_preview_data(dict_list):
                 # 홀딩스 데이터 로드 (미리 로드)
@@ -612,14 +611,14 @@ class Admin:
             rqname = '일지목록'
             trcode = 'opt10170'
             output = gm.tbl.hd일지목록['컬럼']
-            next = '0'
             screen = dc.scr.화면['일지목록']
-            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
-            dict_list.extend(data)
-            while remain:
-                next = '2'
+            next = '0'
+            while True:
                 data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+                logging.debug(f'일지목록 얻기: data count={len(data)}, remain={remain}')
                 dict_list.extend(data)
+                if not remain: break
+                next = '2'
             if not data:
                 logging.warning(f'매매일지 목록 얻기 실패: date:{date_text}, dict_list:{dict_list}')
                 return

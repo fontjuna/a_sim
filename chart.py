@@ -302,7 +302,7 @@ class ChartData:
             # 요청 완료 시 활성 요청 목록에서 제거
             if request_key in self._active_requests:
                 del self._active_requests[request_key]
-                
+
 class ChartManager:
     def __init__(self, cycle='dy', tick=1):
         self.cycle = cycle  # 'mo', 'wk', 'dy', 'mi' 중 하나
@@ -937,7 +937,7 @@ class ScriptManager:
         """이름으로 스크립트 가져오기"""
         return self.scripts.get(name, {})
     
-    def check_script(self, name: str, script_data: dict = None) -> bool:
+    def check_script(self, name: str, script_data: dict = None, code: str = '005930') -> bool:
         """스크립트 구문 및 실행 유효성 검사"""
         if script_data is None:
             script_data = self.scripts.get(name, {})
@@ -963,7 +963,7 @@ class ScriptManager:
             return False
         
         # 3. 가상 실행 테스트
-        return self._test_execute_script(name, script, vars_dict)
+        return self._test_execute_script(name, script, vars_dict, code)
     
     def _has_forbidden_syntax(self, script: str) -> bool:
         """금지된 구문이 있는지 확인"""
@@ -992,7 +992,7 @@ class ScriptManager:
             results.append(func(item))
         return results
     
-    def _create_test_chart_manager(self):
+    def _create_test_chart_manager(self, code: str = '005930'):
         """테스트용 ChartManager 생성"""
         class TestChartManager:
             """테스트용 차트 매니저"""
@@ -1068,7 +1068,7 @@ class ScriptManager:
         
         return TestChartManager()
     
-    def _test_execute_script(self, name: str, script: str, vars_dict: dict = None) -> bool:
+    def _test_execute_script(self, name: str, script: str, vars_dict: dict = None, code: str = '005930') -> bool:
         """테스트 환경에서 스크립트 실행 시도"""
         try:
             # 가상 환경에서 안전하게 실행
