@@ -1355,6 +1355,26 @@ except Exception as e:
         self._compiled_scripts[name] = code_obj
         return code_obj
 
+    def _script_log_debug(self, msg, *args, **kwargs):
+        """스크립트용 debug 로깅 래퍼 함수"""
+        logging.debug(f"[Script] {msg}", *args, **kwargs)
+        
+    def _script_log_info(self, msg, *args, **kwargs):
+        """스크립트용 info 로깅 래퍼 함수"""
+        logging.info(f"[Script] {msg}", *args, **kwargs)
+        
+    def _script_log_warning(self, msg, *args, **kwargs):
+        """스크립트용 warning 로깅 래퍼 함수"""
+        logging.warning(f"[Script] {msg}", *args, **kwargs)
+        
+    def _script_log_error(self, msg, *args, **kwargs):
+        """스크립트용 error 로깅 래퍼 함수"""
+        logging.error(f"[Script] {msg}", *args, **kwargs)
+        
+    def _script_log_critical(self, msg, *args, **kwargs):
+        """스크립트용 critical 로깅 래퍼 함수"""
+        logging.critical(f"[Script] {msg}", *args, **kwargs)
+
     def _prepare_execution_globals(self):
         """실행 환경의 글로벌 변수 준비"""
         try:
@@ -1386,6 +1406,13 @@ except Exception as e:
                 # 허용된 모듈들
                 **modules,
                 
+                # 스크립트용 로깅 래퍼 함수들
+                'debug': lambda msg, *args, **kwargs: logging.debug(f"[Script] {msg}", *args, **kwargs),
+                'info': lambda msg, *args, **kwargs: logging.info(f"[Script] {msg}", *args, **kwargs),
+                'warning': lambda msg, *args, **kwargs: logging.warning(f"[Script] {msg}", *args, **kwargs),
+                'error': lambda msg, *args, **kwargs: logging.error(f"[Script] {msg}", *args, **kwargs),
+                'critical': lambda msg, *args, **kwargs: logging.critical(f"[Script] {msg}", *args, **kwargs),
+                
                 # 차트 매니저
                 'ChartManager': self.chart_manager.__class__,
                 
@@ -1401,8 +1428,8 @@ def {script_name}(code, kwargs={{}}):
     # 스크립트를 함수로 실행
     result = run_script(code, '{script_name}', is_sub_call=True, kwargs=kwargs)
     return result['result'] if result['success'] else None
-                """
-                
+            """
+            
                 # 스크립트 래퍼 함수 컴파일 및 추가
                 try:
                     exec(wrapper_code, globals_dict, globals_dict)
@@ -1417,7 +1444,7 @@ def {script_name}(code, kwargs={{}}):
             logging.error(f"실행 환경 준비 오류: {e}")
             # 기본 환경 반환
             return {'ChartManager': self.chart_manager.__class__}
-                
+                        
     def _check_chart_data_ready(self, code):
         """차트 데이터가 준비되었는지 확인
         

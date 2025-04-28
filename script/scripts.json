@@ -30,7 +30,7 @@
         "desc": ""
     },
     "test2": {
-        "script": "dy = ChartManager('dy')\nmi1 = ChartManager('mi', 1)\ndata = mi1.chart_data._data[code]['mi1'][0]\nprint(data)\nresult = (dy.c(code) < 55750, dy.c(code),)",
+        "script": "dy = ChartManager('dy')\nmi1 = ChartManager('mi', 1)\ndata = mi1.chart_data._data[code]['mi1'][0]\ndebug(data)\nresult = (dy.c(code) < 55750, dy.c(code),)",
         "vars": {},
         "type": "tuple",
         "desc": ""
@@ -39,6 +39,12 @@
         "script": "# MACD 다이버전스 검출\ndy = ChartManager('dy')\n# MACD 계산\nfast = kwargs.get('fast', 12)\nslow = kwargs.get('slow', 26)\nsignal = kwargs.get('signal', 9)\nlookback = kwargs.get('lookback', 20)\n# 가격 패턴과 MACD 패턴 분석\nprice_lows = []\nmacd_lows = []\n# 최근 N봉 검사\nfor i in range(lookback):\n    # 저점 판별 (전봉과 다음봉보다 낮은지)\n    if i > 0 and i < lookback-1:\n        if dy.l(code, i) < dy.l(code, i-1) and dy.l(code, i) < dy.l(code, i+1):\n            price_lows.append((i, dy.l(code, i)))\n            \n            # 해당 시점의 MACD 값\n            macd_val = dy.macd(code, fast, slow, signal, i)[0]\n            macd_lows.append((i, macd_val))\n# 다이버전스 확인 (최소 2개 이상의 저점 필요)\nhas_divergence = False\nif len(price_lows) >= 2 and len(macd_lows) >= 2:\n    # 가격은 하락 저점, MACD는 상승 저점인지 확인\n    if price_lows[-1][1] < price_lows[-2][1] and macd_lows[-1][1] > macd_lows[-2][1]:\n        has_divergence = True\nresult = has_divergence",
         "vars": {},
         "type": "bool",
+        "desc": ""
+    },
+    "for_in_range": {
+        "script": "rg = kwargs.get('repeat', 10)\nsm = 0\nfor i in range(rg):\n    sm = sm + i\nresult = sm",
+        "vars": {},
+        "type": "int",
         "desc": ""
     }
 }
