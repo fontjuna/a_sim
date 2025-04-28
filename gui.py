@@ -21,6 +21,7 @@ class GUI(QMainWindow, form_class):
         self.setupUi(self)
         self.refresh_data_timer = QTimer()
         self.refresh_data_timer.timeout.connect(self.gui_refresh_data)
+        self.script_edited = False
 
         gm.qwork['gui'] = Queue()
         gm.qwork['msg'] = Queue()
@@ -166,6 +167,7 @@ class GUI(QMainWindow, form_class):
             self.btnScriptDel.clicked.connect(self.gui_script_delete)
             self.btnScriptChk.clicked.connect(self.gui_script_check)
             self.btnScriptSave.clicked.connect(self.gui_script_save)
+            self.txtScript.textChanged.connect(lambda: (setattr(self, 'script_edited', True), self.btnScriptSave.setDisabled(True)))
             self.tblScriptVar.clicked.connect(lambda x: self.gui_var_select(x.row()))  # 변수 선택
             self.btnVarDel.clicked.connect(self.gui_var_delete)
             self.btnVarSave.clicked.connect(self.gui_var_save)
@@ -658,15 +660,16 @@ class GUI(QMainWindow, form_class):
             self.btnScriptSave.setEnabled(False)
             name = self.tblScript.item(row_index, 0).text()
 
-            sctipt_item = self.tblScript.item(row_index, 1)
+            sctipt_item = self.tblScript.item(row_index, 2)
             script = sctipt_item.data(Qt.UserRole) if sctipt_item.data(Qt.UserRole) else sctipt_item.text()
-            vars = self.tblScript.item(row_index, 2)
+            vars = self.tblScript.item(row_index, 3)
+            desc = self.tblScript.item(row_index, 4).text()
 
             self.ledScriptName.setText(name)
             self.txtScript.setText(script)
+            self.txtScriptDesc.setText(desc)
             try:
                 vars_dict = json.loads(vars.text())
-                logging.debug(f'스크립트 변수: {vars_dict}')
             except Exception as e:
                 vars_dict = {}
                 logging.error(f'스크립트 변수 파싱 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -677,6 +680,7 @@ class GUI(QMainWindow, form_class):
             self.tblScriptVar.setRowCount(len(dict_list))
             gm.스크립트변수.set(data=dict_list)
             gm.스크립트변수.update_table_widget(self.tblScriptVar)
+            self.script_edited = False
             self.ledVarName.setText('')
             self.ledVarValue.setText('')
 
@@ -687,7 +691,9 @@ class GUI(QMainWindow, form_class):
         self.btnScriptSave.setEnabled(False)
         self.ledScriptName.setText('')
         self.txtScript.setText('')
+        self.txtScriptDesc.setText('')
         self.tblScriptVar.setRowCount(0)
+        self.txtScriptMsg.clear()
 
     def gui_script_delete(self):
         try:
@@ -710,13 +716,16 @@ class GUI(QMainWindow, form_class):
                 result = gm.스크립트.delete(key=name)
                 if result:
                     gm.스크립트.update_table_widget(self.tblScript)
+                    self.ledScriptName.setText('')
                     self.txtScript.setText('')
+                    self.txtScriptDesc.setText('')
                     self.tblScriptVar.clearContents()
                     gm.스크립트변수.delete()
                     gm.스크립트변수.update_table_widget(self.tblScriptVar)
                     self.ledVarName.setText('')
                     self.ledVarValue.setText('')
                     gm.scm.delete_script(name)
+                    self.txtScriptMsg.clear()
 
         except Exception as e:
             logging.error(f'스크립트 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -725,16 +734,23 @@ class GUI(QMainWindow, form_class):
         try:
             name = self.ledScriptName.text().strip()
             script = self.txtScript.toPlainText().strip()
-            vars = {}
+            if len(name.strip()) == 0 or len(script.strip()) == 0:
+                QMessageBox.information(self, '알림', '스크립트명과 스크립트를 입력하세요.')
+                return
+            vars_dict = {}
             for row in range(self.tblScriptVar.rowCount()):
                 key = self.tblScriptVar.item(row, 0).text().strip()
                 value = self.tblScriptVar.item(row, 1).text()
-                vars[key] = float(value) if value else 0.0
-            if gm.scm.check_script(name, {'script': script, 'vars': vars}):
-                QMessageBox.information(self, '알림', '스크립트에 이상이 없습니다.')
+                vars_dict[key] = float(value) if value else 0.0
+            result = gm.scm.run_script('005930', name, check_only=True, script_data={'script': script, 'vars': vars_dict}, )
+            if result['success']:
+                QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n\n반환값={result["result"]}')
                 self.btnScriptSave.setEnabled(True)
+                self.txtScriptMsg.clear()
             else:
-                QMessageBox.critical(self, '에러', '스크립트 작성 에러!')
+                QMessageBox.critical(self, '에러', result['error'])
+                self.txtScriptMsg.append(result['error'])
+                self.txtScriptMsg.moveCursor(QTextCursor.End)
                 self.btnScriptSave.setEnabled(False)
         except Exception as e:
             logging.error(f'스크립트 확인 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -743,14 +759,20 @@ class GUI(QMainWindow, form_class):
         try:
             name = self.ledScriptName.text().strip()
             script = self.txtScript.toPlainText().strip()
+            desc = self.txtScriptDesc.toPlainText().strip()
             vars = {}
             for row in range(self.tblScriptVar.rowCount()):
                 key = self.tblScriptVar.item(row, 0).text().strip()
                 value = self.tblScriptVar.item(row, 1).text()
                 vars[key] = float(value) if value else 0.0
-            gm.scm.set_script(name, script, vars)
-            gm.스크립트.set(key=name, data={'스크립트': script, '변수': json.dumps(vars)})
-            gm.스크립트.update_table_widget(self.tblScript)
+            script_type = gm.scm.set_script(name, script, vars, desc) # 실패시 False, 성공시 스크립트 타입 반환
+            if script_type:
+                gm.스크립트.set(key=name, data={'스크립트': script, '타입': script_type, '변수': json.dumps(vars), '설명': desc})
+                gm.스크립트.update_table_widget(self.tblScript)
+                self.txtScriptMsg.clear()
+                self.script_edited = False
+            else:
+                logging.error(f'스크립트 저장 오류: {type(e).__name__} - {e}', exc_info=True)
         except Exception as e:
             logging.error(f'스크립트 저장 오류: {type(e).__name__} - {e}', exc_info=True)
         finally:

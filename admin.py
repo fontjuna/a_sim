@@ -66,7 +66,7 @@ class Admin:
         scripts = gm.scm.scripts.copy()
         dict_data = []
         for k, v in scripts.items():
-            dict_data.append({'스크립트명': k, '스크립트': v.get('script', '').strip(), '변수': json.dumps(v.get('vars', {}))})
+            dict_data.append({'스크립트명': k, '타입': v.get('type', ''), '스크립트': v.get('script', '').strip(), '변수': json.dumps(v.get('vars', {})), '설명': v.get('desc', '')})
         gm.스크립트.set(data=dict_data)
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
 
@@ -559,11 +559,14 @@ class Admin:
                     if item['전략'] not in data: data[item['전략']] = {}
                     data[item['전략']][item['종목번호']] = item['종목명']
 
-                    chart_data = self.com_get_chart_data(item['종목번호'], 'mi', 1)
-                    if chart_data: la.work('cdt', 'set_chart_data', item['종목번호'], chart_data, 'mi', 1)
-                    chart_data = self.com_get_chart_data(item['종목번호'], 'dy')
-                    if chart_data: la.work('cdt', 'set_chart_data', item['종목번호'], chart_data, 'dy')
+                    set_chart_data(item['종목번호'])
                 gm.ct.set_batch(data)
+
+            def set_chart_data(code):
+                chart_data = self.com_get_chart_data(code, 'mi', 1)
+                if chart_data: la.work('cdt', 'set_chart_data', code, chart_data, 'mi', 1)
+                chart_data = self.com_get_chart_data(code, 'dy')
+                if chart_data: la.work('cdt', 'set_chart_data', code, chart_data, 'dy')
 
             logging.debug(f'dict_list ={dict_list}')
             if dict_list:
@@ -571,6 +574,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
+            set_chart_data('005930') # 스크립트 테스트용 코드
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -580,8 +584,15 @@ class Admin:
     def pri_fx등록_종목감시(self):
         try:
             codes = gm.잔고목록.get(column='종목번호')
-            if not codes: return
+            #if not codes: return
+            code = '005930'
+            codes.extend([code])
             codes = ";".join(codes)
+            종목명 = la.answer('api', 'GetMasterCodeName', code=code)
+            전일가 = la.answer('api', 'GetMasterLastPrice', code=code)
+            gm.dict종목정보.set(code, value={'종목명': 종목명, '전일가': 전일가, '현재가': 0})
+
+            logging.debug(f'실시간 시세 요청: codes={codes}')
             gm.api.SetRealReg(dc.scr.화면['실시간감시'], codes, "10", 0)
         except Exception as e:
             logging.error(f'실시간 시세 요청 오류: {type(e).__name__} - {e}', exc_info=True)

@@ -406,6 +406,7 @@ class FilePath:         # 파일 경로
     LOG_MAX_BYTES = 1024 * 1024 * 5
 
     DB_PATH = 'db'
+    SCRIPT_PATH = 'script'
     CONFIG_PATH = 'config'
     RESOURCE_PATH = 'resources'
     API_PATH = "C:/OpenAPI/data"
@@ -418,7 +419,8 @@ class FilePath:         # 파일 경로
     COUNTER_TICKERS_FILE = 'counter_tickers.json'
     COUNTER_STRATEGY_FILE = 'counter_strategy.json'
     CHARTS_FILE = 'charts.json'
-    SCRIPT_FILE = 'scripts.json'
+    SCRIPTS_FILE = 'scripts.json'
+    FUNCTIONS_FILE = 'functions.json'
 
     config_file = os.path.join(get_path(CONFIG_PATH), CONFIG_FILE)
     define_sets_file = os.path.join(get_path(CONFIG_PATH), DEFINE_SETS_FILE)
@@ -427,7 +429,8 @@ class FilePath:         # 파일 경로
     counter_tickers_file = os.path.join(get_path(DB_PATH), COUNTER_TICKERS_FILE)
     counter_strategy_file = os.path.join(get_path(DB_PATH), COUNTER_STRATEGY_FILE)
     charts_file = os.path.join(get_path(DB_PATH), CHARTS_FILE)
-    script_file = os.path.join(get_path(DB_PATH), SCRIPT_FILE)
+    scripts_file = os.path.join(get_path(SCRIPT_PATH), SCRIPTS_FILE)
+    functions_file = os.path.join(get_path(SCRIPT_PATH), FUNCTIONS_FILE)
     image_file = os.path.join(get_path(IMAGE_PATH), "Liberanimo_only.png")
 
 @dataclass
@@ -739,7 +742,7 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
         '키': '스크립트명',
         '정수': [],
         '실수': [],
-        '컬럼': ['스크립트명', '스크립트', '변수'],
+        '컬럼': ['스크립트명', '타입', '스크립트', '변수', '설명'],
     }
     hd스크립트변수 = {
         '키': '변수명',

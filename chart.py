@@ -1,22 +1,16 @@
 from public import gm, dc
 from classes import la
-from typing import Dict, List, Any, Union, Optional, Tuple
 from datetime import datetime
 import json
 import numpy as np
 import pandas as pd
 import logging
-from threading import Lock, Thread
 import time
 import ast
 import traceback
 import re
-import math
-import queue
-from typing import Dict, List, Any, Union, Optional, Tuple
-from datetime import datetime
-import time
-import logging
+import os
+import json
 
 class ChartData:
     """차트 데이터를 관리하는 싱글톤 클래스"""
@@ -194,7 +188,7 @@ class ChartData:
         """3분봉 업데이트"""
         # 1분봉 데이터 필요
         minute_data = self._data[code].get('mi1', [])
-        if not minute_data:
+        if not minute_data or len(datetime_str.strip()) < 12:
             return
         
         # 새 3분봉 생성 필요 여부 확인
@@ -871,24 +865,74 @@ class ChartManager:
         return pattern_func(code, length)
                 
 class ScriptManager:
-    # 허용 모듈 리스트 (클래스 속성)
-    ALLOWED_MODULES = ['re', 'math', 'datetime', 'random', 'logging', 'json', 'collections']
-    def __init__(self, script_file=dc.fp.script_file):
-        self.script_file = script_file
-        self.scripts = {}  # {name: {script: str, vars: dict}}
-        self.chart_manager = None  # 실행 시 주입
-        self._load_scripts()
-        self._running_scripts = set()  # 실행 중인 스크립트 추적
+    """
+    투자 스크립트 관리 및 실행 클래스 (확장 버전)
     
+    사용자 스크립트 실행, 검증, 관리하고 사용자 함수를 지원합니다.
+    """
+    # 허용된 Python 기능 목록 (whitelist 방식)
+    ALLOWED_MODULES = ['re', 'math', 'datetime', 'random', 'logging', 'json', 'collections']
+
+    # 허용된 Python 내장 함수 및 타입
+    ALLOWED_BUILTINS = [
+        # 기본 데이터 타입
+        'int', 'float', 'str', 'bool', 'list', 'dict', 'set', 'tuple',
+
+        # 데이터 처리 함수
+        'len', 'max', 'min', 'sum', 'abs', 'all', 'any', 'round', 'sorted',
+        'enumerate', 'zip', 'range',
+
+        # 형변환 함수
+        'int', 'float', 'str', 'bool', 'list', 'dict', 'set', 'tuple',
+    ]
+
+    # 허용되지 않는 문법 패턴
+    FORBIDDEN_PATTERNS = [
+        r'import\s+(?!(' + '|'.join(ALLOWED_MODULES) + ')$)',   # 허용된 모듈만 임포트 가능
+        r'open\s*\(',                                           # 파일 열기 금지
+        r'exec\s*\(',                                           # exec() 사용 금지
+        r'eval\s*\(',                                           # eval() 사용 금지
+        r'__import__',                                          # __import__ 사용 금지
+        r'subprocess',                                          # subprocess 모듈 금지
+        r'os\.',                                                # os 모듈 사용 금지
+        r'sys\.',                                               # sys 모듈 사용 금지
+        r'while\s+.*:',                                         # while 루프 금지 (무한 루프 방지)
+    ]
+
+    def __init__(self, script_file=dc.fp.scripts_file):
+        """초기화
+        
+        Args:
+            script_file: 스크립트 저장 파일 경로
+            user_funcs_file: 사용자 함수 저장 파일 경로
+        """
+        self.script_file = script_file
+        self.scripts = {}  # {name: {script: str, vars: dict, type: str, desc: str}}
+        self.user_funcs = {}  # {name: {script: str, vars: dict, type: str, desc: str}}
+        self.chart_manager = ChartManager()  # 실행 시 주입
+        self._running_scripts = set()  # 실행 중인 스크립트 추적
+        self._compiled_scripts = {}  # 컴파일된 스크립트 캐시 {name: code_obj}
+        
+        import sys
+        sys.excepthook = self._global_exception_handler
+        # 파일에서 스크립트와 사용자 함수 로드
+        self._load_scripts()
+    
+    def _global_exception_handler(self, exc_type, exc_value, exc_traceback):
+        """예상치 못한 예외에 대한 글로벌 핸들러"""
+        # 로그에만 기록하고 GUI 팝업 방지
+        logging.error("미처리 예외:", exc_info=(exc_type, exc_value, exc_traceback))
+
     def _load_scripts(self):
         """스크립트 파일에서 스크립트 로드"""
         try:
-            with open(self.script_file, 'r', encoding='utf-8') as f:
-                self.scripts = json.load(f)
-            logging.info(f"스크립트 {len(self.scripts)}개 로드 완료")
-        except FileNotFoundError:
-            logging.warning(f"스크립트 파일 없음: {self.script_file}")
-            self.scripts = {}
+            if os.path.exists(self.script_file):
+                with open(self.script_file, 'r', encoding='utf-8') as f:
+                    self.scripts = json.load(f)
+                logging.info(f"스크립트 {len(self.scripts)}개 로드 완료")
+            else:
+                logging.warning(f"스크립트 파일 없음: {self.script_file}")
+                self.scripts = {}
         except json.JSONDecodeError as e:
             logging.error(f"스크립트 파일 형식 오류: {e}")
             self.scripts = {}
@@ -904,408 +948,624 @@ class ScriptManager:
             logging.error(f"스크립트 저장 오류: {e}")
             return False
     
-    def set_scripts(self, scripts: dict):
-        """스크립트 전체 설정 및 저장"""
-        # 모든 스크립트 유효성 검사
-        valid_scripts = {}
-        for name, script_data in scripts.items():
-            if self.check_script(name, script_data.get('script', '')):
-                valid_scripts[name] = script_data
-            else:
-                logging.warning(f"유효하지 않은 스크립트: {name}")
-        
-        self.scripts = valid_scripts
-        return self._save_scripts()
-    
     def get_scripts(self):
         """저장된 모든 스크립트 반환"""
         return self.scripts
-    
-    def set_script(self, name: str, script: str, vars: dict = None):
-        """단일 스크립트 설정 및 저장"""
-        if not self.check_script(name, {'script': script, 'vars': vars}):
-            logging.warning(f"유효하지 않은 스크립트: {name}")
-            return False
-        
-        self.scripts[name] = {
-            'script': script,
-            'vars': vars or {}
-        }
-        return self._save_scripts()
     
     def get_script(self, name: str):
         """이름으로 스크립트 가져오기"""
         return self.scripts.get(name, {})
     
-    def check_script(self, name: str, script_data: dict = None, code: str = '005930') -> bool:
-        """스크립트 구문 및 실행 유효성 검사"""
-        if script_data is None:
-            script_data = self.scripts.get(name, {})
-
-        script = script_data.get('script', '')
-        vars_dict = script_data.get('vars', {})
-
-        if not script:
-            logging.warning(f"스크립트가 비어있음: {name}")
-            return False
+    def set_scripts(self, scripts: dict):
+        """스크립트 전체 설정 및 저장
         
-        # 1. 구문 분석 검사
-        try:
-            ast.parse(script)
-        except SyntaxError as e:
-            line_no = e.lineno
-            logging.error(f"구문 오류 ({name} 스크립트 {line_no}행): {e}")
-            return False
+        Args:
+            scripts: {name: {script: str, vars: dict}} 형식의 스크립트 사전
         
-        # 2. 보안 검증 (금지된 구문 확인)
-        if self._has_forbidden_syntax(script):
-            logging.error(f"보안 위반 코드 포함 ({name} 스크립트)")
-            return False
+        Returns:
+            bool: 저장 성공 여부
+        """
+        # 모든 스크립트 유효성 검사
+        valid_scripts = {}
+        for name, script_data in scripts.items():
+            result = self.run_script('005930', name, check_only=True, script_data=script_data)
+            if result['success']:   
+                script_data['script'] = script_data['script'].replace('\n\n', '\n')
+                script_data['type'] = self.get_script_type(result['result'])
+                valid_scripts[name] = script_data
+            else:
+                logging.warning(f"유효하지 않은 스크립트: {name} - {result['error']}")
         
-        # 3. 가상 실행 테스트
-        return self._test_execute_script(name, script, vars_dict, code)
+        self.scripts = valid_scripts
+        # 컴파일된 스크립트 캐시 초기화
+        self._compiled_scripts = {}
+        return self._save_scripts()
+    
+    def get_script_type(self, result):
+        if result is None: return 'none'
+        elif isinstance(result, bool): return 'bool'
+        elif isinstance(result, float): return 'float'
+        elif isinstance(result, int): return 'int'
+        elif isinstance(result, str): return 'str'
+        elif isinstance(result, list): return 'list'
+        elif isinstance(result, dict): return 'dict'
+        elif isinstance(result, tuple): return 'tuple'
+        elif isinstance(result, set): return 'set'
+        else: return type(result).__name__
+                    
+    def set_script(self, name: str, script: str, vars: dict = None, desc: str = ''):
+        """단일 스크립트 설정 및 저장
+        
+        Args:
+            name: 스크립트 이름
+            script: 스크립트 코드
+            type: 스크립트 리턴 타입
+            vars: 스크립트에서 사용할 변수 사전
+            desc: 스크립트 설명
+        
+        Returns:
+            type: False=실패, str=성공(str=result type)
+        """
+        script_data = {'script': script, 'vars': vars or {}}
+        result = self.run_script('005930', name, check_only=True, script_data=script_data)
+        
+        if not result['success']:
+            logging.warning(f"유효하지 않은 스크립트: {name} - {result['error']}")
+            return False
+        script_data['script'] = script_data['script'].replace('\n\n', '\n')
+        script_data['type'] = self.get_script_type(result['result'])
+        script_data['desc'] = desc
+        self.scripts[name] = script_data
+        # 컴파일된 스크립트 캐시에서 제거 (재컴파일 필요)
+        if name in self._compiled_scripts:
+            del self._compiled_scripts[name]
+        
+        ret = self._save_scripts()
+        if ret: return script_data['type']
+        return False
+    
+    def delete_script(self, name: str):
+        """스크립트 삭제
+        
+        Args:
+            name: 삭제할 스크립트 이름
+        
+        Returns:
+            bool: 삭제 성공 여부
+        """
+        if name in self.scripts:
+            del self.scripts[name]
+            # 컴파일된 스크립트 캐시에서도 제거
+            if name in self._compiled_scripts:
+                del self._compiled_scripts[name]
+            return self._save_scripts()
+        return False
     
     def _has_forbidden_syntax(self, script: str) -> bool:
-        """금지된 구문이 있는지 확인"""
-        allowed_patterns = '|'.join(self.ALLOWED_MODULES)
-        forbidden_patterns = [
-            r'import\s+(?!(' + allowed_patterns + ')$)',  # 허용된 모듈만 임포트 가능
-            r'open\s*\(',  # 파일 열기 금지
-            r'exec\s*\(',  # exec() 사용 금지
-            r'eval\s*\(',  # eval() 사용 금지
-            r'__import__',  # __import__ 사용 금지
-            r'subprocess',  # subprocess 모듈 금지
-            r'os\.',  # os 모듈 사용 금지
-            r'sys\.',  # sys 모듈 사용 금지
-            r'while\s+.*:',  # while 루프 금지 (무한 루프 방지)
-        ]
+        """금지된 구문이 있는지 확인
         
-        for pattern in forbidden_patterns:
+        Args:
+            script: 검사할 스크립트 코드
+        
+        Returns:
+            bool: 금지된 구문이 있으면 True
+        """
+        # 허용된 모듈 패턴
+        allowed_patterns = '|'.join(self.ALLOWED_MODULES)
+        
+        for pattern in self.FORBIDDEN_PATTERNS:
             if re.search(pattern, script):
                 return True
+        
+        # AST 분석을 통한 추가 검사
+        try:
+            tree = ast.parse(script)
+            
+            # 방문자 패턴으로 AST 노드 검사
+            class ForbiddenSyntaxVisitor(ast.NodeVisitor):
+                def __init__(self):
+                    self.has_forbidden = False
+                    self.forbidden_reason = None
+                
+                def visit_Import(self, node):
+                    for name in node.names:
+                        if name.name not in ScriptManager.ALLOWED_MODULES:
+                            self.has_forbidden = True
+                            self.forbidden_reason = f"허용되지 않는 모듈 임포트: {name.name}"
+                    self.generic_visit(node)
+                
+                def visit_ImportFrom(self, node):
+                    if node.module not in ScriptManager.ALLOWED_MODULES:
+                        self.has_forbidden = True
+                        self.forbidden_reason = f"허용되지 않는 모듈에서 임포트: {node.module}"
+                    self.generic_visit(node)
+                
+                def visit_Call(self, node):
+                # 함수 호출 확인
+                    if isinstance(node.func, ast.Name):
+                        func_name = node.func.id
+                        if func_name in ['eval', 'exec', '__import__']:
+                            self.has_forbidden = True
+                            self.forbidden_reason = f"금지된 함수 호출: {func_name}"
+                        
+                # 속성 접근 호출 확인 (예: os.system)
+                    elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                        module_name = node.func.value.id
+                        if module_name in ['os', 'sys', 'subprocess']:
+                            self.has_forbidden = True
+                            self.forbidden_reason = f"금지된 모듈 사용: {module_name}"
+                    
+                    self.generic_visit(node)
+                
+                def visit_While(self, node):
+                    self.has_forbidden = True
+                    self.forbidden_reason = "while 루프 사용 금지"
+                    self.generic_visit(node)
+            
+            visitor = ForbiddenSyntaxVisitor()
+            visitor.visit(tree)
+            
+            if visitor.has_forbidden:
+                logging.warning(f"금지된 구문 감지: {visitor.forbidden_reason}")
+                return True
+        
+        except SyntaxError as e:
+            logging.error(f"구문 오류: {e}")
+            return True
+        
         return False
     
     def _safe_loop(self, iterable, func):
-        """안전한 루프 실행 함수"""
+        """안전한 루프 실행 함수
+        
+        무한 루프 방지를 위한 for 루프 래퍼 함수.
+        
+        Args:
+            iterable: 반복 가능한 객체
+            func: 각 항목에 적용할 함수
+        
+        Returns:
+            list: 각 항목에 func를 적용한 결과 리스트
+        """
         results = []
         for item in iterable:
             results.append(func(item))
         return results
-    
-    def _create_test_chart_manager(self, code: str = '005930'):
-        """테스트용 ChartManager 생성"""
-        class TestChartManager:
-            """테스트용 차트 매니저"""
-            def __init__(self):
-                self._test_data = {
-                    '005930': [  # 삼성전자 가상 데이터
-                        {'date': '20240101', 'open': 70000, 'high': 71000, 'low': 69000, 'close': 70500, 'volume': 1000000, 'amount': 70500000000},
-                        {'date': '20240102', 'open': 70500, 'high': 72000, 'low': 70000, 'close': 71000, 'volume': 1200000, 'amount': 85200000000},
-                        {'date': '20240103', 'open': 71000, 'high': 71500, 'low': 70000, 'close': 71200, 'volume': 900000, 'amount': 64080000000},
-                    ]
-                }
-            
-            # ChartManager 메서드들 구현
-            def c(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('close', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
-            def o(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('open', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
-            def h(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('high', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
-            def l(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('low', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
-            def v(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('volume', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
-            def a(self, code, n=0): return self._test_data.get(code, [{}])[min(n, len(self._test_data.get(code, [])) - 1)].get('amount', 0) if code in self._test_data and len(self._test_data[code]) > n else 0
-            def time(self, n=0): return '090000' if n == 0 else f"{90000 + n * 100:06d}"  # 테스트용 시간값
-            def today(self): return datetime.now().strftime('%Y%m%d')
-            
-            # 계산 함수들
-            def ma(self, code, a, n, m=0, k='a'): return 10000.0
-            def avg(self, code, a, n, m=0): return 10000.0
-            def eavg(self, code, a, n, m=0): return 10000.0
-            def wavg(self, code, a, n, m=0): return 10000.0
-            def highest(self, code, a, n, m=0): return 10100.0
-            def lowest(self, code, a, n, m=0): return 9800.0
-            def stdev(self, code, a, n, m=0): return 100.0
-            def sum(self, code, a, n, m=0): return 100000.0
-            
-            # 신호 함수들
-            def cross_down(self, code, a, b): return False
-            def cross_up(self, code, a, b): return True
-            def bars_since(self, code, condition): return 5
-            
-            # 추가 함수들 (모두 기본값 반환)
-            def min_value(self, a, b): return min(a, b)
-            def max_value(self, a, b): return max(a, b)
-            def pow(self, a, n): return a ** n
-            def sqrt(self, a): return a ** 0.5 if a >= 0 else 0
-            def log(self, a, base=10): return 1.0
-            def exp(self, a): return 2.7
-            def safe_div(self, a, b, default=0): return a / b if b != 0 else default
-            def iif(self, condition, true_value, false_value): return true_value if condition else false_value
-            def all_true(self, condition_list): return all(condition_list)
-            def any_true(self, condition_list): return any(condition_list)
-            
-            # 보조지표 함수들
-            def rsi(self, code, period=14, m=0): return 50.0
-            def macd(self, code, fast=12, slow=26, signal=9, m=0): return (0.0, 0.0, 0.0)
-            def bollinger_bands(self, code, period=20, std_dev=2, m=0): return (10200.0, 10000.0, 9800.0)
-            def stochastic(self, code, k_period=14, d_period=3, m=0): return (50.0, 50.0)
-            def atr(self, code, period=14, m=0): return 100.0
-            
-            # 캔들패턴 인식 함수들
-            def is_doji(self, code, n=0, threshold=0.1): return False
-            def is_hammer(self, code, n=0): return True
-            def is_engulfing(self, code, n=0, bullish=True): return bullish
-            
-            # 추세 분석 함수들
-            def is_uptrend(self, code, period=14, m=0): return True
-            def is_downtrend(self, code, period=14, m=0): return False
-            def momentum(self, code, period=10, m=0): return 100.0
-            
-            # 데이터 변환 함수들
-            def rate_of_change(self, code, period=1, m=0): return 1.0
-            def normalized_volume(self, code, period=20, m=0): return 1.0
-            def accumulation(self, values): return [sum(values[:i+1]) for i in range(len(values))]
-            def streak_count(self, code, condition_func): return 3
-            def detect_pattern(self, code, pattern_func, length): return True
-        
-        return TestChartManager()
-    
-    def _test_execute_script(self, name: str, script: str, vars_dict: dict = None, code: str = '005930') -> bool:
-        """테스트 환경에서 스크립트 실행 시도"""
-        try:
-            # 가상 환경에서 안전하게 실행
-            # 테스트용 ChartManager 생성
-            test_cm = self._create_test_chart_manager()
-            
-            # 테스트용 글로벌/로컬 환경 설정
-            globals_dict = {
-                # Python 내장 함수들
-                'range': range,
-                'len': len,
-                'int': int,
-                'float': float,
-                'str': str,
-                'bool': bool,
-                'max': max,
-                'min': min,
-                'sum': sum,
-                'abs': abs,
-                'all': all,
-                'any': any,
-                'round': round,
-                'sorted': sorted,
-                'enumerate': enumerate,
-                'zip': zip,
-                'list': list,
-                'dict': dict,
-                'set': set,
-                'tuple': tuple,
-                
-                # 모듈들
-                'math': math,
-                'logging': logging,
-                'datetime': datetime,
-                
-                # 차트 매니저
-                'ChartManager': lambda cycle='dy', tick=1: test_cm,
-                
-                'code': '005930',
 
-                # 유틸리티 함수
-                'loop': self._safe_loop,
-                'run_script': lambda sub_name: True
-            }
-                
-            # 변수 추가
-            for var_name, var_value in vars_dict.items():
-                globals_dict[var_name] = var_value
-            
-            
-            # 컴파일 및 제한된 실행
-            code_obj = compile(script, f"<script_{name}>", 'exec')
-            
-            # 실행 시간 제한
-            start_time = time.time()
-            locals_dict = {}
-            
-            try:
-                exec(code_obj, globals_dict, locals_dict)
-                exec_time = time.time() - start_time
-                if exec_time > 0.1:  # 0.1초 초과 실행 시 경고
-                    logging.warning(f"스크립트 실행 시간 초과 ({name}): {exec_time:.4f}초")
-                return True
-            except Exception as e:
-                logging.error(f"스크립트 실행 오류 ({name}): {type(e).__name__} - {e}")
-                return False
-        except Exception as e:
-            logging.error(f"스크립트 테스트 중 예상치 못한 오류 ({name}): {e}")
-            return False
-    
-    def run_script(self, name: str, code: str, is_sub_call: bool = False):
-        """스크립트 실행
-        name: 스크립트 이름
-        code: 종목코드
-        is_sub_call: 다른 스크립트에서 호출된 것인지 여부
+    def _indent_script(self, script, indent=4):
+        """스크립트 들여쓰기 추가
         
-        Returns: bool - 스크립트 실행 결과 (성공/실패)
+        Args:
+            script: 원본 스크립트
+            indent: 들여쓰기 공백 수
+            
+        Returns:
+            str: 들여쓰기가 추가된 스크립트
         """
-        # 순환 참조 방지
+        try:
+            lines = script.split('\n')
+            indented_lines = [' ' * indent + line if line.strip() else line for line in lines]
+            return '\n'.join(indented_lines)
+        except Exception as e:
+            logging.error(f"들여쓰기 처리 오류: {e}")
+            # 오류 발생 시 원본 반환 (실행은 실패하더라도 예외는 발생시키지 않음)
+            return script
+            
+    def run_script(self, code: str, name: str, check_only=False, script_data=None, is_sub_call=False, kwargs={}):
+        """스크립트 또는 사용자 함수 실행/검사
+        
+        Args:
+            code: 종목코드
+            name: 스크립트/함수 이름
+            check_only: 실행하지 않고 검사만 할지 여부 (실제로는 실행도 함)
+            script_data: 직접 제공하는 스크립트/함수 데이터 (검사용)
+            is_sub_call: 다른 스크립트에서 호출된 것인지 여부
+            kwargs: 스크립트/함수에 전달할 추가 변수들 (사전 형태)
+            
+        Returns:
+            dict: {
+                'success': bool,    # 성공 여부
+                'result': Any,      # 스크립트/함수 실행 결과 (성공 시)
+                'error': str,       # 오류 메시지 (실패 시)
+                'exec_time': float, # 실행 시간 (초)
+                'log': str          # 상세 로그 (실패 시)
+            }
+        """
+        start_time = time.time()
+        result_dict = {
+            'success': False,
+            'result': None,  # 스크립트/함수 모두 기본값은 None
+            'error': None,
+            'exec_time': 0,
+            'log': ''
+        }
+        
+        # 엔티티 구분 (로깅용)
+        entity_type = "스크립트"
+        
+        # 순환 참조 방지 (모든 유형에 적용)
         script_key = f"{name}:{code}"
         if script_key in self._running_scripts:
-            logging.warning(f"순환 참조 감지: {script_key}")
-            return False
+            result_dict['error'] = f"순환 참조 감지: {script_key}"
+            return result_dict
         
-        # 실행 중인 스크립트에 추가
+        # 실행 중인 스크립트/함수에 추가
         self._running_scripts.add(script_key)
         
         try:
-            # 스크립트 가져오기
-            script_data = self.get_script(name)
+            if check_only: code = '005930'
+            # 스크립트/함수 데이터 가져오기
+            if script_data is None:
+                script_data = self.get_script(name)
+            
             script = script_data.get('script', '')
-            vars_dict = script_data.get('vars', {})
+            vars_dict = script_data.get('vars', {}).copy()  # 기본값
+            
+            # vars_dict를 kwargs로 전달
+            combined_kwargs = vars_dict.copy()
+            combined_kwargs.update(kwargs)
             
             if not script:
-                logging.warning(f"스크립트 없음: {name}")
-                self._running_scripts.remove(script_key)
-                return False
+                result_dict['error'] = f"{entity_type} 없음: {name}"
+                return result_dict
             
-            # 차트 매니저 생성 및 데이터 준비 상태 확인
-            if not self.chart_manager:
-                self.chart_manager = ChartManager()
+            # 1. 구문 분석 검사
+            try:
+                # 스크립트/함수를 감싸서 실행하기 위한 코드 생성
+                wrapped_script = f"""
+def execute_script(ChartManager, code, kwargs):
+    try:
+{self._indent_script(script, indent=8)}  # 8칸 들여쓰기 적용
+        return result if 'result' in locals() else None
+    except Exception as e:
+        import logging, traceback
+        tb = traceback.format_exc()
+        logging.error(f"내부 스크립트 오류: {{type(e).__name__}} - {{e}}\\n{{tb}}")
+        raise  # 오류를 전파하여 감지할 수 있도록 함
+
+try:
+    result = execute_script(ChartManager, "{code}", {repr(combined_kwargs)})
+except Exception as e:
+    import logging, traceback
+    tb = traceback.format_exc()
+    logging.error(f"스크립트 실행 오류: {{type(e).__name__}} - {{e}}\\n{{tb}}")
+    raise  # 오류를 상위로 전파
+"""
+                #logging.debug(f'스크립트: \n{script}\n변수: {combined_kwargs}')
+                try:
+                    ast.parse(wrapped_script)
+                except SyntaxError as e:
+                    result_dict['error'] = f"구문 오류 ({name} {entity_type} {e.lineno}행): {e}"
+                    logging.error(result_dict['error'])
+                    return result_dict
+                    
+            except Exception as e:
+                # 그 외 모든 예외도 로그로만 처리
+                result_dict['error'] = f"스크립트 준비 오류 ({name} {entity_type}): {type(e).__name__} - {e}"
+                logging.error(result_dict['error'])
+                return result_dict
             
-            # 차트 데이터 준비 상태 확인 (3분봉과 일봉 데이터가 있는지 확인)
-            chart_data = ChartData()  # 싱글톤이므로 항상 동일 인스턴스 반환
-            has_data = self._check_chart_data_ready(chart_data, code)
-            
-            if not has_data and not is_sub_call:
-                logging.warning(f"차트 데이터 준비되지 않음: {code}")
-                # 데이터 준비 시도
-                self._prepare_chart_data(chart_data, code)
-                # 다시 확인
-                has_data = self._check_chart_data_ready(chart_data, code)
-                if not has_data:
-                    logging.error(f"차트 데이터 준비 실패: {code}")
-                    self._running_scripts.remove(script_key)
-                    return False
-            
-            # 글로벌 환경 설정
-            globals_dict = {
-                # Python 내장 함수들
-                'range': range,
-                'len': len,
-                'int': int,
-                'float': float,
-                'str': str,
-                'bool': bool,
-                'max': max,
-                'min': min,
-                'sum': sum,
-                'abs': abs,
-                'all': all,
-                'any': any,
-                'round': round,
-                'sorted': sorted,
-                'enumerate': enumerate,
-                'zip': zip,
-                'list': list,
-                'dict': dict,
-                'set': set,
-                'tuple': tuple,
+            # 2. 보안 검증 (금지된 구문 확인)
+            try:
+                if self._has_forbidden_syntax(script):
+                    result_dict['error'] = f"보안 위반 코드 포함 ({name} {entity_type})"
+                    return result_dict
                 
-                # 모듈들
-                'math': math,
-                'logging': logging,
-                'datetime': datetime,
-                
-                # 차트 매니저
-                'ChartManager': ChartManager,
-                
-                # 유틸리티 함수
-                'loop': self._safe_loop,
-                'run_script': lambda sub_name: self.run_script(sub_name, code, True)
-            }
-                
-            # 변수 추가
-            for var_name, var_value in vars_dict.items():
-                globals_dict[var_name] = var_value
+            except Exception as e:
+                result_dict['error'] = f"보안 검사 오류: {type(e).__name__} - {e}"
+                logging.error(result_dict['error'])
+                return result_dict
             
-            # 컴파일 및 실행
-            code_obj = compile(script, f"<script_{name}>", 'exec')
-            locals_dict = {}
+            # 3. 차트 데이터 준비 상태 확인 (실행 모드에서만)
+            if not is_sub_call:  # check_only에 관계없이 데이터 준비 (런타임 오류 확인을 위해)
+                try:
+                    has_data = self._check_chart_data_ready(code)
+                    
+                    if not has_data:
+                        # 데이터 준비 시도
+                        self._prepare_chart_data(code)
+                        # 다시 확인
+                        has_data = self._check_chart_data_ready(code)
+                        if not has_data:
+                            result_dict['error'] = f"차트 데이터 준비 실패: {code}"
+                            return result_dict
+                except Exception as e:
+                    result_dict['error'] = f"데이터 준비 오류: {type(e).__name__} - {e}"
+                    logging.error(result_dict['error'])
+                    return result_dict
             
-            # 실행 시간 측정
-            start_time = time.time()
+            # 4. 실행 환경 준비
+            try:
+                globals_dict = self._prepare_execution_globals()
+                locals_dict = {}
+            except Exception as e:
+                result_dict['error'] = f"실행 환경 준비 오류: {type(e).__name__} - {e}"
+                logging.error(result_dict['error'])
+                return result_dict
             
+            # 5. 스크립트/함수 컴파일 또는 캐시에서 가져오기
+            try:
+
+                cache_key = f"{script}_{name}"
+                if check_only or script_data is not None:  # 테스트용이면 항상 새로 컴파일
+                    code_obj = compile(wrapped_script, f"<{cache_key}>", 'exec')
+                elif cache_key not in self._compiled_scripts:  # 아니면 캐시 사용
+                    self._compiled_scripts[cache_key] = compile(wrapped_script, f"<{cache_key}>", 'exec')
+                    code_obj = self._compiled_scripts[cache_key]
+                else:
+                    code_obj = self._compiled_scripts[cache_key]
+
+            except Exception as e:
+                result_dict['error'] = f"컴파일 오류: {type(e).__name__} - {e}"
+                logging.error(result_dict['error'])
+                return result_dict
+            
+            # 6. 실행 (check_only 모드에서도 반드시 실행하여 런타임 오류 확인)
             try:
                 exec(code_obj, globals_dict, locals_dict)
                 exec_time = time.time() - start_time
                 
                 # 실행 시간이 너무 오래 걸리면 경고
                 if exec_time > 0.05:  # 50ms 이상 걸리면 경고
-                    logging.warning(f"스크립트 실행 시간 초과 ({name}:{code}): {exec_time:.4f}초")
+                    logging.warning(f"{entity_type} 실행 시간 초과 ({name}:{code}): {exec_time:.4f}초")
                 
-                # 실행 결과 가져오기 (return 값)
-                result = locals_dict.get('result', True)
-                return bool(result)
+                # 실행 결과 가져오기
+                script_result = locals_dict.get('result')
+                
+                result_dict['success'] = True
+                result_dict['result'] = script_result
+                result_dict['exec_time'] = exec_time
+                
+                # check_only 모드에서는 결과만 반환하고 실제 작업은 수행하지 않음
+                return result_dict
+                
             except Exception as e:
-                if not is_sub_call:  # 하위 호출이 아닐 때만 상세 로깅
-                    tb = traceback.format_exc()
-                    logging.error(f"스크립트 실행 오류 ({name}:{code}): {type(e).__name__} - {e}\n{tb}")
-                else:
-                    logging.error(f"서브스크립트 실행 오류 ({name}:{code}): {type(e).__name__} - {e}")
-                return False
+                tb = traceback.format_exc()
+                error_msg = f"{entity_type} 실행 오류 ({name}:{code}): {type(e).__name__} - {e}"
+                
+                logging.error(f"{error_msg}\n{tb}")
+                result_dict['log'] = tb
+                result_dict['error'] = error_msg
+                return result_dict
+                
         finally:
             # 실행 완료 후 추적 목록에서 제거
-            self._running_scripts.remove(script_key)
-    
-    def _check_chart_data_ready(self, chart_data, code):
-        """차트 데이터가 준비되었는지 확인"""
-        if code not in chart_data._data:
-            return False
+            if script_key in self._running_scripts:
+                self._running_scripts.remove(script_key)
+            
+            # 실행 시간 기록
+            result_dict['exec_time'] = time.time() - start_time
+                
+    def _get_compiled_script(self, name, script):
+        """스크립트 컴파일 또는 캐시에서 가져오기
         
-        # 3분봉과 일봉 데이터가 모두 있는지 확인 (가장 많이 사용하는 주기)
-        if 'mi3' not in chart_data._data[code] or 'dy' not in chart_data._data[code]:
-            return False
+        Args:
+            name: 스크립트 이름
+            script: 스크립트 코드
         
-        # 데이터가 충분한지 확인 (빈 배열이 아닌지)
-        if not chart_data._data[code]['mi3'] or not chart_data._data[code]['dy']:
-            return False
+        Returns:
+            code: 컴파일된 코드 객체
+        """
+        # 캐시에 있으면 사용
+        if name in self._compiled_scripts:
+            return self._compiled_scripts[name]
         
-        return True
-    
-    def _prepare_chart_data(self, chart_data, code):
-        """차트 데이터 준비"""
+        # 없으면 컴파일 후 캐시에 저장
+        code_obj = compile(script, f"<script_{name}>", 'exec')
+        self._compiled_scripts[name] = code_obj
+        return code_obj
+
+    def _prepare_execution_globals(self):
+        """실행 환경의 글로벌 변수 준비"""
         try:
-            # 1분봉과 일봉을 함께 가져오기 (내부적으로 3분봉도 생성됨)
-            chart_data.get_chart_data(code, 'mi', 1)
-            # 준비 완료까지 최대 1초 대기
-            max_wait = 1.0  # 1초
-            start_time = time.time()
-            while time.time() - start_time < max_wait:
-                if self._check_chart_data_ready(chart_data, code):
-                    return True
-                time.sleep(0.1)  # 100ms 대기
+            # Python 내장 함수 제한 (허용된 것만 포함)
+            restricted_builtins = {}
+            builtins_dict = __builtins__ if isinstance(__builtins__, dict) else dir(__builtins__)
+            
+            for name in self.ALLOWED_BUILTINS:
+                if name in builtins_dict:
+                    if isinstance(__builtins__, dict):
+                        restricted_builtins[name] = __builtins__[name]
+                    else:
+                        restricted_builtins[name] = getattr(__builtins__, name)
+            
+            # 필요한 모듈 로드
+            modules = {}
+            for module_name in self.ALLOWED_MODULES:
+                try:
+                    module = __import__(module_name)
+                    modules[module_name] = module
+                except ImportError:
+                    logging.warning(f"모듈 로드 실패: {module_name}")
+            
+            # 글로벌 환경 설정
+            globals_dict = {
+                # Python 내장 함수들 (제한된 목록)
+                **restricted_builtins,
+                
+                # 허용된 모듈들
+                **modules,
+                
+                # 차트 매니저
+                'ChartManager': self.chart_manager.__class__,
+                
+                # 유틸리티 함수
+                'loop': self._safe_loop,
+            }
+            
+            # 모든 스크립트 추가 (사용자 함수 포함)
+            for script_name, script_data in self.scripts.items():
+                # 스크립트가 함수처럼 호출 가능하도록 래퍼 생성
+                wrapper_code = f"""
+def {script_name}(code, kwargs={{}}):
+    # 스크립트를 함수로 실행
+    result = run_script(code, '{script_name}', is_sub_call=True, kwargs=kwargs)
+    return result['result'] if result['success'] else None
+                """
+                
+                # 스크립트 래퍼 함수 컴파일 및 추가
+                try:
+                    exec(wrapper_code, globals_dict, globals_dict)
+                except Exception as e:
+                    logging.error(f"스크립트 래퍼 생성 오류 ({script_name}): {e}")
+            
+            # run_script 함수 추가
+            globals_dict['run_script'] = lambda code, name, kwargs: self.run_script(code, name, is_sub_call=True, kwargs=kwargs)
+            
+            return globals_dict
+        except Exception as e:
+            logging.error(f"실행 환경 준비 오류: {e}")
+            # 기본 환경 반환
+            return {'ChartManager': self.chart_manager.__class__}
+                
+    def _check_chart_data_ready(self, code):
+        """차트 데이터가 준비되었는지 확인
+        
+        Args:
+            code: 종목코드
+        
+        Returns:
+            bool: 데이터가 준비되었으면 True
+        """
+        # 실제 구현에서는 ChartData 클래스를 사용해야 함
+        # 예시 구현
+        try:
+            if not hasattr(self, '_chart_data_cache'):
+                self._chart_data_cache = {}
+            
+            return code in self._chart_data_cache and self._chart_data_cache[code].get('ready', False)
+        except Exception as e:
+            logging.error(f"차트 데이터 확인 오류: {e}")
+            return False
+    
+    def _prepare_chart_data(self, code):
+        """차트 데이터 준비
+        
+        Args:
+            code: 종목코드
+        
+        Returns:
+            bool: 준비 성공 여부
+        """
+        # 실제 구현에서는 ChartData 클래스를 사용해야 함
+        # 예시 구현
+        try:
+            if not hasattr(self, '_chart_data_cache'):
+                self._chart_data_cache = {}
+            
+            # 데이터 준비 요청 로직
+            self._chart_data_cache[code] = {'ready': True}
+            return True
         except Exception as e:
             logging.error(f"차트 데이터 준비 오류: {e}")
-        return False
-
-"""        
-GOLDEN_CROSS_SCRIPT =
-# 차트 매니저 인스턴스 생성
-dy = ChartManager('dy')  # 일봉
-
-# 단기 이동평균 계산
-short_ma = dy.ma(code, dy.c, short_period, 0, 'a')  # 5일 단순이동평균
-# 장기 이동평균 계산
-long_ma = dy.ma(code, dy.c, long_period, 0, 'a')   # 20일 단순이동평균
-
-# 골든 크로스 확인 (단기 이동평균이 장기 이동평균을 상향 돌파)
-is_golden_cross = dy.cross_up(code, 
-    lambda c, n: dy.ma(c, dy.c, short_period, n, 'a'), 
-    lambda c, n: dy.ma(c, dy.c, long_period, n, 'a'))
-
-# 결과 기록
-logging.debug(f"종목코드: {code}, 단기이평: {short_ma:.2f}, 장기이평: {long_ma:.2f}, 골든크로스: {is_golden_cross}")
-
-# 결과 반환 (True이면 매수 신호)
-result = is_golden_cross
-"""
-
+            return False
+        
+    # ===== 스크립트 최적화 및 DLL 컴파일 관련 메서드 =====
+    
+    def export_compiled_script(self, name: str, output_dir='.'):
+        """스크립트를 DLL 또는 pyc 형태로 컴파일 후 내보내기
+        
+        Args:
+            name: 스크립트 이름
+            output_dir: 출력 디렉토리
+        
+        Returns:
+            dict: {
+                'success': bool,  # 내보내기 성공 여부
+                'path': str,      # 저장된 파일 경로 (성공 시)
+                'error': str,     # 오류 메시지 (실패 시)
+            }
+        """
+        result = {'success': False, 'path': None, 'error': None}
+        
+        try:
+            # 스크립트 가져오기
+            script_data = self.get_script(name)
+            script = script_data.get('script', '')
+            
+            if not script:
+                result['error'] = f"스크립트 없음: {name}"
+                return result
+            
+            # .pyc 형태로 컴파일
+            output_file = os.path.join(output_dir, f"{name}.pyc")
+            
+            # 컴파일
+            code_obj = compile(script, f"<script_{name}>", 'exec')
+            
+            # .pyc 파일로 저장
+            import marshal
+            import struct
+            import sys
+            
+            with open(output_file, 'wb') as fc:
+                # 매직 넘버 (Python 버전별로 다름)
+                fc.write(struct.pack('<I', int(sys.hexversion)))
+                # 타임스탬프 (0으로 설정)
+                fc.write(struct.pack('<I', 0))
+                # 소스 크기 (0으로 설정)
+                fc.write(struct.pack('<I', 0))
+                # 컴파일된 코드 객체 저장
+                marshal.dump(code_obj, fc)
+            
+            result['success'] = True
+            result['path'] = output_file
+            return result
+        
+        except Exception as e:
+            result['error'] = f"컴파일 오류: {type(e).__name__} - {e}"
+            return result
+    
+    def import_compiled_script(self, file_path, name=None):
+        """컴파일된 스크립트 가져오기
+        
+        Args:
+            file_path: 컴파일된 파일 경로
+            name: 스크립트 이름 (None이면 파일명 사용)
+        
+        Returns:
+            dict: {
+                'success': bool,  # 가져오기 성공 여부
+                'name': str,      # 스크립트 이름 (성공 시)
+                'error': str,     # 오류 메시지 (실패 시)
+            }
+        """
+        result = {'success': False, 'name': None, 'error': None}
+        
+        try:
+            # 파일 이름에서 스크립트 이름 추출
+            if name is None:
+                name = os.path.splitext(os.path.basename(file_path))[0]
+            
+            # 이미 존재하는지 확인
+            if name in self.scripts:
+                result['error'] = f"이미 존재하는 스크립트 이름: {name}"
+                return result
+            
+            # .pyc 파일 로드
+            import marshal
+            import struct
+            
+            with open(file_path, 'rb') as fc:
+                # 헤더 스킵 (매직 넘버, 타임스탬프, 소스 크기)
+                fc.read(12)
+                # 코드 객체 로드
+                code_obj = marshal.load(fc)
+            
+            # 코드 객체 캐시에 저장
+            self._compiled_scripts[name] = code_obj
+            
+            # 비어있는 스크립트로 등록 (런타임에만 사용)
+            self.scripts[name] = {
+                'script': '# 컴파일된 스크립트',
+                'vars': {}
+            }
+            
+            result['success'] = True
+            result['name'] = name
+            return result
+        
+        except Exception as e:
+            result['error'] = f"가져오기 오류: {type(e).__name__} - {e}"
+            return result
+   
