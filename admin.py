@@ -1,7 +1,7 @@
 from public import gm, dc, Work,load_json, save_json
 from classes import TableManager, TimeLimiter, ThreadSafeDict, la, CounterTicker
 from strategy import Strategy
-from chart import ChartData, ScriptManager
+from chart import ChartData, ScriptManager, enhance_script_manager
 from tabulate import tabulate
 from datetime import datetime
 from PyQt5.QtCore import QTimer
@@ -35,6 +35,13 @@ class Admin:
         gm.cdt = ChartData()
         la.register('cdt', gm.cdt, use_thread=True)
         gm.scm = ScriptManager()
+        try:
+            logging.debug('스크립트 확장 시작')
+            result = enhance_script_manager(gm.scm)
+            logging.debug(f'스크립트 확장 결과={result}')
+            logging.debug(f'사용가능 메소드: dir(gm.scm)={dir(gm.scm)}')
+        except Exception as e:
+            logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
         gm.ipc.request_to_dbm('set_rate', gm.수수료율, gm.세금율)
 
     def get_login_info(self):

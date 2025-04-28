@@ -1,12 +1,12 @@
 {
     "is_price_breakout": {
-        "script": "# 가격 신고가/신저가 돌파 확인\ndy = ChartManager('dy')\n\n# 기본값으로 방향(상향/하향)과 기간 설정\ndirection = kwargs.get('direction', 'up')\nperiod = kwargs.get('period', 20)\n\n# 기준값 계산\nif direction == 'up':\n    threshold = dy.highest(code, dy.h, period, 1)  # 이전 고점\n    current = dy.c(code)  # 현재가\n    return current > threshold  # 상향 돌파\nelse:\n    threshold = dy.lowest(code, dy.l, period, 1)  # 이전 저점\n    current = dy.c(code)  # 현재가\n    return current < threshold  # 하향 돌파",
+        "script": "# 가격 신고가/신저가 돌파 확인\ndy = ChartManager('dy')\n# 기본값으로 방향(상향/하향)과 기간 설정\ndirection = kwargs.get('direction', 'up')\nperiod = kwargs.get('period', 20)\n# 기준값 계산\nif direction == 'up':\n    threshold = dy.highest(code, dy.h, period, 1)  # 이전 고점\n    current = dy.c(code)  # 현재가\n    return current > threshold  # 상향 돌파\nelse:\n    threshold = dy.lowest(code, dy.l, period, 1)  # 이전 저점\n    current = dy.c(code)  # 현재가\n    return current < threshold  # 하향 돌파",
         "vars": {},
         "type": "bool",
         "desc": ""
     },
     "band_break_down": {
-        "script": "# 볼린저 밴드 돌파 전략\ndy = ChartManager('dy')  # 일봉\n\n# 볼린저 밴드 계산 (20일, 2표준편차)\nupper, middle, lower = dy.bollinger_bands(code, 20, 2)\n\n# 전일 종가와 밴드 관계\nprev_close = dy.c(code, 1)\nprev_above_upper = prev_close > upper\n\n# 현재 종가와 밴드 관계\ncurr_close = dy.c(code)\ncurr_below_upper = curr_close < upper\n\n# 밴드 상단 아래로 꺾기 확인\nband_break_down = prev_above_upper and curr_below_upper\n\n# 결과 반환\nresult = band_break_down",
+        "script": "# 볼린저 밴드 돌파 전략\ndy = ChartManager('dy')  # 일봉\n# 볼린저 밴드 계산 (20일, 2표준편차)\nupper, middle, lower = dy.bollinger_bands(code, 20, 2)\n# 전일 종가와 밴드 관계\nprev_close = dy.c(code, 1)\nprev_above_upper = prev_close > upper\n# 현재 종가와 밴드 관계\ncurr_close = dy.c(code)\ncurr_below_upper = curr_close < upper\n# 밴드 상단 아래로 꺾기 확인\nband_break_down = prev_above_upper and curr_below_upper\n# 결과 반환\nresult = band_break_down",
         "vars": {},
         "type": "bool_",
         "desc": ""

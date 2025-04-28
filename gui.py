@@ -724,7 +724,7 @@ class GUI(QMainWindow, form_class):
                     gm.스크립트변수.update_table_widget(self.tblScriptVar)
                     self.ledVarName.setText('')
                     self.ledVarValue.setText('')
-                    gm.scm.delete_script(name)
+                    gm.scm.delete_script_compiled(name)
                     self.txtScriptMsg.clear()
 
         except Exception as e:
@@ -765,7 +765,7 @@ class GUI(QMainWindow, form_class):
                 key = self.tblScriptVar.item(row, 0).text().strip()
                 value = self.tblScriptVar.item(row, 1).text()
                 vars[key] = float(value) if value else 0.0
-            script_type = gm.scm.set_script(name, script, vars, desc) # 실패시 False, 성공시 스크립트 타입 반환
+            script_type = gm.scm.set_script_compiled(name, script, vars, desc) # 실패시 False, 성공시 스크립트 타입 반환
             if script_type:
                 gm.스크립트.set(key=name, data={'스크립트': script, '타입': script_type, '변수': json.dumps(vars), '설명': desc})
                 gm.스크립트.update_table_widget(self.tblScript)

@@ -407,6 +407,7 @@ class FilePath:         # 파일 경로
 
     DB_PATH = 'db'
     SCRIPT_PATH = 'script'
+    CACHE_PATH = 'script/compiled_scripts'
     CONFIG_PATH = 'config'
     RESOURCE_PATH = 'resources'
     API_PATH = "C:/OpenAPI/data"
@@ -432,6 +433,7 @@ class FilePath:         # 파일 경로
     scripts_file = os.path.join(get_path(SCRIPT_PATH), SCRIPTS_FILE)
     functions_file = os.path.join(get_path(SCRIPT_PATH), FUNCTIONS_FILE)
     image_file = os.path.join(get_path(IMAGE_PATH), "Liberanimo_only.png")
+    cache_path = os.path.join(get_path(CACHE_PATH))
 
 @dataclass
 class Constants:        # 상수 정의
