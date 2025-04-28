@@ -12,13 +12,13 @@
         "desc": ""
     },
     "is_golden_cross": {
-        "script": "# 골든 크로스 전략\ndy = ChartManager('dy')  # 일봉\n\n# 단기/장기 이동평균\nshort_ma = dy.ma(code, dy.c, 5)  # 5일 단순이동평균\nlong_ma = dy.ma(code, dy.c, 20)  # 20일 단순이동평균\n\n# 골든 크로스 확인\nis_golden_cross = dy.cross_up(code, \n    lambda c, n: dy.ma(c, dy.c, 5, n), \n    lambda c, n: dy.ma(c, dy.c, 20, n))\n\n# 거래량 확인 (평균 대비 1.5배 이상)\nvolume_increase = dy.v(code) > dy.avg(code, dy.v, 5) * 1.5\n\n# 결과 반환: 골든크로스 + 거래량 증가\nresult = is_golden_cross and volume_increase",
+        "script": "# 골든 크로스 전략\ndy = ChartManager('dy')  # 일봉\n# 단기/장기 이동평균\nshort_ma = dy.ma(code, dy.c, 5)  # 5일 단순이동평균\nlong_ma = dy.ma(code, dy.c, 20)  # 20일 단순이동평균\n# 골든 크로스 확인\nis_golden_cross = dy.cross_up(code, \n    lambda c, n: dy.ma(c, dy.c, 5, n), \n    lambda c, n: dy.ma(c, dy.c, 20, n))\n# 거래량 확인 (평균 대비 1.5배 이상)\nvolume_increase = dy.v(code) > dy.avg(code, dy.v, 5) * 1.5\n# 결과 반환: 골든크로스 + 거래량 증가\nresult = is_golden_cross and volume_increase",
         "vars": {},
         "type": "bool",
         "desc": "골든 전략"
     },
     "highest_close_in_10_days": {
-        "script": "dy = ChartManager('dy')  # 일봉\nmax_high = 0\nmax_high_idx = -1\n\n# loop 함수를 사용하여 최근 10개 봉 확인\n# def 키워드 사용 불가, 람다 함수 사용\ncheck_high = lambda i: dy.h(code, i)\n\nhigh_prices = loop(range(10), check_high)\nmax_high = max(high_prices)\nmax_high_idx = high_prices.index(max_high)\n\n# 현재가 계산\ncurrent_price = dy.c(code, 0)\ndrop_pct = ((max_high - current_price) / max_high) * 100 if max_high > 0 else 0\n\n# 결과 반환\nresult = drop_pct >= 10  # 최고가 대비 10% 이상 하락",
+        "script": "dy = ChartManager('dy')  # 일봉\nmax_high = 0\nmax_high_idx = -1\n# loop 함수를 사용하여 최근 10개 봉 확인\n# def 키워드 사용 불가, 람다 함수 사용\ncheck_high = lambda i: dy.h(code, i)\nhigh_prices = loop(range(10), check_high)\nmax_high = max(high_prices)\nmax_high_idx = high_prices.index(max_high)\n# 현재가 계산\ncurrent_price = dy.c(code, 0)\ndrop_pct = ((max_high - current_price) / max_high) * 100 if max_high > 0 else 0\n# 결과 반환\nresult = drop_pct >= 10  # 최고가 대비 10% 이상 하락",
         "vars": {},
         "type": "bool",
         "desc": "최근 10개봉중 최고가 찾기"
@@ -41,8 +41,14 @@
         "type": "bool",
         "desc": ""
     },
-    "for_in_range": {
-        "script": "rg = kwargs.get('repeat', 10)\nsm = 0\nfor i in range(rg):\n    sm = sm + i\nresult = sm",
+    "add_a": {
+        "script": "result = 5",
+        "vars": {},
+        "type": "int",
+        "desc": ""
+    },
+    "add_b": {
+        "script": "result = 3",
         "vars": {},
         "type": "int",
         "desc": ""

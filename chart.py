@@ -12,14 +12,23 @@ import re
 import os
 import json
 
+import time
+import logging
+import numpy as np
+import datetime
+from datetime import datetime
+from collections import defaultdict
+
 class ChartData:
-    """차트 데이터를 관리하는 싱글톤 클래스"""
+    """차트 데이터를 관리하는 최적화된 싱글톤 클래스"""
     _instance = None
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(ChartData, cls).__new__(cls)
             cls._instance._data = {}  # {code: {cycle: data}}
+            cls._instance._index_maps = {}  # {code: {cycle: {time_key: index}}} - 빠른 시간 검색용
+            cls._instance._cached_aggregations = {}  # {code: {cycle_tick: (timestamp, data)}} - 집계 캐시
             cls._instance._active_requests = {}  # 활성 요청 추적
         return cls._instance
     
@@ -27,6 +36,8 @@ class ChartData:
         if hasattr(self, "_initialized"):
             return
         self._initialized = True
+        # 캐시 설정
+        self._cache_timeout = 300  # 5분 캐시 타임아웃 (초)
     
     def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
         """외부에서 차트 데이터 설정
@@ -44,15 +55,41 @@ class ChartData:
         
         if code not in self._data:
             self._data[code] = {}
+            self._index_maps[code] = {}
         
+        # 데이터 설정
         self._data[code][cycle_key] = data
+        
+        # 인덱스 맵 생성 (빠른 검색용)
+        self._create_index_map(code, cycle_key)
         
         # 3분봉 데이터 초기화 (1분봉으로부터 생성)
         if cycle == 'mi' and tick == 1 and 'mi3' not in self._data[code]:
-            self._data[code]['mi3'] = self._aggregate_minute_data(data, 3)
+            # self._data[code]['mi3'] = self._aggregate_minute_data(data, 3)
+            self._data[code]['mi3'] = self._aggregate_minute_data_optimized(data, 3)
+            self._create_index_map(code, 'mi3')
+            
+        # 캐시 무효화
+        self._invalidate_aggregation_cache(code)
+    
+    def _create_index_map(self, code: str, cycle_key: str):
+        """시간 -> 인덱스 매핑 생성 (빠른 검색용)"""
+        if code not in self._index_maps:
+            self._index_maps[code] = {}
+            
+        index_map = {}
+        data = self._data[code][cycle_key]
+        
+        time_key = '체결시간' if cycle_key.startswith('mi') else '일자'
+        
+        for i, candle in enumerate(data):
+            if time_key in candle:
+                index_map[candle[time_key]] = i
+                
+        self._index_maps[code][cycle_key] = index_map
     
     def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """실시간 가격 정보로 차트 데이터 업데이트
+        """실시간 가격 정보로 차트 데이터 업데이트 (최적화 버전)
         
         Args:
             code: 종목코드
@@ -68,12 +105,17 @@ class ChartData:
         # 1분봉 업데이트
         minute_data = self._data[code]['mi1']
         
+        # 기준 시간 계산 (분 단위로)
+        base_time = datetime_str[:12] + '00'  # 분 단위로 맞춤
+        
         # 데이터가 없거나 새로운 분에 진입한 경우 새 봉 생성
-        if not minute_data or self._is_new_minute(minute_data[0]['체결시간'], datetime_str):
+        is_new_minute = not minute_data or minute_data[0]['체결시간'] != base_time
+        
+        if is_new_minute:
             # 새로운 1분봉 추가
             new_candle = {
                 '종목코드': code,
-                '체결시간': datetime_str[:12] + '00',  # 분 단위로 맞춤
+                '체결시간': base_time,
                 '현재가': price,
                 '시가': price,
                 '고가': price,
@@ -82,6 +124,13 @@ class ChartData:
                 '거래대금': amount
             }
             minute_data.insert(0, new_candle)
+            
+            # 인덱스 맵 업데이트
+            if code in self._index_maps and 'mi1' in self._index_maps[code]:
+                # 모든 인덱스 +1 시프트
+                self._index_maps[code]['mi1'] = {k: v+1 for k, v in self._index_maps[code]['mi1'].items()}
+                # 새 캔들 추가
+                self._index_maps[code]['mi1'][base_time] = 0
         else:
             # 기존 1분봉 업데이트
             current = minute_data[0]
@@ -91,15 +140,23 @@ class ChartData:
             current['거래량'] = volume
             current['거래대금'] = amount
         
-        # 3분봉 업데이트
-        self._update_3minute_chart(code, datetime_str)
+        # 3분봉 업데이트 (증분 방식)
+        self._update_3minute_chart_optimized(code, price, volume, amount, datetime_str, is_new_minute)
         
         # 일봉 업데이트 (있는 경우에만)
         if 'dy' in self._data[code]:
-            self._update_day_chart(code, price, volume, amount, datetime_str)
+            self._update_day_chart_optimized(code, price, volume, amount, datetime_str)
+        
+        # 캐시 무효화
+        self._invalidate_aggregation_cache(code)
+    
+    def _invalidate_aggregation_cache(self, code: str):
+        """코드 관련 집계 캐시 무효화"""
+        if code in self._cached_aggregations:
+            self._cached_aggregations[code] = {}
     
     def get_chart_data(self, code: str, cycle: str, tick: int = None) -> list:
-        """특정 종목, 주기의 차트 데이터 반환
+        """특정 종목, 주기의 차트 데이터 반환 (캐시 활용)
         
         Args:
             code: 종목코드
@@ -119,9 +176,21 @@ class ChartData:
         if cycle_key in ['mi1', 'mi3', 'dy'] and cycle_key in self._data[code]:
             return self._data[code][cycle_key]
         
-        # 다른 분봉은 1분봉에서 생성
+        # 다른 분봉은 캐시 확인 후 없으면 1분봉에서 생성
         if cycle == 'mi' and 'mi1' in self._data[code]:
-            return self._aggregate_minute_data(self._data[code]['mi1'], tick)
+            # 캐시 확인
+            if code in self._cached_aggregations and cycle_key in self._cached_aggregations[code]:
+                cache_time, cached_data = self._cached_aggregations[code][cycle_key]
+                # 캐시가 유효하면 사용
+                if time.time() - cache_time < self._cache_timeout:
+                    return cached_data
+            
+            # 캐시 없으면 생성하고 캐싱
+            aggregated_data = self._aggregate_minute_data_optimized(self._data[code]['mi1'], tick)
+            if code not in self._cached_aggregations:
+                self._cached_aggregations[code] = {}
+            self._cached_aggregations[code][cycle_key] = (time.time(), aggregated_data)
+            return aggregated_data
         
         # 주봉, 월봉은 없으면 서버에서 가져오기
         if cycle in ['wk', 'mo'] and cycle not in self._data[code]:
@@ -133,134 +202,115 @@ class ChartData:
         # 이미 데이터가 있으면 반환
         return self._data.get(code, {}).get(cycle_key, [])
     
-    def _is_new_minute(self, last_time: str, current_time: str) -> bool:
-        """새로운 분봉이 시작되었는지 확인"""
-        # 시간 형식: YYYYMMDDHHmm
-        if len(last_time) >= 12 and len(current_time) >= 12:
-            return last_time[:12] != current_time[:12]
-        return True
-    
-    def _aggregate_minute_data(self, minute_data: list, tick: int) -> list:
-        """1분봉 데이터를 특정 tick으로 집계"""
+    def _aggregate_minute_data_optimized(self, minute_data: list, tick: int) -> list:
+        """1분봉 데이터를 특정 tick으로 집계 (최적화 버전)"""
         if not minute_data:
             return []
         
+        # NumPy 배열로 변환하여 처리하면 더 빠를 수 있지만,
+        # 현재 코드의 구조를 크게 바꾸지 않고 최적화하기 위해 해시맵 활용
+        
+        # 그룹별 데이터 저장용 해시맵
         result = []
-        # 최근 데이터부터 처리 (인덱스 0이 최신)
         grouped_data = {}
+        
+        # 분 계산용 룩업 테이블 (캐싱)
+        minute_map = {}
         
         for candle in minute_data:
             dt_str = candle['체결시간']
             if len(dt_str) < 12:
                 continue
-                
-            dt = datetime.strptime(dt_str[:12], '%Y%m%d%H%M')
-            # tick 단위로 그룹화 (예: 5분봉이면 5의 배수 시간대로)
-            minute = dt.hour * 60 + dt.minute
-            tick_start = (minute // tick) * tick
-            group_dt = dt.replace(hour=tick_start // 60, minute=tick_start % 60)
-            group_key = group_dt.strftime('%Y%m%d%H%M')
+            
+            # 시간 계산 최적화
+            if dt_str in minute_map:
+                group_key = minute_map[dt_str]
+            else:
+                # 분 단위로 계산
+                hour = int(dt_str[8:10])
+                minute = int(dt_str[10:12])
+                total_minutes = hour * 60 + minute
+                # tick 단위로 그룹화
+                tick_start = (total_minutes // tick) * tick
+                group_hour = tick_start // 60
+                group_minute = tick_start % 60
+                group_key = f"{dt_str[:8]}{group_hour:02d}{group_minute:02d}00"
+                minute_map[dt_str] = group_key
             
             if group_key not in grouped_data:
+                # 새 그룹 생성
                 grouped_data[group_key] = {
                     '종목코드': candle['종목코드'],
-                    '체결시간': group_key + '00',
+                    '체결시간': group_key,
                     '현재가': candle['현재가'],
-                    '시가': candle['현재가'],
-                    '고가': candle['현재가'],
-                    '저가': candle['현재가'],
+                    '시가': candle['시가'],
+                    '고가': candle['고가'],
+                    '저가': candle['저가'],
                     '거래량': candle['거래량'],
                     '거래대금': candle.get('거래대금', 0)
                 }
             else:
+                # 기존 그룹 업데이트
                 group = grouped_data[group_key]
-                group['현재가'] = candle['현재가']  # 마지막 값이 종가
+                group['현재가'] = candle['현재가']  # 마지막 값이 종가가 됨
                 group['고가'] = max(group['고가'], candle['고가'])
                 group['저가'] = min(group['저가'], candle['저가'])
+                # group['거래량'] += candle['거래량']  # 거래량 합산 방식은 데이터 중복 가능성 있음
                 # 첫 값을 시가로 유지 (이미 설정됨)
         
-        # 정렬하여 결과 반환 (최신이 먼저)
+        # 시간 기준 정렬하여 결과 반환 (최신이 먼저)
         result = list(grouped_data.values())
         result.sort(key=lambda x: x['체결시간'], reverse=True)
         return result
     
-    def _update_3minute_chart(self, code: str, datetime_str: str):
-        """3분봉 업데이트"""
-        # 1분봉 데이터 필요
-        minute_data = self._data[code].get('mi1', [])
-        if not minute_data or len(datetime_str.strip()) < 12:
+    def _update_3minute_chart_optimized(self, code: str, price: int, volume: int, amount: int, datetime_str: str, is_new_minute: bool):
+        """3분봉 업데이트 (증분 방식)"""
+        # 입력 데이터 형식 검증
+        if len(datetime_str) < 12:
             return
         
-        # 새 3분봉 생성 필요 여부 확인
-        current_minute = int(datetime_str[8:10]) * 60 + int(datetime_str[10:12])
-        is_new_tick = current_minute % 3 == 0
+        # 시간 계산
+        hour = int(datetime_str[8:10])
+        minute = int(datetime_str[10:12])
+        total_minutes = hour * 60 + minute
         
-        # 3분봉 데이터가 없으면 생성
+        # 3분 구간 계산
+        tick = 3
+        tick_start = (total_minutes // tick) * tick
+        tick_end = tick_start + tick - 1
+        tick_time = f"{datetime_str[:8]}{tick_start//60:02d}{tick_start%60:02d}00"
+        
+        # 3분봉 데이터 없으면 초기화
         if 'mi3' not in self._data[code]:
-            self._data[code]['mi3'] = self._aggregate_minute_data(minute_data, 3)
-        elif is_new_tick and datetime_str[12:14] == '00':  # 정확히 3분 시작점
+            minute_data = self._data[code].get('mi1', [])
+            if minute_data:
+                self._data[code]['mi3'] = self._aggregate_minute_data_optimized(minute_data, 3)
+                self._create_index_map(code, 'mi3')
+            else:
+                self._data[code]['mi3'] = []
+            return
+        
+        # 인덱스 맵 가져오기
+        index_map = self._index_maps[code].get('mi3', {})
+        
+        # 새로운 3분 캔들 시작 여부 확인
+        is_new_3min_candle = False
+        
+        # 3분봉 시작 시간인지 확인 (예: 09:00, 09:03, 09:06 등)
+        if minute % 3 == 0 and datetime_str[12:14] == '00' and is_new_minute:
+            is_new_3min_candle = True
+        
+        # 3분봉 데이터 업데이트
+        three_min_data = self._data[code]['mi3']
+        
+        if is_new_3min_candle:
             # 새 3분봉 추가
+            minute_data = self._data[code]['mi1']
             current = minute_data[0]
-            tick_data = self._data[code]['mi3']
             
             new_candle = {
                 '종목코드': code,
-                '체결시간': datetime_str[:12] + '00',
-                '현재가': current['현재가'],
-                '시가': current['시가'],
-                '고가': current['고가'],
-                '저가': current['저가'],
-                '거래량': current['거래량'],
-                '거래대금': current['거래대금']
-            }
-            tick_data.insert(0, new_candle)
-        else:
-            # 현재 진행 중인 3분봉 업데이트
-            if self._data[code]['mi3']:
-                current_minute = int(datetime_str[8:10]) * 60 + int(datetime_str[10:12])
-                tick_start = (current_minute // 3) * 3
-                tick_time = datetime_str[:8] + f"{tick_start//60:02d}{tick_start%60:02d}00"
-                
-                # 최신 3분봉 찾기
-                for i, candle in enumerate(self._data[code]['mi3']):
-                    if candle['체결시간'] == tick_time:
-                        # 현재 3분봉 업데이트
-                        current = minute_data[0]
-                        candle['현재가'] = current['현재가']
-                        candle['고가'] = max(candle['고가'], current['현재가'])
-                        candle['저가'] = min(candle['저가'], current['현재가'])
-                        
-                        # 3분봉 거래량 정확히 계산
-                        total_volume = 0
-                        for j in range(min(3, len(minute_data))):
-                            m_time = minute_data[j]['체결시간']
-                            m_minute = int(m_time[8:10]) * 60 + int(m_time[10:12])
-                            if tick_start <= m_minute < tick_start + 3:
-                                total_volume += minute_data[j]['거래량']
-                        candle['거래량'] = total_volume
-                        break
-    
-    def _update_day_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """일봉 데이터 업데이트 (당일)"""
-        day_data = self._data[code].get('dy', [])
-        if not day_data:
-            return
-            
-        today = datetime_str[:8]  # YYYYMMDD
-        
-        # 최신 일봉이 당일인지 확인
-        if day_data and day_data[0]['일자'] == today:
-            current = day_data[0]
-            current['현재가'] = price
-            current['고가'] = max(current['고가'], price)
-            current['저가'] = min(current['저가'], price)
-            current['거래량'] = volume
-            current['거래대금'] = amount
-        elif day_data:
-            # 당일 데이터 없으면 추가
-            new_day = {
-                '종목코드': code,
-                '일자': today,
+                '체결시간': tick_time,
                 '현재가': price,
                 '시가': price,
                 '고가': price,
@@ -268,7 +318,104 @@ class ChartData:
                 '거래량': volume,
                 '거래대금': amount
             }
-            day_data.insert(0, new_day)
+            
+            three_min_data.insert(0, new_candle)
+            
+            # 인덱스 맵 업데이트
+            if 'mi3' in self._index_maps[code]:
+                # 모든 인덱스 +1 시프트
+                self._index_maps[code]['mi3'] = {k: v+1 for k, v in self._index_maps[code]['mi3'].items()}
+                # 새 캔들 추가
+                self._index_maps[code]['mi3'][tick_time] = 0
+        else:
+            # 현재 3분봉 업데이트
+            if tick_time in index_map:
+                idx = index_map[tick_time]
+                if idx < len(three_min_data):
+                    candle = three_min_data[idx]
+                    candle['현재가'] = price
+                    candle['고가'] = max(candle['고가'], price)
+                    candle['저가'] = min(candle['저가'], price)
+                    candle['거래량'] = volume
+                    candle['거래대금'] = amount
+            elif three_min_data:
+                # 없으면 최신 캔들 확인
+                latest = three_min_data[0]
+                latest_time = latest['체결시간']
+                
+                # 최신 캔들이 현재 3분 구간에 포함되는지 확인
+                latest_hour = int(latest_time[8:10])
+                latest_minute = int(latest_time[10:12])
+                latest_total = latest_hour * 60 + latest_minute
+                
+                if latest_total >= tick_start and latest_total <= tick_end:
+                    latest['현재가'] = price
+                    latest['고가'] = max(latest['고가'], price)
+                    latest['저가'] = min(latest['저가'], price)
+                    latest['거래량'] = volume
+                    latest['거래대금'] = amount
+    
+    def _update_day_chart_optimized(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
+        """일봉 데이터 업데이트 (당일) - 최적화 버전"""
+        day_data = self._data[code].get('dy', [])
+        if not day_data:
+            return
+            
+        today = datetime_str[:8]  # YYYYMMDD
+        
+        # 인덱스 맵 사용하여 오늘 데이터 빠르게 찾기
+        if code in self._index_maps and 'dy' in self._index_maps[code] and today in self._index_maps[code]['dy']:
+            idx = self._index_maps[code]['dy'][today]
+            if idx < len(day_data):
+                current = day_data[idx]
+                current['현재가'] = price
+                current['고가'] = max(current['고가'], price)
+                current['저가'] = min(current['저가'], price)
+                current['거래량'] = volume
+                current['거래대금'] = amount
+                return
+        
+        # 인덱스 맵에 없으면 처음 몇 개만 확인
+        for i, candle in enumerate(day_data[:3]):  # 최근 3일만 검사
+            if candle['일자'] == today:
+                candle['현재가'] = price
+                candle['고가'] = max(candle['고가'], price)
+                candle['저가'] = min(candle['저가'], price)
+                candle['거래량'] = volume
+                candle['거래대금'] = amount
+                
+                # 인덱스 맵 업데이트
+                if code not in self._index_maps:
+                    self._index_maps[code] = {}
+                if 'dy' not in self._index_maps[code]:
+                    self._index_maps[code]['dy'] = {}
+                self._index_maps[code]['dy'][today] = i
+                
+                return
+        
+        # 당일 데이터 없으면 추가
+        new_day = {
+            '종목코드': code,
+            '일자': today,
+            '현재가': price,
+            '시가': price,
+            '고가': price,
+            '저가': price,
+            '거래량': volume,
+            '거래대금': amount
+        }
+        day_data.insert(0, new_day)
+        
+        # 인덱스 맵 업데이트
+        if code not in self._index_maps:
+            self._index_maps[code] = {}
+        if 'dy' not in self._index_maps[code]:
+            self._index_maps[code]['dy'] = {}
+        
+        # 기존 인덱스 시프트
+        self._index_maps[code]['dy'] = {k: v+1 for k, v in self._index_maps[code]['dy'].items()}
+        # 새 데이터 인덱스 추가
+        self._index_maps[code]['dy'][today] = 0
     
     def _get_chart_data(self, code, cycle, tick=None):
         """서버에서 차트 데이터 가져오기 (주봉과 월봉만 요청 할 것)"""
@@ -287,6 +434,7 @@ class ChartData:
             # 요청 시작 시간 기록
             self._active_requests[request_key] = current_time
             dict_list = la.answer('admin', 'com_get_chart_data', code, cycle, tick)
+            
             return dict_list
         
         except Exception as e:
