@@ -75,11 +75,10 @@ class Admin:
         gm.스크립트변수 = TableManager(gm.tbl.hd스크립트변수)
         scripts = gm.scm.scripts.copy()
         dict_data = []
-        list스크립트 = []
         for k, v in scripts.items():
             dict_data.append({'스크립트명': k, '타입': v.get('type', ''), '스크립트': v.get('script', '').strip(), '변수': json.dumps(v.get('vars', {})), '설명': v.get('desc', '')})
-            list스크립트.append(k)
         gm.스크립트.set(data=dict_data)
+        gm.list스크립트 = gm.스크립트.get(column='스크립트명')
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
 
     def get_conditions(self):

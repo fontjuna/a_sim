@@ -1395,6 +1395,9 @@ class ScriptManager:
             logging.error(f"들여쓰기 처리 오류: {e}")
             # 오류 발생 시 원본 반환 (실행은 실패하더라도 예외는 발생시키지 않음)
             return script
+
+    def _is_valid_identifier(self, name):
+        return name.isidentifier()  # Python 3.x에서는 isidentifier 메서드가 있습니다.
             
     def run_script(self, code: str, name: str, check_only=False, script_data=None, is_sub_call=False, kwargs={}):
         """스크립트 또는 사용자 함수 실행/검사
@@ -1427,6 +1430,9 @@ class ScriptManager:
         
         # 엔티티 구분 (로깅용)
         entity_type = "스크립트"
+        if not self._is_valid_identifier(name):
+            result_dict['error'] = f"유효하지 않은 스크립트 이름: {name}"
+            return result_dict
         
         # 순환 참조 방지 (모든 유형에 적용)
         script_key = f"{name}:{code}"

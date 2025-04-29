@@ -52,5 +52,17 @@
         "vars": {},
         "type": "int",
         "desc": ""
+    },
+    "매도_1": {
+        "script": "mi3 = ChartManager('mi', 3)\nma5 = mi3.ma(code, mi3.c, 5)\nresult = ma5>mi3.c(code)",
+        "vars": {},
+        "type": "bool",
+        "desc": ""
+    },
+    "매수_1": {
+        "script": "mi3 = ChartManager('mi', 3)\nma5 = mi3.ma(code, mi3.c, 5)\nma20 = mi3.ma(code, mi3.c, 20)\nresult = ma5 >ma20",
+        "vars": {},
+        "type": "bool",
+        "desc": ""
     }
 }

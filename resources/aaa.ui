@@ -3850,7 +3850,7 @@
         </rect>
        </property>
        <property name="currentIndex">
-        <number>0</number>
+        <number>3</number>
        </property>
        <widget class="QWidget" name="tab_8">
         <attribute name="title">
@@ -4747,6 +4747,9 @@
           </property>
          </widget>
          <widget class="QRadioButton" name="rbScriptBuyOr">
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
           <property name="geometry">
            <rect>
             <x>180</x>

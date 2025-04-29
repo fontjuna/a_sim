@@ -501,6 +501,16 @@ class Constants:        # 상수 정의
         '손실제한': 'chkLossLimit',
         '손실제한율': 'dsbLossLimit',
 
+        # 스크립트 전략
+        '매수스크립트적용': 'chkScriptBuy',
+        '매수스크립트': 'ledScriptBuy',
+        '매수스크립트AND': 'rbScriptBuyAnd',
+        '매수스크립트OR': 'rbScriptBuyOr',
+        '매도스크립트적용': 'chkScriptSell',
+        '매도스크립트': 'ledScriptSell',
+        '매도스크립트AND': 'rbScriptSellAnd',
+        '매도스크립트OR': 'rbScriptSellOr',
+
         '남은횟수': 'xxremain',
     }
     DEFAULT_STRATEGY_SETS = {
@@ -555,6 +565,15 @@ class Constants:        # 상수 정의
         '스탑주문율': 0.0,
         '손실제한': True,
         '손실제한율': 3.0,
+
+        '매수스크립트적용': False,
+        '매수스크립트': '',
+        '매수스크립트AND': True,
+        '매수스크립트OR': False,
+        '매도스크립트적용': False,
+        '매도스크립트': '',
+        '매도스크립트AND': True,
+        '매도스크립트OR': False,
 
         '남은횟수': 1000,
     }

@@ -48,6 +48,7 @@ class GUI(QMainWindow, form_class):
         self.set_widgets()
         self.gui_fx채움_계좌콤보()
         self.gui_fx채움_조건콤보()
+        self.gui_fx채움_스크립트콤보()
         self.gui_fx채움_전략정의()
         self.gui_fx전시_전략정의()
         self.set_widget_events()
@@ -171,6 +172,12 @@ class GUI(QMainWindow, form_class):
             self.tblScriptVar.clicked.connect(lambda x: self.gui_var_select(x.row()))  # 변수 선택
             self.btnVarDel.clicked.connect(self.gui_var_delete)
             self.btnVarSave.clicked.connect(self.gui_var_save)
+
+            # 전략정의 에서 스크립트
+            self.btnScriptBuy.clicked.connect(lambda: self.gui_script_get(kind='buy'))
+            self.btnScriptSell.clicked.connect(lambda: self.gui_script_get(kind='sell'))
+            self.btnScriptBuyClear.clicked.connect(lambda: self.gui_script_get(clear='buy'))
+            self.btnScriptSellClear.clicked.connect(lambda: self.gui_script_get(clear='sell'))
 
             self.gui_tabs_init()
 
@@ -320,7 +327,24 @@ class GUI(QMainWindow, form_class):
             if not name:
                 QMessageBox.warning(self, '알림', '설정 이름을 입력하세요.')
                 return
-
+            
+            if self.chkScriptBuy.isChecked():
+                if not self.ledScriptBuy.text():
+                    QMessageBox.warning(self, '알림', '매수 스크립트를 입력하세요.')
+                    return
+            if self.chkScriptSell.isChecked():
+                if not self.ledScriptSell.text():
+                    QMessageBox.warning(self, '알림', '매도 스크립트를 입력하세요.')
+                    return
+            if self.chkConditionBuy.isChecked():
+                if not self.ledConditionBuy.text():
+                    QMessageBox.warning(self, '알림', '매수 조건식을 입력하세요.')
+                    return
+            if self.chkConditionSell.isChecked():
+                if not self.ledConditionSell.text():
+                    QMessageBox.warning(self, '알림', '매도 조건식을 입력하세요.')
+                    return
+                
             dict설정 = dc.const.DEFAULT_STRATEGY_SETS
             dict설정['전략명칭'] = name
 
@@ -419,6 +443,28 @@ class GUI(QMainWindow, form_class):
 
         except Exception as e:
             logging.error(f'전략 선택 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_script_get(self, kind=None, clear=None):
+        """스크립트 선택 가져오기 버튼 클릭"""
+        try:
+            # 현재 선택된 스크립트 가져오기
+            script_text = self.cbScript.currentText()
+
+            if kind:
+                if kind == 'buy':
+                    self.ledScriptBuy.setText(script_text)
+                elif kind == 'sell':
+                    self.ledScriptSell.setText(script_text)
+            elif clear:
+                if clear == 'buy':
+                    self.ledScriptBuy.setText('')
+                    self.chkScriptBuy.setChecked(False)
+                elif clear == 'sell':
+                    self.ledScriptSell.setText('')
+                    self.chkScriptSell.setChecked(False)
+
+        except Exception as e:
+            logging.error(f'스크립트 선택 오류: {type(e).__name__} - {e}', exc_info=True)
 
     # QWidget 이벤트 -------------------------------------------------------------------------------------
     def gui_account_reload(self):
@@ -726,6 +772,8 @@ class GUI(QMainWindow, form_class):
                     self.ledVarValue.setText('')
                     gm.scm.delete_script_compiled(name)
                     self.txtScriptMsg.clear()
+                    gm.list스크립트 = gm.스크립트.get(column='스크립트명')
+                    self.gui_fx채움_스크립트콤보()
 
         except Exception as e:
             logging.error(f'스크립트 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -769,6 +817,8 @@ class GUI(QMainWindow, form_class):
             if script_type:
                 gm.스크립트.set(key=name, data={'스크립트': script, '타입': script_type, '변수': json.dumps(vars), '설명': desc})
                 gm.스크립트.update_table_widget(self.tblScript)
+                gm.list스크립트 = gm.스크립트.get(column='스크립트명')
+                self.gui_fx채움_스크립트콤보()
                 self.txtScriptMsg.clear()
                 self.script_edited = False
             else:
@@ -839,6 +889,14 @@ class GUI(QMainWindow, form_class):
             self.cbCondition.setCurrentIndex(0)
         except Exception as e:
             logging.error(f'조건콤보 채움 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx채움_스크립트콤보(self):
+        try:
+            self.cbScript.clear()
+            self.cbScript.addItems([script for script in gm.list스크립트 if script.strip()])
+            self.cbScript.setCurrentIndex(0)
+        except Exception as e:
+            logging.error(f'스크립트콤보 채움 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_fx채움_전략정의(self):
         try:
