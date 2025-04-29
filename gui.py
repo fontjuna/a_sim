@@ -371,7 +371,7 @@ class GUI(QMainWindow, form_class):
             gm.전략정의.set(key=name, data=dict설정)
             gm.admin.json_save_strategy_sets()
             self.gui_fx채움_전략정의()
-            logging.debug(f'전략정의 {gm.전략정의.get()}')
+            #logging.debug(f'전략정의 {gm.전략정의.get()}')
             gm.toast.toast(f'주문설정 "{name}"을 저장 했습니다.', duration=4000)
             # return dict주문설정
 

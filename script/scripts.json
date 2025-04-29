@@ -64,5 +64,17 @@
         "vars": {},
         "type": "bool",
         "desc": ""
+    },
+    "loss_cut_3_percent": {
+        "script": "# 3% 손실 매도\n# 매수정보\nprice = kwargs.get('price', 0) # 매수가\nif price == 0:\n  result = False\n  debug('매수가가 0 원 입니다.')\n  return\n  \nquantity = kwargs.get('quantity', 0) # 매수수량\nmi1 = ChartManager('mi', 1)\ncurrent = mi1.c(code)\nif current == 0:\n  debug(f'현재가가 {current}원 입니다.')\n  return\nprofit = (current-price) / price * 100\nresult = profit < -3\nif result:\n  debug(f'current={current}, price={price}, profit={profit}, result={result}')",
+        "vars": {},
+        "type": "none",
+        "desc": "매수가 대비 3%이상 하락시 True"
+    },
+    "profit_cut_3_percent": {
+        "script": "# 3% 이익 매도\n# 매수정보\nprice = kwargs.get('price', 0) # 매수가\nif price == 0:\n  result = False\n  debug('매수가가 0 원 입니다.')\n  return\n  \nquantity = kwargs.get('quantity', 0) # 매수수량\nmi1 = ChartManager('mi', 1)\ncurrent = mi1.c(code)\nif current == 0:\n  debug(f'현재가가 {current}원 입니다.')\n  return\nprofit = (current-price) / price * 100\nresult = profit > 3\nif result:\n  debug(f'current={current}, price={price}, profit={profit}, result={result}')",
+        "vars": {},
+        "type": "none",
+        "desc": "매수가 대비 3%이상 수익시 True"
     }
 }

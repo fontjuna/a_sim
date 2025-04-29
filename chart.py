@@ -5,7 +5,6 @@ from typing import Set, Optional, Any
 from PyQt5.QtCore import QTimer
 import json
 import numpy as np
-import pandas as pd
 import logging
 import time
 import ast
@@ -14,6 +13,11 @@ import re
 import os
 import threading
 import copy
+import hashlib
+import marshal
+import pickle
+import importlib.util
+import traceback
 
 class ChartDataRegister:
     def __init__(self, name):
@@ -543,7 +547,7 @@ class ChartData:
                 del self._active_requests[request_key]
 
 class ChartManager:
-    def __init__(self, cycle='dy', tick=1):
+    def __init__(self, cycle='mi', tick=1):
         self.cycle = cycle  # 'mo', 'wk', 'dy', 'mi' 중 하나
         self.tick = tick    # 분봉일 경우 주기
         self.chart_data = ChartData()  # 싱글톤 인스턴스
@@ -1113,7 +1117,7 @@ class ScriptManager:
     """
     투자 스크립트 관리 및 실행 클래스 (확장 버전)
     
-    사용자 스크립트 실행, 검증, 관리하고 사용자 함수를 지원합니다.
+    사용자 스크립트 실행, 검증, 관리(사용자 함수 포함)
     """
     # 허용된 Python 기능 목록 (whitelist 방식)
     ALLOWED_MODULES = ['re', 'math', 'datetime', 'random', 'logging', 'json', 'collections']
@@ -1627,6 +1631,17 @@ except Exception as e:
                 
                 # 차트 매니저
                 'ChartManager': self.chart_manager.__class__,
+                'cm': self.chart_manager.__class__,
+                'mi1': ChartManager('mi', 1),
+                'mi3': ChartManager('mi', 3),
+                'mi5': ChartManager('mi', 5),
+                'mi15': ChartManager('mi', 15),
+                'mi30': ChartManager('mi', 30),
+                'mi60': ChartManager('mi', 60),
+                'mi240': ChartManager('mi', 240),
+                'dy': ChartManager('dy'),
+                'wk': ChartManager('wk'),
+                'mo': ChartManager('mo'),
                 
                 # 유틸리티 함수
                 'loop': self._safe_loop,
@@ -1699,129 +1714,6 @@ def {script_name}(code, kwargs={{}}):
             logging.error(f"차트 데이터 준비 오류: {e}")
             return False
         
-    # ===== 스크립트 최적화 및 DLL 컴파일 관련 메서드 =====
-    
-    def export_compiled_script(self, name: str, output_dir='.'):
-        """스크립트를 DLL 또는 pyc 형태로 컴파일 후 내보내기
-        
-        Args:
-            name: 스크립트 이름
-            output_dir: 출력 디렉토리
-        
-        Returns:
-            dict: {
-                'success': bool,  # 내보내기 성공 여부
-                'path': str,      # 저장된 파일 경로 (성공 시)
-                'error': str,     # 오류 메시지 (실패 시)
-            }
-        """
-        result = {'success': False, 'path': None, 'error': None}
-        
-        try:
-            # 스크립트 가져오기
-            script_data = self.get_script(name)
-            script = script_data.get('script', '')
-            
-            if not script:
-                result['error'] = f"스크립트 없음: {name}"
-                return result
-            
-            # .pyc 형태로 컴파일
-            output_file = os.path.join(output_dir, f"{name}.pyc")
-            
-            # 컴파일
-            code_obj = compile(script, f"<script_{name}>", 'exec')
-            
-            # .pyc 파일로 저장
-            import marshal
-            import struct
-            import sys
-            
-            with open(output_file, 'wb') as fc:
-                # 매직 넘버 (Python 버전별로 다름)
-                fc.write(struct.pack('<I', int(sys.hexversion)))
-                # 타임스탬프 (0으로 설정)
-                fc.write(struct.pack('<I', 0))
-                # 소스 크기 (0으로 설정)
-                fc.write(struct.pack('<I', 0))
-                # 컴파일된 코드 객체 저장
-                marshal.dump(code_obj, fc)
-            
-            result['success'] = True
-            result['path'] = output_file
-            return result
-        
-        except Exception as e:
-            result['error'] = f"컴파일 오류: {type(e).__name__} - {e}"
-            return result
-    
-    def import_compiled_script(self, file_path, name=None):
-        """컴파일된 스크립트 가져오기
-        
-        Args:
-            file_path: 컴파일된 파일 경로
-            name: 스크립트 이름 (None이면 파일명 사용)
-        
-        Returns:
-            dict: {
-                'success': bool,  # 가져오기 성공 여부
-                'name': str,      # 스크립트 이름 (성공 시)
-                'error': str,     # 오류 메시지 (실패 시)
-            }
-        """
-        result = {'success': False, 'name': None, 'error': None}
-        
-        try:
-            # 파일 이름에서 스크립트 이름 추출
-            if name is None:
-                name = os.path.splitext(os.path.basename(file_path))[0]
-            
-            # 이미 존재하는지 확인
-            if name in self.scripts:
-                result['error'] = f"이미 존재하는 스크립트 이름: {name}"
-                return result
-            
-            # .pyc 파일 로드
-            import marshal
-            import struct
-            
-            with open(file_path, 'rb') as fc:
-                # 헤더 스킵 (매직 넘버, 타임스탬프, 소스 크기)
-                fc.read(12)
-                # 코드 객체 로드
-                code_obj = marshal.load(fc)
-            
-            # 코드 객체 캐시에 저장
-            self._compiled_scripts[name] = code_obj
-            
-            # 비어있는 스크립트로 등록 (런타임에만 사용)
-            self.scripts[name] = {
-                'script': '# 컴파일된 스크립트',
-                'vars': {}
-            }
-            
-            result['success'] = True
-            result['name'] = name
-            return result
-        
-        except Exception as e:
-            result['error'] = f"가져오기 오류: {type(e).__name__} - {e}"
-            return result
-   
-import os
-import time
-import hashlib
-import marshal
-import pickle
-import importlib.util
-import sys
-import traceback
-import ast
-import re
-import logging
-from types import ModuleType, FunctionType
-from typing import Dict, Set, Any, Tuple, Optional, Callable
-
 class CompiledScriptCache:
     """컴파일된 스크립트 관리 클래스"""
     
@@ -2060,9 +1952,9 @@ def execute_script(ChartManager, code, kwargs):
 class ScriptManagerExtension:
     """ScriptManager 클래스를 위한 확장 메서드"""
     
-    def __init__(self):
+    def __init__(self, cache_dir=dc.fp.cache_path):
         """초기화"""
-        self.script_cache = CompiledScriptCache()
+        self.script_cache = CompiledScriptCache(cache_dir=cache_dir)
         self._precompiled_modules = {}  # 사전 컴파일된 모듈
     
     def init_script_compiler(self, script_manager):
@@ -2334,9 +2226,8 @@ except Exception as e:
             # 실행 시간 기록
             result_dict['exec_time'] = time.time() - start_time
 
-
 # ScriptManager 클래스를 확장하는 메서드
-def enhance_script_manager(script_manager):
+def enhance_script_manager(script_manager, cache_dir=dc.fp.cache_path):
     """기존 ScriptManager 클래스를 확장하여 컴파일 기능 추가
     
     Args:
@@ -2347,7 +2238,7 @@ def enhance_script_manager(script_manager):
     """
     try:
         # 확장 클래스 인스턴스 생성
-        extension = ScriptManagerExtension()
+        extension = ScriptManagerExtension(cache_dir=cache_dir)
         
         # 메서드 연결
         script_manager.init_script_compiler = lambda: extension.init_script_compiler(script_manager)
@@ -2368,7 +2259,6 @@ def enhance_script_manager(script_manager):
         logging.error(f"ScriptManager 확장 오류: {e}", exc_info=True)
         return False
 
-
 # 사용 예시
 """
 # ScriptManager 인스턴스 생성 후 확장 적용
@@ -2385,3 +2275,52 @@ script_manager.set_script_compiled('my_script', 'result = dy.c(code) > 50000')
 script_manager.delete_script_compiled('my_script')
 """
 
+if __name__ == '__main__':
+    sm = ScriptManager()
+    enhance_script_manager(sm)
+    script = """
+    dy=ChartManager('dy')
+    price=kwargs.get('price', 0)
+    result = dy.c(code) > price
+    """
+    script_data = {
+        'script': script,
+        'vars': {'price': 55800}
+    }
+    result = sm.run_script('005930', 'my_script', script_data=script_data, check_only=True) # 검사
+    print(result)
+    sm.set_script_compiled('my_script', script_data)
+    result = sm.run_script_compiled('005930', 'my_script') # 실행
+    print(result)
+
+    """
+    result = {
+        'success': bool,    # 성공 여부
+        'result': Any,      # 스크립트/함수 실행 결과 (성공 시)
+        'error': str,       # 오류 메시지 (실패 시)
+        'exec_time': float, # 실행 시간 (초)
+        'log': str          # 상세 로그 (실패 시)
+    }
+    """
+
+"""
+# 3% 손실 매도
+# 매수정보
+price = kwargs.get('price', 0) # 매수가
+if price == 0:
+  result = False
+  debug('매수가가 0 원 입니다.')
+  return
+  
+quantity = kwargs.get('quantity', 0) # 매수수량
+mi1 = ChartManager('mi', 1)
+current = mi1.c(code)
+if current == 0:
+  debug(f'현재가가 0 원 입니다.')
+  return
+
+profit = (current-price) / price * 100
+result = profit < -3
+if result:
+  debug(f'current={current}, price={price}, profit={profit}, result={result}')
+"""

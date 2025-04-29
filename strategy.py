@@ -85,10 +85,10 @@ class Strategy:
     def is_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         """매수 조건 충족 여부를 확인하는 메소드"""
         name = self.dict종목정보.get(code, next='종목명')
-        
+
         if self.매수스크립트적용:
-            script_condition = gm.scm.run_script_compiled(code, self.매수스크립트)
-            if self.매수스크립트AND and not script_condition: return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
+            result = gm.scm.run_script_compiled(code, self.매수스크립트)
+            if self.매수스크립트AND and not result.get('result', False): return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
             logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
 
         if not gm.config.sim_on:
@@ -184,6 +184,7 @@ class Strategy:
             종목명 = row.get('종목명', '')          # 종목번호 = '999999' 일 때 '당일청산 매도'
             매입가 = int(row['매입가'])             # 종목번호 = '999999' 일 때 9
             현재가 = int(row['현재가'])             # 종목번호 = '999999' 일 때 9
+            보유수량 = int(row['보유수량'])         # 종목번호 = '999999' 일 때 9
 
             수익률 = float(row.get('수익률(%)', 0))
 
@@ -209,13 +210,13 @@ class Strategy:
                 send_data['msg'] = '매도지정'
 
             if self.매도스크립트적용:
-                script_condition = gm.scm.run_script_compiled(code, self.매도스크립트, kwargs={'매수가': 매입가})
-                if self.매도스크립트OR and script_condition: 
+                result = gm.scm.run_script_compiled(code, self.매도스크립트, kwargs={'price': 매입가, 'quantity': 보유수량, 'profit': 수익률})
+                if self.매도스크립트OR and result.get('result', False): 
                     send_data['msg'] = '전략매도'
                     return True, send_data, f"전략매도: {code} {종목명}"
 
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
-                if self.매도스크립트적용 and not script_condition: return False, {}, f"매도스크립트 조건 불충족: {code} {종목명}"
+                if self.매도스크립트적용 and not result.get('result', False): return False, {}, f"매도스크립트 조건 불충족: {code} {종목명}"
                 send_data['msg'] = '검색매도'
                 return True, send_data,  f"검색매도: {code} {종목명}"
 
@@ -296,6 +297,8 @@ class Strategy:
         if reason not in ["조건없음", "장 운영시간이 아님"]:
             logging.info(f'매도결정: {self.전략} - {reason}\nsend_data={send_data}')
         if is_ok:
+            if not self.매도적용:
+                la.work('admin', 'send_status_msg', '주문내용', {'구분': f'매도편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': row['종목번호'], '종목명': row['종목명']})
             if isinstance(send_data, list):
                 logging.debug(f'** 복수 매도 주문목록 **: {send_data}')
                 for data in send_data:

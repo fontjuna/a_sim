@@ -340,8 +340,8 @@ class Admin:
     def json_save_strategy_sets(self):
         try:
             result, data = save_json(dc.fp.strategy_sets_file, gm.전략정의.get())
-            if result:
-                logging.debug(f'전략정의 JSON 파일을 저장했습니다. data count={len(data)}')
+            #if result:
+            #    logging.debug(f'전략정의 JSON 파일을 저장했습니다. data count={len(data)}')
             gm.basic_strategy = gm.전략정의.get(key=dc.const.BASIC_STRATEGY)
             return result
         except Exception as e:

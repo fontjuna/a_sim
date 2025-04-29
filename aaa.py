@@ -40,14 +40,14 @@ class Main:
         #self.splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
         #self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.white)
         #self.splash.show()
-        if datetime.now() < datetime(2025, 4, 30):
+        if datetime.now() < datetime(2025, 5, 30):
             splash_pix = QPixmap(dc.fp.image_file)
             screen_width = 800
             screen_height = 400
             resized_pixmap = splash_pix.scaled(screen_width, screen_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.splash = QSplashScreen(resized_pixmap, Qt.WindowStaysOnTopHint)
-            self.splash.showMessage("로딩 중... 잠시만 기다려 주세요...", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
-            self.splash.setStyleSheet("color: rgba(255, 0, 0, 0); font-size: 20px; font-weight: bold;")
+            #self.splash.showMessage("로딩 중... 잠시만 기다려 주세요...", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
+            #self.splash.setStyleSheet("color: rgba(255, 0, 0, 0); font-size: 20px; font-weight: bold;")
             self.splash.show()
         else:
             # 모니터 해상도 가져오기
@@ -63,8 +63,8 @@ class Main:
             # 스플래시 화면 설정
             self.splash = QSplashScreen(resized_pixmap, Qt.WindowStaysOnTopHint)
             self.splash.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint)
-            self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
-            self.splash.setStyleSheet("color: rgba(255, 0, 0, 0); font-size: 30px; font-weight: bold;")
+            #self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
+            #self.splash.setStyleSheet("color: rgba(255, 0, 0, 0); font-size: 30px; font-weight: bold;")
             self.splash.show() # showFullScreen()  # 화면 전체로 표시
             self.time_over = True
 
