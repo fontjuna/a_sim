@@ -2,11 +2,15 @@ from public import dc, get_path, save_json, load_json
 from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QColor
+import multiprocessing as mp
 import threading
 import copy
 import time
 import logging
 import uuid
+import queue
+import os
+from datetime import datetime
 
 class ThreadSafeList:
     def __init__(self):
@@ -826,7 +830,8 @@ class TableManager:
                     cell_item.setForeground(self.color_positive)  # 양수는 적색
                 else:
                     cell_item.setForeground(self.color_zero)      # 0은 검정색
-                
+
+               
 # 워커 쓰레드 클래스
 class WorkerThread(QThread):
     taskReceived = pyqtSignal(str, str, object, object)
@@ -1163,16 +1168,6 @@ class CounterTicker:
             ticker_limit = ticker_info["limit"] if ticker_info["limit"] > 0 else self.data[strategy]["000000"]["all"]
             return ticker_info["count"] < ticker_limit
     
-import multiprocessing as mp
-import threading
-import uuid
-import time
-import logging
-import queue
-import sqlite3
-import os
-from datetime import datetime
-
 # IPC(프로세스 간 통신) 관리자
 class IPCManager:
    def __init__(self):

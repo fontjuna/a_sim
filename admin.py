@@ -1,7 +1,7 @@
 from public import gm, dc, Work,load_json, save_json
 from classes import TableManager, TimeLimiter, ThreadSafeDict, la, CounterTicker
 from strategy import Strategy
-from chart import ChartData, ScriptManager, enhance_script_manager
+from chart import ChartDataRegister, ChartData, ScriptManager, enhance_script_manager
 from tabulate import tabulate
 from datetime import datetime
 from PyQt5.QtCore import QTimer
@@ -34,6 +34,9 @@ class Admin:
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
         gm.cdt = ChartData()
         la.register('cdt', gm.cdt, use_thread=True)
+        gm.cdr = ChartDataRegister('cdr')
+        la.register('cdr', gm.cdr, use_thread=True)
+        la.work('cdr', 'start_register')
         gm.scm = ScriptManager()
         try:
             logging.debug('스크립트 확장 시작')
@@ -72,8 +75,10 @@ class Admin:
         gm.스크립트변수 = TableManager(gm.tbl.hd스크립트변수)
         scripts = gm.scm.scripts.copy()
         dict_data = []
+        list스크립트 = []
         for k, v in scripts.items():
             dict_data.append({'스크립트명': k, '타입': v.get('type', ''), '스크립트': v.get('script', '').strip(), '변수': json.dumps(v.get('vars', {})), '설명': v.get('desc', '')})
+            list스크립트.append(k)
         gm.스크립트.set(data=dict_data)
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
 
@@ -151,7 +156,7 @@ class Admin:
     def com_SendRequest(self, rqname, trcode, input, output, next='0', screen=None, form='dict_list', timeout=5):
         if not self.com_request_time_check(kind='request'): return [], False
         try:
-            logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} input={input} next={next} screen={screen} form={form} timeout={timeout}')
+            #logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} input={input} next={next} screen={screen} form={form} timeout={timeout}')
             args = {
                 'rqname': rqname,
                 'trcode': trcode,
@@ -203,11 +208,6 @@ class Admin:
         dict_data = { '전략번호': idx, '전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
         self.dbm_order_upsert(dict_data)
-        chart_data = self.com_get_chart_data(code, 'mi', '1')
-        if chart_data: la.work('cdt', 'set_chart_data', code, chart_data, 'mi', 1)
-        chart_data = self.com_get_chart_data(code, 'dy')
-        if chart_data: la.work('cdt', 'set_chart_data', code, chart_data, 'dy')
-
         success = gm.api.SendOrder(**cmd)
 
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
@@ -245,10 +245,10 @@ class Admin:
                 next = '2'
             
             if not dict_list:
-                logging.warning(f'챠트 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
+                logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
                 return []
             
-            logging.debug(f'차트 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:{dict_list[:1]}')
+            logging.debug(f'{rqname} 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:{dict_list[:1]}')
             if cycle == 'mi':
                 dict_list = [{
                     '종목코드': code,
@@ -275,7 +275,7 @@ class Admin:
             return dict_list
             
         except Exception as e:
-            logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
             return []
 
     def com_market_status(self):
@@ -412,8 +412,8 @@ class Admin:
                     row['현재가'] = 현재가
                     la.work(f'전략{data["idx"]:02d}', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
+
             la.work('cdt', 'update_chart', code, 현재가, abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
-            #gm.ipc.request_to_dbm('update_minute_data', code, dictFID)
 
         try:
             if gm.잔고목록.in_key(code):
@@ -566,14 +566,8 @@ class Admin:
                     if item['전략'] not in data: data[item['전략']] = {}
                     data[item['전략']][item['종목번호']] = item['종목명']
 
-                    set_chart_data(item['종목번호'])
+                    la.work('cdr', 'register_code', item['종목번호'])
                 gm.ct.set_batch(data)
-
-            def set_chart_data(code):
-                chart_data = self.com_get_chart_data(code, 'mi', 1)
-                if chart_data: la.work('cdt', 'set_chart_data', code, chart_data, 'mi', 1)
-                chart_data = self.com_get_chart_data(code, 'dy')
-                if chart_data: la.work('cdt', 'set_chart_data', code, chart_data, 'dy')
 
             logging.debug(f'dict_list ={dict_list}')
             if dict_list:
@@ -581,7 +575,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            set_chart_data('005930') # 스크립트 테스트용 코드
+            la.work('cdr', 'register_code', '005930') # 스크립트 테스트용 코드
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -895,9 +889,10 @@ class Admin:
                 self.odr_conclution_data(dictFID)
             elif '확인' in 주문상태:
                 row = gm.주문목록.get(key=key)
-                if row and 주문수량 != 0 and 미체결수량 == 0: # 주문 취소주문 클리어
-                    logging.debug(f'주문체결 취소확인: order_no = {order_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
-                    gm.주문목록.delete(key=key) 
+                #if row and 주문수량 != 0 and 미체결수량 == 0: # 주문 취소주문 클리어
+                logging.debug(f'주문체결 취소확인: key={key} {code} {dictFID["종목명"]} order_no = {order_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                #    gm.주문목록.delete(key=key) 
+                gm.주문목록.delete(filter={'키': '취소'})
 
         except Exception as e:
             logging.error(f"접수체결 오류: {type(e).__name__} - {e}", exc_info=True)
@@ -1003,7 +998,7 @@ class Admin:
                     logging.info(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
 
                 gm.잔고목록.set(key=code, data=data)
-                #self.com_get_chart_data(code, 'mi', '1')
+                la.work('cdr', 'register_code', code)
 
             except Exception as e:
                 logging.error(f"매수 처리중 오류 발생: {code} {name} ***")

@@ -772,6 +772,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     gui = None
     api = None
     cdt = None # 챠트 데이타
+    cdr = None # 챠트 데이타 등록
     scm = None # 스크립트 매니저
     
     ipc = None # 프로세스 매니저
@@ -785,6 +786,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     list계좌콤보 = []
     list전략콤보 = []
     list전략튜플 = []
+    list스크립트 = []
 
     qwork = {} #QDict().qdict
     qanswer = {} #QDict().qanswer
