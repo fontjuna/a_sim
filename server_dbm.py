@@ -85,6 +85,12 @@ class DBMServer:
         for index in dc.ddb.MIN_INDEXES.values():
             self.chart_cursor.execute(index)
 
+        # 챠트 테이블 (일, 주, 월)
+        sql = self.create_table_sql(dc.ddb.DAY_TABLE_NAME, dc.ddb.DAY_COLUMNS)
+        self.chart_cursor.execute(sql)
+        for index in dc.ddb.DAY_INDEXES.values():
+            self.chart_cursor.execute(index)
+
         self.chart_db.commit()
 
     # 테이블 생성 SQL문 생성 함수
@@ -141,10 +147,10 @@ class DBMServer:
         }
         self.request_to_admin(order, **work)
 
-    def execute_query(self, sql, db='chart', params=None, many=False):
+    def execute_query(self, sql, db='chart', params=None):
         try:
             cursor = self.chart_db.cursor() if db == 'chart' else self.db.cursor()
-            query_command = cursor.executemany if many else cursor.execute
+            query_command = cursor.executemany if isinstance(params, list) else cursor.execute
             if params: 
                 query_command(sql, params)
             else: 
@@ -162,21 +168,24 @@ class DBMServer:
             self.chart_db.rollback() if db == 'chart' else self.db.rollback()
             self.send_result(None, e)
 
-    def table_upsert(self, db, table, dict_data, many=False):
+    def table_upsert(self, db, table, dict_data):
         try:
-            if not isinstance(dict_data, list): dict_data = [dict_data]
-            columns = ','.join(dict_data[0].keys())
-            column_str = ', '.join(['?'] * len(dict_data[0]))
-            params = tuple(dict_data.values())
+            is_list = isinstance(dict_data, list)   
+            temp = dict_data[0] if is_list else dict_data
+            columns = ','.join(temp.keys())
+            column_str = ', '.join(['?'] * len(temp))
+            params = tuple(dict_data.values()) if not is_list else [tuple(item.values()) for item in dict_data]
             sql = f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ({column_str})"
-            self.execute_query(sql, db=db, params=params, many=many)
+            self.execute_query(sql, db=db, params=params)
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)
 
-    def upsert_chart(self, code, dict_data, many=False):
+    def upsert_chart(self, dict_data, cycle, tick=1):
         """챠트 데이터를 데이터베이스에 저장"""
-        table = dc.ddb.CHT_TABLE_NAME
-        self.table_upsert('chart', table, dict_data, many=many)
+        table = dc.ddb.MIN_TABLE_NAME if cycle in ['mi', 'tk'] else dc.ddb.DAY_TABLE_NAME
+        logging.debug(f'upsert_chart: {cycle}, {tick} {dict_data[:1]}')
+        dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
+        self.table_upsert('chart', table, dict_data)
 
     def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno,  st_no, st_name, st_buy):
         """체결 정보를 데이터베이스에 저장하고 손익 계산"""

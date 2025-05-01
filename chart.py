@@ -64,19 +64,20 @@ class ChartDataRegister:
     def request_chart_data(self):
         codes = copy.deepcopy(self.todo_code)
         for code in codes:
-            #tk_done = codes[code]['tk']
-            #if not tk_done:
-            #    dict_data = la.answer('admin', 'com_get_chart_data', code, cycle='tk', tick=30)
-            #    if dict_data:
-            #        # DB에 저장
-            #    with self._lock: self.todo_code[code]['tk'] = True
-            #    tk_done = True
+            tk_done = codes[code]['tk']
+            if not tk_done:
+                dict_data = la.answer('admin', 'com_get_chart_data', code, cycle='tk', tick=30)
+                if dict_data:
+                    la.work('admin', 'dbm_upsert_chart', dict_data=dict_data, cycle='tk', tick=30)
+                    with self._lock: self.todo_code[code]['tk'] = True
+                    tk_done = True
 
             mi_done = codes[code]['mi']
             if not mi_done:
                 dict_data = la.answer('admin', 'com_get_chart_data', code, cycle='mi', tick=1)
                 if dict_data:
                     gm.cdt.set_chart_data(code, dict_data, 'mi', 1)
+                    la.work('admin', 'dbm_upsert_chart', dict_data=dict_data, cycle='mi', tick=1)
                     with self._lock: self.todo_code[code]['mi'] = True
                     mi_done = True
 
@@ -85,6 +86,7 @@ class ChartDataRegister:
                 dict_data = la.answer('admin', 'com_get_chart_data', code, cycle='dy')
                 if dict_data:
                     gm.cdt.set_chart_data(code, dict_data, 'dy')
+                    la.work('admin', 'dbm_upsert_chart', dict_data=dict_data, cycle='dy')
                     with self._lock: self.todo_code[code]['dy'] = True
                     dy_done = True
 
@@ -224,16 +226,32 @@ class ChartData:
         
         # 캐시 무효화
         self._invalidate_aggregation_cache(code)
+
+        # 시간 체크
+        current_time = time.time()
+        if not hasattr(self, '_last_bulk_update') or current_time - getattr(self, '_last_bulk_update', 0) >= 10:
+            # 모든 코드의 최신 1분봉 수집
+            all_data = []
+            for code in self._data:
+                if 'mi1' in self._data[code] and self._data[code]['mi1']:
+                    all_data.append(self._data[code]['mi1'][0])
+            
+            # 데이터가 있으면 전송
+            if all_data:
+                la.work('admin', 'dbm_upsert_chart', dict_data=all_data, cycle='mi', tick=1)
+            
+            # 마지막 업데이트 시간 저장
+            self._last_bulk_update = current_time        
     
     def _create_candle(self, code, time_str, close, open, high, low, volume, amount, is_missing=False):
         """캔들 객체 생성 헬퍼 함수"""
         candle = {
             '종목코드': code,
             '체결시간': time_str,
-            '현재가': close,
             '시가': open,
             '고가': high,
             '저가': low,
+            '현재가': close,
             '거래량': volume,
             '거래대금': amount
         }
@@ -408,10 +426,10 @@ class ChartData:
             new_day = {
                 '종목코드': code,
                 '일자': today,
-                '현재가': price,
                 '시가': price,  # 첫 체결가가 시가가 됨
                 '고가': price,
                 '저가': price,
+                '현재가': price,
                 '거래량': volume,
                 '거래대금': amount
             }
@@ -507,10 +525,10 @@ class ChartData:
                 grouped_data[group_key] = {
                     '종목코드': candle['종목코드'],
                     '체결시간': group_key,
-                    '현재가': candle['현재가'],
                     '시가': candle['시가'],
                     '고가': candle['고가'],
                     '저가': candle['저가'],
+                    '현재가': candle['현재가'],
                     '거래량': candle['거래량'],
                     '거래대금': candle.get('거래대금', 0)
                 }

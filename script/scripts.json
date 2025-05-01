@@ -1,16 +1,4 @@
 {
-    "test": {
-        "script": "# 기본적으로 코드를 지정 안 하면 삼성전자임\nresult = dy.c()",
-        "vars": {},
-        "type": "int",
-        "desc": ""
-    },
-    "test2": {
-        "script": "data = mi1.chart_data._data[code]['mi1'][0]\ndebug(data)\nresult = (dy.c() < 55750, dy.c())",
-        "vars": {},
-        "type": "tuple",
-        "desc": ""
-    },
     "매도_1": {
         "script": "ma3_5 = mi3.ma(mi3.c, 5)\nma3_10 = mi3.ma(mi3.c, 10)\nresult = ma3_10 > mi3.c() or ma3_5 < ma3_10",
         "vars": {},

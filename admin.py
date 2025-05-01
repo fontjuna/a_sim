@@ -374,6 +374,7 @@ class Admin:
 
     def on_fx실시간_조건검색(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
         if not gm.config.ready: return
+        if not gm.config.sim_on and time.time() < 90000: return
         try:
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
             if condition in gm.매수문자열들:
@@ -1082,6 +1083,12 @@ class Admin:
     def dbm_query_result(self, result, error=None):
         if error is not None:
             logging.debug(f'디비 요청 결과: result={result} error={error}')
+
+    def dbm_upsert_chart(self, dict_data, cycle, tick=1):
+        try:
+            gm.ipc.request_to_dbm('upsert_chart', dict_data, cycle, tick)
+        except Exception as e:
+            logging.error(f"dbm_upsert_chart 오류: {type(e).__name__} - {e}", exc_info=True)
 
     def dbm_fx실시간_수신데이타(self, data):
         # 디비에서 작업결과를 실시간으로 내보내는걸 수신 (예: 차트 분석 후 매매 신호)
