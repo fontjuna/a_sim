@@ -182,6 +182,15 @@ class DataBaseFields:   # 데이터베이스 필드 정의
     현재가 = FieldsAttributes(name='현재가', type='INTEGER', not_null=True, default=0)
     호가구분 = FieldsAttributes(name='호가구분', type='TEXT', not_null=True, default="''")
     화면번호 = FieldsAttributes(name='화면번호', type='TEXT', not_null=True, default="''")
+    일자 = FieldsAttributes(name='일자', type='TEXT', not_null=True, default="''")
+    시가 = FieldsAttributes(name='시가', type='INTEGER', not_null=True, default=0)
+    고가 = FieldsAttributes(name='고가', type='INTEGER', not_null=True, default=0)
+    저가 = FieldsAttributes(name='저가', type='INTEGER', not_null=True, default=0)
+    현재가 = FieldsAttributes(name='현재가', type='INTEGER', not_null=True, default=0)
+    거래량 = FieldsAttributes(name='거래량', type='INTEGER', not_null=True, default=0)
+    거래대금 = FieldsAttributes(name='거래대금', type='INTEGER', not_null=True, default=0)
+    주기 = FieldsAttributes(name='주기', type='TEXT', not_null=True, default="''")
+    틱 = FieldsAttributes(name='틱', type='INTEGER', not_null=True, default=0)
 
 class DataBaseColumns:  # 데이터베이스 컬럼 정의
     fd = DataBaseFields()
@@ -209,6 +218,22 @@ class DataBaseColumns:  # 데이터베이스 컬럼 정의
     CONC_INDEXES = {
         'idx_buyorder': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_buyorder ON {CONC_TABLE_NAME}(매수일자, 매수번호)",
         'idx_sellorder': f"CREATE INDEX IF NOT EXISTS idx_sellorder ON {CONC_TABLE_NAME}(매도일자, 매도번호)"
+    }
+    
+    MIN_TABLE_NAME = 'minute_n_tick'
+    MIN_SELECT_DATE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE 체결시간 = ? ORDER BY 체결시간 DESC"
+    MIN_COLUMNS = [fd.id, fd.종목코드, fd.체결시간, fd.시가, fd.고가, fd.저가, fd.현재가, fd.거래량, fd.거래대금, fd.주기, fd.틱]
+    MIN_COLUMN_NAMES = [col.name for col in MIN_COLUMNS]
+    MIN_INDEXES = {
+        'idx_code': f"CREATE INDEX IF NOT EXISTS idx_code ON {MIN_TABLE_NAME}(종목코드)"
+    }
+
+    DAY_TABLE_NAME = 'day_week_month'
+    DAY_SELECT_DATE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 일자 = ? ORDER BY 일자 DESC"
+    DAY_COLUMNS = [fd.id, fd.종목코드, fd.일자, fd.시가, fd.고가, fd.저가, fd.현재가, fd.거래량, fd.거래대금, fd.주기, fd.틱]
+    DAY_COLUMN_NAMES = [col.name for col in DAY_COLUMNS]
+    DAY_INDEXES = {
+        'idx_code': f"CREATE INDEX IF NOT EXISTS idx_code ON {DAY_TABLE_NAME}(종목코드)"
     }
 
 @dataclass
@@ -378,11 +403,11 @@ class ScreenNumber:     # 화면번호
         '8811': '신규매수', '8812': '신규매도', '5511': '매수취소', '5512': '매도취소', '6611': '매수정정', '6612': '매도정정', '7711': '수동매수', '7712': '수동매도'
     })
     차트종류: dict = field(default_factory=lambda: {
-        'mo': '월봉', 'wk': '주봉', 'dy': '일봉', 'mi': '분봉'
+        'mo': '월봉', 'wk': '주봉', 'dy': '일봉', 'mi': '분봉', 'tk': '틱봉'
     })
     챠트TR: dict = field(default_factory=lambda: {
-        'mo': 'OPT10083', 'wk': 'OPT10082', 'dy': 'OPT10081', 'mi': 'OPT10080',
-        '월봉챠트': 'OPT10083', '주봉챠트': 'OPT10082', '일봉챠트': 'OPT10081', '분봉챠트': 'OPT10080',
+        'mo': 'OPT10083', 'wk': 'OPT10082', 'dy': 'OPT10081', 'mi': 'OPT10080', 'tk': 'OPT10079',
+        '월봉챠트': 'OPT10083', '주봉챠트': 'OPT10082', '일봉챠트': 'OPT10081', '분봉챠트': 'OPT10080', '틱봉챠트': 'OPT10079',
     })
 @dataclass
 class MarketStatus:     # 장 상태
@@ -738,23 +763,23 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
         }
 
     hd분봉챠트 = {
-        '키': '코드체결시간',
+        '키': ['종목코드', '체결시간'],
+        '키중복': False,
         '정수': ['시가', '고가', '저가', '현재가', '거래량'],
         '실수': [],
-        '컬럼': ['체결시간', '종목코드', '현재가', '시가', '고가', '저가', '거래량'],
-        '추가': ['코드체결시간', '종목명'],
-        '확장': ['코드체결시간', '체결시간', '종목코드', '종목명', '현재가', '시가', '고가', '저가', '거래량'],
-        '헤더': ['체결시간', '종목코드', '종목명', '현재가', '시가', '고가', '저가', '거래량'],
+        '컬럼': ['종목코드', '체결시간', '시가', '고가', '저가', '현재가', '거래량'],
     }
+    hd틱봉챠트 = hd분봉챠트.copy()
+    hd틱봉챠트.update({
+        '키중복': True,
+    })
 
     hd일봉챠트 = {
-        '키': '코드일자',
+        '키': ['종목코드', '일자'],
+        '키중복': False,
         '정수': ['시가', '고가', '저가', '현재가', '거래량', '거래대금'],
         '실수': [],
-        '컬럼': ['일자', '종목코드', '현재가', '시가', '고가', '저가', '거래량', '거래대금'],
-        '추가': ['코드일자', '종목명'],
-        '확장': ['코드일자', '일자',  '종목코드', '종목명', '현재가', '시가', '고가', '저가', '거래량', '거래대금'],
-        '헤더': ['일자', '종목코드', '종목명', '현재가', '시가', '고가', '저가', '거래량', '거래대금'],
+        '컬럼': ['종목코드', '일자', '시가', '고가', '저가', '현재가', '거래량', '거래대금'],
     }
     hd주봉챠트 = hd일봉챠트.copy()
     hd월봉챠트 = hd일봉챠트.copy()

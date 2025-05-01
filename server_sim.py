@@ -383,7 +383,7 @@ class OnReceiveRealData(QThread):
                 }
                 gm.admin.on_fx실시간_주식체결(**job)
 
-                if self._stop_event.wait(timeout=0.02/len(sim.ticker)):
+                if self._stop_event.wait(timeout=0.2/len(sim.ticker)):
                     return
 
     def stop(self):

@@ -9,8 +9,8 @@ class DBMServer:
     def __init__(self):
         self.db = None
         self.cursor = None
-        self.daily_db = None
-        self.daily_cursor = None
+        self.chart_db = None
+        self.chart_cursor = None
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
         self.dict_minute_data = {}
@@ -18,13 +18,13 @@ class DBMServer:
         self.init_dbm()
 
     def stop(self):
-        if self.daily_db is not None:
-            if self.daily_cursor is not None:
-                self.daily_cursor.close()
-                self.daily_cursor = None
-            self.daily_db.commit()
-            self.daily_db.close()
-            self.daily_db = None
+        if self.chart_db is not None:
+            if self.chart_cursor is not None:
+                self.chart_cursor.close()
+                self.chart_cursor = None
+            self.chart_db.commit()
+            self.chart_db.close()
+            self.chart_db = None
         if self.db is not None:
             if self.cursor is not None:
                 self.cursor.close()
@@ -51,7 +51,7 @@ class DBMServer:
         self.db = sqlite3.connect(path)
         # 아래 람다식은 튜플로 받은 레코드를 딕셔너리로 변환하는 함수
         self.db.row_factory = lambda cursor, row: { col[0]: row[idx] for idx, col in enumerate(cursor.description)}
-        # self.daily_db.row_factory = sqlite3.Row # 직렬화 에러
+        # self.chart_db.row_factory = sqlite3.Row # 직렬화 에러
         self.cursor = self.db.cursor()
 
         # trades 테이블
@@ -70,22 +70,22 @@ class DBMServer:
 
         self.db.commit()
 
-        # # 매일 생성 디비
-        # db_daily = f'abc_{datetime.now().strftime("%Y%m%d")}.db'
-        # path_daily = os.path.join(get_path(dc.fp.DB_PATH), db_daily)
-        # self.daily_db = sqlite3.connect(path_daily)
-        # # 아래 람다식은 튜플로 받은 레코드를 딕셔너리로 변환하는 함수
-        # self.daily_db.row_factory = lambda cursor, row: { col[0]: row[idx] for idx, col in enumerate(cursor.description)}
-        # # self.daily_db.row_factory = sqlite3.Row # 직렬화 에러
-        # self.daily_cursor = self.daily_db.cursor()
+        # 챠트 디비
+        db_chart = f'abc_chart.db'
+        path_chart = os.path.join(get_path(dc.fp.DB_PATH), db_chart)
+        self.chart_db = sqlite3.connect(path_chart)
+        # 아래 람다식은 튜플로 받은 레코드를 딕셔너리로 변환하는 함수
+        self.chart_db.row_factory = lambda cursor, row: { col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+        # self.chart_db.row_factory = sqlite3.Row # 직렬화 에러
+        self.chart_cursor = self.chart_db.cursor()
 
-        # # 주문 테이블
-        # sql = self.create_table_sql(dc.ddb.ORD_TABLE_NAME, dc.ddb.ORD_COLUMNS)
-        # self.daily_cursor.execute(sql)
-        # for index in dc.ddb.ORD_INDEXES.values():
-        #     self.daily_cursor.execute(index)
+        # 챠트 테이블 (틱, 분)
+        sql = self.create_table_sql(dc.ddb.MIN_TABLE_NAME, dc.ddb.MIN_COLUMNS)
+        self.chart_cursor.execute(sql)
+        for index in dc.ddb.MIN_INDEXES.values():
+            self.chart_cursor.execute(index)
 
-        # self.daily_db.commit()
+        self.chart_db.commit()
 
     # 테이블 생성 SQL문 생성 함수
     def create_table_sql(self, table_name, fields, pk_columns=None):
@@ -141,33 +141,42 @@ class DBMServer:
         }
         self.request_to_admin(order, **work)
 
-    def execute_query(self, sql, db='daily', params=None):
+    def execute_query(self, sql, db='chart', params=None, many=False):
         try:
-            cursor = self.daily_db.cursor() if db == 'daily' else self.db.cursor()
-            if params: cursor.execute(sql, params)
-            else: cursor.execute(sql)
+            cursor = self.chart_db.cursor() if db == 'chart' else self.db.cursor()
+            query_command = cursor.executemany if many else cursor.execute
+            if params: 
+                query_command(sql, params)
+            else: 
+                query_command(sql)
 
             if sql.strip().upper().startswith('SELECT'):
                 result = cursor.fetchall()
                 return result
             else:
-                self.daily_db.commit() if db == 'daily' else self.db.commit()
+                self.chart_db.commit() if db == 'chart' else self.db.commit()
                 return cursor.rowcount
 
         except Exception as e:
             logging.error(f"Database error: {e}", exc_info=True)
-            self.daily_db.rollback() if db == 'daily' else self.db.rollback()
+            self.chart_db.rollback() if db == 'chart' else self.db.rollback()
             self.send_result(None, e)
 
-    def table_upsert(self, db, table, dict_data):
+    def table_upsert(self, db, table, dict_data, many=False):
         try:
-            columns = ','.join(dict_data.keys())
-            column_str = ', '.join(['?'] * len(dict_data))
+            if not isinstance(dict_data, list): dict_data = [dict_data]
+            columns = ','.join(dict_data[0].keys())
+            column_str = ', '.join(['?'] * len(dict_data[0]))
             params = tuple(dict_data.values())
             sql = f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ({column_str})"
-            self.execute_query(sql, db=db, params=params)
+            self.execute_query(sql, db=db, params=params, many=many)
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)
+
+    def upsert_chart(self, code, dict_data, many=False):
+        """챠트 데이터를 데이터베이스에 저장"""
+        table = dc.ddb.CHT_TABLE_NAME
+        self.table_upsert('chart', table, dict_data, many=many)
 
     def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno,  st_no, st_name, st_buy):
         """체결 정보를 데이터베이스에 저장하고 손익 계산"""

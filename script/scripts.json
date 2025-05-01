@@ -1,80 +1,44 @@
 {
-    "is_price_breakout": {
-        "script": "# 가격 신고가/신저가 돌파 확인\ndy = ChartManager('dy')\n# 기본값으로 방향(상향/하향)과 기간 설정\ndirection = kwargs.get('direction', 'up')\nperiod = kwargs.get('period', 20)\n# 기준값 계산\nif direction == 'up':\n    threshold = dy.highest(code, dy.h, period, 1)  # 이전 고점\n    current = dy.c(code)  # 현재가\n    return current > threshold  # 상향 돌파\nelse:\n    threshold = dy.lowest(code, dy.l, period, 1)  # 이전 저점\n    current = dy.c(code)  # 현재가\n    return current < threshold  # 하향 돌파",
-        "vars": {},
-        "type": "bool",
-        "desc": ""
-    },
-    "band_break_down": {
-        "script": "# 볼린저 밴드 돌파 전략\ndy = ChartManager('dy')  # 일봉\n# 볼린저 밴드 계산 (20일, 2표준편차)\nupper, middle, lower = dy.bollinger_bands(code, 20, 2)\n# 전일 종가와 밴드 관계\nprev_close = dy.c(code, 1)\nprev_above_upper = prev_close > upper\n# 현재 종가와 밴드 관계\ncurr_close = dy.c(code)\ncurr_below_upper = curr_close < upper\n# 밴드 상단 아래로 꺾기 확인\nband_break_down = prev_above_upper and curr_below_upper\n# 결과 반환\nresult = band_break_down",
-        "vars": {},
-        "type": "bool_",
-        "desc": ""
-    },
-    "is_golden_cross": {
-        "script": "# 골든 크로스 전략\ndy = ChartManager('dy')  # 일봉\n# 단기/장기 이동평균\nshort_ma = dy.ma(code, dy.c, 5)  # 5일 단순이동평균\nlong_ma = dy.ma(code, dy.c, 20)  # 20일 단순이동평균\n# 골든 크로스 확인\nis_golden_cross = dy.cross_up(code, \n    lambda c, n: dy.ma(c, dy.c, 5, n), \n    lambda c, n: dy.ma(c, dy.c, 20, n))\n# 거래량 확인 (평균 대비 1.5배 이상)\nvolume_increase = dy.v(code) > dy.avg(code, dy.v, 5) * 1.5\n# 결과 반환: 골든크로스 + 거래량 증가\nresult = is_golden_cross and volume_increase",
-        "vars": {},
-        "type": "bool",
-        "desc": "골든 전략"
-    },
-    "highest_close_in_10_days": {
-        "script": "dy = ChartManager('dy')  # 일봉\nmax_high = 0\nmax_high_idx = -1\n# loop 함수를 사용하여 최근 10개 봉 확인\n# def 키워드 사용 불가, 람다 함수 사용\ncheck_high = lambda i: dy.h(code, i)\nhigh_prices = loop(range(10), check_high)\nmax_high = max(high_prices)\nmax_high_idx = high_prices.index(max_high)\n# 현재가 계산\ncurrent_price = dy.c(code, 0)\ndrop_pct = ((max_high - current_price) / max_high) * 100 if max_high > 0 else 0\n# 결과 반환\nresult = drop_pct >= 10  # 최고가 대비 10% 이상 하락",
-        "vars": {},
-        "type": "bool",
-        "desc": "최근 10개봉중 최고가 찾기"
-    },
     "test": {
-        "script": "dy = ChartManager('dy')\nresult = dy.c(code, 0)",
+        "script": "# 기본적으로 코드를 지정 안 하면 삼성전자임\nresult = dy.c()",
         "vars": {},
         "type": "int",
         "desc": ""
     },
     "test2": {
-        "script": "dy = ChartManager('dy')\nmi1 = ChartManager('mi', 1)\ndata = mi1.chart_data._data[code]['mi1'][0]\ndebug(data)\nresult = (dy.c(code) < 55750, dy.c(code),)",
+        "script": "data = mi1.chart_data._data[code]['mi1'][0]\ndebug(data)\nresult = (dy.c() < 55750, dy.c())",
         "vars": {},
         "type": "tuple",
         "desc": ""
     },
-    "macd_diversions": {
-        "script": "# MACD 다이버전스 검출\ndy = ChartManager('dy')\n# MACD 계산\nfast = kwargs.get('fast', 12)\nslow = kwargs.get('slow', 26)\nsignal = kwargs.get('signal', 9)\nlookback = kwargs.get('lookback', 20)\n# 가격 패턴과 MACD 패턴 분석\nprice_lows = []\nmacd_lows = []\n# 최근 N봉 검사\nfor i in range(lookback):\n    # 저점 판별 (전봉과 다음봉보다 낮은지)\n    if i > 0 and i < lookback-1:\n        if dy.l(code, i) < dy.l(code, i-1) and dy.l(code, i) < dy.l(code, i+1):\n            price_lows.append((i, dy.l(code, i)))\n            \n            # 해당 시점의 MACD 값\n            macd_val = dy.macd(code, fast, slow, signal, i)[0]\n            macd_lows.append((i, macd_val))\n# 다이버전스 확인 (최소 2개 이상의 저점 필요)\nhas_divergence = False\nif len(price_lows) >= 2 and len(macd_lows) >= 2:\n    # 가격은 하락 저점, MACD는 상승 저점인지 확인\n    if price_lows[-1][1] < price_lows[-2][1] and macd_lows[-1][1] > macd_lows[-2][1]:\n        has_divergence = True\nresult = has_divergence",
-        "vars": {},
-        "type": "bool",
-        "desc": ""
-    },
-    "add_a": {
-        "script": "result = 5",
-        "vars": {},
-        "type": "int",
-        "desc": ""
-    },
-    "add_b": {
-        "script": "result = 3",
-        "vars": {},
-        "type": "int",
-        "desc": ""
-    },
     "매도_1": {
-        "script": "mi3 = ChartManager('mi', 3)\nma5 = mi3.ma(code, mi3.c, 5)\nresult = ma5>mi3.c(code)",
+        "script": "ma3_5 = mi3.ma(mi3.c, 5)\nma3_10 = mi3.ma(mi3.c, 10)\nresult = ma3_10 > mi3.c() or ma3_5 < ma3_10",
         "vars": {},
         "type": "bool",
         "desc": ""
     },
     "매수_1": {
-        "script": "mi3 = ChartManager('mi', 3)\nma5 = mi3.ma(code, mi3.c, 5)\nma20 = mi3.ma(code, mi3.c, 20)\nresult = ma5 >ma20",
+        "script": "ma3_5 = mi3.ma(mi3.c, 5)\nma3_20 = mi3.ma(mi3.c, 20)\nresult = ma3_5 >ma3_20",
         "vars": {},
         "type": "bool",
         "desc": ""
     },
     "loss_cut_3_percent": {
-        "script": "# 3% 손실 매도\n# 매수정보\nprice = kwargs.get('price', 0) # 매수가\nif price == 0:\n  result = False\n  debug('매수가가 0 원 입니다.')\n  return\n  \nquantity = kwargs.get('quantity', 0) # 매수수량\nmi1 = ChartManager('mi', 1)\ncurrent = mi1.c(code)\nif current == 0:\n  debug(f'현재가가 {current}원 입니다.')\n  return\nprofit = (current-price) / price * 100\nresult = profit < -3\nif result:\n  debug(f'current={current}, price={price}, profit={profit}, result={result}')",
+        "script": "# 3% 손실 매도\n# 매수정보\n#debug(f'{code} {name} {qty} {price}')\nif price == 0:\n  result = False\n  debug('{code} 매수가가 0 원 입니다.')\n  return\n  \ncurrent = mi1.c()\nif current == 0:\n  debug(f'{code} 현재가가 0 원 입니다.')\n  return\nprofit = (current-price) / price * 100\nresult = profit < -2\nif result:\n  debug(f'current={current}, price={price}, profit={profit}, result={result}')",
         "vars": {},
         "type": "none",
         "desc": "매수가 대비 3%이상 하락시 True"
     },
     "profit_cut_3_percent": {
-        "script": "# 3% 이익 매도\n# 매수정보\nprice = kwargs.get('price', 0) # 매수가\nif price == 0:\n  result = False\n  debug('매수가가 0 원 입니다.')\n  return\n  \nquantity = kwargs.get('quantity', 0) # 매수수량\nmi1 = ChartManager('mi', 1)\ncurrent = mi1.c(code)\nif current == 0:\n  debug(f'현재가가 {current}원 입니다.')\n  return\nprofit = (current-price) / price * 100\nresult = profit > 3\nif result:\n  debug(f'current={current}, price={price}, profit={profit}, result={result}')",
+        "script": "# 3% 손실 매도\n# 매수정보\nif price == 0:\n  result = False\n  debug('{code} 매수가가 0 원 입니다.')\n  return\n  \ncurrent = mi1.c()\nif current == 0:\n  debug(f'{code} 현재가가 0 원 입니다.')\n  return\nprofit = (current-price) / price * 100\nresult = profit < -3\nif result:\n  debug(f'current={current}, price={price}, profit={profit}, result={result}')",
         "vars": {},
-        "type": "none",
+        "type": "bool",
         "desc": "매수가 대비 3%이상 수익시 True"
+    },
+    "not_매도_1": {
+        "script": "sell = 매도_1()\nresult = not sell",
+        "vars": {},
+        "type": "bool",
+        "desc": ""
     }
 }

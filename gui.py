@@ -790,7 +790,7 @@ class GUI(QMainWindow, form_class):
                 key = self.tblScriptVar.item(row, 0).text().strip()
                 value = self.tblScriptVar.item(row, 1).text()
                 vars_dict[key] = float(value) if value else 0.0
-            result = gm.scm.run_script('005930', name, check_only=True, script_data={'script': script, 'vars': vars_dict}, )
+            result = gm.scm.run_script(name, check_only=True, script_data={'script': script, 'vars': vars_dict}, kwargs={'code': '005930'})
             if result['success']:
                 QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n\n반환값={result["result"]}')
                 self.btnScriptSave.setEnabled(True)

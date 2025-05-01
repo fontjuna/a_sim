@@ -87,14 +87,13 @@ class Strategy:
         name = self.dict종목정보.get(code, next='종목명')
 
         if self.매수스크립트적용:
-            result = gm.scm.run_script_compiled(code, self.매수스크립트)
+            result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
             if self.매수스크립트AND and not result.get('result', False): return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
             logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
 
         if not gm.config.sim_on:
             status_market = la.answer('admin', 'com_market_status')
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
-
 
         if not gm.ct.get(self.전략, "000000", self.매수전략): 
             return False, {}, f"전략별 매수 횟수 제한 {code} {name} 매수횟수={self.체결횟수} 회 초과"
@@ -210,8 +209,9 @@ class Strategy:
                 send_data['msg'] = '매도지정'
 
             if self.매도스크립트적용:
-                result = gm.scm.run_script_compiled(code, self.매도스크립트, kwargs={'price': 매입가, 'quantity': 보유수량, 'profit': 수익률})
-                if self.매도스크립트OR and result.get('result', False): 
+                result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
+                if self.매도스크립트OR and result.get('result', True): 
+                    logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
                     send_data['msg'] = '전략매도'
                     return True, send_data, f"전략매도: {code} {종목명}"
 

@@ -39,10 +39,10 @@ class Admin:
         la.work('cdr', 'start_register')
         gm.scm = ScriptManager()
         try:
-            logging.debug('스크립트 확장 시작')
+            #logging.debug('스크립트 확장 시작')
             result = enhance_script_manager(gm.scm)
             logging.debug(f'스크립트 확장 결과={result}')
-            logging.debug(f'사용가능 메소드: dir(gm.scm)={dir(gm.scm)}')
+            #logging.debug(f'사용가능 메소드: dir(gm.scm)={dir(gm.scm)}')
         except Exception as e:
             logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
         gm.ipc.request_to_dbm('set_rate', gm.수수료율, gm.세금율)
@@ -219,7 +219,7 @@ class Admin:
             trcode = dc.scr.챠트TR[cycle]
             screen = dc.scr.화면[rqname]
             date = datetime.now().strftime('%Y%m%d')
-            if cycle == 'mi':
+            if cycle in ['mi', 'tk']:
                 if tick == None:
                     tick = '1'
                 elif isinstance(tick, int):
@@ -248,14 +248,14 @@ class Admin:
                 return []
             
             logging.debug(f'{rqname} 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:{dict_list[:1]}')
-            if cycle == 'mi':
+            if cycle in ['mi', 'tk']:
                 dict_list = [{
                     '종목코드': code,
                     '체결시간': item['체결시간'] if item['체결시간'] else datetime.now().strftime('%Y%m%d%H%M%S'),
-                    '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
                     '시가': abs(int(item['시가'])) if item['시가'] else 0,
                     '고가': abs(int(item['고가'])) if item['고가'] else 0,
                     '저가': abs(int(item['저가'])) if item['저가'] else 0,
+                    '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
                     '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
                     '거래대금': 0,
                 } for item in dict_list]
@@ -263,10 +263,10 @@ class Admin:
                 dict_list = [{
                     '종목코드': code,
                     '일자': item['일자'] if item['일자'] else datetime.now().strftime('%Y%m%d'),
-                    '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
                     '시가': abs(int(item['시가'])) if item['시가'] else 0,
                     '고가': abs(int(item['고가'])) if item['고가'] else 0,
                     '저가': abs(int(item['저가'])) if item['저가'] else 0,
+                    '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
                     '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
                     '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
                 } for item in dict_list]
