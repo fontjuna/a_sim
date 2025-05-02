@@ -73,6 +73,7 @@ class Admin:
         gm.주문목록 = TableManager(gm.tbl.hd주문목록)
         gm.스크립트 = TableManager(gm.tbl.hd스크립트)
         gm.스크립트변수 = TableManager(gm.tbl.hd스크립트변수)
+        gm.차트자료 = TableManager(gm.tbl.hd차트자료)
         scripts = gm.scm.scripts.copy()
         dict_data = []
         for k, v in scripts.items():
@@ -215,8 +216,8 @@ class Admin:
         """서버에서 차트 데이터 가져오기 (기존 코드 유지, 데드락 방지 추가)"""
         try:
             # 이하 원래 코드
-            rqname = f'{dc.scr.차트종류[cycle]}챠트'
-            trcode = dc.scr.챠트TR[cycle]
+            rqname = f'{dc.scr.차트종류[cycle]}차트'
+            trcode = dc.scr.차트TR[cycle]
             screen = dc.scr.화면[rqname]
             date = datetime.now().strftime('%Y%m%d')
             if cycle in ['mi', 'tk']:
@@ -430,11 +431,11 @@ class Admin:
         except Exception as e:
             logging.error(f'실시간 주식체결 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    # 업데이트  -------------------------------------------------------------------------------------------
+    # 조회 및 처리  -------------------------------------------------------------------------------------------
     def update_price(self, code):
         try:
-            rqname = '분봉챠트'
-            trcode = dc.scr.챠트TR[rqname]
+            rqname = '분봉차트'
+            trcode = dc.scr.차트TR[rqname]
             screen = dc.scr.화면[rqname]
             input = {'종목코드':code, '틱범위': 1, '수정주가구분': 1}
             output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
@@ -448,7 +449,7 @@ class Admin:
             next = '2'
         
             if not dict_list:
-                logging.warning(f'챠트 데이타 얻기 실패: code:{code}, dict_list:"{dict_list}"')
+                logging.warning(f'차트 데이타 얻기 실패: code:{code}, dict_list:"{dict_list}"')
                 return []
             
             dict_list = [{
@@ -461,11 +462,11 @@ class Admin:
                 '거래량': abs(int(item['거래량'])),
                 '거래대금': 0#abs(int(item['거래대금'])),
             } for item in dict_list]
-            logging.debug(f'챠트 데이타 얻기: code:{code} dict_list:\n{pd.DataFrame(dict_list)}')
+            logging.debug(f'차트 데이타 얻기: code:{code} dict_list:\n{pd.DataFrame(dict_list)}')
             return dict_list
         
         except Exception as e:
-            logging.error(f'챠트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.error(f'차트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
             return []
 
     def pri_fx얻기_잔고합산(self):
@@ -567,9 +568,10 @@ class Admin:
                     data[item['전략']][item['종목번호']] = item['종목명']
 
                     la.work('cdr', 'register_code', item['종목번호'])
+                    gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.ct.set_batch(data)
 
-            logging.debug(f'dict_list ={dict_list}')
+            #logging.debug(f'dict_list ={dict_list}')
             if dict_list:
                 dict_list = get_preview_data(dict_list)
                 gm.잔고목록.set(data=dict_list)
@@ -581,6 +583,84 @@ class Admin:
 
         except Exception as e:
             logging.error(f'pri_fx얻기_잔고목록 오류: {e}', exc_info=True)
+
+    def pri_fx처리_잔고데이터(self, idx, code, row, dictFID):
+        try:
+            # 잔고목록 업데이트
+            현재가 = abs(int(dictFID['현재가']))
+            최고가 = row.get('최고가', 0)
+            감시율 = row.get('감시시작율', 0.0) / 100
+            보존율 = row.get('이익보존율', 0.0) / 100
+            감시 = row.get('감시', 0)
+            보존 = row.get('보존', 0)
+            새감시 = 감시 or ((1 if 현재가 > row['매입가'] * (1 + 감시율) else 0) if 감시율 else 0)
+            새보존 = 보존 or ((1 if 현재가 > row['매입가'] * (1 + 보존율) else 0) if 보존율 else 0)
+
+            if 새감시 != 감시 or 새보존 != 보존:
+                gm.holdings[code]['감시'] = 새감시
+                gm.holdings[code]['보존'] = 새보존
+                save_json(dc.fp.holdings_file, gm.holdings)
+
+            보유수량 = int(row['보유수량'])
+            매입금액 = int(row['매입금액'])
+
+            매수수수료 = int(매입금액 * gm.수수료율 / 10) * 10            # 매수시 10원 미만 절사
+            매도수수료 = int(보유수량 * 현재가 * gm.수수료율 / 10) * 10   # 매도시 10원 미만 절사
+            거래세 = int(보유수량 * 현재가 * gm.세금율)                   # 매도시 거래세 0.18% 원미만 절사
+
+            평가금액 = 현재가 * 보유수량 - 매수수수료 - 매도수수료 - 거래세
+            평가손익 = 평가금액 - 매입금액
+            수익률 = (평가손익 / 매입금액) * 100 if 매입금액 > 0 else 0
+
+            dictFID.update({
+                '현재가': 현재가,
+                '평가금액': 평가금액,
+                '평가손익': 평가손익,
+                '수익률(%)': round(수익률, 2),
+                '최고가': 현재가 if 현재가 > 최고가 else 최고가,
+                '보존': 새보존,
+                '감시': 새감시,
+                '상태': 1,
+            })
+            gm.잔고목록.set(key=code, data=dictFID)
+
+            # 잔고합산 업데이트
+            총매입금액, 총평가금액 = gm.잔고목록.sum(column=['매입금액', '평가금액'])
+            총평가손익금액 = 총평가금액 - 총매입금액
+            총수익률 = (총평가손익금액 / 총매입금액 * 100) if 총매입금액 else 0
+
+            # 추정예탁자산 = 이전추정예탁자산 + (현재총평가금액 - 이전총평가금액)
+            이전총평가금액 = gm.l2잔고합산_copy['총평가금액'] or 0
+            이전추정예탁자산 = gm.l2잔고합산_copy['추정예탁자산'] or 0
+            추정예탁자산 = 이전추정예탁자산 + 총평가금액 - 이전총평가금액
+
+            gm.잔고합산.set(data={
+                '총매입금액': 총매입금액,
+                '총평가금액': 총평가금액,
+                '추정예탁자산': 추정예탁자산,
+                '총평가손익금액': 총평가손익금액,
+                '총수익률(%)': round(총수익률, 2),
+            }, key=0)
+            gm.l2잔고합산_copy = gm.잔고합산.get(key=0)
+
+        except Exception as e:
+            logging.error(f'실시간 배치 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def pri_fx검사_매도요건(self, idx, code, 전략):
+        row = gm.잔고목록.get(key=code)
+        if not row: return
+        if row['주문가능수량'] == 0: return
+        if row['보유수량'] == 0: return
+        if row['현재가'] == 0: return
+        if row['상태'] == 0: return
+        if 전략 not in la.workers.keys(): return
+        key = f'{code}_매도'
+        data={'키': key, '구분': '매도', '상태': '요청', '전략': 전략, '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
+        if gm.주문목록.in_key(key): return
+        gm.주문목록.set(key=key, data=data)
+        gm.잔고목록.set(key=code, data={'주문가능수량': 0})
+        row.update({'rqname': '신규매도', 'account': gm.config.account})
+        la.work(전략, 'order_sell', row)
 
     def pri_fx등록_종목감시(self):
         try:
@@ -695,83 +775,22 @@ class Admin:
         except Exception as e:
             logging.error(f'체결목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def pri_fx처리_잔고데이터(self, idx, code, row, dictFID):
+    def pri_fx얻기_차트자료(self, date_text, code, cycle, tick):
         try:
-            # 잔고목록 업데이트
-            현재가 = abs(int(dictFID['현재가']))
-            최고가 = row.get('최고가', 0)
-            감시율 = row.get('감시시작율', 0.0) / 100
-            보존율 = row.get('이익보존율', 0.0) / 100
-            감시 = row.get('감시', 0)
-            보존 = row.get('보존', 0)
-            새감시 = 감시 or ((1 if 현재가 > row['매입가'] * (1 + 감시율) else 0) if 감시율 else 0)
-            새보존 = 보존 or ((1 if 현재가 > row['매입가'] * (1 + 보존율) else 0) if 보존율 else 0)
-
-            if 새감시 != 감시 or 새보존 != 보존:
-                gm.holdings[code]['감시'] = 새감시
-                gm.holdings[code]['보존'] = 새보존
-                save_json(dc.fp.holdings_file, gm.holdings)
-
-            보유수량 = int(row['보유수량'])
-            매입금액 = int(row['매입금액'])
-
-            매수수수료 = int(매입금액 * gm.수수료율 / 10) * 10            # 매수시 10원 미만 절사
-            매도수수료 = int(보유수량 * 현재가 * gm.수수료율 / 10) * 10   # 매도시 10원 미만 절사
-            거래세 = int(보유수량 * 현재가 * gm.세금율)                   # 매도시 거래세 0.18% 원미만 절사
-
-            평가금액 = 현재가 * 보유수량 - 매수수수료 - 매도수수료 - 거래세
-            평가손익 = 평가금액 - 매입금액
-            수익률 = (평가손익 / 매입금액) * 100 if 매입금액 > 0 else 0
-
-            dictFID.update({
-                '현재가': 현재가,
-                '평가금액': 평가금액,
-                '평가손익': 평가손익,
-                '수익률(%)': round(수익률, 2),
-                '최고가': 현재가 if 현재가 > 최고가 else 최고가,
-                '보존': 새보존,
-                '감시': 새감시,
-                '상태': 1,
-            })
-            gm.잔고목록.set(key=code, data=dictFID)
-
-            # 잔고합산 업데이트
-            총매입금액, 총평가금액 = gm.잔고목록.sum(column=['매입금액', '평가금액'])
-            총평가손익금액 = 총평가금액 - 총매입금액
-            총수익률 = (총평가손익금액 / 총매입금액 * 100) if 총매입금액 else 0
-
-            # 추정예탁자산 = 이전추정예탁자산 + (현재총평가금액 - 이전총평가금액)
-            이전총평가금액 = gm.l2잔고합산_copy['총평가금액'] or 0
-            이전추정예탁자산 = gm.l2잔고합산_copy['추정예탁자산'] or 0
-            추정예탁자산 = 이전추정예탁자산 + 총평가금액 - 이전총평가금액
-
-            gm.잔고합산.set(data={
-                '총매입금액': 총매입금액,
-                '총평가금액': 총평가금액,
-                '추정예탁자산': 추정예탁자산,
-                '총평가손익금액': 총평가손익금액,
-                '총수익률(%)': round(총수익률, 2),
-            }, key=0)
-            gm.l2잔고합산_copy = gm.잔고합산.get(key=0)
+            gm.차트자료.delete()
+            sql = dc.ddb.MIN_SELECT_DATE if cycle in ('분봉', '틱봉') else dc.ddb.DAY_SELECT_DATE
+            dict_list = gm.ipc.request_to_dbm('execute_query', sql=sql, db='chart', params=(date_text, code, dc.scr.차트종류[cycle], tick if tick else ''))
+            if dict_list is not None and len(dict_list) > 0:
+                min_check = cycle in ('분봉', '틱봉')
+                if min_check:
+                    dict_list = [{**item, '일자': (item['체결시간'] if min_check else item['일자']).strftime('%Y-%m-%d'), '시간': item['체결시간'].strftime('%H:%M:%S') if min_check else ''} for item in dict_list]
+                gm.차트자료.set(data=dict_list)
+                logging.info(f"차트자료 얻기 완료: data count={gm.차트자료.len()}")
+            else:
+                logging.warning(f'차트자료 얻기 실패: date:{date_text}, dict_list:{dict_list}')
 
         except Exception as e:
-            logging.error(f'실시간 배치 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def pri_fx검사_매도요건(self, idx, code, 전략):
-        row = gm.잔고목록.get(key=code)
-        if not row: return
-        if row['주문가능수량'] == 0: return
-        if row['보유수량'] == 0: return
-        if row['현재가'] == 0: return
-        if row['상태'] == 0: return
-        if 전략 not in la.workers.keys(): return
-        key = f'{code}_매도'
-        data={'키': key, '구분': '매도', '상태': '요청', '전략': 전략, '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
-        if gm.주문목록.in_key(key): return
-        gm.주문목록.set(key=key, data=data)
-        gm.잔고목록.set(key=code, data={'주문가능수량': 0})
-        row.update({'rqname': '신규매도', 'account': gm.config.account})
-        la.work(전략, 'order_sell', row)
+            logging.error(f'체결목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
 
     # 전략 매매  -------------------------------------------------------------------------------------------
     def cdn_fx준비_전략매매(self):
@@ -998,7 +1017,6 @@ class Admin:
                     logging.info(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
 
                 gm.잔고목록.set(key=code, data=data)
-                la.work('cdr', 'register_code', code)
 
             except Exception as e:
                 logging.error(f"매수 처리중 오류 발생: {code} {name} ***")

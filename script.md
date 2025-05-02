@@ -29,7 +29,10 @@
 ```python
 # 스크립트 설명 주석
 # 차트 매니저 인스턴스 생성
-dy = ChartManager('dy')  # 일봉 차트
+# code(종목코드), name(종목명), price(매수단가), qty(보유수량)은 기본지정 되므로 
+# 스크립트내에서 다른 용도로 사용하면 뜻하지 않는 결과가 나올 수 있습니다.(변수 역할 변경 금지)
+# 단, 특별히 다른 code의 차트매니저를 생성 하고 싶을땐 생성전에 code = '005930' 값을 변경 후 생성
+dy = ChartManager(code, 'dy')  # 일봉 차트
 
 # 계산 로직
 ma20 = dy.ma(dy.c, 20)  # 20일 이동평균
@@ -68,37 +71,23 @@ result = f"{name} 종목이 {dy.c()} 원에 매수 신호 발생"
 ### 3.1 인스턴스 생성
 
 ChartManager 클래스는 차트 데이터에 접근하고 분석하는 기능을 제공합니다. 다양한 주기의 차트 데이터를 다룰 수 있습니다.
+지원 되는 종목은 실행 된 매수검색식에 검색 된 종목에 한해서 가능 합니다.
 
-#### 3.1.1 기본 주기 인스턴스
-
-시스템에서 제공하는 기본 주기 인스턴스들이 있어 편리하게 사용할 수 있습니다:
-
-```python
-# 분봉 차트
-mi1 = ChartManager('mi', 1)     # 1분봉
-mi3 = ChartManager('mi', 3)     # 3분봉
-mi5 = ChartManager('mi', 5)     # 5분봉
-mi15 = ChartManager('mi', 15)   # 15분봉
-mi30 = ChartManager('mi', 30)   # 30분봉
-mi60 = ChartManager('mi', 60)   # 60분봉
-mi240 = ChartManager('mi', 240) # 240분봉
-
-# 일/주/월 차트
-dy = ChartManager('dy')  # 일봉
-wk = ChartManager('wk')  # 주봉
-mo = ChartManager('mo')  # 월봉
-```
-
-#### 3.1.2 없는 주기 인스턴스 생성
-
-기본 제공되지 않는 주기의 차트 데이터가 필요한 경우, 직접 인스턴스를 생성할 수 있습니다:
 
 ```python
 # 10분봉 차트 인스턴스 생성
-mi10 = ChartManager('mi', 10)
+mi10 = ChartManager(code, 'mi', 10)
 
-# 45분봉 차트 인스턴스 생성
-mi45 = ChartManager('mi', 45)
+# 특수 주기 분봉 차트 인스턴스 생성
+mi7 = ChartManager(code, 'mi', 7)
+
+# 일봉 차트 인스턴스 생성
+dy = ChartManager(code, 'dy')
+
+# 다른 종목이 필요할 경우
+dy_005930 = ChartManager('005930, 'dy')
+dy_code = ChartManger(code, 'dy')
+지표종목현재 = dy_005930.c() > dy_
 ```
 
 ### 3.2 기본 데이터 함수
@@ -106,7 +95,7 @@ mi45 = ChartManager('mi', 45)
 ChartManager는 OHLCV(시가, 고가, 저가, 종가, 거래량) 데이터에 쉽게 접근할 수 있는 메서드를 제공합니다:
 
 ```python
-cm = ChartManager('dy')  # 일봉 차트
+cm = ChartManager(code, 'dy')  # 일봉 차트
 
 # 기본 가격 데이터 접근
 cm.o()      # 현재 봉의 시가
@@ -130,7 +119,7 @@ cm.today()  # 오늘 날짜 (YYYYMMDD 형식)
 이동평균은 가격의 추세를 파악하는 데 중요한 지표입니다. ChartManager는 여러 종류의 이동평균을 계산하는 함수를 제공합니다:
 
 ```python
-cm = ChartManager('dy')
+cm = ChartManager(code, 'dy')
 
 # 다양한 이동평균 계산
 sma = cm.ma(cm.c, 20)                # 20일 단순이동평균 (기본값)
@@ -158,7 +147,7 @@ high_sma = cm.ma(cm.h, 20)           # 20일 고가 단순이동평균
 ### 3.4 indicator와 offset
 ```python
 # 스크립트 예시
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # indicator로 함수처럼 호출 가능한 지표 생성
 ma20 = dy.indicator(dy.ma, dy.c, 20)
@@ -183,7 +172,7 @@ if ma20() > ma20(1) and rsi14() < 70:
 ChartManager는 다양한 기술적 지표를 계산하는 함수를 제공합니다:
 
 ```python
-cm = ChartManager('dy')
+cm = ChartManager(code, 'dy')
 
 # RSI (상대강도지수)
 rsi = cm.rsi()                # 기본 14일 RSI
@@ -212,7 +201,7 @@ atr_5 = cm.atr(5)  # 5일 ATR
 ChartManager는 데이터 분석에 유용한 여러 계산 함수를 제공합니다:
 
 ```python
-cm = ChartManager('dy')
+cm = ChartManager(code, 'dy')
 
 # 최고값/최저값 찾기
 highest = cm.highest(cm.h, 20)        # 20일간 고가 중 최고값
@@ -231,7 +220,7 @@ volume_sum = cm.sum(cm.v, 5)          # 5일간 거래량 합계
 기술적 지표의 신호를 감지하는 함수들을 제공합니다:
 
 ```python
-cm = ChartManager('dy')
+cm = ChartManager(code, 'dy')
 
 # 골든크로스/데드크로스 감지
 golden_cross = cm.cross_up(cm.ma(cm.c, 5), cm.ma(cm.c, 20))
@@ -251,7 +240,7 @@ value_at_cross = cm.value_when(1,
 캔들 패턴 감지를 위한 함수들이 제공됩니다:
 
 ```python
-cm = ChartManager('dy')
+cm = ChartManager(code, 'dy')
 
 # 기본 캔들 패턴 감지
 is_doji = cm.is_doji()                 # 도지 캔들 확인
@@ -267,7 +256,7 @@ prev_doji = cm.is_doji(1)              # 1봉 이전 도지 캔들 확인
 ChartManager는 추세 분석, 모멘텀 계산 등 다양한 보조 함수들을 제공합니다:
 
 ```python
-cm = ChartManager('dy')
+cm = ChartManager(code, 'dy')
 
 # 추세 분석
 uptrend = cm.is_uptrend()              # 상승 추세 확인(기본 14일)
@@ -325,7 +314,7 @@ int, float, str, bool, list, dict, set, tuple
 예시:
 ```python
 # 내장함수 사용 예
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 closes = [dy.c(i) for i in range(5)]  # 최근 5일 종가 리스트
 avg_close = sum(closes) / len(closes)  # 평균 종가 계산
 max_close = max(closes)               # 최고 종가
@@ -371,7 +360,7 @@ unique_values = {1, 2, 3, 4, 5}
 스크립트 내에서 조건문과 논리 연산자를 사용할 수 있습니다:
 
 ```python
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 기본 조건문
 if dy.c() > dy.ma(dy.c, 20):
@@ -402,7 +391,7 @@ result = "매수" if dy.c() > dy.ma(dy.c, 20) else "관망"
 스크립트 내에서 for 루프를 사용하여 데이터를 처리할 수 있습니다:
 
 ```python
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 리스트 생성
 closes = []
@@ -534,7 +523,7 @@ finally:
 
 ```python
 # 기본 스크립트 예제
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 ma20 = dy.ma(dy.c, 20)
 ma60 = dy.ma(dy.c, 60)
 
@@ -552,7 +541,7 @@ result = ma20 > ma60 and dy.c() > ma20
 
 ```python
 # RSI 계산 스크립트
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 rsi_period = 14  # 기본값
 
 # 매개변수 확인 (다른 스크립트에서 전달 가능)
@@ -576,7 +565,7 @@ rsi_value = calculate_rsi(period=9)  # 9일 RSI 계산
 
 ```python
 # 매수 판단 스크립트
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 이동평균 확인
 ma5 = dy.ma(dy.c, 5)
@@ -606,9 +595,9 @@ if result:
 
 ```python
 # 다양한 주기 분석 스크립트
-dy = ChartManager('dy')    # 일봉
-mi60 = ChartManager('mi', 60)  # 60분봉
-wk = ChartManager('wk')    # 주봉
+dy = ChartManager(code, 'dy')    # 일봉
+mi60 = ChartManager(code, 'mi', 60)  # 60분봉
+wk = ChartManager(code, 'wk')    # 주봉
 
 # 각 주기별 상승 추세 확인
 daily_uptrend = dy.c() > dy.ma(dy.c, 20)
@@ -655,7 +644,7 @@ result = rsi_value < 30 and is_macd_buy  # 과매도 상태이면서 MACD 매수
 
 ```python
 # 디버깅을 포함한 스크립트 예제
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 try:
     # 데이터 수집
@@ -689,7 +678,7 @@ except Exception as e:
 
 ```python
 # 복합 지표 스크립트
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 이동평균 데이터
 ma5 = dy.ma(dy.c, 5)
@@ -780,8 +769,8 @@ hour = now.hour
 minute = now.minute
 
 # 차트 데이터
-mi15 = ChartManager('mi', 15)  # 15분봉
-dy = ChartManager('dy')        # 일봉
+mi15 = ChartManager(code, 'mi', 15)  # 15분봉
+dy = ChartManager(code, 'dy')        # 일봉
 
 # 전략 설정
 if weekday == 0:  # 월요일은 보수적
@@ -816,7 +805,7 @@ result = signal
 
 ```python
 # 확률 기반 매매 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 최근 N일간의 상승/하락 패턴 분석
 N = 5
@@ -1017,7 +1006,7 @@ if len(values) < period:
 
 ```python
 # 골든크로스 매수 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 이동평균 계산
 ma5 = dy.ma(dy.c, 5)
@@ -1041,7 +1030,7 @@ if result:
 
 ```python
 # RSI 과매도 반등 매수 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # RSI 계산
 rsi = dy.rsi(14)
@@ -1070,9 +1059,9 @@ if result:
 # 여러 주기에서 동시에 저항선 돌파 시 매수
 
 # 다양한 주기 차트 설정
-dy = ChartManager('dy')    # 일봉
-mi60 = ChartManager('mi', 60)  # 60분봉
-wk = ChartManager('wk')    # 주봉
+dy = ChartManager(code, 'dy')    # 일봉
+mi60 = ChartManager(code, 'mi', 60)  # 60분봉
+wk = ChartManager(code, 'wk')    # 주봉
 
 # 각 차트별 저항선 설정 (최근 20봉 중 최고가의 0.5% 위)
 daily_resistance = dy.highest(dy.h, 20) * 1.005
@@ -1108,7 +1097,7 @@ if result:
 
 ```python
 # MACD 히스토그램 다이버전스 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # MACD 데이터 수집
 macd_periods = 10  # 확인할 기간
@@ -1149,7 +1138,7 @@ if result:
 
 ```python
 # 매수 가격 최적화 스크립트
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 현재 시장 상황 확인
 current = dy.c()
@@ -1185,7 +1174,7 @@ result = round(buy_price, 2)  # 소수점 둘째 자리까지 반올림
 
 ```python
 # 목표가 및 손절가 계산 스크립트
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 손절가, 목표가 비율 설정 (기본값)
 sl_ratio = 0.05  # 5% 손절
@@ -1674,7 +1663,7 @@ max_value = max(closes)
 
 ```python
 # 볼린저 밴드 돌파 매수 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 볼린저 밴드 계산 (20일, 2시그마)
 upper, middle, lower = dy.bollinger_bands(20, 2)
@@ -1708,7 +1697,7 @@ if result:
 
 ```python
 # 3중 이동평균 매수 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 이동평균 계산
 ma5 = dy.ma(dy.c, 5)
@@ -1750,7 +1739,7 @@ if result:
 
 ```python
 # 이중 고점 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # RSI 계산
 rsi = dy.rsi(14)
@@ -1787,7 +1776,7 @@ if result:
 
 ```python
 # 손절매 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 주요 지지선 계산 (최근 20일 중 최저가의 95%)
 key_support = dy.lowest(dy.l, 20) * 0.95
@@ -1829,7 +1818,7 @@ if result:
 
 ```python
 # 3일 고/저점 돌파 스윙 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 전략 설정
 lookback = 3  # 확인 기간 (일)
@@ -1866,7 +1855,7 @@ else:
 
 ```python
 # 변동성 돌파 전략 (일명 "낙수 전략")
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 전략 설정
 k = 0.5  # 변동폭 계수 (0.5 = 50%)
@@ -1950,8 +1939,8 @@ current_hour = now.hour
 is_trading_hour = trading_hours[0] <= current_hour < trading_hours[1]
 
 # 차트 매니저 인스턴스 생성
-dy = ChartManager('dy')  # 일봉
-mi60 = ChartManager('mi', 60)  # 60분봉
+dy = ChartManager(code, 'dy')  # 일봉
+mi60 = ChartManager(code, 'mi', 60)  # 60분봉
 
 # -------------------------------------------------------------
 # 1. 기술적 지표 분석 (서브스크립트 활용)
@@ -2307,8 +2296,8 @@ period3 = kwargs.get('period3', 5)               # 세 번째 기간
 multiplier = kwargs.get('multiplier', 2)         # 승수(볼린저밴드용)
 
 # 차트 매니저 인스턴스 생성
-dy = ChartManager('dy')  # 일봉 차트
-h4 = ChartManager('mi', 240)  # 4시간봉 차트
+dy = ChartManager(code, 'dy')  # 일봉 차트
+h4 = ChartManager(code, 'mi', 240)  # 4시간봉 차트
 
 # 람다 함수를 활용한 지표 생성 (함수처럼 사용 가능)
 def create_indicator(func, *args):
@@ -2393,10 +2382,10 @@ analysis_type = kwargs.get('analysis', 'trend')  # 기본은 추세 분석
 cross_type = kwargs.get('cross', 'golden')       # 교차 타입 (golden/death)
 
 # 여러 시간대 차트 준비
-mi15 = ChartManager('mi', 15)   # 15분봉
-mi60 = ChartManager('mi', 60)   # 60분봉
-dy = ChartManager('dy')         # 일봉
-wk = ChartManager('wk')         # 주봉
+mi15 = ChartManager(code, 'mi', 15)   # 15분봉
+mi60 = ChartManager(code, 'mi', 60)   # 60분봉
+dy = ChartManager(code, 'dy')         # 일봉
+wk = ChartManager(code, 'wk')         # 주봉
 
 # 기간 설정
 short_period = 5
@@ -2544,7 +2533,7 @@ pattern_type = kwargs.get('pattern', 'all')  # 기본값은 모든 패턴 확인
 lookback = kwargs.get('lookback', 20)        # 확인할 최대 기간
 
 # 차트 매니저 인스턴스
-dy = ChartManager('dy')  # 일봉 차트
+dy = ChartManager(code, 'dy')  # 일봉 차트
 
 # 패턴 인식 결과 저장소
 patterns_found = {}
@@ -2741,7 +2730,7 @@ A: 스크립트 이름 뒤에 키워드 인자(keyword arguments)로 매개변�
 예: `my_script(period=5, threshold=1.5)`
 
 **Q: 어떤 차트 주기를 사용할 수 있나요?**  
-A: 분봉(mi), 일봉(dy), 주봉(wk), 월봉(mo) 주기를 사용할 수 있습니다. 분봉은 틱 수를 지정할 수 있습니다. (예: 5분봉은 `ChartManager('mi', 5)`)
+A: 분봉(mi), 일봉(dy), 주봉(wk), 월봉(mo) 주기를 사용할 수 있습니다. 분봉은 틱 수를 지정할 수 있습니다. (예: 5분봉은 `ChartManager(code, 'mi', 5)`)
 
 ### E.2 오류 및 디버깅 관련
 

@@ -99,6 +99,10 @@ class GUI(QMainWindow, form_class):
             self.dtConclusion.setCalendarPopup(True)
             self.dtConclusion.setDate(today)
 
+            self.dtChartDate.setMaximumDate(today)
+            self.dtChartDate.setCalendarPopup(True)
+            self.dtChartDate.setDate(today)
+
             self.dtMonitor.setMaximumDate(today)
             self.dtMonitor.setCalendarPopup(True)
             self.dtMonitor.setDate(today)
@@ -109,6 +113,12 @@ class GUI(QMainWindow, form_class):
 
             self.tblScriptVar.setColumnCount(2)
             self.tblScriptVar.setHorizontalHeaderLabels(['변수명', '값'])
+
+            self.cbChartTick.addItems(dc.ticks.get('틱봉',[]))
+            self.cbChartCode.addItem('005930 삼성전자')
+
+            # 폼 초기화 시
+            self.txtScript.setAcceptRichText(False)  # 서식 있는 텍스트 거부            
 
             statusBar = QStatusBar()
             self.setStatusBar(statusBar)
@@ -133,6 +143,7 @@ class GUI(QMainWindow, form_class):
             self.cbAccounts.currentIndexChanged.connect(self.gui_account_changed)       # 계좌 변경 선택
             self.cbCondition.currentIndexChanged.connect(self.gui_strategy_changed)     # 검색식 변경 선택
             self.btnReloadAccount.clicked.connect(self.gui_account_reload)              # 계좌 재로드
+            self.cbChartCycle.currentIndexChanged.connect(lambda idx: self.gui_chart_cycle_changed(self.cbChartCycle.itemText(idx))) # 차트 주기 변경 선택
 
             self.tblStrategy.clicked.connect(lambda x: self.gui_set_strategy(x.row()))  # 전략설정 선택
             self.btnLoadCondition.clicked.connect(self.gui_strategy_reload)             # 검색식 재로드
@@ -150,8 +161,9 @@ class GUI(QMainWindow, form_class):
             self.btnLoadDaily.clicked.connect(self.gui_daily_load)                      # 매매일지 로드
             self.btnDeposit.clicked.connect(self.gui_deposit_load)                      # 예수금 로드
             self.btnLoadConclusion.clicked.connect(self.gui_conclusion_load)            # 체결목록 로드
-            self.btnLoadMonitor.clicked.connect(self.gui_load_monitor)                  # 당일 매매 목록 로드
-
+            self.btnLoadMonitor.clicked.connect(self.gui_monitor_load)                  # 당일 매매 목록 로드
+            self.btnChartLoad.clicked.connect(self.gui_chart_load)                      # 차트 로드
+            
             self.rbInfo.toggled.connect(lambda: self.gui_log_level_set('INFO', self.rbInfo.isChecked()))
             self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
 
@@ -481,7 +493,7 @@ class GUI(QMainWindow, form_class):
         else:
             logging.warning('계좌를 선택하세요')
 
-    def gui_load_monitor(self):
+    def gui_monitor_load(self):
         self.btnLoadMonitor.setEnabled(False)
         gm.admin.pri_fx얻기_매매목록(self.dtMonitor.date().toString("yyyy-MM-dd"))
         self.gui_fx갱신_매매정보()
@@ -504,6 +516,22 @@ class GUI(QMainWindow, form_class):
         gm.admin.pri_fx얻기_체결목록(self.dtConclusion.date().toString("yyyyMMdd"))
         self.gui_fx갱신_체결정보()
         self.btnLoadConclusion.setEnabled(True)
+
+    def gui_chart_combo_add(self, item):
+        self.cbChartCode.addItem(item)
+
+    def gui_chart_load(self):
+        self.btnChartLoad.setEnabled(False)
+        date_text = self.dtChartDate.date().toString("yyyyMMdd")
+        item = self.cbChartCycle.currentText()
+        cycle = dc.scr.차트종류[item]
+        tick = int(self.cbChartTick.currentText()) if item in ('분봉', '틱봉') else 0
+        code = self.cbChartCode.currentText().split()[0]
+        name = self.cbChartCode.currentText().split()[1]
+        gm.admin.pri_fx얻기_차트자료(date_text, code, cycle, tick)
+        gm.차트자료.update_table_widget(self.tblChart)
+        gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
+        self.btnChartLoad.setEnabled(True)
 
     def gui_strategy_restart(self):
         self.gui_strategy_stop(question=False)
@@ -546,6 +574,11 @@ class GUI(QMainWindow, form_class):
         gm.admin.get_conditions()
         self.gui_fx채움_조건콤보()
         gm.toast.toast('전략매매를 다시 읽어 왔습니다.', duration=3000)
+
+    def gui_chart_cycle_changed(self, item):
+        self.cbChartTick.clear()
+        if item in ['틱봉', '분봉']: 
+            self.cbChartTick.addItems(dc.ticks.get(item,[]))
 
     def gui_log_level_set(self, key, value):
         if key == 'DEBUG' and value == True:
@@ -780,9 +813,9 @@ class GUI(QMainWindow, form_class):
 
     def gui_script_check(self):
         try:
-            name = self.ledScriptName.text().strip()
-            script = self.txtScript.toPlainText().strip()
-            if len(name.strip()) == 0 or len(script.strip()) == 0:
+            script_name = self.ledScriptName.text().strip()
+            script = self.txtScript.toPlainText()
+            if len(script_name.strip()) == 0 or len(script.strip()) == 0:
                 QMessageBox.information(self, '알림', '스크립트명과 스크립트를 입력하세요.')
                 return
             vars_dict = {}
@@ -790,7 +823,7 @@ class GUI(QMainWindow, form_class):
                 key = self.tblScriptVar.item(row, 0).text().strip()
                 value = self.tblScriptVar.item(row, 1).text()
                 vars_dict[key] = float(value) if value else 0.0
-            result = gm.scm.run_script(name, check_only=True, script_data={'script': script, 'vars': vars_dict}, kwargs={'code': '005930'})
+            result = gm.scm.run_script(script_name, check_only=True, script_data={'script': script, 'vars': vars_dict}, kwargs={'code': '005930'})
             if result['success']:
                 QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n\n반환값={result["result"]}')
                 self.btnScriptSave.setEnabled(True)
@@ -805,24 +838,25 @@ class GUI(QMainWindow, form_class):
 
     def gui_script_save(self):
         try:
-            name = self.ledScriptName.text().strip()
-            script = self.txtScript.toPlainText().strip()
-            desc = self.txtScriptDesc.toPlainText().strip()
+            script_name = self.ledScriptName.text() #.strip()
+            script = self.txtScript.toPlainText() #.strip()
+            desc = self.txtScriptDesc.toPlainText() #.strip()
             vars = {}
+            kwargs = {'code': '005930', 'name': '', 'price': 0, 'qty': 0}
             for row in range(self.tblScriptVar.rowCount()):
                 key = self.tblScriptVar.item(row, 0).text().strip()
                 value = self.tblScriptVar.item(row, 1).text()
                 vars[key] = float(value) if value else 0.0
-            script_type = gm.scm.set_script_compiled(name, script, vars, desc) # 실패시 False, 성공시 스크립트 타입 반환
+            script_type = gm.scm.set_script_compiled(script_name, script, vars, desc, kwargs) # 실패시 False, 성공시 스크립트 타입 반환
             if script_type:
-                gm.스크립트.set(key=name, data={'스크립트': script, '타입': script_type, '변수': json.dumps(vars), '설명': desc})
+                gm.스크립트.set(key=script_name, data={'스크립트': script, '타입': script_type, '변수': json.dumps(vars), '설명': desc})
                 gm.스크립트.update_table_widget(self.tblScript)
                 gm.list스크립트 = gm.스크립트.get(column='스크립트명')
                 self.gui_fx채움_스크립트콤보()
                 self.txtScriptMsg.clear()
                 self.script_edited = False
             else:
-                logging.error(f'스크립트 저장 오류: {type(e).__name__} - {e}', exc_info=True)
+                logging.error(f'스크립트 저장 오류: script_type={script_type}')
         except Exception as e:
             logging.error(f'스크립트 저장 오류: {type(e).__name__} - {e}', exc_info=True)
         finally:

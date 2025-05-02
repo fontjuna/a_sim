@@ -13,15 +13,19 @@ import time
 import sys
 import pythoncom
 from datetime import datetime
-import os
 
 init_logger()
+def _global_exception_handler(exc_type, exc_value, exc_traceback):
+    """예상치 못한 예외에 대한 글로벌 핸들러"""
+    # 로그에만 기록하고 GUI 팝업 방지
+    logging.error("미처리 예외:", exc_info=(exc_type, exc_value, exc_traceback))
 
 class Main:
     def __init__(self):
         self.app = None
         self.cleanup_flag = False
         self.time_over = False
+        sys.excepthook = _global_exception_handler
 
     def init(self):
         self.app = QApplication(sys.argv)

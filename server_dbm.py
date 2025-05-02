@@ -70,7 +70,7 @@ class DBMServer:
 
         self.db.commit()
 
-        # 챠트 디비
+        # 차트 디비
         db_chart = f'abc_chart.db'
         path_chart = os.path.join(get_path(dc.fp.DB_PATH), db_chart)
         self.chart_db = sqlite3.connect(path_chart)
@@ -79,13 +79,13 @@ class DBMServer:
         # self.chart_db.row_factory = sqlite3.Row # 직렬화 에러
         self.chart_cursor = self.chart_db.cursor()
 
-        # 챠트 테이블 (틱, 분)
+        # 차트 테이블 (틱, 분)
         sql = self.create_table_sql(dc.ddb.MIN_TABLE_NAME, dc.ddb.MIN_COLUMNS)
         self.chart_cursor.execute(sql)
         for index in dc.ddb.MIN_INDEXES.values():
             self.chart_cursor.execute(index)
 
-        # 챠트 테이블 (일, 주, 월)
+        # 차트 테이블 (일, 주, 월)
         sql = self.create_table_sql(dc.ddb.DAY_TABLE_NAME, dc.ddb.DAY_COLUMNS)
         self.chart_cursor.execute(sql)
         for index in dc.ddb.DAY_INDEXES.values():
@@ -181,9 +181,9 @@ class DBMServer:
             logging.error(f"table_upsert error: {e}", exc_info=True)
 
     def upsert_chart(self, dict_data, cycle, tick=1):
-        """챠트 데이터를 데이터베이스에 저장"""
+        """차트 데이터를 데이터베이스에 저장"""
         table = dc.ddb.MIN_TABLE_NAME if cycle in ['mi', 'tk'] else dc.ddb.DAY_TABLE_NAME
-        logging.debug(f'upsert_chart: {cycle}, {tick} {dict_data[:1]}')
+        logging.debug(f'upsert_chart: {cycle}, {tick}, len={len(dict_data)} {dict_data[:1]}')
         dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
         self.table_upsert('chart', table, dict_data)
 

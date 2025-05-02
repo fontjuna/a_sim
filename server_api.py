@@ -150,6 +150,7 @@ class APIServer():
 
     def SendCondition(self, screen, cond_name, cond_index, search, block=True, timeout=5):
         try:
+            data = False
             if block is True:
                 self.tr_condition_loaded = False
 

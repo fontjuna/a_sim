@@ -118,7 +118,7 @@ class FieldsAttributes: # 데이터베이스 필드 속성
     check: str = None
 
 @dataclass
-class DataBaseFields:   # 데이터베이스 필드 정의
+class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
     id = FieldsAttributes(name='id', type='INTEGER', primary=True, autoincrement=True)
     거래세 = FieldsAttributes(name='거래세', type='INTEGER', not_null=True, default=0)
     거래세율 = FieldsAttributes(name='거래세율', type='REAL', not_null=True, default=0.0)
@@ -192,7 +192,7 @@ class DataBaseFields:   # 데이터베이스 필드 정의
     주기 = FieldsAttributes(name='주기', type='TEXT', not_null=True, default="''")
     틱 = FieldsAttributes(name='틱', type='INTEGER', not_null=True, default=0)
 
-class DataBaseColumns:  # 데이터베이스 컬럼 정의
+class DataBaseColumns:  # 데이터베이스 테이블 정의
     fd = DataBaseFields()
 
     TRD_TABLE_NAME = 'trades'
@@ -221,7 +221,7 @@ class DataBaseColumns:  # 데이터베이스 컬럼 정의
     }
     
     MIN_TABLE_NAME = 'minute_n_tick'
-    MIN_SELECT_DATE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE 체결시간 = ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
+    MIN_SELECT_DATE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE substr(체결시간, 1, 8) = ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
     MIN_COLUMNS = [fd.id, fd.종목코드, fd.체결시간, fd.시가, fd.고가, fd.저가, fd.현재가, fd.거래량, fd.거래대금, fd.주기, fd.틱]
     MIN_COLUMN_NAMES = [col.name for col in MIN_COLUMNS]
     MIN_INDEXES = {
@@ -397,7 +397,7 @@ class ScreenNumber:     # 화면번호
         '신규매수': '5511', '신규매도': '5512', '매수취소': '6611', '매도취소': '6612', '매수정정': '7711', '매도정정': '7712', 
         '수동매수': '8811', '수동매도': '8812', '수취매수': '9911', '수취매도': '9912',
         '실시간감시': '5100', '조건감시': '5200', '실시간조회': '5900', '장시작시간': '5910',
-        '틱봉챠트': '9110', '분봉챠트': '9120', '일봉챠트': '9130', '주봉챠트': '9140', '월봉챠트': '9150', '년봉챠트': '9160',
+        '틱봉차트': '9110', '분봉차트': '9120', '일봉차트': '9130', '주봉차트': '9140', '월봉차트': '9150', '년봉차트': '9160',
     })
     # 화면번호 xx11 매수, xx12 매도 수정금지 및 사용 금지 - OnReceiveTrData() 처리
     # 화면번호 4xxxx 수정금지 screen.startswith('4') = '신규매수'   - OnReceiveTrData() 처리
@@ -405,12 +405,14 @@ class ScreenNumber:     # 화면번호
         '8811': '신규매수', '8812': '신규매도', '5511': '매수취소', '5512': '매도취소', '6611': '매수정정', '6612': '매도정정', '7711': '수동매수', '7712': '수동매도'
     })
     차트종류: dict = field(default_factory=lambda: {
-        'mo': '월봉', 'wk': '주봉', 'dy': '일봉', 'mi': '분봉', 'tk': '틱봉'
+        'mo': '월봉', 'wk': '주봉', 'dy': '일봉', 'mi': '분봉', 'tk': '틱봉',
+        '틱봉': 'tk', '분봉': 'mi', '일봉': 'dy', '주봉': 'wk', '월봉': 'mo'
     })
-    챠트TR: dict = field(default_factory=lambda: {
+    차트TR: dict = field(default_factory=lambda: {
         'mo': 'OPT10083', 'wk': 'OPT10082', 'dy': 'OPT10081', 'mi': 'OPT10080', 'tk': 'OPT10079',
-        '월봉챠트': 'OPT10083', '주봉챠트': 'OPT10082', '일봉챠트': 'OPT10081', '분봉챠트': 'OPT10080', '틱봉챠트': 'OPT10079',
+        '월봉차트': 'OPT10083', '주봉차트': 'OPT10082', '일봉차트': 'OPT10081', '분봉차트': 'OPT10080', '틱봉차트': 'OPT10079',
     })
+
 @dataclass
 class MarketStatus:     # 장 상태
     장종료 = '장 종료'
@@ -621,6 +623,13 @@ class DefineConstants:  # 글로벌 상수 정의
     fp = FilePath()
     ms = MarketStatus()
     ddb = DataBaseColumns()
+    ticks = {
+        '틱봉': ['30'],
+        '분봉': ['1'],
+        '일봉': [],
+        '주봉': [],
+        '월봉': [],
+    }
     log_config = {
         'version': 1,
         'formatters': {
@@ -764,28 +773,15 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
             '헤더': ['전략명칭', '투자금액', '매수적용', '매수전략', '매도적용', '매도전략', '이익실현율', '이익보존율', '손실제한율', '감시적용', '감시시작율', '스탑주문율'],
         }
 
-    hd분봉챠트 = {
-        '키': ['종목코드', '체결시간'],
-        '키중복': False,
-        '정수': ['시가', '고가', '저가', '현재가', '거래량'],
-        '실수': [],
-        '컬럼': ['종목코드', '체결시간', '시가', '고가', '저가', '현재가', '거래량'],
-    }
-    hd틱봉챠트 = hd분봉챠트.copy()
-    hd틱봉챠트.update({
-        '키중복': True,
-    })
-
-    hd일봉챠트 = {
-        '키': ['종목코드', '일자'],
+    hd차트자료 = {
+        '키': ['종목코드', '일자', '시간'],
         '키중복': False,
         '정수': ['시가', '고가', '저가', '현재가', '거래량', '거래대금'],
         '실수': [],
-        '컬럼': ['종목코드', '일자', '시가', '고가', '저가', '현재가', '거래량', '거래대금'],
+        '컬럼': ['종목코드', '일자', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
+        '헤더': ['종목코드', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
     }
-    hd주봉챠트 = hd일봉챠트.copy()
-    hd월봉챠트 = hd일봉챠트.copy()
-   
+
     hd스크립트 = {
         '키': '스크립트명',
         '정수': [],
@@ -817,8 +813,8 @@ class GlobalMemory:      # 글로벌 메모리 정의
     admin = None
     gui = None
     api = None
-    cdt = None # 챠트 데이타
-    cdr = None # 챠트 데이타 등록
+    cdt = None # 차트 데이타
+    cdr = None # 차트 데이타 등록
     scm = None # 스크립트 매니저
     
     ipc = None # 프로세스 매니저
@@ -852,6 +848,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     주문목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd주문목록))
     스크립트 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd스크립트))
     스크립트변수 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd스크립트변수))
+    차트자료 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd차트자료))
     l2잔고합산_copy = None
     l2손익합산 = 0
     # 서버 호출 제한 체크

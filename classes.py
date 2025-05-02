@@ -1667,7 +1667,6 @@ config = {
 table = TableManager(config)
 """
 
-
 # 워커 쓰레드 클래스
 class WorkerThread(QThread):
     taskReceived = pyqtSignal(str, str, object, object)

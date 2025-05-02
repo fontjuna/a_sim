@@ -87,9 +87,10 @@ class Strategy:
         name = self.dict종목정보.get(code, next='종목명')
 
         if self.매수스크립트적용:
-            result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
-            if self.매수스크립트AND and not result.get('result', False): return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
-            logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
+            if code in gm.cdr.done_code:
+                result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
+                if self.매수스크립트AND and not result.get('result', False): return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
+                logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
 
         if not gm.config.sim_on:
             status_market = la.answer('admin', 'com_market_status')
@@ -209,11 +210,12 @@ class Strategy:
                 send_data['msg'] = '매도지정'
 
             if self.매도스크립트적용:
-                result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
-                if self.매도스크립트OR and result.get('result', True): 
-                    logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
-                    send_data['msg'] = '전략매도'
-                    return True, send_data, f"전략매도: {code} {종목명}"
+                if code in gm.cdr.done_code:
+                    result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
+                    if self.매도스크립트OR and result.get('result', True): 
+                        logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
+                        send_data['msg'] = '전략매도'
+                        return True, send_data, f"전략매도: {code} {종목명}"
 
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
                 if self.매도스크립트적용 and not result.get('result', False): return False, {}, f"매도스크립트 조건 불충족: {code} {종목명}"
@@ -484,9 +486,8 @@ class Strategy:
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
                     la.work('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                #    logging.debug(f'매수 조건 추가: {self.전략} ** {code} {종목명}')
-                #else:
-                #    logging.debug(f'매수 조건 이미 있음: {self.전략} ** {code} {종목명}')
+                    la.work('cdr', 'register_code', code)
+                    gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.dict조건종목감시:
                     self.cdn_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가

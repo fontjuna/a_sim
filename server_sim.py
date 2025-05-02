@@ -696,7 +696,7 @@ class SIMServer():
             logging.error(f"SendCondition 오류: {type(e).__name__} - {e}")
 
         finally:
-            return data
+            return False
 
     def SendConditionStop(self, screen, cond_name, cond_index):
         global cond_thread
