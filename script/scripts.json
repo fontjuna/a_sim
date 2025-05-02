@@ -1,6 +1,6 @@
 {
     "매도_1": {
-        "script": "#code = '347850'\nmi3 = CM(code, 'mi', 3)\n\nma5 = mi3.ma(mi3.c, 5)\nma10 = mi3.ma(mi3.c, 10)\n\ndn = ma10 > mi3.c()\n\n#result = mi3.c()\nresult = dn or ma5 < ma10",
+        "script": "#code = '347850'\nmi3 = CM(code, 'mi', 3)\nma5 = mi3.ma(mi3.c, 5)\nma10 = mi3.ma(mi3.c, 10)\ndn = ma10 > mi3.c()\n#result = mi3.c()\nresult = dn or ma5 < ma10",
         "vars": {},
         "type": "bool",
         "desc": ""

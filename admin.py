@@ -39,13 +39,11 @@ class Admin:
         la.work('cdr', 'start_register')
         gm.scm = ScriptManager()
         try:
-            #logging.debug('스크립트 확장 시작')
             result = enhance_script_manager(gm.scm)
             logging.debug(f'스크립트 확장 결과={result}')
-            #logging.debug(f'사용가능 메소드: dir(gm.scm)={dir(gm.scm)}')
         except Exception as e:
             logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
-        gm.ipc.request_to_dbm('set_rate', gm.수수료율, gm.세금율)
+        gm.ipc.admin_to_dbm('set_rate', gm.수수료율, gm.세금율)
 
     def get_login_info(self):
         accounts = gm.api.GetLoginInfo('ACCNO')
@@ -77,7 +75,7 @@ class Admin:
         scripts = gm.scm.scripts.copy()
         dict_data = []
         for k, v in scripts.items():
-            dict_data.append({'스크립트명': k, '타입': v.get('type', ''), '스크립트': v.get('script', '').strip(), '변수': json.dumps(v.get('vars', {})), '설명': v.get('desc', '')})
+            dict_data.append({'스크립트명': k, '스크립트': v.get('script', ''), '변수': json.dumps(v.get('vars', {})), '타입': v.get('type', ''), '설명': v.get('desc', '')})
         gm.스크립트.set(data=dict_data)
         gm.list스크립트 = gm.스크립트.get(column='스크립트명')
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
@@ -748,7 +746,7 @@ class Admin:
         try:
             gm.매매목록.delete()
             #dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
-            dict_list = gm.ipc.request_to_dbm('execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.ipc.admin_to_dbm('execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
             #logging.debug(f'매매목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
             if dict_list is not None and len(dict_list) > 0:
                 gm.매매목록.set(data=dict_list)
@@ -762,7 +760,7 @@ class Admin:
         try:
             gm.체결목록.delete()
             #dict_list = la.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
-            dict_list = gm.ipc.request_to_dbm('execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.ipc.admin_to_dbm('execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
             #logging.debug(f'체결목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
             if dict_list is not None and len(dict_list) > 0:
                 gm.체결목록.set(data=dict_list)
@@ -779,7 +777,7 @@ class Admin:
         try:
             gm.차트자료.delete()
             sql = dc.ddb.MIN_SELECT_DATE if cycle in ('분봉', '틱봉') else dc.ddb.DAY_SELECT_DATE
-            dict_list = gm.ipc.request_to_dbm('execute_query', sql=sql, db='chart', params=(date_text, code, dc.scr.차트종류[cycle], tick if tick else ''))
+            dict_list = gm.ipc.admin_to_dbm('execute_query', sql=sql, db='chart', params=(date_text, code, dc.scr.차트종류[cycle], tick if tick else ''))
             if dict_list is not None and len(dict_list) > 0:
                 min_check = cycle in ('분봉', '틱봉')
                 if min_check:
@@ -1068,19 +1066,19 @@ class Admin:
     # dbm 처리 메소드 -----------------------------------------------------------------------------------------------
 
     def dbm_stop(self):
-        gm.ipc.request_to_dbm('stop')
+        gm.ipc.admin_to_dbm('stop')
         time.sleep(0.1)  # 마지막 메시지 처리를 위한 대기
 
     def dbm_order_upsert(self, dict_data):
         try:
-            gm.ipc.request_to_dbm('table_upsert', db='db', table='trades', dict_data=dict_data)
+            gm.ipc.admin_to_dbm('table_upsert', db='db', table='trades', dict_data=dict_data)
         except Exception as e:
             logging.error(f"dbm_order_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
 
     def dbm_trade_upsert(self, dictFID):
         try:
             dict_data = {key: dictFID[key] for key in dc.ddb.TRD_COLUMN_NAMES if key in dictFID}
-            gm.ipc.request_to_dbm('table_upsert', db='db', table='trades', dict_data=dict_data)
+            gm.ipc.admin_to_dbm('table_upsert', db='db', table='trades', dict_data=dict_data)
 
             if dictFID['주문상태'] == '체결':
                 kind = dictFID['주문구분']
@@ -1094,7 +1092,7 @@ class Admin:
                 ordno = dictFID['주문번호']
                 st_buy = dictFID['매수전략']
 
-                gm.ipc.request_to_dbm('upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_no, st_name, st_buy)
+                gm.ipc.admin_to_dbm('upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_no, st_name, st_buy)
         except Exception as e:
             logging.error(f"dbm_trade_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
 
@@ -1104,7 +1102,7 @@ class Admin:
 
     def dbm_upsert_chart(self, dict_data, cycle, tick=1):
         try:
-            gm.ipc.request_to_dbm('upsert_chart', dict_data, cycle, tick)
+            gm.ipc.admin_to_dbm('upsert_chart', dict_data, cycle, tick)
         except Exception as e:
             logging.error(f"dbm_upsert_chart 오류: {type(e).__name__} - {e}", exc_info=True)
 

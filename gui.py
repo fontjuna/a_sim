@@ -739,8 +739,9 @@ class GUI(QMainWindow, form_class):
             self.btnScriptSave.setEnabled(False)
             name = self.tblScript.item(row_index, 0).text()
 
-            sctipt_item = self.tblScript.item(row_index, 2)
-            script = sctipt_item.data(Qt.UserRole) if sctipt_item.data(Qt.UserRole) else sctipt_item.text()
+            # sctipt_item = self.tblScript.item(row_index, 2)
+            # script = sctipt_item.data(Qt.UserRole) if sctipt_item.data(Qt.UserRole) else sctipt_item.text()
+            script = gm.스크립트.get(key=name, column='스크립트')
             vars = self.tblScript.item(row_index, 3)
             desc = self.tblScript.item(row_index, 4).text()
 
@@ -849,7 +850,7 @@ class GUI(QMainWindow, form_class):
                 vars[key] = float(value) if value else 0.0
             script_type = gm.scm.set_script_compiled(script_name, script, vars, desc, kwargs) # 실패시 False, 성공시 스크립트 타입 반환
             if script_type:
-                gm.스크립트.set(key=script_name, data={'스크립트': script, '타입': script_type, '변수': json.dumps(vars), '설명': desc})
+                gm.스크립트.set(key=script_name, data={'스크립트': script, '변수': json.dumps(vars), '타입': script_type, '설명': desc})
                 gm.스크립트.update_table_widget(self.tblScript)
                 gm.list스크립트 = gm.스크립트.get(column='스크립트명')
                 self.gui_fx채움_스크립트콤보()

@@ -2079,7 +2079,7 @@ class IPCManager:
       self.admin_listener.start()
       logging.info("Admin 리스너 쓰레드 시작")
    
-   def request_to_dbm(self, method, *args, wait_result=True, timeout=10, callback=None, **kwargs):
+   def admin_to_dbm(self, method, *args, wait_result=True, timeout=10, callback=None, **kwargs):
       """DBM에 요청 전송"""
       if self.shutting_down:
          return None
@@ -2124,7 +2124,7 @@ def dbm_worker(dbm_class, input_queue, output_queue, result_dict):
       logging.info("DBM 프로세스 초기화 완료")
       
       # Admin으로 요청 보내는 함수
-      def request_to_admin(method, *args, wait_result=True, timeout=10, **kwargs):
+      def dbm_to_admin(method, *args, wait_result=True, timeout=10, **kwargs):
          req_id = str(uuid.uuid4())
          
          # 요청 전송
@@ -2152,8 +2152,8 @@ def dbm_worker(dbm_class, input_queue, output_queue, result_dict):
          del result_dict[req_id]
          return result.get('result', None)
       
-      # DBM 인스턴스에 request_to_admin 함수 추가
-      dbm.request_to_admin = request_to_admin
+      # DBM 인스턴스에 dbm_to_admin 함수 추가
+      dbm.dbm_to_admin = dbm_to_admin
       
       shutting_down = False
       # 메시지 처리 루프

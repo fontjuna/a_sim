@@ -145,7 +145,7 @@ class DBMServer:
             'result': result,
             'error': error
         }
-        self.request_to_admin(order, **work)
+        self.dbm_to_admin(order, **work)
 
     def execute_query(self, sql, db='chart', params=None):
         try:
@@ -276,13 +276,13 @@ class DBMServer:
         pass
 
     def get_minute_data(self, code, tick=3, all=False):
-        df = self.request_to_admin('dbm_get_minute_data', code=code, tick=tick, all=all)
+        df = self.dbm_to_admin('dbm_get_minute_data', code=code, tick=tick, all=all)
         return df
 
     def update_minute_data(self, code):
 
         logging.debug(f'update_minute_data received: {code}')
-        data = self.request_to_admin('com_get_chart_data', code=code, cycle='mi', tick=1)
+        data = self.dbm_to_admin('com_get_chart_data', code=code, cycle='mi', tick=1)
         if data:
             logging.debug(f'update_minute_data answer: {data[:1]}')
             return data
