@@ -739,8 +739,6 @@ class GUI(QMainWindow, form_class):
             self.btnScriptSave.setEnabled(False)
             name = self.tblScript.item(row_index, 0).text()
 
-            # sctipt_item = self.tblScript.item(row_index, 2)
-            # script = sctipt_item.data(Qt.UserRole) if sctipt_item.data(Qt.UserRole) else sctipt_item.text()
             script = gm.스크립트.get(key=name, column='스크립트')
             vars = self.tblScript.item(row_index, 3)
             desc = self.tblScript.item(row_index, 4).text()
