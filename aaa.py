@@ -4,7 +4,7 @@ from gui import GUI
 from server_api import APIServer
 from server_sim import SIMServer
 from server_dbm import DBMServer
-from classes import Toast, la, IPCManager
+from classes import Toast, la, IPCManager, add_shared_vars_to_admin
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QPixmap, QGuiApplication
@@ -74,18 +74,24 @@ class Main:
 
     def set_proc(self):
         try:
-            gm.ipc = IPCManager()
+            logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
             gm.toast = Toast()
+            gm.ipc = IPCManager()
             gm.main = self
             gm.admin = Admin()
-            gm.api = APIServer('api') if not gm.config.sim_on else SIMServer('api')
-            gm.gui = GUI() if gm.config.gui_on else None
-            la.register('api', gm.api, use_thread=False)
-            la.work('api', 'CommConnect', block=False)
             la.register('admin', gm.admin, use_thread=False)
+            gm.gui = GUI() if gm.config.gui_on else None
+
+            # 먼저 add_shared_vars_to_admin 호출
+            add_shared_vars_to_admin(gm.admin, gm.ipc)
+
+            gm.ipc.start_api_process(APIServer if not gm.config.sim_on else SIMServer)
             gm.ipc.start_dbm_process(DBMServer)
             gm.ipc.start_admin_listener(gm.admin)
-            logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
+
+            # 모든 설정이 완료된 후 CommConnect 호출
+            gm.ipc.set_var('admin', 'connected', gm.admin.connected)
+            gm.ipc.admin_to_api('CommConnect', block=False)
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -99,13 +105,15 @@ class Main:
             logging.debug('prepare : 로그인 대기 시작')
             while True:
                 pythoncom.PumpWaitingMessages()
-                if la.answer('api', 'api_connected'): break
+                if gm.ipc.get_var('admin', 'connected'): break
                 time.sleep(0.1)
-            logging.debug(f'***** {gm.api.name.upper()} connected *****')
+
             if gm.config.sim_real_only:
-                la.work('api', 'set_tickers')
+                gm.ipc.admin_to_api('set_tickers')
+
             la.work('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
+
             if gm.config.gui_on: gm.gui.init()
             logging.debug('prepare : gui 초기화 완료')
         except Exception as e:
@@ -151,6 +159,12 @@ class Main:
                     gm.ipc.queues['admin_to_dbm'].put({
                         'command': 'stop'
                     })
+                    gm.ipc.queues['admin_to_api'].put({
+                        'command': 'stop'
+                    })
+                    gm.ipc.queues['admin_to_api'].put({
+                        'command': 'prepare_shutdown'
+                    })
                     gm.ipc.queues['admin_to_dbm'].put({
                         'command': 'prepare_shutdown'
                     })
@@ -161,7 +175,7 @@ class Main:
             
             for t in gm.전략쓰레드:
                 la.stop_worker(t.name)
-            la.stop_worker('api')
+            # la.stop_worker('api')
             if hasattr(gm, 'ipc') and gm.ipc:
                 gm.ipc.stop_dbm_process()
         except Exception as e:

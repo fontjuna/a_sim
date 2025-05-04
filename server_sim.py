@@ -1,6 +1,7 @@
 from classes import la
-from public import hoga, dc, gm
+from public import hoga, dc, gm, init_logger
 from PyQt5.QAxContainer import QAxWidget
+from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread
 import logging
 import time
@@ -9,6 +10,8 @@ import threading
 import pythoncom
 import pandas as pd
 import copy
+
+init_logger()
 
 real_thread = {}
 cond_thread = {}
@@ -391,8 +394,9 @@ class OnReceiveRealData(QThread):
         self._stop_event.set()
 
 class SIMServer():
-    def __init__(self, name):
-        self.name = name
+    app = QApplication([])
+    def __init__(self):
+        self.name = 'api'
         self.ocx = None
         self.connected = False
 
@@ -420,7 +424,7 @@ class SIMServer():
             logging.debug(f'{self.name} api_init start')
             self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
             self._set_signal_slots()
-            logging.debug(f'{self.name} api_init end: ocx={self.ocx}')
+            logging.debug(f'{self.name} api_init success: ocx={self.ocx}')
         except Exception as e:
             logging.error(f"API 초기화 오류: {type(e).__name__} - {e}")
 
@@ -571,6 +575,7 @@ class SIMServer():
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
+        self.set_var('admin', 'connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def CommConnect(self, block=True):
@@ -579,6 +584,7 @@ class SIMServer():
             self.real_CommConnect(block)
         else:
             self.connected = True
+            self.set_var('admin', 'connected', self.connected)
 
     def real_CommConnect(self, block=True):
         logging.debug(f'CommConnect: block={block}')

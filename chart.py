@@ -19,92 +19,6 @@ import pickle
 import importlib.util
 import traceback
 
-class ChartDataRegister:
-    def __init__(self, name):
-        self.name = name
-        self.running = False
-        self._lock = threading.RLock()
-        self.done_code = []
-        self.todo_code = {}
-        self.loop_interval = 0.3  # 루프 간격 (초)
-        
-    def start_register(self):
-        """루프 시작 - la.work로 호출"""
-        if self.running:
-            return False
-        
-        self.running = True
-        self._loop_task()  # 첫 루프 실행
-        logging.debug(f'{self.name} 시작')
-        return True
-        
-    def stop_register(self):
-        """루프 중지 - la.work로 호출"""
-        self.running = False
-        logging.debug(f'{self.name} 중지')
-        return True
-        
-    def _loop_task(self):
-        """한 번의 루프 처리 - 내부에서 호출"""
-        if not self.running:
-            return
-            
-        try:
-            # 차트 데이터 요청 처리
-            if self.todo_code:
-                self.request_chart_data()
-                
-            # 다음 루프 예약
-            if self.running:
-                QTimer.singleShot(int(self.loop_interval * 1000), self._loop_task)
-        except Exception as e:
-            logging.error(f'{self.name} 루프 처리 오류: {e}', exc_info=True)
-            self.running = False
-
-    def request_chart_data(self):
-        codes = copy.deepcopy(self.todo_code)
-        for code in codes:
-            tk_done = codes[code]['tk']
-            if not tk_done:
-                dict_data = la.answer('admin', 'com_get_chart_data', code, cycle='tk', tick=30)
-                if dict_data:
-                    la.work('admin', 'dbm_upsert_chart', dict_data=dict_data, cycle='tk', tick=30)
-                    with self._lock: self.todo_code[code]['tk'] = True
-                    tk_done = True
-
-            mi_done = codes[code]['mi']
-            if not mi_done:
-                dict_data = la.answer('admin', 'com_get_chart_data', code, cycle='mi', tick=1)
-                if dict_data:
-                    gm.cdt.set_chart_data(code, dict_data, 'mi', 1)
-                    la.work('admin', 'dbm_upsert_chart', dict_data=dict_data, cycle='mi', tick=1)
-                    with self._lock: self.todo_code[code]['mi'] = True
-                    mi_done = True
-
-            dy_done = codes[code]['dy']
-            if not dy_done:
-                dict_data = la.answer('admin', 'com_get_chart_data', code, cycle='dy')
-                if dict_data:
-                    gm.cdt.set_chart_data(code, dict_data, 'dy')
-                    la.work('admin', 'dbm_upsert_chart', dict_data=dict_data, cycle='dy')
-                    with self._lock: self.todo_code[code]['dy'] = True
-                    dy_done = True
-
-            if mi_done and dy_done:
-                with self._lock:
-                    self.done_code.append(code)
-                    del self.todo_code[code]
-                    
-    def register_code(self, code):
-        """코드 등록 - la.work 또는 la.answer로 호출"""
-        if code in self.done_code or code in self.todo_code:
-            return False
-        
-        logging.debug(f'{self.name} 차트관리 종목코드 등록: {code}')
-        with self._lock:
-            self.todo_code[code] = {'tk': False, 'mi': False, 'dy': False}
-        return True
-    
 class ChartData:
     """차트 데이터를 관리하는 최적화된 싱글톤 클래스"""
     _instance = None
@@ -560,7 +474,7 @@ class ChartData:
             
             # 요청 시작 시간 기록
             self._active_requests[request_key] = current_time
-            dict_list = la.answer('admin', 'com_get_chart_data', code, cycle, tick)
+            dict_list = gm.ipc.admin_to_dbm('dbm_get_chart_data', code, cycle, tick)
             
             return dict_list
         

@@ -1,37 +1,41 @@
 from public import dc, get_path
-from classes import la
 from datetime import datetime, timedelta
 import logging
 import sqlite3
 import os
-
+import threading
+import copy
+import time
 class DBMServer:
     def __init__(self):
-        self.db = None
-        self.cursor = None
-        self.chart_db = None
-        self.chart_cursor = None
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
-        self.dict_minute_data = {}
+        self.done_code = []
+        self.todo_code = {}
+        self._lock = threading.Lock()
+        self.thread_local = threading.local()  # 스레드 로컬 변수 추가
+
+        self.thread_run = False
+        self.thread_chart = None    
 
         self.init_dbm()
+        self.start_request_chart_data()
 
     def stop(self):
-        if self.chart_db is not None:
-            if self.chart_cursor is not None:
-                self.chart_cursor.close()
-                self.chart_cursor = None
-            self.chart_db.commit()
-            self.chart_db.close()
-            self.chart_db = None
-        if self.db is not None:
-            if self.cursor is not None:
-                self.cursor.close()
-                self.cursor = None
-            self.db.commit()
-            self.db.close()
-            self.db = None
+        self.stop_request_chart_data()
+        
+        # 모든 연결 닫기 시도 (각 스레드의 연결)
+        try:
+            self.stop_request_chart_data()
+            self.thread_chart = None
+            if hasattr(self.thread_local, 'chart'):
+                conn = self.thread_local.chart
+                conn.close()
+            if hasattr(self.thread_local, 'db'):
+                conn = self.thread_local.db
+                conn.close()
+        except Exception as e:
+            logging.error(f"Error closing database connections: {e}", exc_info=True)
 
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
@@ -41,57 +45,66 @@ class DBMServer:
         self.fee_rate = fee_rate
         self.tax_rate = tax_rate    
 
+    # 스레드별 연결 관리 메서드 추가
+    def get_connection(self, db_type='chart'):
+        """스레드별 데이터베이스 연결 반환"""
+        if not hasattr(self.thread_local, db_type):
+            if db_type == 'chart':
+                db_name = 'abc_chart.db'
+            else:
+                db_name = 'abc.db'
+            path = os.path.join(get_path(dc.fp.DB_PATH), db_name)
+            conn = sqlite3.connect(path)
+            conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+            setattr(self.thread_local, db_type, conn)
+        return getattr(self.thread_local, db_type)
+
+    def get_cursor(self, db_type='chart'):
+        """스레드별 커서 반환"""
+        conn = self.get_connection(db_type)
+        return conn.cursor()
+
     # 디비 초기화 --------------------------------------------------------------------------------------------------
     def init_dbm(self):
         logging.debug('dbm_init_db')
 
         # 통합 디비
-        db = 'abc.db'
-        path = os.path.join(get_path(dc.fp.DB_PATH), db)
-        self.db = sqlite3.connect(path)
-        # 아래 람다식은 튜플로 받은 레코드를 딕셔너리로 변환하는 함수
-        self.db.row_factory = lambda cursor, row: { col[0]: row[idx] for idx, col in enumerate(cursor.description)}
-        # self.chart_db.row_factory = sqlite3.Row # 직렬화 에러
-        self.cursor = self.db.cursor()
-
+        db_conn = self.get_connection('db')
+        db_cursor = db_conn.cursor()
+        
         # trades 테이블
         sql = self.create_table_sql(dc.ddb.TRD_TABLE_NAME, dc.ddb.TRD_COLUMNS)
-        self.cursor.execute(sql)
+        db_cursor.execute(sql)
         for index in dc.ddb.TRD_INDEXES.values():
-            self.cursor.execute(index)
+            db_cursor.execute(index)
 
         # Conclusion Table
         sql = self.create_table_sql(dc.ddb.CONC_TABLE_NAME, dc.ddb.CONC_COLUMNS)
-        self.cursor.execute(sql)
+        db_cursor.execute(sql)
         for index in dc.ddb.CONC_INDEXES.values():
-            self.cursor.execute(index)
+            db_cursor.execute(index)
 
         #self.cleanup_old_data()
 
-        self.db.commit()
+        db_conn.commit()
 
         # 차트 디비
-        db_chart = f'abc_chart.db'
-        path_chart = os.path.join(get_path(dc.fp.DB_PATH), db_chart)
-        self.chart_db = sqlite3.connect(path_chart)
-        # 아래 람다식은 튜플로 받은 레코드를 딕셔너리로 변환하는 함수
-        self.chart_db.row_factory = lambda cursor, row: { col[0]: row[idx] for idx, col in enumerate(cursor.description)}
-        # self.chart_db.row_factory = sqlite3.Row # 직렬화 에러
-        self.chart_cursor = self.chart_db.cursor()
-
+        chart_conn = self.get_connection('chart')
+        chart_cursor = chart_conn.cursor()
+        
         # 차트 테이블 (틱, 분)
         sql = self.create_table_sql(dc.ddb.MIN_TABLE_NAME, dc.ddb.MIN_COLUMNS)
-        self.chart_cursor.execute(sql)
+        chart_cursor.execute(sql)
         for index in dc.ddb.MIN_INDEXES.values():
-            self.chart_cursor.execute(index)
+            chart_cursor.execute(index)
 
         # 차트 테이블 (일, 주, 월)
         sql = self.create_table_sql(dc.ddb.DAY_TABLE_NAME, dc.ddb.DAY_COLUMNS)
-        self.chart_cursor.execute(sql)
+        chart_cursor.execute(sql)
         for index in dc.ddb.DAY_INDEXES.values():
-            self.chart_cursor.execute(index)
+            chart_cursor.execute(index)
 
-        self.chart_db.commit()
+        chart_conn.commit()
 
     # 테이블 생성 SQL문 생성 함수
     def create_table_sql(self, table_name, fields, pk_columns=None):
@@ -130,7 +143,8 @@ class DBMServer:
             sql = f"DELETE FROM {dc.ddb.MON_TABLE_NAME} WHERE DATE(처리일시) < ?"
             self.execute_query(sql, db='db', params=(date_str,))
             
-            deleted_rows = self.cursor.rowcount
+            cursor = self.get_cursor('db')
+            deleted_rows = cursor.rowcount
             logging.info(f"monitor 테이블에서 {date_str} 이전 데이터 {deleted_rows}건 삭제 완료")
             
             # 데이터베이스 최적화 (VACUUM)
@@ -149,7 +163,7 @@ class DBMServer:
 
     def execute_query(self, sql, db='chart', params=None):
         try:
-            cursor = self.chart_db.cursor() if db == 'chart' else self.db.cursor()
+            cursor = self.get_cursor(db)
             query_command = cursor.executemany if isinstance(params, list) else cursor.execute
             if params: 
                 query_command(sql, params)
@@ -160,12 +174,14 @@ class DBMServer:
                 result = cursor.fetchall()
                 return result
             else:
-                self.chart_db.commit() if db == 'chart' else self.db.commit()
+                conn = self.get_connection(db)
+                conn.commit()
                 return cursor.rowcount
 
         except Exception as e:
             logging.error(f"Database error: {e}", exc_info=True)
-            self.chart_db.rollback() if db == 'chart' else self.db.rollback()
+            conn = self.get_connection(db)
+            conn.rollback()
             self.send_result(None, e)
 
     def table_upsert(self, db, table, dict_data):
@@ -272,20 +288,127 @@ class DBMServer:
             logging.error(f"upsert_conclusion error: {e}", exc_info=True)
             return False
         
-    def receive_current_price(self, code, dictFID):
-        pass
+    def dbm_get_chart_data(self, code, cycle, tick=None):
+        try:
+            if not self.dbm_to_admin('com_request_time_check', kind='request'): return [], False
 
-    def get_minute_data(self, code, tick=3, all=False):
-        df = self.dbm_to_admin('dbm_get_minute_data', code=code, tick=tick, all=all)
-        return df
+            rqname = f'{dc.scr.차트종류[cycle]}차트'
+            trcode = dc.scr.차트TR[cycle]
+            screen = dc.scr.화면[rqname]
+            date = datetime.now().strftime('%Y%m%d')
+            if cycle in ['mi', 'tk']:
+                if tick == None:
+                    tick = '1'
+                elif isinstance(tick, int):
+                    tick = str(tick)
+                input = {'종목코드':code, '틱범위': tick, '수정주가구분': "1"}
+                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
+            else:
+                if cycle == 'dy':
+                    input = {'종목코드':code, '기준일자': date, '수정주가구분': "1"}
+                else:
+                    input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': "1"}
+                output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
 
-    def update_minute_data(self, code):
+            next = '0'
+            all = False #if cycle in ['mi', 'dy'] else True
+            args = {
+                'rqname': rqname,
+                'trcode': trcode,
+                'input': input,
+                'output': output,
+                'next': next if next else '0',
+                'screen': screen if screen else dc.scr.화면[rqname],
+                'form': 'dict_list',
+                'timeout': 2
+            }
+            dict_list = []
+            while True:
+                data, remain = self.dbm_to_api('api_request', **args)
+                if data is None or len(data) == 0: break
+                dict_list.extend(data)
+                if not (remain and all): break
+                next = '2'
+            
+            if not dict_list:
+                logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
+                return
+            
+            logging.debug(f'{rqname} 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:{dict_list[:1]}')
+            if cycle in ['mi', 'tk']:
+                dict_list = [{
+                    '종목코드': code,
+                    '체결시간': item['체결시간'] if item['체결시간'] else datetime.now().strftime('%Y%m%d%H%M%S'),
+                    '시가': abs(int(item['시가'])) if item['시가'] else 0,
+                    '고가': abs(int(item['고가'])) if item['고가'] else 0,
+                    '저가': abs(int(item['저가'])) if item['저가'] else 0,
+                    '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
+                    '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
+                    '거래대금': 0,
+                } for item in dict_list]
+            else:
+                dict_list = [{
+                    '종목코드': code,
+                    '일자': item['일자'] if item['일자'] else datetime.now().strftime('%Y%m%d'),
+                    '시가': abs(int(item['시가'])) if item['시가'] else 0,
+                    '고가': abs(int(item['고가'])) if item['고가'] else 0,
+                    '저가': abs(int(item['저가'])) if item['저가'] else 0,
+                    '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
+                    '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
+                    '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
+                } for item in dict_list]
+            self.upsert_chart(dict_list, cycle, tick)
+            self.update_todo_code(code, cycle)
+            self.dbm_to_admin('dbm_update_chart', code, dict_list, cycle, tick)
+            
+        except Exception as e:
+            logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
 
-        logging.debug(f'update_minute_data received: {code}')
-        data = self.dbm_to_admin('com_get_chart_data', code=code, cycle='mi', tick=1)
-        if data:
-            logging.debug(f'update_minute_data answer: {data[:1]}')
-            return data
-        else:
-            logging.error(f'update_minute_data error: {code}')
-            return None
+    def start_request_chart_data(self):
+        if self.thread_run: return
+        self.thread_run = True
+        self.thread_chart = threading.Thread(target=self.request_chart_data)
+        self.thread_chart.start()
+
+    def stop_request_chart_data(self):
+        self.thread_run = False
+        if self.thread_chart:
+            self.thread_chart.join()
+            self.thread_chart = None
+
+    def request_chart_data(self):
+        while self.thread_run:
+            with self._lock:
+                codes = copy.deepcopy(self.todo_code)
+            for code in codes:
+                if not codes[code]['tk']:
+                    self.dbm_get_chart_data(code, cycle='tk', tick=30)
+
+                if not codes[code]['mi']:
+                    self.dbm_get_chart_data(code, cycle='mi', tick=1)
+
+                if not codes[code]['dy']:
+                    self.dbm_get_chart_data(code, cycle='dy')
+            time.sleep(0.3)
+
+    def update_todo_code(self, code, cycle):                    
+        with self._lock:
+            self.todo_code[code][cycle] = True
+            if all(self.todo_code[code].values()):
+                self.done_code.append(code)
+                del self.todo_code[code]
+
+    def register_code(self, code):
+        """코드 등록 - la.work 또는 la.answer로 호출"""
+        with self._lock:
+            if code in self.done_code or code in self.todo_code:
+                return False
+
+            logging.debug(f'차트관리 종목코드 등록: {code}')
+            self.todo_code[code] = {'tk': False, 'mi': False, 'dy': False}
+        return True
+    
+    def is_done(self, code):
+        with self._lock:
+            return code in self.done_code
+

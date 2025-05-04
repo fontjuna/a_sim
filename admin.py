@@ -1,7 +1,7 @@
 from public import gm, dc, Work,load_json, save_json
 from classes import TableManager, TimeLimiter, ThreadSafeDict, la, CounterTicker
 from strategy import Strategy
-from chart import ChartDataRegister, ChartData, ScriptManager, enhance_script_manager
+from chart import ChartData, ScriptManager, enhance_script_manager
 from tabulate import tabulate
 from datetime import datetime
 from PyQt5.QtCore import QTimer
@@ -13,6 +13,7 @@ import json
 class Admin:
     def __init__(self):
         self.name = 'admin'
+        self.connected = False
 
     def init(self):
         logging.debug(f'{self.name} init')
@@ -34,9 +35,9 @@ class Admin:
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
         gm.cdt = ChartData()
         la.register('cdt', gm.cdt, use_thread=True)
-        gm.cdr = ChartDataRegister('cdr')
-        la.register('cdr', gm.cdr, use_thread=True)
-        la.work('cdr', 'start_register')
+        # gm.cdr = ChartDataRegister('cdr')
+        # la.register('cdr', gm.cdr, use_thread=True)
+        # la.work('cdr', 'start_register')
         gm.scm = ScriptManager()
         try:
             result = enhance_script_manager(gm.scm)
@@ -46,12 +47,12 @@ class Admin:
         gm.ipc.admin_to_dbm('set_rate', gm.수수료율, gm.세금율)
 
     def get_login_info(self):
-        accounts = gm.api.GetLoginInfo('ACCNO')
+        accounts = gm.ipc.admin_to_api('GetLoginInfo', 'ACCNO')
         logging.debug(f'GetLoginInfo Accounts: {accounts}')
         gm.list계좌콤보 = accounts
         gm.config.account = accounts[0]
 
-        gm.config.server = gm.api.GetLoginInfo('GetServerGubun')
+        gm.config.server = gm.ipc.admin_to_api('GetLoginInfo', 'GetServerGubun')
         gm.수수료율 = dc.const.fee_sim if gm.config.server == '1' else dc.const.fee_real # 모의투자 0.35%, 실전투자 0.15% 매수, 매도 각각
         gm.세금율 = dc.const.tax_rate # 코스피 거래세 0.03 + 농어촌 특별세 0.12%, 코스닥 거래세 0.15 매도시적용
         logging.debug(f"서버:{gm.config.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.config.account}")
@@ -82,9 +83,9 @@ class Admin:
 
     def get_conditions(self):
         try:
-            loaded = gm.api.GetConditionLoad()
+            loaded = gm.ipc.admin_to_api('GetConditionLoad')
             if loaded: # sucess=1, fail=0
-                gm.list전략튜플 = gm.api.GetConditionNameList()
+                gm.list전략튜플 = gm.ipc.admin_to_api('GetConditionNameList')
                 logging.debug(f'전략 로드 : {gm.list전략튜플}')
                 gm.list전략콤보 = [condition[0] + ' : ' + condition[1] for condition in gm.list전략튜플]
                 logging.info(f'전략 로드 : 총 {len(gm.list전략콤보)}개의 전략이 있습니다.')
@@ -98,12 +99,12 @@ class Admin:
 
     def set_real_remove_all(self):
         logging.debug('set_real_remove_all')
-        gm.api.SetRealRemove('ALL', 'ALL')
+        gm.ipc.admin_to_api('SetRealRemove', 'ALL', 'ALL')
 
     def get_holdings(self):
         logging.info('* get_holdings *')
         gm.dict잔고종목감시 = {}
-        gm.api.SetRealRemove(dc.scr.화면['실시간감시'], 'ALL')
+        gm.ipc.admin_to_api('SetRealRemove', dc.scr.화면['실시간감시'], 'ALL')
         self.pri_fx얻기_잔고합산()
         self.pri_fx얻기_잔고목록()
         self.pri_fx등록_종목감시()
@@ -165,7 +166,7 @@ class Admin:
                 'form': form if form else 'dict_list',
                 'timeout': timeout if timeout else 5
             }
-            return gm.api.api_request(**args)
+            return gm.ipc.admin_to_api('api_request', **args)
         except Exception as e:
             logging.error(f'com_SendRequest 오류: {e}')
             return [], False
@@ -177,7 +178,7 @@ class Admin:
             return [], False
 
         logging.debug(f'조건 검색 요청 전: {cond_text}')
-        condition_list = gm.api.SendCondition(screen, cond_name, cond_index, search)
+        condition_list = gm.ipc.admin_to_api('SendCondition', screen, cond_name, cond_index, search)
         if not isinstance(condition_list, list):
             logging.warning(f'조건 검색 실패: {cond_text} result={condition_list}')
             return [], False
@@ -191,7 +192,7 @@ class Admin:
         전략 = f'전략{idx:02d}'
         전략명칭 = gm.전략쓰레드[idx].전략명칭
         매수전략 = gm.전략쓰레드[idx].매수전략
-        name = gm.api.GetMasterCodeName(code)
+        name = gm.ipc.admin_to_api('GetMasterCodeName', code)
         주문유형 = dc.fid.주문유형FID[ordtype]
         kind = msg if msg else 주문유형
         job = {"구분": kind, "전략": 전략, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
@@ -206,75 +207,9 @@ class Admin:
         dict_data = { '전략번호': idx, '전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
         self.dbm_order_upsert(dict_data)
-        success = gm.api.SendOrder(**cmd)
+        success = gm.ipc.admin_to_api('SendOrder', **cmd)
 
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
-
-    def com_get_chart_data(self, code, cycle, tick=None):
-        """서버에서 차트 데이터 가져오기 (기존 코드 유지, 데드락 방지 추가)"""
-        try:
-            # 이하 원래 코드
-            rqname = f'{dc.scr.차트종류[cycle]}차트'
-            trcode = dc.scr.차트TR[cycle]
-            screen = dc.scr.화면[rqname]
-            date = datetime.now().strftime('%Y%m%d')
-            if cycle in ['mi', 'tk']:
-                if tick == None:
-                    tick = '1'
-                elif isinstance(tick, int):
-                    tick = str(tick)
-                input = {'종목코드':code, '틱범위': tick, '수정주가구분': "1"}
-                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
-            else:
-                if cycle == 'dy':
-                    input = {'종목코드':code, '기준일자': date, '수정주가구분': "1"}
-                else:
-                    input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': "1"}
-                output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
-
-            next = '0'
-            all = False #if cycle in ['mi', 'dy'] else True
-            dict_list = []
-            while True:
-                data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen, 'dict_list', 2)
-                if data is None or len(data) == 0: break
-                dict_list.extend(data)
-                if not (remain and all): break
-                next = '2'
-            
-            if not dict_list:
-                logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
-                return []
-            
-            logging.debug(f'{rqname} 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:{dict_list[:1]}')
-            if cycle in ['mi', 'tk']:
-                dict_list = [{
-                    '종목코드': code,
-                    '체결시간': item['체결시간'] if item['체결시간'] else datetime.now().strftime('%Y%m%d%H%M%S'),
-                    '시가': abs(int(item['시가'])) if item['시가'] else 0,
-                    '고가': abs(int(item['고가'])) if item['고가'] else 0,
-                    '저가': abs(int(item['저가'])) if item['저가'] else 0,
-                    '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
-                    '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
-                    '거래대금': 0,
-                } for item in dict_list]
-            else:
-                dict_list = [{
-                    '종목코드': code,
-                    '일자': item['일자'] if item['일자'] else datetime.now().strftime('%Y%m%d'),
-                    '시가': abs(int(item['시가'])) if item['시가'] else 0,
-                    '고가': abs(int(item['고가'])) if item['고가'] else 0,
-                    '저가': abs(int(item['저가'])) if item['저가'] else 0,
-                    '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
-                    '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
-                    '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
-                } for item in dict_list]
-            
-            return dict_list
-            
-        except Exception as e:
-            logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
-            return []
 
     def com_market_status(self):
         now = datetime.now()
@@ -550,7 +485,7 @@ class Admin:
             def save_counter(dict_list):
                 data = {}
                 for item in dict_list:
-                    전일가 = gm.api.GetMasterLastPrice(item['종목번호'])
+                    전일가 = gm.ipc.admin_to_api('GetMasterLastPrice', item['종목번호'])
                     gm.dict종목정보.set(item['종목번호'], {'종목명': item['종목명'], '전일가': 전일가, "현재가": 0})
                     전략정의 = gm.전략정의.get(key=item['전략명칭'])
                     if not 전략정의:
@@ -565,7 +500,8 @@ class Admin:
                     if item['전략'] not in data: data[item['전략']] = {}
                     data[item['전략']][item['종목번호']] = item['종목명']
 
-                    la.work('cdr', 'register_code', item['종목번호'])
+                    # la.work('cdr', 'register_code', item['종목번호'])
+                    gm.ipc.admin_to_dbm('register_code', item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.ct.set_batch(data)
 
@@ -575,7 +511,8 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            la.work('cdr', 'register_code', '005930') # 스크립트 테스트용 코드
+            # la.work('cdr', 'register_code', '005930') # 스크립트 테스트용 코드
+            gm.ipc.admin_to_dbm('register_code', '005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -672,7 +609,7 @@ class Admin:
             gm.dict종목정보.set(code, value={'종목명': 종목명, '전일가': 전일가, '현재가': 0})
 
             logging.debug(f'실시간 시세 요청: codes={codes}')
-            gm.api.SetRealReg(dc.scr.화면['실시간감시'], codes, "10", 0)
+            gm.ipc.admin_to_api('SetRealReg', dc.scr.화면['실시간감시'], codes, "10", 0)
         except Exception as e:
             logging.error(f'실시간 시세 요청 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -775,9 +712,11 @@ class Admin:
 
     def pri_fx얻기_차트자료(self, date_text, code, cycle, tick):
         try:
+            logging.debug(f'차트자료 얻기: date:{date_text}, code:{code}, cycle:{cycle}, tick:{tick}')
             gm.차트자료.delete()
-            sql = dc.ddb.MIN_SELECT_DATE if cycle in ('분봉', '틱봉') else dc.ddb.DAY_SELECT_DATE
-            dict_list = gm.ipc.admin_to_dbm('execute_query', sql=sql, db='chart', params=(date_text, code, dc.scr.차트종류[cycle], tick if tick else ''))
+            tick = int(tick)
+            sql_select = dc.ddb.MIN_SELECT_DATE if cycle in ('분봉', '틱봉') else dc.ddb.DAY_SELECT_DATE
+            dict_list = gm.ipc.admin_to_dbm('execute_query', sql=sql_select, db='chart', params=(date_text, code, dc.scr.차트종류[cycle], tick if tick else '',))
             if dict_list is not None and len(dict_list) > 0:
                 min_check = cycle in ('분봉', '틱봉')
                 if min_check:
@@ -1100,11 +1039,11 @@ class Admin:
         if error is not None:
             logging.debug(f'디비 요청 결과: result={result} error={error}')
 
-    def dbm_upsert_chart(self, dict_data, cycle, tick=1):
+    def dbm_update_chart(self, code, dict_data, cycle, tick=1):
         try:
-            gm.ipc.admin_to_dbm('upsert_chart', dict_data, cycle, tick)
+            la.work('cdt', 'set_chart_data', code, dict_data, cycle, tick)
         except Exception as e:
-            logging.error(f"dbm_upsert_chart 오류: {type(e).__name__} - {e}", exc_info=True)
+            logging.error(f"dbm_update_chart 오류: {type(e).__name__} - {e}", exc_info=True)
 
     def dbm_fx실시간_수신데이타(self, data):
         # 디비에서 작업결과를 실시간으로 내보내는걸 수신 (예: 차트 분석 후 매매 신호)

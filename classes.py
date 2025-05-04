@@ -2002,219 +2002,600 @@ class CounterTicker:
             ticker_info = self.data[strategy][code]
             ticker_limit = ticker_info["limit"] if ticker_info["limit"] > 0 else self.data[strategy]["000000"]["all"]
             return ticker_info["count"] < ticker_limit
-    
+
 # IPC(프로세스 간 통신) 관리자
 class IPCManager:
-   def __init__(self):
-      self.manager = mp.Manager()
-      self.queues = {}  # name -> Queue
-      self.result_dict = self.manager.dict()  # id -> result
-      self.callbacks = {}  # id -> callback function
-      self.dbm_process = None
-      self.shutting_down = False
-   
-   def create_queue(self, name):
-      """특정 이름의 큐 생성"""
-      if name not in self.queues:
-         self.queues[name] = mp.Queue()
-      return self.queues[name]
-   
-   def get_queue(self, name):
-      """큐 가져오기"""
-      if name not in self.queues:
-         self.create_queue(name)
-      return self.queues[name]
-   
-   def prepare_shutdown(self):
-      self.shutting_down = True
-      logging.info("종료 준비 중 ...")
-   
-   def start_dbm_process(self, dbm_class):
-      """DBM 프로세스 시작"""
-      if self.dbm_process is not None:
-         logging.warning("DBM 프로세스가 이미 실행 중입니다")
-         return
-      
-      # 필요한 큐 생성
-      self.create_queue('admin_to_dbm')
-      self.create_queue('dbm_to_admin')
-      
-      # 프로세스 시작
-      self.dbm_process = mp.Process(
-         target=dbm_worker,
-         args=(dbm_class, self.queues['admin_to_dbm'], 
-               self.queues['dbm_to_admin'], self.result_dict),
-         daemon=True
-      )
-      self.dbm_process.start()
-      logging.info(f"DBM 프로세스 시작됨 (PID: {self.dbm_process.pid})")
-      return self.dbm_process.pid
-   
-   def stop_dbm_process(self):
-      """DBM 프로세스 종료"""
-      if self.dbm_process is None:
-         return
-      
-      # 종료 명령 전송
-      self.queues['admin_to_dbm'].put({
-         'command': 'stop'
-      })
-      
-      # 프로세스 종료 대기
-      self.dbm_process.join(2.0)
-      if self.dbm_process.is_alive():
-         self.dbm_process.terminate()
-         self.dbm_process.join(1.0)
-      
-      self.dbm_process = None
-      logging.info("DBM 프로세스 종료됨")
-   
-   def start_admin_listener(self, admin_instance):
-      """Admin의 메시지 리스너 시작"""
-      self.admin_listener = threading.Thread(
-         target=admin_listener_thread,
-         args=(admin_instance, self.queues['dbm_to_admin'], self.result_dict, self.callbacks),
-         daemon=True
-      )
-      self.admin_listener.start()
-      logging.info("Admin 리스너 쓰레드 시작")
-   
-   def admin_to_dbm(self, method, *args, wait_result=True, timeout=10, callback=None, **kwargs):
-      """DBM에 요청 전송"""
-      if self.shutting_down:
-         return None
-      
-      req_id = str(uuid.uuid4())
-      
-      # 콜백 등록
-      if callback:
-         self.callbacks[req_id] = callback
-      
-      # 요청 전송
-      self.queues['admin_to_dbm'].put({
-         'id': req_id,
-         'method': method,
-         'args': args,
-         'kwargs': kwargs
-      })
-      
-      # 결과를 기다리지 않으면 바로 반환
-      if not wait_result:
-         return req_id
-      
-      # 결과 대기
-      start_time = time.time()
-      while req_id not in self.result_dict:
-         if time.time() - start_time > timeout:
-            logging.warning(f"요청 타임아웃: {method}")
-            return None
-         time.sleep(0.01)
-      
-      # 결과 반환 및 정리
-      result = self.result_dict[req_id]
-      del self.result_dict[req_id]
-      return result.get('result', None)
+    def __init__(self):
+        self.manager = mp.Manager()
+        self.queues = {}  # name -> Queue
+        self.result_dict = self.manager.dict()  # id -> result
+        self.callbacks = {}  # id -> callback function
 
-# DBM 프로세스 워커
-def dbm_worker(dbm_class, input_queue, output_queue, result_dict):
-   """DBM 프로세스 메인 함수"""
-   try:
-      # DBM 인스턴스 생성
-      dbm = dbm_class()
-      logging.info("DBM 프로세스 초기화 완료")
-      
-      # Admin으로 요청 보내는 함수
-      def dbm_to_admin(method, *args, wait_result=True, timeout=10, **kwargs):
-         req_id = str(uuid.uuid4())
-         
-         # 요청 전송
-         output_queue.put({
+        # 공유변수 딕셔너리 추가
+        self.shared_vars = self.manager.dict()
+
+        self.dbm_process = None
+        self.api_process = None  # API 프로세스 추가
+        self.shutting_down = False
+
+    def get_var(self, process_name, var_name, default=None):
+        """특정 프로세스의 변수 가져오기"""
+        key = f"{process_name}.{var_name}"
+        return self.shared_vars.get(key, default)
+    
+    def set_var(self, process_name, var_name, value):
+        """특정 프로세스의 변수 설정하기"""
+        key = f"{process_name}.{var_name}"
+        self.shared_vars[key] = value
+    
+    def create_queue(self, name):
+        """특정 이름의 큐 생성"""
+        if name not in self.queues:
+            self.queues[name] = mp.Queue()
+        return self.queues[name]
+    
+    def get_queue(self, name):
+        """큐 가져오기"""
+        if name not in self.queues:
+            self.create_queue(name)
+        return self.queues[name]
+    
+    def prepare_shutdown(self):
+        self.shutting_down = True
+        logging.info("종료 준비 중 ...")
+    
+    def start_dbm_process(self, dbm_class):
+        """DBM 프로세스 시작"""
+        if self.dbm_process is not None:
+            logging.warning("DBM 프로세스가 이미 실행 중입니다")
+            return
+        
+        # 필요한 큐 생성
+        self.create_queue('admin_to_dbm')
+        self.create_queue('dbm_to_admin')
+        self.create_queue('dbm_to_api')
+        self.create_queue('api_to_dbm')
+        
+        # 프로세스 시작
+        self.dbm_process = mp.Process(
+            target=dbm_worker,
+            args=(dbm_class, 
+                self.queues['admin_to_dbm'], 
+                self.queues['dbm_to_admin'],
+                self.queues['dbm_to_api'],
+                self.queues['api_to_dbm'],
+                self.result_dict,
+                self.shared_vars),
+            daemon=True
+        )
+        self.dbm_process.start()
+        logging.info(f"DBM 프로세스 시작됨 (PID: {self.dbm_process.pid})")
+        return self.dbm_process.pid
+    
+    def start_api_process(self, api_class):
+        """API 프로세스 시작"""
+        if self.api_process is not None:
+            logging.warning("API 프로세스가 이미 실행 중입니다")
+            return
+        
+        # 필요한 큐 생성
+        self.create_queue('admin_to_api')
+        self.create_queue('api_to_admin')
+        self.create_queue('dbm_to_api')
+        self.create_queue('api_to_dbm')
+        
+        # 프로세스 시작
+        self.api_process = mp.Process(
+            target=api_worker,
+            args=(api_class, 
+                self.queues['admin_to_api'], 
+                self.queues['api_to_admin'],
+                self.queues['dbm_to_api'],
+                self.queues['api_to_dbm'],
+                self.result_dict,
+                self.shared_vars),
+            daemon=True
+        )
+        self.api_process.start()
+        logging.info(f"API 프로세스 시작됨 (PID: {self.api_process.pid})")
+        return self.api_process.pid
+
+    # IPCManager 클래스에 테스트 메서드 추가
+    def test_shared_vars(self):
+        test_key = 'test.var'
+        test_value = 'test_value'
+        self.shared_vars[test_key] = test_value
+        logging.debug(f"Test shared_vars: set {test_key} = {test_value}")
+        logging.debug(f"Test shared_vars: get {test_key} = {self.shared_vars.get(test_key)}")
+            
+    def stop_dbm_process(self):
+        """DBM 프로세스 종료"""
+        if self.dbm_process is None:
+            return
+        
+        # 종료 명령 전송
+        self.queues['admin_to_dbm'].put({
+            'command': 'stop'
+        })
+        
+        # 프로세스 종료 대기
+        self.dbm_process.join(2.0)
+        if self.dbm_process.is_alive():
+            self.dbm_process.terminate()
+            self.dbm_process.join(1.0)
+        
+        self.dbm_process = None
+        logging.info("DBM 프로세스 종료됨")
+    
+    def stop_api_process(self):
+        """API 프로세스 종료"""
+        if self.api_process is None:
+            return
+        
+        # 종료 명령 전송
+        self.queues['admin_to_api'].put({
+            'command': 'stop'
+        })
+        
+        # 프로세스 종료 대기
+        self.api_process.join(2.0)
+        if self.api_process.is_alive():
+            self.api_process.terminate()
+            self.api_process.join(1.0)
+        
+        self.api_process = None
+        logging.info("API 프로세스 종료됨")
+    
+    def start_admin_listener(self, admin_instance):
+        """Admin의 메시지 리스너 시작"""
+        self.admin_dbm_listener = threading.Thread(
+            target=admin_listener_thread,
+            args=(admin_instance, self.queues['dbm_to_admin'], self.result_dict, self.callbacks),
+            daemon=True
+        )
+        self.admin_dbm_listener.start()
+        
+        self.admin_api_listener = threading.Thread(
+            target=admin_listener_thread,
+            args=(admin_instance, self.queues['api_to_admin'], self.result_dict, self.callbacks),
+            daemon=True
+        )
+        self.admin_api_listener.start()
+        
+        logging.info("Admin 리스너 쓰레드 시작")
+    
+    def admin_to_dbm(self, method, *args, wait_result=True, timeout=10, callback=None, **kwargs):
+        """DBM에 요청 전송"""
+        return self._send_request(
+            'admin_to_dbm', method, args, kwargs, wait_result, timeout, callback
+        )
+    
+    def admin_to_api(self, method, *args, wait_result=True, timeout=10, callback=None, **kwargs):
+        """API에 요청 전송"""
+        return self._send_request(
+            'admin_to_api', method, args, kwargs, wait_result, timeout, callback
+        )
+    
+    def _send_request(self, queue_name, method, args, kwargs, wait_result, timeout, callback):
+        """요청 전송 공통 함수"""
+        if self.shutting_down:
+            return None
+        
+        req_id = str(uuid.uuid4())
+        
+        # 콜백 등록
+        if callback:
+            self.callbacks[req_id] = callback
+        
+        # 요청 전송
+        self.queues[queue_name].put({
             'id': req_id,
             'method': method,
             'args': args,
             'kwargs': kwargs
-         })
-         
-         # 결과를 기다리지 않으면 바로 반환
-         if not wait_result:
+        })
+        
+        # 결과를 기다리지 않으면 바로 반환
+        if not wait_result:
             return req_id
-         
-         # 결과 대기
-         start_time = time.time()
-         while req_id not in result_dict:
+        
+        # 결과 대기
+        start_time = time.time()
+        while req_id not in self.result_dict:
             if time.time() - start_time > timeout:
-               logging.warning(f"요청 타임아웃: {method}")
-               return None
+                logging.warning(f"요청 타임아웃: {method}")
+                return None
             time.sleep(0.01)
-         
-         # 결과 반환 및 정리
-         result = result_dict[req_id]
-         del result_dict[req_id]
-         return result.get('result', None)
-      
-      # DBM 인스턴스에 dbm_to_admin 함수 추가
-      dbm.dbm_to_admin = dbm_to_admin
-      
-      shutting_down = False
-      # 메시지 처리 루프
-      while not shutting_down:
-         try:
-            # 요청 가져오기 (타임아웃 설정하여 간격적으로 체크)
-            try:
-               request = input_queue.get(timeout=0.1)
-            except queue.Empty:
-               continue
-            
-            # 종료 명령 확인
-            if 'command' in request:
-                if request['command'] == 'stop':
-                    shutting_down = True
-                    logging.info("종료 명령 수신")
-                    break
-                elif request['command'] == 'prepare_shutdown':
-                    shutting_down = True
-                    continue
+        
+        # 결과 반환 및 정리
+        result = self.result_dict[req_id]
+        del self.result_dict[req_id]
+        return result.get('result', None)
 
-            # 요청 정보 파싱
-            req_id = request.get('id')
-            method_name = request.get('method')
-            args = request.get('args', ())
-            kwargs = request.get('kwargs', {})
-            
-            # 메서드 찾기
-            method = getattr(dbm, method_name, None)
-            if method is None:
-               logging.error(f"메서드 없음: {method_name}")
-               result_dict[req_id] = {
-                  'status': 'error',
-                  'error': f"메서드 없음: {method_name}",
-                  'result': None
-               }
-               continue
-            
-            # 메서드 실행
+# DBM 프로세스 워커
+def dbm_worker(dbm_class, admin_input_queue, admin_output_queue, api_output_queue, api_input_queue, result_dict, shared_vars):
+    """DBM 프로세스 메인 함수"""
+    try:
+        # DBM 인스턴스 생성
+        dbm = dbm_class()
+        logging.info("DBM 프로세스 초기화 완료")
+        
+        # Admin으로 요청 보내는 함수
+        def dbm_to_admin(method, *args, wait_result=True, timeout=10, **kwargs):
+            return _send_process_request(
+                admin_output_queue, method, args, kwargs, 
+                wait_result, timeout, result_dict
+            )
+        
+        # API로 요청 보내는 함수
+        def dbm_to_api(method, *args, wait_result=True, timeout=10, **kwargs):
+            # logging.debug(f"DBM to API 요청: {method}, args={args}, kwargs={kwargs}")
+            return _send_process_request(
+                api_output_queue, method, args, kwargs, 
+                wait_result, timeout, result_dict
+            )
+        
+        # 공유 변수 접근 함수
+        def get_var(process_name, var_name, default=None):
+            key = f"{process_name}.{var_name}"
+            return shared_vars.get(key, default)
+        
+        def set_var(process_name, var_name, value):
+            key = f"{process_name}.{var_name}"
+            shared_vars[key] = value
+        
+        # DBM 인스턴스에 함수 추가
+        dbm.dbm_to_admin = dbm_to_admin
+        dbm.dbm_to_api = dbm_to_api
+        dbm.get_var = get_var
+        dbm.set_var = set_var
+        
+        # 초기 변수 설정
+        dbm.set_var('dbm', 'name', dbm.name if hasattr(dbm, 'name') else 'dbm')
+        
+        shutting_down = False
+        # 메시지 처리 루프
+        while not shutting_down:
             try:
-               result = method(*args, **kwargs)
-               result_dict[req_id] = {
-                  'status': 'success',
-                  'result': result
-               }
-               #logging.debug(f"메서드 실행 완료: {method_name}, 결과: {result}")
+                # Admin으로부터 메시지 처리
+                try:
+                    request = admin_input_queue.get(timeout=0.1)
+                    # 종료 명령 확인
+                    if 'command' in request:
+                        if request['command'] == 'stop':
+                            shutting_down = True
+                            logging.info("종료 명령 수신")
+                            continue
+                        elif request['command'] == 'prepare_shutdown':
+                            shutting_down = True
+                            continue
+                    
+                    # 요청 정보 파싱
+                    req_id = request.get('id')
+                    method_name = request.get('method')
+                    args = request.get('args', ())
+                    kwargs = request.get('kwargs', {})
+                    
+                    # 메서드 찾기
+                    method = getattr(dbm, method_name, None)
+                    if method is None:
+                        logging.error(f"메서드 없음: {method_name}")
+                        result_dict[req_id] = {
+                            'status': 'error',
+                            'error': f"메서드 없음: {method_name}",
+                            'result': None
+                        }
+                        continue
+                
+                    # 메서드 실행
+                    try:
+                        result = method(*args, **kwargs)
+                        result_dict[req_id] = {
+                            'status': 'success',
+                            'result': result
+                        }
+                    except Exception as e:
+                        logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+                        result_dict[req_id] = {
+                            'status': 'error',
+                            'error': str(e),
+                            'result': None
+                        }
+                except queue.Empty:
+                    pass
+                
+                # API로부터 메시지 처리
+                try:
+                    request = api_input_queue.get(timeout=0.1)
+                    # 종료 명령 확인
+                    if 'command' in request:
+                        if request['command'] == 'stop':
+                            shutting_down = True
+                            logging.info("종료 명령 수신")
+                            continue
+                        elif request['command'] == 'prepare_shutdown':
+                            shutting_down = True
+                            continue
+                    
+                    # 요청 정보 파싱
+                    req_id = request.get('id')
+                    method_name = request.get('method')
+                    args = request.get('args', ())
+                    kwargs = request.get('kwargs', {})
+                    
+                    # 메서드 찾기
+                    method = getattr(dbm, method_name, None)
+                    if method is None:
+                        logging.error(f"메서드 없음: {method_name}")
+                        result_dict[req_id] = {
+                            'status': 'error',
+                            'error': f"메서드 없음: {method_name}",
+                            'result': None
+                        }
+                        continue
+                
+                    # 메서드 실행
+                    try:
+                        result = method(*args, **kwargs)
+                        result_dict[req_id] = {
+                            'status': 'success',
+                            'result': result
+                        }
+                    except Exception as e:
+                        logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+                        result_dict[req_id] = {
+                            'status': 'error',
+                            'error': str(e),
+                            'result': None
+                        }
+                except queue.Empty:
+                    pass
+                
+                time.sleep(0.01)  # CPU 사용량 감소
+                
             except Exception as e:
-               logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-               result_dict[req_id] = {
-                  'status': 'error',
-                  'error': str(e),
-                  'result': None
-               }
-         except Exception as e:
-            logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
-   
+                logging.error(f"메시지 처리 중 오류: {e}", exc_info=True)
+    
+    except Exception as e:
+        logging.error(f"DBM 프로세스 오류: {e}", exc_info=True)
+    
+    finally:
+        logging.info("DBM 프로세스 종료")
+
+# API 프로세스 워커
+def api_worker(api_class, admin_input_queue, admin_output_queue, dbm_input_queue, dbm_output_queue, result_dict, shared_vars):
+    """API 프로세스 메인 함수"""
+    try:
+        # API 인스턴스 생성
+        api = api_class()
+        logging.info("API 프로세스 초기화 완료")
+        
+        # Admin으로 요청 보내는 함수
+        def api_to_admin(method, *args, wait_result=True, timeout=10, **kwargs):
+            return _send_process_request(
+                admin_output_queue, method, args, kwargs, 
+                wait_result, timeout, result_dict
+            )
+        
+        # DBM으로 요청 보내는 함수
+        def api_to_dbm(method, *args, wait_result=True, timeout=10, **kwargs):
+            return _send_process_request(
+                dbm_output_queue, method, args, kwargs, 
+                wait_result, timeout, result_dict
+            )
+        
+        # 공유 변수 접근 함수
+        def get_var(process_name, var_name, default=None):
+            key = f"{process_name}.{var_name}"
+            return shared_vars.get(key, default)
+        
+        def set_var(process_name, var_name, value):
+            key = f"{process_name}.{var_name}"
+            shared_vars[key] = value
+        
+        # API 인스턴스에 함수 추가
+        api.api_to_admin = api_to_admin
+        api.api_to_dbm = api_to_dbm
+        api.get_var = get_var
+        api.set_var = set_var
+        
+        # 초기 변수 설정
+        api.set_var('api', 'name', api.name if hasattr(api, 'name') else 'api')
+        
+        shutting_down = False
+        # 메시지 처리 루프
+        while not shutting_down:
+            try:
+                # Admin으로부터 메시지 처리
+                try:
+                    request = admin_input_queue.get(timeout=0.1)
+                    #logging.debug(f"API: Admin으로부터 메시지 수신: {request.get('method', request.get('command', 'unknown'))}")
+                    
+                    # 종료 명령 확인
+                    if 'command' in request:
+                        if request['command'] == 'stop':
+                            shutting_down = True
+                            logging.info("종료 명령 수신")
+                            continue
+                        elif request['command'] == 'prepare_shutdown':
+                            shutting_down = True
+                            continue
+                    
+                    # 요청 정보 파싱
+                    req_id = request.get('id')
+                    method_name = request.get('method')
+                    args = request.get('args', ())
+                    kwargs = request.get('kwargs', {})
+                    
+                    # 메서드 찾기
+                    method = getattr(api, method_name, None)
+                    if method is None:
+                        logging.error(f"메서드 없음: {method_name}")
+                        result_dict[req_id] = {
+                            'status': 'error',
+                            'error': f"메서드 없음: {method_name}",
+                            'result': None
+                        }
+                        continue
+                    
+                    # 메서드 실행
+                    try:
+                        result = method(*args, **kwargs)
+                        result_dict[req_id] = {
+                            'status': 'success',
+                            'result': result
+                        }
+                    except Exception as e:
+                        logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+                        result_dict[req_id] = {
+                            'status': 'error',
+                            'error': str(e),
+                            'result': None
+                        }
+                except queue.Empty:
+                    pass
+                
+                # DBM으로부터 메시지 처리
+                try:
+                    request = dbm_input_queue.get(timeout=0.1)
+                    #logging.debug(f"API: DBM으로부터 메시지 수신: {request.get('method', request.get('command', 'unknown'))}")
+                    
+                    # 종료 명령 확인
+                    if 'command' in request:
+                        if request['command'] == 'stop':
+                            shutting_down = True
+                            logging.info("종료 명령 수신")
+                            continue
+                        elif request['command'] == 'prepare_shutdown':
+                            shutting_down = True
+                            continue
+                    
+                    # 요청 정보 파싱
+                    req_id = request.get('id')
+                    method_name = request.get('method')
+                    args = request.get('args', ())
+                    kwargs = request.get('kwargs', {})
+                    
+                    # 메서드 찾기
+                    method = getattr(api, method_name, None)
+                    if method is None:
+                        logging.error(f"메서드 없음: {method_name}")
+                        result_dict[req_id] = {
+                            'status': 'error',
+                            'error': f"메서드 없음: {method_name}",
+                            'result': None
+                        }
+                        continue
+                    
+                    # 메서드 실행
+                    try:
+                        result = method(*args, **kwargs)
+                        result_dict[req_id] = {
+                            'status': 'success',
+                            'result': result
+                        }
+                    except Exception as e:
+                        logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+                        result_dict[req_id] = {
+                            'status': 'error',
+                            'error': str(e),
+                            'result': None
+                        }
+                except queue.Empty:
+                    pass
+                
+                time.sleep(0.01)  # CPU 사용량 감소
+                
+            except Exception as e:
+                logging.error(f"메시지 처리 중 오류: {e}", exc_info=True)
+    
+    except Exception as e:
+        logging.error(f"API 프로세스 오류: {e}", exc_info=True)
+    
+    finally:
+        logging.info("API 프로세스 종료")
+
+# 요청 전송 공통 함수 
+def _send_process_request(output_queue, method, args, kwargs, wait_result, timeout, result_dict):
+    req_id = str(uuid.uuid4())
+    
+    # 요청 전송
+    output_queue.put({
+        'id': req_id,
+        'method': method,
+        'args': args,
+        'kwargs': kwargs
+    })
+    
+    # 결과를 기다리지 않으면 바로 반환
+    if not wait_result:
+        return req_id
+    
+    # 결과 대기
+    start_time = time.time()
+    while req_id not in result_dict:
+        if time.time() - start_time > timeout:
+            logging.warning(f"요청 타임아웃: {method}")
+            return None
+        time.sleep(0.01)
+    
+    # 결과 반환 및 정리
+    result = result_dict[req_id]
+    del result_dict[req_id]
+    return result.get('result', None)
+
+# 메시지 처리 함수
+def process_messages(input_queue, instance, result_dict, shutting_down):
+   try:
+      # 요청 가져오기 (타임아웃 설정하여 간격적으로 체크)
+      try:
+         request = input_queue.get(timeout=0.1)
+      except queue.Empty:
+         return shutting_down
+      
+      # 종료 명령 확인
+      if 'command' in request:
+         if request['command'] == 'stop':
+            logging.info("종료 명령 수신")
+            return True
+         elif request['command'] == 'prepare_shutdown':
+            return True
+      
+      # 요청 정보 파싱
+      req_id = request.get('id')
+      method_name = request.get('method')
+      args = request.get('args', ())
+      kwargs = request.get('kwargs', {})
+      
+      # 메서드 찾기
+      method = getattr(instance, method_name, None)
+      if method is None:
+         logging.error(f"메서드 없음: {method_name}")
+         result_dict[req_id] = {
+            'status': 'error',
+            'error': f"메서드 없음: {method_name}",
+            'result': None
+         }
+         return shutting_down
+      
+      # 메서드 실행
+      try:
+         result = method(*args, **kwargs)
+         result_dict[req_id] = {
+            'status': 'success',
+            'result': result
+         }
+      except Exception as e:
+         logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+         result_dict[req_id] = {
+            'status': 'error',
+            'error': str(e),
+            'result': None
+         }
    except Exception as e:
-      logging.error(f"DBM 프로세스 오류: {e}", exc_info=True)
+      logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
    
-   finally:
-      logging.info("DBM 프로세스 종료")
+   return shutting_down
 
 # Admin 리스너 쓰레드
 def admin_listener_thread(admin_instance, input_queue, result_dict, callbacks):
@@ -2263,7 +2644,6 @@ def admin_listener_thread(admin_instance, input_queue, result_dict, callbacks):
                   except Exception as e:
                      logging.error(f"콜백 실행 오류: {e}", exc_info=True)
                
-               #logging.debug(f"메서드 실행 완료: {method_name}, 결과: {result}")
             except Exception as e:
                logging.error(f"메서드 실행 오류: {e}", exc_info=True)
                result_dict[req_id] = {
@@ -2279,3 +2659,11 @@ def admin_listener_thread(admin_instance, input_queue, result_dict, callbacks):
    
    finally:
       logging.info("Admin 리스너 쓰레드 종료")
+
+# Admin 클래스에 공유 변수 관련 메서드 추가
+def add_shared_vars_to_admin(admin_instance, ipc_manager):
+   """Admin 인스턴스에 공유 변수 메서드 추가"""
+   admin_instance.get_var = ipc_manager.get_var
+   admin_instance.set_var = ipc_manager.set_var
+
+
