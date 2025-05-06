@@ -474,7 +474,7 @@ class ChartData:
             
             # 요청 시작 시간 기록
             self._active_requests[request_key] = current_time
-            dict_list = gm.ipc.admin_to_dbm('dbm_get_chart_data', code, cycle, tick)
+            dict_list = gm.ipc.answer('dbm', 'dbm_get_chart_data', code, cycle, tick)
             
             return dict_list
         

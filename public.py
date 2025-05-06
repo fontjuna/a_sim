@@ -190,7 +190,7 @@ class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
     거래량 = FieldsAttributes(name='거래량', type='INTEGER', not_null=True, default=0)
     거래대금 = FieldsAttributes(name='거래대금', type='INTEGER', not_null=True, default=0)
     주기 = FieldsAttributes(name='주기', type='TEXT', not_null=True, default="''")
-    틱 = FieldsAttributes(name='틱', type='INTEGER', not_null=True, default=0)
+    틱 = FieldsAttributes(name='틱', type='INTEGER', not_null=True, default=1)
 
 class DataBaseColumns:  # 데이터베이스 테이블 정의
     fd = DataBaseFields()
@@ -221,21 +221,23 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     }
     
     MIN_TABLE_NAME = 'minute_n_tick'
+    MIN_SELECT_SAMPLE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 체결시간 DESC LIMIT 1"
     MIN_SELECT_DATE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE substr(체결시간, 1, 8) = ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
     MIN_COLUMNS = [fd.id, fd.종목코드, fd.체결시간, fd.시가, fd.고가, fd.저가, fd.현재가, fd.거래량, fd.거래대금, fd.주기, fd.틱]
     MIN_COLUMN_NAMES = [col.name for col in MIN_COLUMNS]
     MIN_INDEXES = {
-        'idx_time_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_time_cycle_tick_code ON {MIN_TABLE_NAME}(체결시간, 주기, 틱, 종목코드)",
         'idx_cycle_tick_code_time': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_tick_code_time ON {MIN_TABLE_NAME}(주기, 틱, 종목코드, 체결시간)",
+        'idx_time_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_time_cycle_tick_code ON {MIN_TABLE_NAME}(체결시간, 주기, 틱, 종목코드)",
     }
 
     DAY_TABLE_NAME = 'day_week_month'
-    DAY_SELECT_DATE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 일자 = ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 일자 DESC"
+    DAY_SELECT_SAMPLE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 일자 DESC LIMIT 1"
+    DAY_SELECT_DATE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 일자 = ? AND 주기 = ?"
     DAY_COLUMNS = [fd.id, fd.종목코드, fd.일자, fd.시가, fd.고가, fd.저가, fd.현재가, fd.거래량, fd.거래대금, fd.주기, fd.틱]
     DAY_COLUMN_NAMES = [col.name for col in DAY_COLUMNS]
     DAY_INDEXES = {
-        'idx_date_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_date_cycle_tick_code ON {DAY_TABLE_NAME}(일자, 주기, 틱, 종목코드)",
         'idx_cycle_tick_code_date': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_tick_code_date ON {DAY_TABLE_NAME}(주기, 틱, 종목코드, 일자)",
+        'idx_date_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_date_cycle_tick_code ON {DAY_TABLE_NAME}(일자, 주기, 틱, 종목코드)",
     }
 
 @dataclass
@@ -615,6 +617,44 @@ class Constants:        # 상수 정의
     list양음가대비 = ['평가손익', '수익률(%)', '전일대비', '손익율', '당일매도손익', '손익금액', '수익률']
 
 @dataclass
+class SimTicker:
+    ticker = {
+        "000100": { "종목명": "유한양행", "전일가": 131600 },
+        "000660": { "종목명": "SK하이닉스", "전일가": 192400 },
+        "003670": { "종목명": "포스코퓨처엠", "전일가": 142900 },
+        "004020": { "종목명": "현대제철", "전일가": 31900 },
+        "005010": { "종목명": "휴스틸", "전일가": 5670 },
+        "005490": { "종목명": "POSCO홀딩스", "전일가": 319250 },
+        "005930": { "종목명": "삼성전자", "전일가": 54300 },
+        "006880": { "종목명": "신송홀딩스", "전일가": 8200 },
+        "008970": { "종목명": "동양철관", "전일가": 1065 },
+        "009520": { "종목명": "포스코엠텍", "전일가": 14561 },
+        "009540": { "종목명": "HD한국조선해양", "전일가": 251000 },
+        "010140": { "종목명": "삼성중공업", "전일가": 15010 },
+        "012450": { "종목명": "한화에어로스페이스", "전일가": 717000 },
+        "022100": { "종목명": "포스코DX", "전일가": 26441 },
+        "036460": { "종목명": "한국가스공사", "전일가": 40100 },
+        "042660": { "종목명": "한화오션", "전일가": 84600 },
+        "047050": { "종목명": "포스코인터내셔널", "전일가": 61000 },
+        "047810": { "종목명": "한국항공우주", "전일가": 75800 },
+        "051910": { "종목명": "LG화학", "전일가": 254000 },
+        "058430": { "종목명": "포스코스틸리온", "전일가": 47050 },
+        "071090": { "종목명": "하이스틸", "전일가": 4650 },
+        "071280": { "종목명": "로체시스템즈", "전일가": 16060 },
+        "079550": { "종목명": "LIG넥스원", "전일가": 320500 },
+        "092790": { "종목명": "넥스틸", "전일가": 14430 },
+        "097230": { "종목명": "HJ중공업", "전일가": 7793 },
+        "103140": { "종목명": "풍산", "전일가": 66400 },
+        "163280": { "종목명": "에어레인", "전일가": 15160 },
+        "170920": { "종목명": "엘티씨", "전일가": 10790 },
+        "189300": { "종목명": "인텔리안테크", "전일가": 42500 },
+        "267270": { "종목명": "HD현대건설기계", "전일가": 77000 },
+        "272210": { "종목명": "한화시스템", "전일가": 35250 },
+        "310210": { "종목명": "보로노이", "전일가": 127800 },
+        "314930": { "종목명": "바이오다인", "전일가": 15580 },
+    }
+
+@dataclass
 class DefineConstants:  # 글로벌 상수 정의
     const = Constants()
     fid = FIDs()
@@ -623,6 +663,7 @@ class DefineConstants:  # 글로벌 상수 정의
     fp = FilePath()
     ms = MarketStatus()
     ddb = DataBaseColumns()
+    sim = SimTicker()
     ticks = {
         '틱봉': ['30'],
         '분봉': ['1'],
@@ -778,8 +819,11 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
         '키중복': False,
         '정수': ['시가', '고가', '저가', '현재가', '거래량', '거래대금'],
         '실수': [],
-        '컬럼': ['종목코드', '일자', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
-        '헤더': ['종목코드', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
+        '컬럼': ['종목코드', '종목명', '일자', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
+        '헤더': [
+            ['종목코드', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
+            ['종목코드', '종목명', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
+        ]
     }
 
     hd스크립트 = {
@@ -798,8 +842,8 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
 @dataclass
 class GlobalConfig:     # 환경변수 정의
     sim_on = True
+    sim_no = 0
     gui_on = False
-    sim_real_only = False
     ready = False
     log_level = logging.DEBUG
     server = '1'
@@ -808,18 +852,15 @@ class GlobalConfig:     # 환경변수 정의
 
 @dataclass
 class GlobalMemory:      # 글로벌 메모리 정의
-    
+    connected = False
+
     main = None
     admin = None
     gui = None
     api = None
     cdt = None # 차트 데이타
-    cdr = None # 차트 데이타 등록
     scm = None # 스크립트 매니저
-    
     ipc = None # 프로세스 매니저
-    dbm_proxy = None # 데이타베이스 프록시
-    admin_proxy = None # 관리자 프록시
 
     toast = None
     json_config = dc.log_config

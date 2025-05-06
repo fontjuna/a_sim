@@ -413,20 +413,29 @@ class SIMServer():
         self.tr_condition_list = None       # OnReceiveTrCondition에서 리스트 담기
 
         self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
-        self.real = gm.config.sim_real_only
-        if self.real: 
-            self.api_init()
-        else:
-            ready_tickers = True
+        self.real = False
 
     def api_init(self):
         try:
+            if not self.real: 
+                ready_tickers = True
+                return
             logging.debug(f'{self.name} api_init start')
             self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
             self._set_signal_slots()
             logging.debug(f'{self.name} api_init success: ocx={self.ocx}')
         except Exception as e:
             logging.error(f"API 초기화 오류: {type(e).__name__} - {e}")
+
+    # 각 클래스(Admin, API, DBM)에 추가할 메서드
+    def get_var(self, var_name, default=None):
+        """인스턴스 변수 가져오기"""
+        return getattr(self, var_name, default)
+
+    def set_var(self, var_name, value):
+        """인스턴스 변수 설정하기"""
+        setattr(self, var_name, value)
+        return True
 
     def set_tickers(self):
         codes = self.GetCodeListByMarket('NXT')
@@ -453,27 +462,29 @@ class SIMServer():
         #self.ocx.OnReceiveRealCondition.connect(self.OnReceiveRealCondition)
         self.ocx.OnReceiveMsg.connect(self.OnReceiveMsg)
 
-    def stop(self):
-        # 1. 먼저 모든 쓰레드에 종료 신호
-        all_threads = [*real_thread.values(), *cond_thread.values()]
-        for thread in all_threads: thread.stop()
+    # def stop(self):
+    #     # 1. 먼저 모든 쓰레드에 종료 신호
+    #     all_threads = [*real_thread.values(), *cond_thread.values()]
+    #     for thread in all_threads: thread.stop()
             
-        # 2. 짧은 시간 대기하여 쓰레드들이 sleep에서 깨어날 시간 제공
-        time.sleep(0.1)
+    #     # 2. 짧은 시간 대기하여 쓰레드들이 sleep에서 깨어날 시간 제공
+    #     time.sleep(0.1)
         
-        # 3. 각 쓰레드가 실제로 종료될 때까지 대기 (타임아웃 설정)
-        for thread in all_threads:
-            if hasattr(thread, 'is_alive') and thread.is_alive(): thread.wait(timeout=1000)  # 1초
+    #     # 3. 각 쓰레드가 실제로 종료될 때까지 대기 (타임아웃 설정)
+    #     for thread in all_threads:
+    #         if hasattr(thread, 'is_alive') and thread.is_alive(): thread.wait(timeout=1000)  # 1초
             
-        # 4. 컬렉션 정리
-        real_thread.clear()
-        cond_thread.clear()
+    #     # 4. 컬렉션 정리
+    #     real_thread.clear()
+    #     cond_thread.clear()
 
-    def api_login(self, block=True):
-        logging.debug(f'login: block={block}')
-        self.CommConnect(block)
+    # def api_login(self, block=True):
+    #     logging.debug(f'login: block={block}')
+    #     self.CommConnect(block)
 
     def api_connected(self):
+        while not self.connected:
+            pythoncom.PumpWaitingMessages()
         return self.connected
 
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
@@ -575,7 +586,7 @@ class SIMServer():
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        self.set_var('admin', 'connected', self.connected)
+        self.api_to_admin('set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def CommConnect(self, block=True):
@@ -584,7 +595,7 @@ class SIMServer():
             self.real_CommConnect(block)
         else:
             self.connected = True
-            self.set_var('admin', 'connected', self.connected)
+            self.api_to_admin('set_connected', self.connected)
 
     def real_CommConnect(self, block=True):
         logging.debug(f'CommConnect: block={block}')

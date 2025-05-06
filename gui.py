@@ -529,7 +529,7 @@ class GUI(QMainWindow, form_class):
         code = self.cbChartCode.currentText().split()[0]
         name = self.cbChartCode.currentText().split()[1]
         gm.admin.pri_fx얻기_차트자료(date_text, code, cycle, tick)
-        gm.차트자료.update_table_widget(self.tblChart)
+        gm.차트자료.update_table_widget(self.tblChart, header=0 if cycle in ('mi', 'tk') else 1)
         gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
         self.btnChartLoad.setEnabled(True)
 
@@ -622,7 +622,7 @@ class GUI(QMainWindow, form_class):
     def gui_tr_code_changed(self):
         code = self.leTrCode.text().strip()
         if code:
-            self.leTrName.setText(gm.ipc.admin_to_api('GetMasterCodeName', code).strip())
+            self.leTrName.setText(gm.ipc.answer('api', 'GetMasterCodeName', code).strip())
 
     def gui_tr_order(self):
         kind = '매수' if self.rbTrBuy.isChecked() else '매도'
@@ -682,7 +682,7 @@ class GUI(QMainWindow, form_class):
             'ordno': ''
         }
         if kind == '매수':
-            gm.ipc.admin_to_api('SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
+            gm.ipc.work('api', 'SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
         else:
             if row['주문가능수량'] == 0:
                 QMessageBox.warning(self, '알림', '주문가능수량이 없습니다.')
@@ -1083,11 +1083,10 @@ class GUI(QMainWindow, form_class):
         try:
             # 기본 상태바 업데이트
             now = datetime.now()
-            connected = gm.ipc.get_var('api', 'connected')
             if now > self.lbl3_update_time + timedelta(seconds=60): self.lbl3.setText('')
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
-            self.lbl2.setText('연결됨' if connected else '끊어짐')
-            self.lbl2.setStyleSheet("color: green;" if connected else "color: red;")
+            self.lbl2.setText('연결됨' if gm.connected else '끊어짐')
+            self.lbl2.setStyleSheet("color: green;" if gm.connected else "color: red;")
             self.lbl4.setText(la.answer('admin', 'com_market_status'))
 
             # 큐 메시지 처리

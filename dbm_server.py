@@ -19,7 +19,7 @@ class DBMServer:
         self.thread_chart = None    
 
         self.init_dbm()
-        self.start_request_chart_data()
+        #self.start_request_chart_data()
 
     def stop(self):
         self.stop_request_chart_data()
@@ -40,6 +40,16 @@ class DBMServer:
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
         logging.debug(f'DBM 로그 레벨 설정: {level}')
+
+    # 각 클래스(Admin, API, DBM)에 추가할 메서드
+    def get_var(self, var_name, default=None):
+        """인스턴스 변수 가져오기"""
+        return getattr(self, var_name, default)
+
+    def set_var(self, var_name, value):
+        """인스턴스 변수 설정하기"""
+        setattr(self, var_name, value)
+        return True
 
     def set_rate(self, fee_rate, tax_rate):
         self.fee_rate = fee_rate
@@ -84,7 +94,6 @@ class DBMServer:
         for index in dc.ddb.CONC_INDEXES.values():
             db_cursor.execute(index)
 
-        #self.cleanup_old_data()
 
         db_conn.commit()
 
@@ -105,6 +114,8 @@ class DBMServer:
             chart_cursor.execute(index)
 
         chart_conn.commit()
+
+        #self.cleanup_old_data()
 
     # 테이블 생성 SQL문 생성 함수
     def create_table_sql(self, table_name, fields, pk_columns=None):
@@ -159,7 +170,7 @@ class DBMServer:
             'result': result,
             'error': error
         }
-        self.dbm_to_admin(order, **work)
+        self.work('admin', order, **work)
 
     def execute_query(self, sql, db='chart', params=None):
         try:
@@ -288,9 +299,8 @@ class DBMServer:
             logging.error(f"upsert_conclusion error: {e}", exc_info=True)
             return False
         
-    def dbm_get_chart_data(self, code, cycle, tick=None):
+    def dbm_get_chart_data(self, code, cycle, tick=None, times=1):
         try:
-            if not self.dbm_to_admin('com_request_time_check', kind='request'): return [], False
 
             rqname = f'{dc.scr.차트종류[cycle]}차트'
             trcode = dc.scr.차트TR[cycle]
@@ -311,30 +321,21 @@ class DBMServer:
                 output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
 
             next = '0'
-            all = False #if cycle in ['mi', 'dy'] else True
-            args = {
-                'rqname': rqname,
-                'trcode': trcode,
-                'input': input,
-                'output': output,
-                'next': next if next else '0',
-                'screen': screen if screen else dc.scr.화면[rqname],
-                'form': 'dict_list',
-                'timeout': 2
-            }
             dict_list = []
             while True:
-                data, remain = self.dbm_to_api('api_request', **args)
+                if not self.answer('admin', 'com_request_time_check', kind='request'): break
+                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=2)
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
-                if not (remain and all): break
-                next = '2'
+                times -= 1
+                if not remain or times <= 0: break
+                next = '2' 
             
             if not dict_list:
                 logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
                 return
             
-            logging.debug(f'{rqname} 데이타 얻기: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:{dict_list[:1]}')
+            logging.debug(f'{rqname} 데이타 얻기: times:{times}, code:{code}, cycle:{cycle}, tick:{tick}, dict_list:{dict_list[:1]}')
             if cycle in ['mi', 'tk']:
                 dict_list = [{
                     '종목코드': code,
@@ -359,7 +360,7 @@ class DBMServer:
                 } for item in dict_list]
             self.upsert_chart(dict_list, cycle, tick)
             self.update_todo_code(code, cycle)
-            self.dbm_to_admin('dbm_update_chart', code, dict_list, cycle, tick)
+            self.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
             
         except Exception as e:
             logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -367,7 +368,7 @@ class DBMServer:
     def start_request_chart_data(self):
         if self.thread_run: return
         self.thread_run = True
-        self.thread_chart = threading.Thread(target=self.request_chart_data)
+        self.thread_chart = threading.Thread(target=self.request_chart_data, daemon=True)
         self.thread_chart.start()
 
     def stop_request_chart_data(self):
@@ -380,16 +381,16 @@ class DBMServer:
         while self.thread_run:
             with self._lock:
                 codes = copy.deepcopy(self.todo_code)
+                if not codes:
+                    time.sleep(1)
+                    continue
+
             for code in codes:
-                if not codes[code]['tk']:
-                    self.dbm_get_chart_data(code, cycle='tk', tick=30)
+                #if not codes[code]['tk']: self.dbm_get_chart_data(code, cycle='tk', tick=30, times=99)
+                if not codes[code]['mi']: self.dbm_get_chart_data(code, cycle='mi', tick=1)
+                if not codes[code]['dy']: self.dbm_get_chart_data(code, cycle='dy')
 
-                if not codes[code]['mi']:
-                    self.dbm_get_chart_data(code, cycle='mi', tick=1)
-
-                if not codes[code]['dy']:
-                    self.dbm_get_chart_data(code, cycle='dy')
-            time.sleep(0.3)
+            time.sleep(0.1)
 
     def update_todo_code(self, code, cycle):                    
         with self._lock:
@@ -399,13 +400,13 @@ class DBMServer:
                 del self.todo_code[code]
 
     def register_code(self, code):
-        """코드 등록 - la.work 또는 la.answer로 호출"""
+        if not self.thread_run: return
         with self._lock:
             if code in self.done_code or code in self.todo_code:
                 return False
 
             logging.debug(f'차트관리 종목코드 등록: {code}')
-            self.todo_code[code] = {'tk': False, 'mi': False, 'dy': False}
+            self.todo_code[code] = {'mi': False, 'dy': False}
         return True
     
     def is_done(self, code):

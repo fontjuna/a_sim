@@ -844,7 +844,7 @@ class TableManager:
             - '정수': 정수형으로 변환할 컬럼 리스트
             - '실수': 실수형으로 변환할 컬럼 리스트
             - '컬럼': 전체 컬럼 리스트
-            - '헤더': 화면용 컬럼 리스트
+            - '헤더': 화면용 컬럼 리스트 또는 리스트의 리스트 (여러 헤더 셋)
         """
         self.data = []
         self.data_dict = {}  # 키 기반 검색을 위한 딕셔너리
@@ -866,8 +866,19 @@ class TableManager:
         self.int_columns = config.get('정수', [])
         self.float_columns = config.get('실수', [])
         self.all_columns = config.get('확장', config.get('컬럼', []))
-        self.display_columns = config.get('헤더', [])
         
+        # 헤더 설정 - 리스트의 리스트로 처리
+        header_config = config.get('헤더', [])
+        if header_config and not isinstance(header_config[0], list):
+            # 단일 리스트인 경우, 리스트의 리스트로 변환
+            self.display_columns = [header_config]
+        else:
+            self.display_columns = header_config
+            
+        # 헤더가 없는 경우 all_columns 사용
+        if not self.display_columns:
+            self.display_columns = [self.all_columns]
+
         # 키가 있는 경우 키 컬럼이 all_columns에 있는지 확인
         if self.key_columns:
             for key_col in self.key_columns:
@@ -1515,13 +1526,14 @@ class TableManager:
         finally:
             self.lock.unlock()
     
-    def update_table_widget(self, table_widget, stretch=True):
+    def update_table_widget(self, table_widget, stretch=True, header=0):
         """
         저장된 데이터를 테이블 위젯에 표시
         
         Parameters:
         table_widget (QTableWidget): 데이터를 표시할 테이블 위젯
         stretch (bool): 마지막 열을 테이블 너비에 맞게 늘릴지 여부
+        header (int): 사용할 헤더 세트의 인덱스 (기본값: 0)
         """
         import copy
         from PyQt5.QtWidgets import QTableWidgetItem
@@ -1535,7 +1547,10 @@ class TableManager:
                 return
                 
             data_copy = copy.deepcopy(self.data)
-            columns = self.display_columns or self.all_columns
+            if header < 0 or header >= len(self.display_columns):
+                header = 0
+
+            columns = self.display_columns[header]
             resize_needed = self._resize
             
             if resize_needed:
@@ -2011,23 +2026,10 @@ class IPCManager:
         self.result_dict = self.manager.dict()  # id -> result
         self.callbacks = {}  # id -> callback function
 
-        # 공유변수 딕셔너리 추가
-        self.shared_vars = self.manager.dict()
-
         self.dbm_process = None
         self.api_process = None  # API 프로세스 추가
         self.shutting_down = False
 
-    def get_var(self, process_name, var_name, default=None):
-        """특정 프로세스의 변수 가져오기"""
-        key = f"{process_name}.{var_name}"
-        return self.shared_vars.get(key, default)
-    
-    def set_var(self, process_name, var_name, value):
-        """특정 프로세스의 변수 설정하기"""
-        key = f"{process_name}.{var_name}"
-        self.shared_vars[key] = value
-    
     def create_queue(self, name):
         """특정 이름의 큐 생성"""
         if name not in self.queues:
@@ -2065,7 +2067,7 @@ class IPCManager:
                 self.queues['dbm_to_api'],
                 self.queues['api_to_dbm'],
                 self.result_dict,
-                self.shared_vars),
+                ),
             daemon=True
         )
         self.dbm_process.start()
@@ -2093,21 +2095,13 @@ class IPCManager:
                 self.queues['dbm_to_api'],
                 self.queues['api_to_dbm'],
                 self.result_dict,
-                self.shared_vars),
+                ),
             daemon=True
         )
         self.api_process.start()
         logging.info(f"API 프로세스 시작됨 (PID: {self.api_process.pid})")
         return self.api_process.pid
 
-    # IPCManager 클래스에 테스트 메서드 추가
-    def test_shared_vars(self):
-        test_key = 'test.var'
-        test_value = 'test_value'
-        self.shared_vars[test_key] = test_value
-        logging.debug(f"Test shared_vars: set {test_key} = {test_value}")
-        logging.debug(f"Test shared_vars: get {test_key} = {self.shared_vars.get(test_key)}")
-            
     def stop_dbm_process(self):
         """DBM 프로세스 종료"""
         if self.dbm_process is None:
@@ -2176,6 +2170,57 @@ class IPCManager:
             'admin_to_api', method, args, kwargs, wait_result, timeout, callback
         )
     
+    def work(self, target, method, *args, **kwargs):
+        """응답 필요 없는 비동기 요청 (모든 프로세스에서 사용 가능)"""
+        # Admin 프로세스에서 호출했을 때
+        if hasattr(self, 'admin_to_api') and hasattr(self, 'admin_to_dbm'):
+            if target == 'api':
+                return self.admin_to_api(method, *args, wait_result=False, **kwargs)
+            elif target == 'dbm':
+                return self.admin_to_dbm(method, *args, wait_result=False, **kwargs)
+        
+        # API 프로세스에서 호출했을 때
+        elif hasattr(self, 'api_to_admin') and hasattr(self, 'api_to_dbm'):
+            if target == 'admin':
+                return self.api_to_admin(method, *args, wait_result=False, **kwargs)
+            elif target == 'dbm':
+                return self.api_to_dbm(method, *args, wait_result=False, **kwargs)
+        
+        # DBM 프로세스에서 호출했을 때
+        elif hasattr(self, 'dbm_to_admin') and hasattr(self, 'dbm_to_api'):
+            if target == 'admin':
+                return self.dbm_to_admin(method, *args, wait_result=False, **kwargs)
+            elif target == 'api':
+                return self.dbm_to_api(method, *args, wait_result=False, **kwargs)
+        
+        return None
+
+    def answer(self, target, method, *args, timeout=10, **kwargs):
+        """응답 필요한 동기 요청 (모든 프로세스에서 사용 가능, 콜백 지원)"""
+        # callback=callback을 kwargs에 넣어서 전달하면 callback 함수를 호출할 수 있음
+        # Admin 프로세스에서 호출했을 때
+        if hasattr(self, 'admin_to_api') and hasattr(self, 'admin_to_dbm'):
+            if target == 'api':
+                return self.admin_to_api(method, *args, wait_result=True, timeout=timeout, **kwargs)
+            elif target == 'dbm':
+                return self.admin_to_dbm(method, *args, wait_result=True, timeout=timeout, **kwargs)
+        
+        # API 프로세스에서 호출했을 때
+        elif hasattr(self, 'api_to_admin') and hasattr(self, 'api_to_dbm'):
+            if target == 'admin':
+                return self.api_to_admin(method, *args, wait_result=True, timeout=timeout, **kwargs)
+            elif target == 'dbm':
+                return self.api_to_dbm(method, *args, wait_result=True, timeout=timeout, **kwargs)
+        
+        # DBM 프로세스에서 호출했을 때
+        elif hasattr(self, 'dbm_to_admin') and hasattr(self, 'dbm_to_api'):
+            if target == 'admin':
+                return self.dbm_to_admin(method, *args, wait_result=True, timeout=timeout, **kwargs)
+            elif target == 'api':
+                return self.dbm_to_api(method, *args, wait_result=True, timeout=timeout, **kwargs)
+        
+        return None
+    
     def _send_request(self, queue_name, method, args, kwargs, wait_result, timeout, callback):
         """요청 전송 공통 함수"""
         if self.shutting_down:
@@ -2213,13 +2258,28 @@ class IPCManager:
         return result.get('result', None)
 
 # DBM 프로세스 워커
-def dbm_worker(dbm_class, admin_input_queue, admin_output_queue, api_output_queue, api_input_queue, result_dict, shared_vars):
+def dbm_worker(dbm_class, admin_input_queue, admin_output_queue, api_output_queue, api_input_queue, result_dict):
     """DBM 프로세스 메인 함수"""
     try:
         # DBM 인스턴스 생성
         dbm = dbm_class()
         logging.info("DBM 프로세스 초기화 완료")
         
+        def work(target, method, *args, **kwargs):
+            if target == 'admin':
+                return dbm_to_admin(method, *args, wait_result=False, **kwargs)
+            elif target == 'api':
+                return dbm_to_api(method, *args, wait_result=False, **kwargs)
+            return None
+        
+        def answer(target, method, *args, timeout=10, **kwargs):
+            # callback=callback을 kwargs에 넣어서 전달하면 callback 함수를 호출할 수 있음
+            if target == 'admin':
+                return dbm_to_admin(method, *args, wait_result=True, timeout=timeout, **kwargs)
+            elif target == 'api':
+                return dbm_to_api(method, *args, wait_result=True, timeout=timeout, **kwargs)
+            return None
+                
         # Admin으로 요청 보내는 함수
         def dbm_to_admin(method, *args, wait_result=True, timeout=10, **kwargs):
             return _send_process_request(
@@ -2235,23 +2295,11 @@ def dbm_worker(dbm_class, admin_input_queue, admin_output_queue, api_output_queu
                 wait_result, timeout, result_dict
             )
         
-        # 공유 변수 접근 함수
-        def get_var(process_name, var_name, default=None):
-            key = f"{process_name}.{var_name}"
-            return shared_vars.get(key, default)
-        
-        def set_var(process_name, var_name, value):
-            key = f"{process_name}.{var_name}"
-            shared_vars[key] = value
-        
         # DBM 인스턴스에 함수 추가
         dbm.dbm_to_admin = dbm_to_admin
         dbm.dbm_to_api = dbm_to_api
-        dbm.get_var = get_var
-        dbm.set_var = set_var
-        
-        # 초기 변수 설정
-        dbm.set_var('dbm', 'name', dbm.name if hasattr(dbm, 'name') else 'dbm')
+        dbm.work = work
+        dbm.answer = answer
         
         shutting_down = False
         # 메시지 처리 루프
@@ -2363,13 +2411,29 @@ def dbm_worker(dbm_class, admin_input_queue, admin_output_queue, api_output_queu
         logging.info("DBM 프로세스 종료")
 
 # API 프로세스 워커
-def api_worker(api_class, admin_input_queue, admin_output_queue, dbm_input_queue, dbm_output_queue, result_dict, shared_vars):
+def api_worker(api_class, admin_input_queue, admin_output_queue, dbm_input_queue, dbm_output_queue, result_dict):
     """API 프로세스 메인 함수"""
     try:
         # API 인스턴스 생성
         api = api_class()
         logging.info("API 프로세스 초기화 완료")
+
+        # API 인스턴스에 메서드 추가
+        def work(target, method, *args, **kwargs):
+            if target == 'admin':
+                return api_to_admin(method, *args, wait_result=False, **kwargs)
+            elif target == 'dbm':
+                return api_to_dbm(method, *args, wait_result=False, **kwargs)
+            return None
         
+        def answer(target, method, *args, timeout=10, **kwargs):
+            # callback=callback을 kwargs에 넣어서 전달하면 callback 함수를 호출할 수 있음
+            if target == 'admin':
+                return api_to_admin(method, *args, wait_result=True, timeout=timeout, **kwargs)
+            elif target == 'dbm':
+                return api_to_dbm(method, *args, wait_result=True, timeout=timeout, **kwargs)
+            return None
+                
         # Admin으로 요청 보내는 함수
         def api_to_admin(method, *args, wait_result=True, timeout=10, **kwargs):
             return _send_process_request(
@@ -2384,23 +2448,11 @@ def api_worker(api_class, admin_input_queue, admin_output_queue, dbm_input_queue
                 wait_result, timeout, result_dict
             )
         
-        # 공유 변수 접근 함수
-        def get_var(process_name, var_name, default=None):
-            key = f"{process_name}.{var_name}"
-            return shared_vars.get(key, default)
-        
-        def set_var(process_name, var_name, value):
-            key = f"{process_name}.{var_name}"
-            shared_vars[key] = value
-        
         # API 인스턴스에 함수 추가
         api.api_to_admin = api_to_admin
         api.api_to_dbm = api_to_dbm
-        api.get_var = get_var
-        api.set_var = set_var
-        
-        # 초기 변수 설정
-        api.set_var('api', 'name', api.name if hasattr(api, 'name') else 'api')
+        api.work = work
+        api.answer = answer
         
         shutting_down = False
         # 메시지 처리 루프
@@ -2659,11 +2711,5 @@ def admin_listener_thread(admin_instance, input_queue, result_dict, callbacks):
    
    finally:
       logging.info("Admin 리스너 쓰레드 종료")
-
-# Admin 클래스에 공유 변수 관련 메서드 추가
-def add_shared_vars_to_admin(admin_instance, ipc_manager):
-   """Admin 인스턴스에 공유 변수 메서드 추가"""
-   admin_instance.get_var = ipc_manager.get_var
-   admin_instance.set_var = ipc_manager.set_var
 
 

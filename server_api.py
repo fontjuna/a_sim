@@ -43,26 +43,38 @@ class APIServer():
         except Exception as e:
             logging.error(f"API 초기화 오류: {type(e).__name__} - {e}")
 
+    # 각 클래스(Admin, API, DBM)에 추가할 메서드
+    def get_var(self, var_name, default=None):
+        """인스턴스 변수 가져오기"""
+        return getattr(self, var_name, default)
+
+    def set_var(self, var_name, value):
+        """인스턴스 변수 설정하기"""
+        setattr(self, var_name, value)
+        return True
+
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
         logging.debug(f'API 로그 레벨 설정: {level}')
 
     # 추가 메서드 --------------------------------------------------------------------------------------------------
-    def api_login(self, block=True):
-        logging.debug(f'login: block={block}')
-        self.CommConnect(block)
+    # def api_login(self, block=True):
+    #     logging.debug(f'login: block={block}')
+    #     self.CommConnect(block)
 
     def api_connected(self):
+        while not self.connected:
+            pythoncom.PumpWaitingMessages()
         return self.connected
 
-    def api_get_condition_lists(self):
-        return self.strategy_list
+    # def api_get_condition_lists(self):
+    #     return self.strategy_list
 
-    def api_get_tr_result(self):
-        return self.tr_result
+    # def api_get_tr_result(self):
+    #     return self.tr_result
 
-    def api_get_tr_remained(self):
-        return self.tr_remained
+    # def api_get_tr_remained(self):
+    #     return self.tr_remained
 
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         try:
@@ -184,7 +196,7 @@ class APIServer():
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        self.set_var('admin', 'connected', self.connected)
+        self.work('admin', 'set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):

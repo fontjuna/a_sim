@@ -87,7 +87,7 @@ class Strategy:
         name = self.dict종목정보.get(code, next='종목명')
 
         if self.매수스크립트적용:
-            if gm.ipc.admin_to_dbm('is_done', code):
+            if gm.ipc.answer('dbm', 'is_done', code):
                 result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
                 if self.매수스크립트AND and not result.get('result', False): return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
                 logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
@@ -210,7 +210,7 @@ class Strategy:
                 send_data['msg'] = '매도지정'
 
             if self.매도스크립트적용:
-                if gm.ipc.admin_to_dbm('is_done', code):
+                if gm.ipc.answer('dbm', 'is_done', code):
                     result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
                     if self.매도스크립트OR and result.get('result', True): 
                         logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
@@ -418,7 +418,7 @@ class Strategy:
             def stop_trade(cond_index, cond_name, trade_type):
                 if cond_name:
                     screen = f'2{1 if trade_type == "매수" else 2}{self.전략[-2:]}'
-                    gm.ipc.admin_to_api('SendConditionStop', screen, cond_name, cond_index)
+                    gm.ipc.work('api', 'SendConditionStop', screen, cond_name, cond_index)
                 else:
                     raise Exception(f'{trade_type} 조건이 없습니다.')
                 logging.info(f'{trade_type} 전략 중지 - {self.전략} : {cond_index:03d} : {cond_name}')
@@ -442,9 +442,9 @@ class Strategy:
 
     def cdn_fx편입_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
-            종목명 = gm.ipc.admin_to_api('GetMasterCodeName', code=code)
+            종목명 = gm.ipc.answer('api', 'GetMasterCodeName', code=code)
             if not self.dict종목정보.contains(code):
-                전일가 = gm.ipc.admin_to_api('GetMasterLastPrice', code=code)
+                전일가 = gm.ipc.answer('api', 'GetMasterLastPrice', code=code)
                 self.dict종목정보.set(code, value={'종목명': 종목명, '전일가': 전일가, '현재가': 0})
 
             if gm.dict주문대기종목.contains(code):
@@ -487,7 +487,7 @@ class Strategy:
                     gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
                     la.work('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
                     # la.work('cdr', 'register_code', code)
-                    gm.ipc.admin_to_dbm('register_code', code)
+                    gm.ipc.work('dbm', 'register_code', code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.dict조건종목감시:
@@ -511,7 +511,7 @@ class Strategy:
 
     def cdn_fx이탈_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
-            name = gm.ipc.admin_to_api('GetMasterCodeName', code=code)
+            name = gm.ipc.answer('api', 'GetMasterCodeName', code=code)
             if kind == '매도':
                 if gm.매도조건목록.in_key(code):
                     logging.info(f'{kind}이탈 : {self.전략} {self.전략명칭} {code} {name}')
@@ -525,7 +525,7 @@ class Strategy:
             # 실시간 감시 해지하지 않는다.
             if len(gm.dict조건종목감시) > 90 and code in gm.dict조건종목감시:
                 screen = f'{3 if kind == "매수" else 2}0{self.전략[-2:]}'
-                gm.ipc.admin_to_api('SetRealRemove', screen=screen, code=code)
+                gm.ipc.work('api', 'SetRealRemove', screen=screen, code=code)
                 del gm.dict조건종목감시[code]
                 logging.debug(f'실시간 감시 해지: {gm.dict조건종목감시.keys()}')
 
@@ -541,7 +541,7 @@ class Strategy:
 
             codes = ",".join(condition_list)
             fids = "10"  # 현재가
-            gm.ipc.admin_to_api('SetRealReg', screen=dc.scr.화면[self.전략], code_list=codes, fid_list=fids, opt_type=search_flag)
+            gm.ipc.work('api', 'SetRealReg', screen=dc.scr.화면[self.전략], code_list=codes, fid_list=fids, opt_type=search_flag)
             gm.dict조건종목감시.update({code: fids for code in condition_list})
             #logging.debug(f'실시간 감시 요청: {gm.dict조건종목감시.keys()}')
         except Exception as e:

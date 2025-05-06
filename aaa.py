@@ -1,10 +1,11 @@
 from public import init_logger, dc, gm
 from admin import Admin
 from gui import GUI
-from server_api import APIServer
-from server_sim import SIMServer
-from server_dbm import DBMServer
-from classes import Toast, la, IPCManager, add_shared_vars_to_admin
+# from server_api import APIServer
+# from server_sima import SIMServer
+from api_server import APIServer
+from dbm_server import DBMServer
+from classes import Toast, la, IPCManager
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QPixmap, QGuiApplication
@@ -31,11 +32,11 @@ class Main:
         self.app = QApplication(sys.argv)
         args = [arg.lower() for arg in sys.argv]
         gm.config.gui_on = 'off' not in args
-        gm.config.sim_on = 'sim' in args            # 시뮬레이션 (전체)
-        gm.config.sim_real_only = 'sim2' in args    # 시뮬레이션 (실시간처리만)
-        if gm.config.sim_real_only:
-            gm.config.sim_on = True
+        gm.config.sim_no = 1 if 'sim1' in args else 2 if 'sim2' in args else 3 if 'sim3' in args else 0
+        if 'sim' in args and gm.config.sim_no == 0: gm.config.sim_no = 1
+        gm.config.sim_on = gm.config.sim_no > 0
         logging.info(f"### {'GUI' if gm.config.gui_on else 'CONSOLE'} Mode 로 시작 합니다. ###")
+        logging.info(f"### {f'시뮬레이션 {gm.config.sim_no}번' if gm.config.sim_on else '실제 API'} 모드로 시작 합니다. ###")
 
     def show_splash(self):
         if not gm.config.gui_on: return
@@ -82,34 +83,33 @@ class Main:
             la.register('admin', gm.admin, use_thread=False)
             gm.gui = GUI() if gm.config.gui_on else None
 
-            # 먼저 add_shared_vars_to_admin 호출
-            add_shared_vars_to_admin(gm.admin, gm.ipc)
-
-            gm.ipc.start_api_process(APIServer if not gm.config.sim_on else SIMServer)
+            gm.ipc.start_api_process(APIServer) # if not gm.config.sim_on else SIMServer)
             gm.ipc.start_dbm_process(DBMServer)
-            gm.ipc.start_admin_listener(gm.admin)
+            gm.ipc.start_admin_listener(gm.admin) # 위에 두개 먼저 실행 후 이 코드 실행
+            gm.ipc.work('api', 'api_init')
 
-            # 모든 설정이 완료된 후 CommConnect 호출
-            gm.ipc.set_var('admin', 'connected', gm.admin.connected)
-            gm.ipc.admin_to_api('CommConnect', block=False)
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
 
+    def login(self):
+        # 모든 설정이 완료된 후 CommConnect 호출
+        gm.ipc.work('api', 'CommConnect', block=False, sim_no=gm.config.sim_no)
+
     def show(self):
         if not gm.config.gui_on: return
         gm.gui.gui_show()
+        #time.sleep(1)
 
     def prepare(self):
         try:
             logging.debug('prepare : 로그인 대기 시작')
             while True:
-                pythoncom.PumpWaitingMessages()
-                if gm.ipc.get_var('admin', 'connected'): break
-                time.sleep(0.1)
+                # api_connected는 여기 외에 사용 금지
+                if not gm.ipc.answer('api', 'api_connected'): time.sleep(0.5)
+                else: break
 
-            if gm.config.sim_real_only:
-                gm.ipc.admin_to_api('set_tickers')
+            if gm.config.sim_on: gm.ipc.work('api', 'set_tickers', gm.config.sim_no)
 
             la.work('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
@@ -146,8 +146,9 @@ class Main:
         self.init()
         self.show_splash()
         self.set_proc()
-        self.show()
+        self.login()
         self.prepare()
+        self.show()
         self.run()
 
     def cleanup(self):
@@ -156,17 +157,17 @@ class Main:
             if hasattr(gm, 'ipc') and gm.ipc:
                 gm.ipc.prepare_shutdown()
                 try:
-                    gm.ipc.queues['admin_to_dbm'].put({
-                        'command': 'stop'
-                    })
-                    gm.ipc.queues['admin_to_api'].put({
-                        'command': 'stop'
-                    })
                     gm.ipc.queues['admin_to_api'].put({
                         'command': 'prepare_shutdown'
                     })
                     gm.ipc.queues['admin_to_dbm'].put({
                         'command': 'prepare_shutdown'
+                    })
+                    gm.ipc.queues['admin_to_api'].put({
+                        'command': 'stop'
+                    })
+                    gm.ipc.queues['admin_to_dbm'].put({
+                        'command': 'stop'
                     })
                 except Exception as e:
                     pass
@@ -177,6 +178,7 @@ class Main:
                 la.stop_worker(t.name)
             # la.stop_worker('api')
             if hasattr(gm, 'ipc') and gm.ipc:
+                gm.ipc.stop_api_process()
                 gm.ipc.stop_dbm_process()
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
