@@ -494,34 +494,6 @@ class ChartManager:
         self._data_cache = {}  # 종목별 데이터 캐시 {code: data}
         self.code = code    # 종목코드 (없으면 컨텍스트에서 가져옴)
 
-    # def _get_code(self):
-    #     """현재 컨텍스트의 종목코드 또는 설정된 코드 반환"""
-    #     # 인스턴스에 코드가 설정되어 있으면 사용
-    #     if self.code:
-    #         return self.code
-                
-    #     # 스크립트 내에서 정의된 code 변수 확인 (가장 우선)
-    #     try:
-    #         import inspect
-    #         # 호출자 프레임 가져오기
-    #         frame = inspect.currentframe().f_back
-    #         # 호출자의 로컬 변수에서 code 찾기
-    #         if 'code' in frame.f_locals:
-    #             return frame.f_locals['code']
-    #         # 호출자의 로컬 변수에서 kwargs 찾기
-    #         kwargs = frame.f_locals.get('kwargs', {})
-    #         # kwargs에서 코드 가져오기
-    #         if 'code' in kwargs:
-    #             return kwargs.get('code')
-    #         # 글로벌 변수에서 code 찾기
-    #         if 'code' in frame.f_globals:
-    #             return frame.f_globals['code']
-    #     except:
-    #         pass  # 오류 발생 시 다음 단계로 진행
-            
-    #     # 기본값 반환
-    #     raise KeyError("코드가 지정되지 않았습니다. 'code' 변수를 지정하거나 ChartManager에 코드를 명시적으로 제공하세요.")
-
     def _get_data(self) -> list:
         """현재 종목의 차트 데이터 가져오기 (캐싱)"""
         #code = self._get_code()

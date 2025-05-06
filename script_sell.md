@@ -10,7 +10,7 @@
 
 ```python
 # RSI 과매수 영역 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 rsi_period = kwargs.get('rsi_period', 14)
@@ -18,7 +18,7 @@ overbought_threshold = kwargs.get('overbought_threshold', 70)
 confirmation_days = kwargs.get('confirmation_days', 2)
 
 # RSI 계산
-current_rsi = dy.rsi(code, rsi_period)
+current_rsi = dy.rsi(rsi_period)
 
 # 과매수 확인
 is_overbought = current_rsi > overbought_threshold
@@ -26,11 +26,11 @@ is_overbought = current_rsi > overbought_threshold
 # 확인 기간 동안 RSI가 과매수 영역에 있었는지 확인
 confirmation_count = 0
 for i in range(1, confirmation_days + 1):
-    if dy.rsi(code, rsi_period, i) > overbought_threshold:
+    if dy.rsi(rsi_period, i) > overbought_threshold:
         confirmation_count += 1
 
 # 확인 기간 동안 계속 과매수 상태였다가 현재 하락 시작하는지 확인
-rsi_turning_down = current_rsi < dy.rsi(code, rsi_period, 1)
+rsi_turning_down = current_rsi < dy.rsi(rsi_period, 1)
 
 # 최종 매도 신호: 현재 과매수 + 확인 기간 동안 과매수 지속 + RSI 하락 전환
 sell_signal = is_overbought and confirmation_count >= confirmation_days - 1 and rsi_turning_down
@@ -48,23 +48,23 @@ result = {
 
 ```python
 # 이동평균 데스 크로스 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 단기/장기 이동평균 기간
 short_period = kwargs.get('short_period', 5)
 long_period = kwargs.get('long_period', 20)
 
 # 이동평균 계산
-short_ma = dy.ma(code, dy.c, short_period)
-long_ma = dy.ma(code, dy.c, long_period)
+short_ma = dy.ma(dy.c, short_period)
+long_ma = dy.ma(dy.c, long_period)
 
 # 데스 크로스 확인 (단기 이평선이 장기 이평선을 하향 돌파)
-death_cross = dy.cross_down(code,
+death_cross = dy.cross_down(
     lambda c, n: dy.ma(c, dy.c, short_period, n),
     lambda c, n: dy.ma(c, dy.c, long_period, n))
 
 # 거래량 급증 확인
-volume_surge = dy.v(code) > dy.avg(code, dy.v, 20) * 1.5
+volume_surge = dy.v() > dy.avg(dy.v, 20) * 1.5
 
 # 매도 신호: 데스 크로스 + 거래량 급증
 sell_signal = death_cross and volume_surge
@@ -82,7 +82,7 @@ result = {
 
 ```python
 # MACD 하향 교차 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # MACD 파라미터
 fast_period = kwargs.get('fast_period', 12)
@@ -90,10 +90,10 @@ slow_period = kwargs.get('slow_period', 26)
 signal_period = kwargs.get('signal_period', 9)
 
 # MACD 계산
-macd_line, signal_line, histogram = dy.macd(code, fast_period, slow_period, signal_period)
+macd_line, signal_line, histogram = dy.macd(fast_period, slow_period, signal_period)
 
 # 이전 MACD 값
-prev_macd_line, prev_signal_line, prev_histogram = dy.macd(code, fast_period, slow_period, signal_period, 1)
+prev_macd_line, prev_signal_line, prev_histogram = dy.macd(fast_period, slow_period, signal_period, 1)
 
 # MACD 하향 교차 (매도 신호)
 bearish_cross = macd_line < signal_line and prev_macd_line >= prev_signal_line
@@ -131,14 +131,14 @@ result = {
 
 ```python
 # 이중 고점(Double Top) 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 lookback = kwargs.get('lookback', 30)  # 분석 기간
 threshold = kwargs.get('threshold', 0.03)  # 고점 유사성 임계값 (3%)
 
 # 최근 고점 찾기
-price_data = [dy.h(code, i) for i in range(lookback)]
+price_data = [dy.h(i) for i in range(lookback)]
 highs = []
 
 # 고점 탐지 (양쪽 봉보다 높은 봉)
@@ -165,20 +165,20 @@ similar_heights = price_diff_pct <= threshold
 # 두 고점 사이 저점 찾기
 valley_start = recent_highs[0][0]
 valley_end = recent_highs[1][0]
-valley_prices = [dy.l(code, i) for i in range(valley_start, valley_end+1)]
+valley_prices = [dy.h(i) for i in range(valley_start, valley_end+1)]
 valley_low = min(valley_prices)
 valley_low_idx = valley_prices.index(valley_low) + valley_start
 
 # 이중 고점 이후 넥라인(지지선) 돌파 확인
 neckline = valley_low
-current_price = dy.c(code)
+current_price = dy.c()
 breaks_neckline = current_price < neckline
 
 # 패턴 완성 여부
 pattern_complete = similar_heights and breaks_neckline
 
 # 추가 확인: 거래량 증가
-volume_increasing = dy.v(code) > dy.avg(code, dy.v, 5)
+volume_increasing = dy.v() > dy.avg(dy.v, 5)
 
 # 최종 매도 신호
 sell_signal = pattern_complete and volume_increasing
@@ -201,15 +201,15 @@ result = {
 
 ```python
 # 상승 쐐기형(Rising Wedge) 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 lookback = kwargs.get('lookback', 20)  # 분석 기간
 min_points = kwargs.get('min_points', 5)  # 최소 터치 포인트 수
 
 # 고가/저가 데이터 수집
-highs = [dy.h(code, i) for i in range(lookback)]
-lows = [dy.l(code, i) for i in range(lookback)]
+highs = [dy.h(i) for i in range(lookback)]
+lows = [dy.h(i) for i in range(lookback)]
 
 # 상단선, 하단선에 각각 최소 터치 포인트 찾기
 high_points = []
@@ -247,13 +247,13 @@ lower_slope = calculate_slope(low_points)
 rising_wedge = upper_slope > 0 and lower_slope > 0 and upper_slope < lower_slope
 
 # 패턴 하향 돌파 확인
-current_price = dy.c(code)
+current_price = dy.c()
 latest_idx = 0
 lower_trendline_value = low_points[-1][1] + lower_slope * (0 - low_points[-1][0])
 breakdown = current_price < lower_trendline_value
 
 # 거래량 확인
-volume_surge = dy.v(code) > dy.avg(code, dy.v, 5)
+volume_surge = dy.v() > dy.avg(dy.v, 5)
 
 # 최종 매도 신호
 sell_signal = rising_wedge and breakdown and volume_surge
@@ -274,14 +274,14 @@ result = {
 
 ```python
 # 헤드앤숄더(Head and Shoulders) 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 lookback = kwargs.get('lookback', 40)  # 분석 기간
 threshold = kwargs.get('threshold', 0.03)  # 어깨 유사성 임계값 (3%)
 
 # 최근 고점 찾기
-price_data = [dy.h(code, i) for i in range(lookback)]
+price_data = [dy.h(i) for i in range(lookback)]
 pivot_points = []
 
 # 피봇 포인트 탐지 (고점)
@@ -321,8 +321,8 @@ similar_shoulders = shoulder_diff_pct <= threshold
 left_valley_idx = (left_shoulder[0] + head[0]) // 2
 right_valley_idx = (head[0] + right_shoulder[0]) // 2
 
-left_valley = min([dy.l(code, i) for i in range(left_valley_idx-2, left_valley_idx+3)])
-right_valley = min([dy.l(code, i) for i in range(right_valley_idx-2, right_valley_idx+3)])
+left_valley = min([dy.h(i) for i in range(left_valley_idx-2, left_valley_idx+3)])
+right_valley = min([dy.h(i) for i in range(right_valley_idx-2, right_valley_idx+3)])
 
 # 넥라인이 수평인지 확인
 neckline_slope = (right_valley - left_valley) / (right_valley_idx - left_valley_idx)
@@ -332,14 +332,14 @@ flat_neckline = abs(neckline_slope) < 0.001  # 거의 수평
 current_neckline = right_valley + neckline_slope * (0 - right_valley_idx)
 
 # 넥라인 돌파 확인
-current_price = dy.c(code)
+current_price = dy.c()
 breaks_neckline = current_price < current_neckline
 
 # 패턴 확인
 pattern_valid = similar_shoulders and breaks_neckline
 
 # 추가 확인: 거래량 증가
-volume_increasing = dy.v(code) > dy.avg(code, dy.v, 5)
+volume_increasing = dy.v() > dy.avg(dy.v, 5)
 
 # 최종 매도 신호
 sell_signal = pattern_valid and volume_increasing
@@ -369,7 +369,7 @@ result = {
 
 ```python
 # 고정 비율 손절매 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 stop_loss_pct = kwargs.get('stop_loss_pct', 5.0)  # 손절매 비율 (%)
@@ -377,10 +377,10 @@ entry_price = kwargs.get('entry_price', 0)  # 진입가격
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 손실률 계산
 loss_pct = (entry_price - current_price) / entry_price * 100
@@ -401,7 +401,7 @@ result = {
 
 ```python
 # ATR 기반 손절매 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 atr_period = kwargs.get('atr_period', 14)  # ATR 계산 기간
@@ -410,13 +410,13 @@ entry_price = kwargs.get('entry_price', 0)  # 진입가격
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # ATR 계산
-atr_value = dy.atr(code, atr_period)
+atr_value = dy.atr(atr_period)
 
 # 손절매 가격 계산
 stop_loss_price = entry_price - (atr_value * atr_multiplier)
@@ -437,7 +437,7 @@ result = {
 
 ```python
 # 이동평균 기반 손절매 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 ma_period = kwargs.get('ma_period', 20)  # 이동평균 기간
@@ -445,13 +445,13 @@ entry_price = kwargs.get('entry_price', 0)  # 진입가격
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 이동평균 계산
-ma_value = dy.ma(code, dy.c, ma_period)
+ma_value = dy.ma(dy.c, ma_period)
 
 # 손절매 신호: 가격이 이동평균선 아래로 하락
 stop_loss_triggered = current_price < ma_value
@@ -472,7 +472,7 @@ result = {
 
 ```python
 # 변동성 돌파 손절매 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 volatility_period = kwargs.get('volatility_period', 10)  # 변동성 계산 기간
@@ -481,15 +481,15 @@ entry_price = kwargs.get('entry_price', 0)  # 진입가격
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 최근 변동성 계산 (일일 고가-저가 범위의 평균)
 volatility = 0
 for i in range(volatility_period):
-    daily_range = dy.h(code, i) - dy.l(code, i)
+    daily_range = dy.h(i) - dy.h(i)
     volatility += daily_range
 volatility /= volatility_period
 
@@ -516,7 +516,7 @@ result = {
 
 ```python
 # 고정 비율 이익실현 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 take_profit_pct = kwargs.get('take_profit_pct', 10.0)  # 이익실현 비율 (%)
@@ -524,10 +524,10 @@ entry_price = kwargs.get('entry_price', 0)  # 진입가격
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 수익률 계산
 profit_pct = (current_price - entry_price) / entry_price * 100
@@ -548,7 +548,7 @@ result = {
 
 ```python
 # 피보나치 되돌림 이익실현 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 lookback = kwargs.get('lookback', 60)  # 분석 기간
@@ -557,14 +557,14 @@ entry_price = kwargs.get('entry_price', 0)  # 진입가격
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 최근 주요 저점과 고점 찾기
-highs = [dy.h(code, i) for i in range(lookback)]
-lows = [dy.l(code, i) for i in range(lookback)]
+highs = [dy.h(i) for i in range(lookback)]
+lows = [dy.h(i) for i in range(lookback)]
 
 swing_high = max(highs)
 swing_high_idx = highs.index(swing_high)
@@ -597,7 +597,7 @@ result = {
 
 ```python
 # 추세선 돌파 이익실현 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 lookback = kwargs.get('lookback', 20)  # 분석 기간
@@ -605,13 +605,13 @@ entry_price = kwargs.get('entry_price', 0)  # 진입가격
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 고가 데이터 수집
-highs = [dy.h(code, i) for i in range(lookback)]
+highs = [dy.h(i) for i in range(lookback)]
 
 # 상승 추세선 계산 (고점 연결)
 high_points = []
@@ -662,7 +662,7 @@ result = {
 
 ```python
 # 볼린저 밴드 이익실현 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 bb_period = kwargs.get('bb_period', 20)  # 볼린저 밴드 기간
@@ -671,13 +671,13 @@ entry_price = kwargs.get('entry_price', 0)  # 진입가격
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 볼린저 밴드 계산
-upper, middle, lower = dy.bollinger_bands(code, bb_period, bb_std)
+upper, middle, lower = dy.bollinger_bands(bb_period, bb_std)
 
 # 이익실현 신호: 가격이 상단 밴드에 도달
 take_profit_triggered = current_price >= upper
@@ -713,7 +713,7 @@ result = {
 
 ```python
 # 기본 트레일링 스탑 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 trailing_pct = kwargs.get('trailing_pct', 5.0)  # 트레일링 스탑 비율 (%)
@@ -722,16 +722,16 @@ highest_since_entry = kwargs.get('highest_since_entry', 0)  # 진입 후 최고�
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 진입 후 최고가 업데이트
 if highest_since_entry == 0:
     # 이전 데이터에서 최고가 검색
     lookback = 30  # 최대 30봉 전까지 검색
-    prices = [dy.h(code, i) for i in range(lookback)]
+    prices = [dy.h(i) for i in range(lookback)]
     entry_idx = prices.index(entry_price) if entry_price in prices else 0
     highest_since_entry = max(prices[:entry_idx+1])
 else:
@@ -767,7 +767,7 @@ result = {
 
 ```python
 # ATR 트레일링 스탑 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 atr_period = kwargs.get('atr_period', 14)  # ATR 계산 기간
@@ -777,19 +777,19 @@ highest_since_entry = kwargs.get('highest_since_entry', 0)  # 진입 후 최고�
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # ATR 계산
-atr_value = dy.atr(code, atr_period)
+atr_value = dy.atr(atr_period)
 
 # 진입 후 최고가 업데이트
 if highest_since_entry == 0:
     # 이전 데이터에서 최고가 검색
     lookback = 30  # 최대 30봉 전까지 검색
-    prices = [dy.h(code, i) for i in range(lookback)]
+    prices = [dy.h(i) for i in range(lookback)]
     entry_idx = prices.index(entry_price) if entry_price in prices else 0
     highest_since_entry = max(prices[:entry_idx+1])
 else:
@@ -826,7 +826,7 @@ result = {
 
 ```python
 # 파라볼릭 SAR 트레일링 스탑 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 acceleration_factor = kwargs.get('acceleration_factor', 0.02)  # 가속 계수
@@ -835,13 +835,13 @@ entry_price = kwargs.get('entry_price', 0)  # 진입가격
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 현재가격 및 이전 가격 데이터
-current_price = dy.c(code)
-prev_price = dy.c(code, 1)
-current_high = dy.h(code)
-prev_high = dy.h(code, 1)
+current_price = dy.c()
+prev_price = dy.c(1)
+current_high = dy.h()
+prev_high = dy.h(1)
 
 # 이전 SAR 값 (제공되지 않은 경우 진입가의 95% 사용)
 prev_sar = kwargs.get('prev_sar', entry_price * 0.95)
@@ -901,7 +901,7 @@ result = {
 
 ```python
 # RSI + MACD + 볼린저 밴드 복합 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 rsi_period = kwargs.get('rsi_period', 14)
@@ -914,19 +914,19 @@ bb_std = kwargs.get('bb_std', 2)
 min_signals = kwargs.get('min_signals', 2)  # 최소 매도 신호 수
 
 # 1. RSI 과매수 확인
-rsi_value = dy.rsi(code, rsi_period)
+rsi_value = dy.rsi(rsi_period)
 rsi_sell = rsi_value > rsi_threshold
 
 # 2. MACD 하향 교차 확인
-macd_line, signal_line, histogram = dy.macd(code, macd_fast, macd_slow, macd_signal)
-prev_macd, prev_signal, prev_hist = dy.macd(code, macd_fast, macd_slow, macd_signal, 1)
+macd_line, signal_line, histogram = dy.macd(macd_fast, macd_slow, macd_signal)
+prev_macd, prev_signal, prev_hist = dy.macd(macd_fast, macd_slow, macd_signal, 1)
 macd_bearish_cross = macd_line < signal_line and prev_macd >= prev_signal
 macd_turning_negative = histogram < 0 and prev_hist >= 0
 macd_sell = macd_bearish_cross or macd_turning_negative
 
 # 3. 볼린저 밴드 상단 터치 확인
-upper, middle, lower = dy.bollinger_bands(code, bb_period, bb_std)
-current_price = dy.c(code)
+upper, middle, lower = dy.bollinger_bands(bb_period, bb_std)
+current_price = dy.c()
 bb_sell = current_price >= upper
 
 # 매도 신호 카운트
@@ -975,7 +975,7 @@ result = {
 
 ```python
 # 이동평균 교차 + 패턴 인식 복합 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 short_ma = kwargs.get('short_ma', 5)
@@ -984,15 +984,15 @@ long_ma = kwargs.get('long_ma', 60)
 min_signals = kwargs.get('min_signals', 2)  # 최소 매도 신호 수
 
 # 현재 가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 1. 이동평균 교차 확인
-ma_short = dy.ma(code, dy.c, short_ma)
-ma_medium = dy.ma(code, dy.c, medium_ma)
-ma_long = dy.ma(code, dy.c, long_ma)
+ma_short = dy.ma(dy.c, short_ma)
+ma_medium = dy.ma(dy.c, medium_ma)
+ma_long = dy.ma(dy.c, long_ma)
 
 # 데스 크로스 확인 (단기 이평선이 중기 이평선을 하향 돌파)
-death_cross = dy.cross_down(code, 
+death_cross = dy.cross_down(
     lambda c, n: dy.ma(c, dy.c, short_ma, n),
     lambda c, n: dy.ma(c, dy.c, medium_ma, n))
 
@@ -1006,7 +1006,7 @@ ma_sell = death_cross or bearish_alignment
 # 2.1 상승 고갈 패턴 (캔들 크기 감소)
 candle_sizes = []
 for i in range(5):
-    candle_size = abs(dy.c(code, i) - dy.o(code, i))
+    candle_size = abs(dy.c(i) - dy.o(i))
     candle_sizes.append(candle_size)
 
 diminishing_candles = all(candle_sizes[i] > candle_sizes[i-1] for i in range(1, 5))
@@ -1014,21 +1014,21 @@ diminishing_candles = all(candle_sizes[i] > candle_sizes[i-1] for i in range(1, 
 # 2.2 하락 캔들 연속 확인
 bearish_candles = 0
 for i in range(3):
-    if dy.c(code, i) < dy.o(code, i):
+    if dy.c(i) < dy.o(i):
         bearish_candles += 1
 
 # 2.3 도지 캔들 확인 (몸통이 작은 캔들)
-doji = abs(dy.c(code) - dy.o(code)) / (dy.h(code) - dy.l(code)) < 0.1 if (dy.h(code) - dy.l(code)) > 0 else False
+doji = abs(dy.c() - dy.o()) / (dy.h() - dy.h()) < 0.1 if (dy.h() - dy.h()) > 0 else False
 
 # 캔들 패턴 신호 조합
 candle_sell = diminishing_candles or bearish_candles >= 2 or doji
 
 # 3. 거래량 확인
 # 3.1 거래량 감소 추세
-volume_decline = dy.v(code) < dy.avg(code, dy.v, 5)
+volume_decline = dy.v() < dy.avg(dy.v, 5)
 
 # 3.2 거래량 이상치 (평균의 2배 이상)
-volume_spike = dy.v(code) > dy.avg(code, dy.v, 20) * 2
+volume_spike = dy.v() > dy.avg(dy.v, 20) * 2
 
 # 거래량 신호 조합
 volume_sell = volume_decline or volume_spike
@@ -1082,7 +1082,7 @@ result = {
 
 ```python
 # 점수 기반 복합 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 threshold = kwargs.get('threshold', 70)  # 매도 임계값 (0-100)
@@ -1095,10 +1095,10 @@ max_score = 0
 weight = 30
 max_score += weight
 
-ma5 = dy.ma(code, dy.c, 5)
-ma20 = dy.ma(code, dy.c, 20)
-ma60 = dy.ma(code, dy.c, 60)
-current_price = dy.c(code)
+ma5 = dy.ma(dy.c, 5)
+ma20 = dy.ma(dy.c, 20)
+ma60 = dy.ma(dy.c, 60)
+current_price = dy.c()
 
 # 이동평균 배열 점수
 if ma5 < ma20 < ma60:
@@ -1112,8 +1112,8 @@ elif current_price < ma20:
 weight = 20
 max_score += weight
 
-rsi = dy.rsi(code, 14)
-prev_rsi = dy.rsi(code, 14, 1)
+rsi = dy.rsi(14)
+prev_rsi = dy.rsi(14, 1)
 
 # RSI 점수
 if rsi > 70:
@@ -1127,7 +1127,7 @@ elif rsi > prev_rsi and rsi > 50:
 weight = 20
 max_score += weight
 
-upper, middle, lower = dy.bollinger_bands(code, 20, 2)
+upper, middle, lower = dy.bollinger_bands(20, 2)
 bandwidth = (upper - lower) / middle if middle > 0 else 0
 
 # 볼린저 밴드 점수
@@ -1142,8 +1142,8 @@ elif current_price > middle:
 weight = 15
 max_score += weight
 
-macd, signal, hist = dy.macd(code, 12, 26, 9)
-prev_macd, prev_signal, prev_hist = dy.macd(code, 12, 26, 9, 1)
+macd, signal, hist = dy.macd(12, 26, 9)
+prev_macd, prev_signal, prev_hist = dy.macd(12, 26, 9, 1)
 
 # MACD 점수
 if macd < signal and prev_macd >= prev_signal:
@@ -1157,11 +1157,11 @@ elif hist < 0 and prev_hist > 0:
 weight = 15
 max_score += weight
 
-vol = dy.v(code)
-avg_vol = dy.avg(code, dy.v, 20)
+vol = dy.v()
+avg_vol = dy.avg(dy.v, 20)
 
 # 거래량 점수
-if vol > avg_vol * 2 and current_price < dy.c(code, 1):
+if vol > avg_vol * 2 and current_price < dy.c(1):
     total_score += weight  # 거래량 급증 + 가격 하락
 elif vol > avg_vol * 1.5:
     total_score += weight * 0.7  # 거래량 증가
@@ -1219,7 +1219,7 @@ result = {
 
 ```python
 # 조기 수익 확정 매도 전략 (단기 투자)
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 profit_target = kwargs.get('profit_target', 5.0)  # 목표 수익률 (%)
@@ -1230,7 +1230,7 @@ entry_date = kwargs.get('entry_date', '')  # 진입일자 (YYYYMMDD)
 
 # 진입가격이 제공되지 않은 경우 이전 주기 종가 사용
 if entry_price == 0:
-    entry_price = dy.c(code, 1)
+    entry_price = dy.c(1)
 
 # 진입일자가 제공되지 않은 경우 이전 주기 날짜로 가정
 if entry_date == '':
@@ -1238,7 +1238,7 @@ if entry_date == '':
     entry_date = '20230101'  # 임의의 날짜
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 현재 날짜
 current_date = dy.today()
@@ -1283,7 +1283,7 @@ result = {
 
 ```python
 # 추세 전환 매도 전략 (중장기 투자)
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 ma_short = kwargs.get('ma_short', 20)  # 단기 이동평균
@@ -1292,34 +1292,34 @@ rsi_period = kwargs.get('rsi_period', 14)  # RSI 기간
 volume_period = kwargs.get('volume_period', 20)  # 거래량 평균 기간
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 이동평균 계산
-ma_short_value = dy.ma(code, dy.c, ma_short)
-ma_long_value = dy.ma(code, dy.c, ma_long)
+ma_short_value = dy.ma(dy.c, ma_short)
+ma_long_value = dy.ma(dy.c, ma_long)
 
 # 이전 이동평균 (5일 전)
-ma_short_prev = dy.ma(code, dy.c, ma_short, 5)
-ma_long_prev = dy.ma(code, dy.c, ma_long, 5)
+ma_short_prev = dy.ma(dy.c, ma_short, 5)
+ma_long_prev = dy.ma(dy.c, ma_long, 5)
 
 # 이동평균 방향 변화 확인
 ma_short_direction_change = (ma_short_value < ma_short_prev)
 ma_long_direction_change = (ma_long_value < ma_long_prev)
 
 # 이동평균 교차 확인
-cross_down = dy.cross_down(code, 
+cross_down = dy.cross_down(
     lambda c, n: dy.ma(c, dy.c, ma_short, n),
     lambda c, n: dy.ma(c, dy.c, ma_long, n))
 
 # RSI 계산 및 하락 추세 확인
-rsi = dy.rsi(code, rsi_period)
-rsi_prev = dy.rsi(code, rsi_period, 5)
+rsi = dy.rsi(rsi_period)
+rsi_prev = dy.rsi(rsi_period, 5)
 rsi_declining = rsi < rsi_prev and rsi < 70
 
 # 거래량 변화 확인
-volume = dy.v(code)
-avg_volume = dy.avg(code, dy.v, volume_period)
-volume_surge = volume > avg_volume * 1.5 and current_price < dy.c(code, 1)
+volume = dy.v()
+avg_volume = dy.avg(dy.v, volume_period)
+volume_surge = volume > avg_volume * 1.5 and current_price < dy.c(1)
 
 # 추세 점수 계산 (0-100)
 trend_score = 0
@@ -1373,7 +1373,7 @@ result = {
 
 ```python
 # 변동성 대응 매도 전략 (시장 급변 시)
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 volatility_window = kwargs.get('volatility_window', 10)  # 변동성 측정 기간
@@ -1382,26 +1382,26 @@ abnormal_drop = kwargs.get('abnormal_drop', 5.0)  # 비정상적 하락률 (%)
 vix_threshold = kwargs.get('vix_threshold', 25)  # VIX 임계값 (실제로는 VIX 데이터 필요)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 변동성 계산 (ATR 사용)
-current_atr = dy.atr(code, volatility_window)
-normal_atr = dy.atr(code, volatility_window, 20)  # 20일 전 ATR (정상 기간 가정)
+current_atr = dy.atr(volatility_window)
+normal_atr = dy.atr(volatility_window, 20)  # 20일 전 ATR (정상 기간 가정)
 
 # 변동성 비율
 volatility_ratio = current_atr / normal_atr if normal_atr > 0 else 1.0
 
 # 가격 급락 확인
-recent_high = dy.highest(code, dy.h, 5)
+recent_high = dy.highest(dy.h, 5)
 drop_pct = (recent_high - current_price) / recent_high * 100 if recent_high > 0 else 0
 
 # 거래량 급증 확인
-volume = dy.v(code)
-avg_volume = dy.avg(code, dy.v, 20)
+volume = dy.v()
+avg_volume = dy.avg(dy.v, 20)
 volume_surge = volume > avg_volume * 2
 
 # 이격도 계산 (20일 이동평균 대비)
-ma20 = dy.ma(code, dy.c, 20)
+ma20 = dy.ma(dy.c, 20)
 disparity = (current_price / ma20 * 100) - 100 if ma20 > 0 else 0
 
 # VIX 지수 수준 (실제로는 외부 데이터 필요)
@@ -1476,9 +1476,9 @@ result = {
 
 ```python
 # 3중 타임프레임 매도 전략
-dy = ChartManager('dy')    # 일봉
-h4 = ChartManager('h4')    # 4시간봉
-mi60 = ChartManager('mi', 60)  # 60분봉
+dy = ChartManager(code, 'dy')    # 일봉
+h4 = ChartManager(code, 'h4')    # 4시간봉
+mi60 = ChartManager(code, 'mi', 60)  # 60분봉
 
 # 매개변수
 rsi_period = kwargs.get('rsi_period', 14)
@@ -1489,17 +1489,17 @@ min_signals = kwargs.get('min_signals', 2)  # 최소 매도 타임프레임 수
 # 각 타임프레임별 매도 신호 확인
 # 1. 일봉 분석
 # 1.1 RSI 과매수
-daily_rsi = dy.rsi(code, rsi_period)
+daily_rsi = dy.rsi(rsi_period)
 daily_rsi_overbought = daily_rsi > 70
 
 # 1.2 이동평균 데스 크로스
-daily_cross_down = dy.cross_down(code, 
+daily_cross_down = dy.cross_down(
     lambda c, n: dy.ma(c, dy.c, ma_short, n),
     lambda c, n: dy.ma(c, dy.c, ma_long, n))
 
 # 1.3 볼린저 밴드 상단 접촉
-daily_upper, daily_middle, daily_lower = dy.bollinger_bands(code, 20, 2)
-daily_price = dy.c(code)
+daily_upper, daily_middle, daily_lower = dy.bollinger_bands(20, 2)
+daily_price = dy.c()
 daily_bb_top_touch = daily_price >= daily_upper
 
 # 일봉 매도 신호
@@ -1507,17 +1507,17 @@ daily_sell = daily_rsi_overbought or daily_cross_down or daily_bb_top_touch
 
 # 2. 4시간봉 분석
 # 2.1 RSI 과매수
-h4_rsi = h4.rsi(code, rsi_period)
+h4_rsi = h4.rsi(rsi_period)
 h4_rsi_overbought = h4_rsi > 70
 
 # 2.2 이동평균 데스 크로스
-h4_cross_down = h4.cross_down(code, 
+h4_cross_down = h4.cross_down(
     lambda c, n: h4.ma(c, h4.c, ma_short, n),
     lambda c, n: h4.ma(c, h4.c, ma_long, n))
 
 # 2.3 볼린저 밴드 상단 접촉
-h4_upper, h4_middle, h4_lower = h4.bollinger_bands(code, 20, 2)
-h4_price = h4.c(code)
+h4_upper, h4_middle, h4_lower = h4.bollinger_bands(20, 2)
+h4_price = h4.c()
 h4_bb_top_touch = h4_price >= h4_upper
 
 # 4시간봉 매도 신호
@@ -1525,17 +1525,17 @@ h4_sell = h4_rsi_overbought or h4_cross_down or h4_bb_top_touch
 
 # 3. 60분봉 분석
 # 3.1 RSI 과매수
-mi60_rsi = mi60.rsi(code, rsi_period)
+mi60_rsi = mi60.rsi(rsi_period)
 mi60_rsi_overbought = mi60_rsi > 70
 
 # 3.2 이동평균 데스 크로스
-mi60_cross_down = mi60.cross_down(code, 
+mi60_cross_down = mi60.cross_down(
     lambda c, n: mi60.ma(c, mi60.c, ma_short, n),
     lambda c, n: mi60.ma(c, mi60.c, ma_long, n))
 
 # 3.3 볼린저 밴드 상단 접촉
-mi60_upper, mi60_middle, mi60_lower = mi60.bollinger_bands(code, 20, 2)
-mi60_price = mi60.c(code)
+mi60_upper, mi60_middle, mi60_lower = mi60.bollinger_bands(20, 2)
+mi60_price = mi60.c()
 mi60_bb_top_touch = mi60_price >= mi60_upper
 
 # 60분봉 매도 신호
@@ -1597,7 +1597,7 @@ result = {
 
 ```python
 # 자산 비중 재조정 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 portfolio = kwargs.get('portfolio', {})  # {종목코드: 보유비중(%) 또는 보유금액}
@@ -1605,7 +1605,7 @@ target_weights = kwargs.get('target_weights', {})  # {종목코드: 목표비중
 rebalance_threshold = kwargs.get('rebalance_threshold', 5.0)  # 재조정 임계값(%)
 
 # 현재 종목의 정보
-current_price = dy.c(code)
+current_price = dy.c()
 current_weight = portfolio.get(code, 0)  # 현재 비중
 
 # 목표 비중
@@ -1639,7 +1639,7 @@ result = {
 
 ```python
 # 섹터 집중도 관리 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 sector_allocation = kwargs.get('sector_allocation', {})  # {섹터: 현재비중(%)}
@@ -1656,7 +1656,7 @@ current_sector_weight = sector_allocation.get(current_sector, 0)
 target_sector_weight = sector_targets.get(current_sector, 0)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 섹터 초과 비중 계산
 sector_overweight = current_sector_weight - target_sector_weight
@@ -1691,7 +1691,7 @@ result = {
 
 ```python
 # 상관관계 분산 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 correlations = kwargs.get('correlations', {})  # {종목코드: [다른 종목과의 상관계수 리스트]}
@@ -1730,7 +1730,7 @@ result = {
 
 ```python
 # 성장주 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 growth_threshold = kwargs.get('growth_threshold', 30)  # 성장률 임계값 (%)
@@ -1741,32 +1741,32 @@ earnings_growth = kwargs.get('earnings_growth', 0)  # 순이익 성장률 (%)
 pe_ratio = kwargs.get('pe_ratio', 0)  # 현재 P/E
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 이동평균 계산
-ma20 = dy.ma(code, dy.c, 20)
-ma50 = dy.ma(code, dy.c, 50)
-ma200 = dy.ma(code, dy.c, 200)
+ma20 = dy.ma(dy.c, 20)
+ma50 = dy.ma(dy.c, 50)
+ma200 = dy.ma(dy.c, 200)
 
 # 기술적 매도 신호 확인
 # 1. 200일선 하향 돌파
-ma200_breakdown = dy.cross_down(code,
+ma200_breakdown = dy.cross_down(
     lambda c, n: dy.c(c, n),
     lambda c, n: dy.ma(c, dy.c, 200, n))
 
 # 2. 50일선 하향 돌파 (약한 신호)
-ma50_breakdown = dy.cross_down(code,
+ma50_breakdown = dy.cross_down(
     lambda c, n: dy.c(c, n),
     lambda c, n: dy.ma(c, dy.c, 50, n))
 
 # 3. 20일선 하향 돌파 (단기 신호)
-ma20_breakdown = dy.cross_down(code,
+ma20_breakdown = dy.cross_down(
     lambda c, n: dy.c(c, n),
     lambda c, n: dy.ma(c, dy.c, 20, n))
 
 # 4. RSI 과매수 및 하락 전환
-rsi = dy.rsi(code, 14)
-prev_rsi = dy.rsi(code, 14, 1)
+rsi = dy.rsi(14)
+prev_rsi = dy.rsi(14, 1)
 rsi_sell = rsi < prev_rsi and prev_rsi > 70
 
 # 기술적 위험 점수 (0-100)
@@ -1855,7 +1855,7 @@ result = {
 
 ```python
 # 가치주 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 pb_threshold = kwargs.get('pb_threshold', 1.5)  # P/B 임계값
@@ -1868,7 +1868,7 @@ dividend_yield = kwargs.get('dividend_yield', 0)  # 현재 배당률 (%)
 roe = kwargs.get('roe', 0)  # 현재 ROE (%)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 기본적 매도 신호 확인
 # 1. 밸류에이션 상승
@@ -1882,20 +1882,20 @@ roe_low = roe < roe_min
 
 # 기술적 매도 신호 확인
 # 1. 20일 이동평균 하향 돌파
-ma20 = dy.ma(code, dy.c, 20)
-ma20_breakdown = dy.cross_down(code,
+ma20 = dy.ma(dy.c, 20)
+ma20_breakdown = dy.cross_down(
     lambda c, n: dy.c(c, n),
     lambda c, n: dy.ma(c, dy.c, 20, n))
 
 # 2. 최근 고점에서 10% 이상 하락
-recent_high = dy.highest(code, dy.h, 20)
+recent_high = dy.highest(dy.h, 20)
 price_drop = (recent_high - current_price) / recent_high * 100 if recent_high > 0 else 0
 price_significant_drop = price_drop >= 10
 
 # 3. 거래량 급증 확인
-volume = dy.v(code)
-avg_volume = dy.avg(code, dy.v, 20)
-volume_surge = volume > avg_volume * 1.5 and current_price < dy.c(code, 1)
+volume = dy.v()
+avg_volume = dy.avg(dy.v, 20)
+volume_surge = volume > avg_volume * 1.5 and current_price < dy.c(1)
 
 # 기본적 매도 점수 (0-100)
 fundamental_risk = 0
@@ -1976,7 +1976,7 @@ result = {
 
 ```python
 # 배당주 매도 전략
-dy = ChartManager('dy')
+dy = ChartManager(code, 'dy')
 
 # 매개변수
 min_dividend = kwargs.get('min_dividend', 3.0)  # 최소 배당률 (%)
@@ -1988,7 +1988,7 @@ debt_ratio = kwargs.get('debt_ratio', 0)  # 부채비율 (%)
 max_debt = kwargs.get('max_debt', 150)  # 최대 허용 부채비율 (%)
 
 # 현재가격
-current_price = dy.c(code)
+current_price = dy.c()
 
 # 배당 관련 매도 신호 확인
 # 1. 배당률 하락
@@ -2008,13 +2008,13 @@ debt_too_high = debt_ratio > max_debt
 
 # 기술적 매도 신호 확인
 # 1. 50일 이동평균 하향 돌파
-ma50_breakdown = dy.cross_down(code,
+ma50_breakdown = dy.cross_down(
     lambda c, n: dy.c(c, n),
     lambda c, n: dy.ma(c, dy.c, 50, n))
 
 # 2. 상대강도 하락
-rsi = dy.rsi(code, 14)
-prev_rsi = dy.rsi(code, 14, 10)  # 10일 전 RSI
+rsi = dy.rsi(14)
+prev_rsi = dy.rsi(14, 10)  # 10일 전 RSI
 rsi_declining = rsi < prev_rsi and rsi < 50
 
 # 배당 관련 위험 점수 (0-100)

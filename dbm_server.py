@@ -333,7 +333,7 @@ class DBMServer:
             
             if not dict_list:
                 logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
-                return
+                return dict_list
             
             logging.debug(f'{rqname} 데이타 얻기: times:{times}, code:{code}, cycle:{cycle}, tick:{tick}, dict_list:{dict_list[:1]}')
             if cycle in ['mi', 'tk']:
@@ -358,12 +358,15 @@ class DBMServer:
                     '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
                     '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
                 } for item in dict_list]
-            self.upsert_chart(dict_list, cycle, tick)
-            self.update_todo_code(code, cycle)
-            self.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
-            
+            if cycle in ['dy', 'mi']:
+                self.upsert_chart(dict_list, cycle, tick)
+                self.update_todo_code(code, cycle)
+                self.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
+            return dict_list
+        
         except Exception as e:
             logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            return []
 
     def start_request_chart_data(self):
         if self.thread_run: return
@@ -382,7 +385,7 @@ class DBMServer:
             with self._lock:
                 codes = copy.deepcopy(self.todo_code)
                 if not codes:
-                    time.sleep(1)
+                    time.sleep(0.01)
                     continue
 
             for code in codes:
