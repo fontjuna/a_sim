@@ -2712,4 +2712,3 @@ def admin_listener_thread(admin_instance, input_queue, result_dict, callbacks):
    finally:
       logging.info("Admin 리스너 쓰레드 종료")
 
-

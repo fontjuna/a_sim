@@ -10,6 +10,7 @@ import logging.handlers
 import os
 import sys
 import json
+import time
 
 def hoga(current_price, position=0):
     # logging.debug(f'hoga : current_price={current_price}, position={position}')
@@ -97,6 +98,22 @@ def save_json(file_path, data):
     except Exception as e:
         logging.error(f'파일 저장 오류: {os.path.basename(file_path)} {type(e).__name__} - {e}', exc_info=True)
         return False, e
+
+def profile_operation(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        elapsed = time.time() - start_time
+        if elapsed > 0.1:  # 100ms 이상 걸리는 작업 로깅
+            logging.debug(f"[PROFILE] {func.__name__} took {elapsed:.3f} seconds {'*'*70}")
+        return result
+    return wrapper
+
+# 주요 함수에 적용
+@profile_operation
+def some_critical_function():
+    # 기존 코드
+    pass
 
 @dataclass
 class Work:

@@ -1,4 +1,4 @@
-from public import dc, get_path
+from public import dc, get_path, profile_operation
 from chart import ctdt
 from datetime import datetime, timedelta
 import logging
@@ -301,6 +301,7 @@ class DBMServer:
             logging.error(f"upsert_conclusion error: {e}", exc_info=True)
             return False
         
+    @profile_operation
     def dbm_get_chart_data(self, code, cycle, tick=None, times=1):
         try:
 
@@ -361,7 +362,7 @@ class DBMServer:
                     '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
                 } for item in dict_list]
             if cycle in ['dy', 'mi']:
-                self.upsert_chart(dict_list, cycle, tick)
+                #self.upsert_chart(dict_list, cycle, tick)
                 self.update_todo_code(code, cycle)
                 #self.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
                 ctdt.set_chart_data(code, dict_list, cycle, tick)
@@ -388,7 +389,7 @@ class DBMServer:
             with self._lock:
                 codes = copy.deepcopy(self.todo_code)
                 if not codes:
-                    time.sleep(0.01)
+                    time.sleep(0.1)
                     continue
 
             for code in codes:
@@ -419,6 +420,7 @@ class DBMServer:
         with self._lock:
             return code in self.done_code
 
+    @profile_operation
     def update_script_chart(self, code, price, volumn, amount, datetime_str):
         if code in self.todo_code or code in self.done_code:
             ctdt.update_chart(code, price, volumn, amount, datetime_str)

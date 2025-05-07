@@ -1,4 +1,4 @@
-from public import dc, gm
+from public import dc, gm, profile_operation
 from datetime import datetime
 from typing import Set, Optional, Any
 from multiprocessing import shared_memory
@@ -186,6 +186,7 @@ class ChartData:
             pass
    
     # 기존 ChartData 인터페이스 구현
+    @profile_operation
     def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
         """외부에서 차트 데이터 설정"""
         if not data:
@@ -234,6 +235,7 @@ class ChartData:
                 
         shared_data['_index_maps'][code][cycle_key] = index_map
    
+    @profile_operation
     def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
         """실시간 가격 정보로 차트 데이터 업데이트"""
         with self._write_lock:
