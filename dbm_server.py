@@ -6,6 +6,7 @@ import os
 import threading
 import copy
 import time
+
 class DBMServer:
     def __init__(self):
         self.fee_rate = 0.00015

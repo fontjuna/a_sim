@@ -523,8 +523,39 @@ class APIServer():
         self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
         self.api_init()  # 초기화 바로 실행
 
-    # def stop(self):
-    #     pass
+    def stop(self):
+        """APIServer 종료 시 실행되는 메서드"""
+        logging.info(f"APIServer 종료 시작 (sim_no={self.sim_no})")
+        
+        # 시뮬레이션 모드에서만 추가 정리 필요
+        if self.sim_no > 0:
+            # 실시간 데이터 스레드 정리
+            global real_thread
+            for screen in list(real_thread.keys()):
+                if real_thread[screen]:
+                    try:
+                        logging.debug(f"실시간 데이터 스레드 정리: {screen}")
+                        real_thread[screen].stop()
+                        real_thread[screen].wait(1000)  # 최대 1초 대기
+                        del real_thread[screen]
+                    except Exception as e:
+                        logging.error(f"실시간 스레드 정리 오류: {e}")
+            
+            # 조건검색 스레드 정리
+            global cond_thread
+            for screen in list(cond_thread.keys()):
+                if cond_thread[screen]:
+                    try:
+                        logging.debug(f"조건검색 스레드 정리: {screen}")
+                        cond_thread[screen].stop()
+                        cond_thread[screen].wait(1000)  # 최대 1초 대기
+                        del cond_thread[screen]
+                    except Exception as e:
+                        logging.error(f"조건검색 스레드 정리 오류: {e}")
+        
+        # 연결 상태 변경
+        self.connected = False
+        logging.info("APIServer 종료 완료")
 
     def api_init(self):
         try:
@@ -587,6 +618,7 @@ class APIServer():
         """차트 데이터 로드 - 외부에서 구현 예정"""
         # 이 함수는 외부에서 구현 예정
         return []
+    
     # 각 클래스(Admin, API, DBM)에 추가할 메서드
     def get_var(self, var_name, default=None):
         """인스턴스 변수 가져오기"""
@@ -891,8 +923,9 @@ class APIServer():
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
                     self.work('admin', 'on_fx실시간_주식체결', **job)
-                elif rtype == '장시작시간': self.work('admin', 'on_fx실시간_장운영감시', **job)
-
+                elif rtype == '장시작시간': 
+                    self.work('admin', 'on_fx실시간_장운영감시', **job)
+            #logging.debug(f'OnReceiveRealData: {job}')
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
