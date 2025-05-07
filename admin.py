@@ -35,8 +35,8 @@ class Admin:
         gm.ct = CounterTicker()
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
-        gm.cdt = ChartData()
-        la.register('cdt', gm.cdt, use_thread=True)
+        # gm.cdt = ChartData()
+        # la.register('cdt', gm.cdt, use_thread=True)
         gm.scm = ScriptManager()
         try:
             result = enhance_script_manager(gm.scm)
@@ -347,7 +347,7 @@ class Admin:
                     la.work(f'전략{data["idx"]:02d}', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
 
-            la.work('cdt', 'update_chart', code, 현재가, abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
+            #gm.ipc.work('dbm', 'update_script_chart', code, 현재가, abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
 
         try:
             if gm.잔고목록.in_key(code):
@@ -1043,11 +1043,11 @@ class Admin:
         if error is not None:
             logging.debug(f'디비 요청 결과: result={result} error={error}')
 
-    def dbm_update_chart(self, code, dict_data, cycle, tick=1):
-        try:
-            la.work('cdt', 'set_chart_data', code, dict_data, cycle, tick)
-        except Exception as e:
-            logging.error(f"dbm_update_chart 오류: {type(e).__name__} - {e}", exc_info=True)
+    # def dbm_update_chart(self, code, dict_data, cycle, tick=1):
+    #     try:
+    #         la.work('cdt', 'set_chart_data', code, dict_data, cycle, tick)
+    #     except Exception as e:
+    #         logging.error(f"dbm_update_chart 오류: {type(e).__name__} - {e}", exc_info=True)
 
     def dbm_fx실시간_수신데이타(self, data):
         # 디비에서 작업결과를 실시간으로 내보내는걸 수신 (예: 차트 분석 후 매매 신호)

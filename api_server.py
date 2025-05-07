@@ -923,6 +923,7 @@ class APIServer():
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
                     self.work('admin', 'on_fx실시간_주식체결', **job)
+                    self.work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['거래량'], dictFID['거래대금'], dictFID['체결시간'])
                 elif rtype == '장시작시간': 
                     self.work('admin', 'on_fx실시간_장운영감시', **job)
             #logging.debug(f'OnReceiveRealData: {job}')

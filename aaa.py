@@ -1,8 +1,7 @@
 from public import init_logger, dc, gm
 from admin import Admin
 from gui import GUI
-# from server_api import APIServer
-# from server_sima import SIMServer
+from chart import ctdt
 from api_server import APIServer
 from dbm_server import DBMServer
 from classes import Toast, la, IPCManager
@@ -157,18 +156,10 @@ class Main:
             if hasattr(gm, 'ipc') and gm.ipc:
                 gm.ipc.prepare_shutdown()
                 try:
-                    gm.ipc.queues['admin_to_api'].put({
-                        'command': 'prepare_shutdown'
-                    })
-                    gm.ipc.queues['admin_to_dbm'].put({
-                        'command': 'prepare_shutdown'
-                    })
-                    gm.ipc.queues['admin_to_api'].put({
-                        'command': 'stop'
-                    })
-                    gm.ipc.queues['admin_to_dbm'].put({
-                        'command': 'stop'
-                    })
+                    gm.ipc.queues['admin_to_api'].put({ 'command': 'prepare_shutdown' })
+                    gm.ipc.queues['admin_to_dbm'].put({ 'command': 'prepare_shutdown' })
+                    gm.ipc.queues['admin_to_api'].put({ 'command': 'stop' })
+                    gm.ipc.queues['admin_to_dbm'].put({ 'command': 'stop' })
                 except Exception as e:
                     pass
                 finally:
@@ -184,6 +175,7 @@ class Main:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:
             self.cleanup_flag = True
+            ctdt.clean_up()
             if hasattr(self, 'app'): self.app.quit()
             logging.info("cleanup completed")
             
@@ -201,5 +193,6 @@ if __name__ == "__main__":
     finally:
         if not main.cleanup_flag: main.cleanup()
         logging.info(f"{'#'*10} LIBERANIMO End {'#'*10}")
+        # 로깅 종료는 가장 마지막에 수행
         logging.shutdown()
         sys.exit(exit_code)

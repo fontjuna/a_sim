@@ -1,4 +1,5 @@
 from public import dc, get_path
+from chart import ctdt
 from datetime import datetime, timedelta
 import logging
 import sqlite3
@@ -362,7 +363,8 @@ class DBMServer:
             if cycle in ['dy', 'mi']:
                 self.upsert_chart(dict_list, cycle, tick)
                 self.update_todo_code(code, cycle)
-                self.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
+                #self.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
+                ctdt.set_chart_data(code, dict_list, cycle, tick)
             return dict_list
         
         except Exception as e:
@@ -417,3 +419,6 @@ class DBMServer:
         with self._lock:
             return code in self.done_code
 
+    def update_script_chart(self, code, price, volumn, amount, datetime_str):
+        if code in self.todo_code or code in self.done_code:
+            ctdt.update_chart(code, price, volumn, amount, datetime_str)

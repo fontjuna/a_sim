@@ -1,8 +1,7 @@
-from public import gm, dc
-from classes import la
+from public import dc, gm
 from datetime import datetime
 from typing import Set, Optional, Any
-from PyQt5.QtCore import QTimer
+from multiprocessing import shared_memory
 import json
 import numpy as np
 import logging
@@ -17,87 +16,93 @@ import hashlib
 import marshal
 import pickle
 import importlib.util
-import traceback
 
-from datetime import datetime
-import os
-from multiprocessing import shared_memory
-from multiprocessing.managers import SharedMemoryManager
-import numpy as np
-import pickle
-import time
-import threading
-import traceback
-from datetime import datetime
-import os
-
-class SharedMemoryChartData:
-    """공유 메모리를 사용하는 차트 데이터 관리 클래스"""
+class ChartData:
     _instance = None
     _is_initialized = False
     _lock = threading.RLock()
+    _read_locks = {}  # 코드별 읽기 락
+    _write_lock = threading.RLock()  # 전체 쓰기 락
     
     # 공유 메모리 관련 변수
     _shm = None
     _shm_name = "chart_data_shm"
     _shm_size = 1024 * 1024 * 100  # 초기 크기 100MB
     _data_offset = 4096  # 메타데이터 영역 크기
-    _read_locks = {}
-    _write_locks = threading.RLock()
-    
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
-                    cls._instance = super(SharedMemoryChartData, cls).__new__(cls)
+                    cls._instance = super(ChartData, cls).__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
-        if SharedMemoryChartData._is_initialized:
+        if hasattr(self, "_initialized"):
             return
         
         with self._lock:
-            if not SharedMemoryChartData._is_initialized:
-                self._init_shared_memory()
+            if not hasattr(self, "_initialized"):
+                # 메타데이터 초기화를 먼저 수행
                 self._metadata = {
-                'last_update': 0,
-                'version': 0,
-                'is_dirty': False
+                    'last_update': 0,
+                    'version': 0
                 }
-                self._cached_data = None
-                self._cached_version = -1
-                self._load_data()
                 
-                print(f"[{datetime.now()}] SharedMemoryChartData initialized in PID: {os.getpid()}")
-                SharedMemoryChartData._is_initialized = True
-   
+                # 공유 메모리 초기화 시도
+                try:
+                    self._init_shared_memory()
+                except Exception as e:
+                    logging.debug(f"[{datetime.now()}] Error initializing shared memory: {str(e)}", exc_info=True)
+                    traceback.print_exc()
+                    # 초기화 실패해도 계속 진행할 수 있도록 함
+                    pass
+                
+                # 내부 데이터 구조 초기화
+                self._ensure_data_initialized()
+                
+                self._initialized = True
+                logging.debug(f"[{datetime.now()}] ChartData initialized in PID: {os.getpid()}")
+                
     def _init_shared_memory(self):
         """공유 메모리 초기화"""
         try:
             # 기존 공유 메모리가 있는지 시도
             self._shm = shared_memory.SharedMemory(name=self._shm_name)
-            print(f"[{datetime.now()}] Connected to existing shared memory: {self._shm_name}")
-        except:
+            logging.debug(f"[{datetime.now()}] Connected to existing shared memory: {self._shm_name}")
+        except FileNotFoundError:
             try:
                 # 없으면 새로 생성
                 self._shm = shared_memory.SharedMemory(
-                name=self._shm_name, 
-                create=True, 
-                size=self._shm_size
+                    name=self._shm_name, 
+                    create=True, 
+                    size=self._shm_size
                 )
                 # 초기 데이터 구조 설정
-                empty_data = {'_data': {}, '_index_maps': {}, '_cached_aggregations': {}}
+                empty_data = {'_data': {}, '_index_maps': {}, '_cached_aggregations': {}, '_active_requests': {}}
                 self._save_data_to_shm(empty_data)
-                print(f"[{datetime.now()}] Created new shared memory: {self._shm_name}")
+                logging.debug(f"[{datetime.now()}] Created new shared memory: {self._shm_name}")
             except Exception as e:
-                print(f"[{datetime.now()}] Error creating shared memory: {str(e)}")
+                logging.debug(f"[{datetime.now()}] Error creating shared memory: {str(e)}", exc_info=True)
                 traceback.print_exc()
                 raise
-    
+   
+    def _ensure_data_initialized(self):
+        """데이터 구조가 초기화되었는지 확인"""
+        data = self._load_data_from_shm()
+        if not data or '_data' not in data:
+            data = {'_data': {}, '_index_maps': {}, '_cached_aggregations': {}, '_active_requests': {}}
+            self._save_data_to_shm(data)
+   
     def _save_data_to_shm(self, data):
         """데이터를 공유 메모리에 저장"""
-        with self._lock:
+        with self._write_lock:
             try:
+                # _shm이 없으면 무시
+                if not hasattr(self, '_shm') or self._shm is None:
+                    logging.debug(f"[{datetime.now()}] Warning: Shared memory not available for saving data")
+                    return
+                
                 # 데이터 직렬화
                 pickled_data = pickle.dumps(data)
                 data_size = len(pickled_data)
@@ -106,7 +111,7 @@ class SharedMemoryChartData:
                 if data_size + self._data_offset > self._shm_size:
                     old_shm = self._shm
                     new_size = max(self._shm_size * 2, data_size + self._data_offset + 1024*1024)
-                    print(f"[{datetime.now()}] Expanding shared memory from {self._shm_size} to {new_size} bytes")
+                    logging.debug(f"[{datetime.now()}] Expanding shared memory from {self._shm_size} to {new_size} bytes")
                     
                     # 새 공유 메모리 생성
                     new_shm = shared_memory.SharedMemory(
@@ -127,14 +132,14 @@ class SharedMemoryChartData:
                     # 이전 메모리 해제
                     old_shm.close()
                     old_shm.unlink()
-                
-                print(f"[{datetime.now()}] Shared memory expanded and renamed to {self._shm_name}")
+                    
+                    logging.debug(f"[{datetime.now()}] Shared memory expanded and renamed to {self._shm_name}")
                 
                 # 메모리에 데이터 크기 저장 (첫 4바이트)
                 size_bytes = data_size.to_bytes(4, byteorder='little')
                 self._shm.buf[:4] = size_bytes
                 
-                # 버전 업데이트 (다음 4바이트)
+                # 버전 업데이트 (다음 8바이트)
                 version = int(time.time() * 1000).to_bytes(8, byteorder='little')
                 self._shm.buf[4:12] = version
                 
@@ -144,22 +149,14 @@ class SharedMemoryChartData:
                 # 메타데이터 업데이트
                 self._metadata['version'] = int.from_bytes(version, byteorder='little')
                 self._metadata['last_update'] = time.time()
-                self._metadata['is_dirty'] = False
                 
             except Exception as e:
-                print(f"[{datetime.now()}] Error saving data to shared memory: {str(e)}")
+                logging.debug(f"[{datetime.now()}] Error saving data to shared memory: {str(e)}", exc_info=True)
                 traceback.print_exc()
    
-    def _load_data(self):
+    def _load_data_from_shm(self):
         """공유 메모리에서 데이터 로드"""
         try:
-            # 버전 확인
-            current_version = int.from_bytes(self._shm.buf[4:12], byteorder='little')
-            
-            # 캐시된 버전과 동일하면 캐시 사용
-            if self._cached_data is not None and self._cached_version == current_version:
-                return self._cached_data
-            
             # 데이터 크기 읽기
             data_size = int.from_bytes(self._shm.buf[:4], byteorder='little')
             
@@ -167,108 +164,67 @@ class SharedMemoryChartData:
                 # 직렬화된 데이터 추출 및 역직렬화
                 pickled_data = bytes(self._shm.buf[self._data_offset:self._data_offset + data_size])
                 data = pickle.loads(pickled_data)
-                
-                # 캐시 업데이트
-                self._cached_data = data
-                self._cached_version = current_version
-                
                 return data
-            return {'_data': {}, '_index_maps': {}, '_cached_aggregations': {}}
+            return {'_data': {}, '_index_maps': {}, '_cached_aggregations': {}, '_active_requests': {}}
             
         except Exception as e:
-            print(f"[{datetime.now()}] Error loading data from shared memory: {str(e)}")
+            logging.debug(f"[{datetime.now()}] Error loading data from shared memory: {str(e)}", exc_info=True)
             traceback.print_exc()
-            return {'_data': {}, '_index_maps': {}, '_cached_aggregations': {}}
-   
-    def _sync_data(self):
-        """주기적인 데이터 동기화 수행"""
-        try:
-            # 변경사항이 있으면 저장
-            if self._metadata['is_dirty']:
-                if self._cached_data:
-                    self._save_data_to_shm(self._cached_data)
-                
-            # 주기적으로 버전 확인하고 필요시 데이터 다시 로드
-            current_version = int.from_bytes(self._shm.buf[4:12], byteorder='little')
-            if current_version != self._cached_version:
-                self._load_data()
-        
-        except Exception as e:
-            print(f"[{datetime.now()}] Error in sync_data: {str(e)}")
-        
-        finally:
-            # 다음 동기화 예약
-            self._sync_timer = threading.Timer(1.0, self._sync_data)
-            self._sync_timer.daemon = True
-            self._sync_timer.start()
+            return {'_data': {}, '_index_maps': {}, '_cached_aggregations': {}, '_active_requests': {}}
     
     def __del__(self):
-        """소멸자"""
+        """소멸자 - 공유 메모리 정리"""
         try:
-            if hasattr(self, '_sync_timer') and self._sync_timer:
-                self._sync_timer.cancel()
-            
             # 마지막 인스턴스가 소멸될 때만 공유 메모리 해제
-            if SharedMemoryChartData._instance == self:
-                SharedMemoryChartData._instance = None
-                SharedMemoryChartData._is_initialized = False
+            if ChartData._instance == self:
+                ChartData._instance = None
                 
                 if hasattr(self, '_shm') and self._shm:
                     print(f"[{datetime.now()}] Closing shared memory in PID: {os.getpid()}")
                     self._shm.close()
         except:
             pass
-
-    # ChartData와 동일한 인터페이스 메서드들
-    def set_chart_data(self, code, data, cycle, tick=None):
-        """차트 데이터 설정"""
-        with self._lock:
-            chart_data = self._load_data()
+   
+    # 기존 ChartData 인터페이스 구현
+    def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
+        """외부에서 차트 데이터 설정"""
+        if not data:
+            return
+            
+        with self._write_lock:
+            shared_data = self._load_data_from_shm()
             
             cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
             
-            if '_data' not in chart_data:
-                chart_data['_data'] = {}
-            if '_index_maps' not in chart_data:
-                chart_data['_index_maps'] = {}
-            
-            if not data:
-                return
-                
-            if code not in chart_data['_data']:
-                chart_data['_data'][code] = {}
-                chart_data['_index_maps'][code] = {}
+            if code not in shared_data['_data']:
+                shared_data['_data'][code] = {}
+                shared_data['_index_maps'][code] = {}
             
             # 데이터 설정
-            chart_data['_data'][code][cycle_key] = data
+            shared_data['_data'][code][cycle_key] = data
             
-            # 인덱스 맵 생성
-            self._create_index_map(chart_data, code, cycle_key)
+            # 인덱스 맵 생성 (빠른 검색용)
+            self._create_index_map(shared_data, code, cycle_key)
             
             # 3분봉 데이터 초기화 (1분봉으로부터 생성)
-            if cycle == 'mi' and tick == 1 and 'mi3' not in chart_data['_data'][code]:
-                chart_data['_data'][code]['mi3'] = self._aggregate_minute_data(data, 3)
-                self._create_index_map(chart_data, code, 'mi3')
-            
+            if cycle == 'mi' and tick == 1 and 'mi3' not in shared_data['_data'][code]:
+                shared_data['_data'][code]['mi3'] = self._aggregate_minute_data(data, 3)
+                self._create_index_map(shared_data, code, 'mi3')
+                
             # 캐시 무효화
-            if '_cached_aggregations' not in chart_data:
-                chart_data['_cached_aggregations'] = {}
-            if code in chart_data['_cached_aggregations']:
-                chart_data['_cached_aggregations'][code] = {}
+            if code in shared_data.get('_cached_aggregations', {}):
+                shared_data['_cached_aggregations'][code] = {}
             
-            # 변경 사항 표시
-            self._metadata['is_dirty'] = True
-            self._cached_data = chart_data
-
-            self._save_data_to_shm(chart_data)
-    
-    def _create_index_map(self, chart_data, code, cycle_key):
+            # 즉시 저장
+            self._save_data_to_shm(shared_data)
+   
+    def _create_index_map(self, shared_data, code: str, cycle_key: str):
         """시간 -> 인덱스 매핑 생성 (빠른 검색용)"""
-        if code not in chart_data['_index_maps']:
-            chart_data['_index_maps'][code] = {}
+        if code not in shared_data['_index_maps']:
+            shared_data['_index_maps'][code] = {}
                 
         index_map = {}
-        data = chart_data['_data'][code][cycle_key]
+        data = shared_data['_data'][code][cycle_key]
         
         time_key = '체결시간' if cycle_key.startswith('mi') else '일자'
         
@@ -276,31 +232,31 @@ class SharedMemoryChartData:
             if time_key in candle:
                 index_map[candle[time_key]] = i
                 
-        chart_data['_index_maps'][code][cycle_key] = index_map
-    
-    def update_chart(self, code, price, volume, amount, datetime_str):
+        shared_data['_index_maps'][code][cycle_key] = index_map
+   
+    def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
         """실시간 가격 정보로 차트 데이터 업데이트"""
-        with self._lock:
-            chart_data = self._load_data()
+        with self._write_lock:
+            shared_data = self._load_data_from_shm()
             
             # 등록되지 않은 코드는 무시
-            if code not in chart_data['_data'] or 'mi1' not in chart_data['_data'][code]:
+            if code not in shared_data['_data'] or 'mi1' not in shared_data['_data'][code]:
                 return
-            
+                
             # 기준 시간 계산 (분 단위로)
             base_time = datetime_str[:12] + '00'  # 분 단위로 맞춤
             
-            minute_data = chart_data['_data'][code]['mi1']
+            minute_data = shared_data['_data'][code]['mi1']
             
             # 데이터가 없는 경우
             if not minute_data:
                 new_candle = self._create_candle(code, base_time, price, price, price, price, volume, amount)
                 minute_data.insert(0, new_candle)
-                if code in chart_data['_index_maps'] and 'mi1' in chart_data['_index_maps'][code]:
-                    chart_data['_index_maps'][code]['mi1'][base_time] = 0
+                if code in shared_data['_index_maps'] and 'mi1' in shared_data['_index_maps'][code]:
+                    shared_data['_index_maps'][code]['mi1'][base_time] = 0
                 
-                self._metadata['is_dirty'] = True
-                self._cached_data = chart_data
+                # 즉시 저장
+                self._save_data_to_shm(shared_data)
                 return
             
             # 최신 봉 시간 확인
@@ -329,31 +285,45 @@ class SharedMemoryChartData:
                         missing_candle = self._create_candle(
                             code, missing_time, last_price, last_price, last_price, last_price, 0, 0, True)
                         minute_data.insert(0, missing_candle)
-                        self._update_index_map(chart_data, code, 'mi1', missing_time)
-                    
+                        self._update_index_map(shared_data, code, 'mi1', missing_time)
+                
                 # 현재 시간대의 새 봉 추가
                 new_candle = self._create_candle(code, base_time, price, price, price, price, volume, amount)
                 minute_data.insert(0, new_candle)
-                self._update_index_map(chart_data, code, 'mi1', base_time)
+                self._update_index_map(shared_data, code, 'mi1', base_time)
             
             # 3분봉 업데이트
-            self._update_cyclic_chart(chart_data, code, price, volume, amount, datetime_str, 3)
+            self._update_cyclic_chart(shared_data, code, price, volume, amount, datetime_str, 3)
             
             # 일봉 업데이트 (있는 경우에만)
-            if 'dy' in chart_data['_data'][code]:
-                self._update_day_chart(chart_data, code, price, volume, amount, datetime_str)
+            if 'dy' in shared_data['_data'][code]:
+                self._update_day_chart(shared_data, code, price, volume, amount, datetime_str)
             
             # 캐시 무효화
-            if code in chart_data.get('_cached_aggregations', {}):
-                chart_data['_cached_aggregations'][code] = {}
+            if code in shared_data.get('_cached_aggregations', {}):
+                shared_data['_cached_aggregations'][code] = {}
             
-            # 변경 사항 표시
-            self._metadata['is_dirty'] = True
-            self._cached_data = chart_data
+            # 즉시 저장
+            self._save_data_to_shm(shared_data)
 
-            self._save_data_to_shm(chart_data)
-    
-    # 원본 ChartData의 나머지 헬퍼 메소드들
+
+            # 시간 체크 - DB 업데이트 *****************************************************************************
+            current_time = time.time()
+            if not hasattr(self, '_last_bulk_update') or current_time - getattr(self, '_last_bulk_update', 0) >= 10:
+                # 모든 코드의 최신 1분봉 수집
+                all_data = []
+                for code in shared_data['_data']:
+                    if 'mi1' in shared_data['_data'][code] and shared_data['_data'][code]['mi1']:
+                        all_data.append(shared_data['_data'][code]['mi1'][0])
+                
+                # 데이터가 있으면 전송
+                # if all_data:
+                #     gm.ipc.work('dbm', 'upsert_chart', dict_data=all_data, cycle='mi', tick=1)
+                
+                # 마지막 업데이트 시간 저장
+                self._last_bulk_update = current_time
+   
+    # 기존 ChartData의 헬퍼 메소드들 구현
     def _create_candle(self, code, time_str, close, open, high, low, volume, amount, is_missing=False):
         """캔들 객체 생성 헬퍼 함수"""
         candle = {
@@ -386,15 +356,15 @@ class SharedMemoryChartData:
         # 누락 표시 제거
         if 'is_missing' in candle:
             del candle['is_missing']
-    
-    def _update_index_map(self, chart_data, code, cycle_key, time_key):
+   
+    def _update_index_map(self, shared_data, code, cycle_key, time_key):
         """인덱스 맵 업데이트 (새 캔들 추가 시)"""
-        if code in chart_data['_index_maps'] and cycle_key in chart_data['_index_maps'][code]:
+        if code in shared_data['_index_maps'] and cycle_key in shared_data['_index_maps'][code]:
             # 기존 인덱스 시프트
-            chart_data['_index_maps'][code][cycle_key] = {k: v+1 for k, v in chart_data['_index_maps'][code][cycle_key].items()}
+            shared_data['_index_maps'][code][cycle_key] = {k: v+1 for k, v in shared_data['_index_maps'][code][cycle_key].items()}
             # 새 캔들 인덱스 추가
-            chart_data['_index_maps'][code][cycle_key][time_key] = 0
-    
+            shared_data['_index_maps'][code][cycle_key][time_key] = 0
+
     def _calculate_time_diff(self, time1, time2, tick=1):
         """두 시간 사이의 차이 계산 (tick 단위)"""
         # 날짜 부분이 다르면 큰 값 반환
@@ -411,7 +381,7 @@ class SharedMemoryChartData:
         
         # 차이 계산
         return period2 - period1 if period2 > period1 else 1000
-    
+   
     def _generate_missing_times(self, start_time, end_time, tick=1):
         """누락된 시간대 목록 생성"""
         result = []
@@ -437,8 +407,8 @@ class SharedMemoryChartData:
             result.append(time_str)
         
         return result
-    
-    def _update_cyclic_chart(self, chart_data, code, price, volume, amount, datetime_str, tick):
+   
+    def _update_cyclic_chart(self, shared_data, code, price, volume, amount, datetime_str, tick):
         """주기적 차트 업데이트 (3분봉 등)"""
         cycle_key = f'mi{tick}'
         
@@ -456,17 +426,17 @@ class SharedMemoryChartData:
         tick_time = f"{datetime_str[:8]}{tick_start//60:02d}{tick_start%60:02d}00"
         
         # 데이터 없으면 초기화
-        if cycle_key not in chart_data['_data'][code]:
-            minute_data = chart_data['_data'][code].get('mi1', [])
+        if cycle_key not in shared_data['_data'][code]:
+            minute_data = shared_data['_data'][code].get('mi1', [])
             if minute_data:
-                chart_data['_data'][code][cycle_key] = self._aggregate_minute_data(minute_data, tick)
-                self._create_index_map(chart_data, code, cycle_key)
+                shared_data['_data'][code][cycle_key] = self._aggregate_minute_data(minute_data, tick)
+                self._create_index_map(shared_data, code, cycle_key)
             else:
-                chart_data['_data'][code][cycle_key] = []
+                shared_data['_data'][code][cycle_key] = []
             return
         
-        # 주기 데이터 및 인덱스 맵 참조
-        cyclic_data = chart_data['_data'][code][cycle_key]
+        # 주기 데이터 참조
+        cyclic_data = shared_data['_data'][code][cycle_key]
         
         # 주기 데이터가 비어있으면 새로 생성
         if not cyclic_data:
@@ -474,9 +444,9 @@ class SharedMemoryChartData:
             cyclic_data.append(new_candle)
             
             # 인덱스 맵 초기화
-            if cycle_key not in chart_data['_index_maps'][code]:
-                chart_data['_index_maps'][code][cycle_key] = {}
-            chart_data['_index_maps'][code][cycle_key][tick_time] = 0
+            if cycle_key not in shared_data['_index_maps'][code]:
+                shared_data['_index_maps'][code][cycle_key] = {}
+            shared_data['_index_maps'][code][cycle_key][tick_time] = 0
             return
         
         # 현재 주기 시간 확인
@@ -504,24 +474,24 @@ class SharedMemoryChartData:
                 missing_candle = self._create_candle(
                 code, missing_time, last_price, last_price, last_price, last_price, 0, 0, True)
                 cyclic_data.insert(0, missing_candle)
-                self._update_index_map(chart_data, code, cycle_key, missing_time)
+                self._update_index_map(shared_data, code, cycle_key, missing_time)
         
         # 현재 주기 캔들 추가
         new_candle = self._create_candle(code, tick_time, price, price, price, price, volume, amount)
         cyclic_data.insert(0, new_candle)
-        self._update_index_map(chart_data, code, cycle_key, tick_time)
+        self._update_index_map(shared_data, code, cycle_key, tick_time)
     
-    def _update_day_chart(self, chart_data, code, price, volume, amount, datetime_str):
+    def _update_day_chart(self, shared_data, code, price, volume, amount, datetime_str):
         """일봉 데이터 업데이트 (당일)"""
-        day_data = chart_data['_data'][code].get('dy', [])
+        day_data = shared_data['_data'][code].get('dy', [])
         if not day_data:
             return
             
         today = datetime_str[:8]  # YYYYMMDD
         
         # 인덱스 맵 사용하여 오늘 데이터 빠르게 찾기
-        if code in chart_data['_index_maps'] and 'dy' in chart_data['_index_maps'][code] and today in chart_data['_index_maps'][code]['dy']:
-            idx = chart_data['_index_maps'][code]['dy'][today]
+        if code in shared_data['_index_maps'] and 'dy' in shared_data['_index_maps'][code] and today in shared_data['_index_maps'][code]['dy']:
+            idx = shared_data['_index_maps'][code]['dy'][today]
             if idx < len(day_data):
                 current = day_data[idx]
                 self._update_candle(current, price, None, volume, amount)
@@ -544,16 +514,16 @@ class SharedMemoryChartData:
             day_data.insert(0, new_day)
             
             # 인덱스 맵 업데이트
-            if code not in chart_data['_index_maps']:
-                chart_data['_index_maps'][code] = {}
-            if 'dy' not in chart_data['_index_maps'][code]:
-                chart_data['_index_maps'][code]['dy'] = {}
+            if code not in shared_data['_index_maps']:
+                shared_data['_index_maps'][code] = {}
+            if 'dy' not in shared_data['_index_maps'][code]:
+                shared_data['_index_maps'][code]['dy'] = {}
             
             # 기존 인덱스 시프트
-            chart_data['_index_maps'][code]['dy'] = {k: v+1 for k, v in chart_data['_index_maps'][code]['dy'].items()}
+            shared_data['_index_maps'][code]['dy'] = {k: v+1 for k, v in shared_data['_index_maps'][code]['dy'].items()}
             # 새 데이터 인덱스 추가
-            chart_data['_index_maps'][code]['dy'][today] = 0
-    
+            shared_data['_index_maps'][code]['dy'][today] = 0
+
     def _aggregate_minute_data(self, minute_data, tick):
         """1분봉 데이터를 특정 tick으로 집계"""
         if not minute_data:
@@ -610,464 +580,65 @@ class SharedMemoryChartData:
         result = list(grouped_data.values())
         result.sort(key=lambda x: x['체결시간'], reverse=True)
         return result
-    
-    def get_chart_data(self, code, cycle, tick=None):
+   
+    def get_chart_data(self, code: str, cycle: str, tick: int = None) -> list:
         """특정 종목, 주기의 차트 데이터 반환"""
+        # 코드별 읽기 락 생성 (없으면)
         if code not in self._read_locks:
-            with self._write_locks:
+            with self._write_lock:
                 if code not in self._read_locks:
-                    self._read_locks[code] = threading.RLock()
-
+                 self._read_locks[code] = threading.RLock()
+        
+        # 읽기 락 사용
         with self._read_locks[code]:
-            chart_data = self._load_data()
+            shared_data = self._load_data_from_shm()
             
             # 등록되지 않은 코드면 빈 리스트 반환
-            if code not in chart_data.get('_data', {}):
+            if code not in shared_data.get('_data', {}):
                 return []
             
             cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
             
+            # 1분봉, 3분봉, 일봉은 있으면 바로 반환
+            if cycle_key in ['mi1', 'mi3', 'dy'] and cycle_key in shared_data['_data'][code]:
+                return copy.deepcopy(shared_data['_data'][code][cycle_key])
+            
+            # 다른 분봉은 1분봉에서 생성
+            if cycle == 'mi' and 'mi1' in shared_data['_data'][code]:
+                # 캐시 확인
+                if '_cached_aggregations' in shared_data and code in shared_data['_cached_aggregations'] and cycle_key in shared_data['_cached_aggregations'][code]:
+                    return copy.deepcopy(shared_data['_cached_aggregations'][code][cycle_key])
+                
+                # 캐시 없으면 생성
+                aggregated_data = self._aggregate_minute_data(shared_data['_data'][code]['mi1'], tick)
+                
+                # 캐시 저장을 위해 공유 데이터 업데이트
+                with self._write_lock:
+                    shared_data_updated = self._load_data_from_shm()
+                    
+                    # 캐시 구조 초기화
+                    if '_cached_aggregations' not in shared_data_updated:
+                        shared_data_updated['_cached_aggregations'] = {}
+                    if code not in shared_data_updated['_cached_aggregations']:
+                        shared_data_updated['_cached_aggregations'][code] = {}
+                    
+                    # 캐시 저장
+                    shared_data_updated['_cached_aggregations'][code][cycle_key] = aggregated_data
+                    
+                    # 변경사항 즉시 저장
+                    self._save_data_to_shm(shared_data_updated)
+                
+                return copy.deepcopy(aggregated_data)
+            
+            # 주봉, 월봉은 없으면 서버에서 가져오기
+            if cycle in ['wk', 'mo'] and cycle not in shared_data['_data'].get(code, {}):
+                data = self._get_chart_data(code, cycle)
+                if data:
+                    self.set_chart_data(code, data, cycle)
+                    return copy.deepcopy(data)
+            
             # 이미 데이터가 있으면 반환
-            return chart_data['_data'].get(code, {}).get(cycle_key, [])
-   
-class OriginalChartData:
-    """차트 데이터를 관리하는 최적화된 싱글톤 클래스"""
-    _instance = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(ChartData, cls).__new__(cls)
-            cls._instance._data = {}  # {code: {cycle: data}}
-            cls._instance._index_maps = {}  # {code: {cycle: {time_key: index}}} - 빠른 시간 검색용
-            cls._instance._cached_aggregations = {}  # {code: {cycle_tick: (timestamp, data)}} - 집계 캐시
-            cls._instance._active_requests = {}  # 활성 요청 추적
-            cls._instance._cache_timeout = 300  # 5분 캐시 타임아웃 (초)
-        return cls._instance
-    
-    def __init__(self):
-        if hasattr(self, "_initialized"):
-            return
-        self._initialized = True
-    
-    def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
-        """외부에서 차트 데이터 설정"""
-        if not data:
-            return
-            
-        cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
-        
-        if code not in self._data:
-            self._data[code] = {}
-            self._index_maps[code] = {}
-        
-        # 데이터 설정
-        self._data[code][cycle_key] = data
-        
-        # 인덱스 맵 생성 (빠른 검색용)
-        self._create_index_map(code, cycle_key)
-        
-        # 3분봉 데이터 초기화 (1분봉으로부터 생성)
-        if cycle == 'mi' and tick == 1 and 'mi3' not in self._data[code]:
-            self._data[code]['mi3'] = self._aggregate_minute_data(data, 3)
-            self._create_index_map(code, 'mi3')
-            
-        # 캐시 무효화
-        self._invalidate_aggregation_cache(code)
-    
-    def _create_index_map(self, code: str, cycle_key: str):
-        """시간 -> 인덱스 매핑 생성 (빠른 검색용)"""
-        if code not in self._index_maps:
-            self._index_maps[code] = {}
-            
-        index_map = {}
-        data = self._data[code][cycle_key]
-        
-        time_key = '체결시간' if cycle_key.startswith('mi') else '일자'
-        
-        for i, candle in enumerate(data):
-            if time_key in candle:
-                index_map[candle[time_key]] = i
-                
-        self._index_maps[code][cycle_key] = index_map
-    
-    def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """실시간 가격 정보로 차트 데이터 업데이트 (최적화 버전)"""
-        # 등록되지 않은 코드는 무시
-        if code not in self._data or 'mi1' not in self._data[code]:
-            return
-            
-        # 기준 시간 계산 (분 단위로)
-        base_time = datetime_str[:12] + '00'  # 분 단위로 맞춤
-        
-        minute_data = self._data[code]['mi1']
-        
-        # 데이터가 없는 경우
-        if not minute_data:
-            new_candle = self._create_candle(code, base_time, price, price, price, price, volume, amount)
-            minute_data.insert(0, new_candle)
-            if code in self._index_maps and 'mi1' in self._index_maps[code]:
-                self._index_maps[code]['mi1'][base_time] = 0
-            return
-        
-        # 최신 봉 시간 확인
-        latest_time = minute_data[0]['체결시간']
-        
-        # 같은 봉 내의 업데이트인 경우
-        if latest_time == base_time:
-            # 기존 봉 업데이트
-            self._update_candle(minute_data[0], price, price, volume, amount)
-        else:
-            # 새로운 봉 또는 누락된 봉 처리
-            # 시간대 차이 확인
-            time_diff = self._calculate_time_diff(latest_time, base_time)
-            
-            # 누락된 봉이 있는 경우
-            if time_diff > 1:
-                # 직전 봉의 종가
-                last_price = minute_data[0]['현재가']
-                
-                # 누락된 시간대 목록 생성
-                missing_times = self._generate_missing_times(latest_time, base_time)
-                
-                # 누락된 봉 생성
-                for missing_time in missing_times:
-                    # 누락 봉은 직전 봉의 종가로 OHLC 모두 동일하게 설정
-                    missing_candle = self._create_candle(
-                        code, missing_time, last_price, last_price, last_price, last_price, 0, 0, True)
-                    minute_data.insert(0, missing_candle)
-                    self._update_index_map(code, 'mi1', missing_time)
-            
-            # 현재 시간대의 새 봉 추가
-            new_candle = self._create_candle(code, base_time, price, price, price, price, volume, amount)
-            minute_data.insert(0, new_candle)
-            self._update_index_map(code, 'mi1', base_time)
-        
-        # 3분봉 업데이트
-        self._update_cyclic_chart(code, price, volume, amount, datetime_str, 3)
-        
-        # 일봉 업데이트 (있는 경우에만)
-        if 'dy' in self._data[code]:
-            self._update_day_chart(code, price, volume, amount, datetime_str)
-        
-        # 캐시 무효화
-        self._invalidate_aggregation_cache(code)
-
-        # 시간 체크
-        current_time = time.time()
-        if not hasattr(self, '_last_bulk_update') or current_time - getattr(self, '_last_bulk_update', 0) >= 10:
-            # 모든 코드의 최신 1분봉 수집
-            all_data = []
-            for code in self._data:
-                if 'mi1' in self._data[code] and self._data[code]['mi1']:
-                    all_data.append(self._data[code]['mi1'][0])
-            
-            # 데이터가 있으면 전송
-            if all_data:
-                la.work('admin', 'dbm_upsert_chart', dict_data=all_data, cycle='mi', tick=1)
-            
-            # 마지막 업데이트 시간 저장
-            self._last_bulk_update = current_time        
-    
-    def _create_candle(self, code, time_str, close, open, high, low, volume, amount, is_missing=False):
-        """캔들 객체 생성 헬퍼 함수"""
-        candle = {
-            '종목코드': code,
-            '체결시간': time_str,
-            '시가': open,
-            '고가': high,
-            '저가': low,
-            '현재가': close,
-            '거래량': volume,
-            '거래대금': amount
-        }
-        if is_missing:
-            candle['is_missing'] = True
-        return candle
-    
-    def _update_candle(self, candle, price, open_price=None, volume=None, amount=None):
-        """캔들 업데이트 헬퍼 함수"""
-        candle['현재가'] = price
-        candle['고가'] = max(candle['고가'], price)
-        candle['저가'] = min(candle['저가'], price)
-        
-        if open_price is not None:
-            candle['시가'] = open_price
-        if volume is not None:
-            candle['거래량'] = volume
-        if amount is not None:
-            candle['거래대금'] = amount
-        
-        # 누락 표시 제거
-        if 'is_missing' in candle:
-            del candle['is_missing']
-    
-    def _update_index_map(self, code, cycle_key, time_key):
-        """인덱스 맵 업데이트 (새 캔들 추가 시)"""
-        if code in self._index_maps and cycle_key in self._index_maps[code]:
-            # 기존 인덱스 시프트
-            self._index_maps[code][cycle_key] = {k: v+1 for k, v in self._index_maps[code][cycle_key].items()}
-            # 새 캔들 인덱스 추가
-            self._index_maps[code][cycle_key][time_key] = 0
-    
-    def _calculate_time_diff(self, time1, time2, tick=1):
-        """두 시간 사이의 차이 계산 (tick 단위)"""
-        # 날짜 부분이 다르면 큰 값 반환
-        if time1[:8] != time2[:8]:
-            return 1000  # 다른 날짜는 큰 차이로 처리
-        
-        # 시간을 분으로 변환
-        minutes1 = int(time1[8:10]) * 60 + int(time1[10:12])
-        minutes2 = int(time2[8:10]) * 60 + int(time2[10:12])
-        
-        # tick 단위로 변환
-        period1 = minutes1 // tick
-        period2 = minutes2 // tick
-        
-        # 차이 계산
-        return period2 - period1 if period2 > period1 else 1000
-    
-    def _generate_missing_times(self, start_time, end_time, tick=1):
-        """누락된 시간대 목록 생성"""
-        result = []
-        
-        # 날짜 부분이 다르면 빈 목록 반환
-        if start_time[:8] != end_time[:8]:
-            return result
-        
-        # 시작/종료 시간을 분으로 변환
-        start_minutes = int(start_time[8:10]) * 60 + int(start_time[10:12])
-        end_minutes = int(end_time[8:10]) * 60 + int(end_time[10:12])
-        
-        # tick 단위로 변환
-        start_period = (start_minutes // tick)
-        end_period = (end_minutes // tick)
-        
-        # 사이에 있는 모든 시간대 생성
-        for period in range(start_period + 1, end_period):
-            minutes = period * tick
-            hour = minutes // 60
-            minute = minutes % 60
-            time_str = f"{start_time[:8]}{hour:02d}{minute:02d}00"
-            result.append(time_str)
-        
-        return result
-    
-    def _update_cyclic_chart(self, code, price, volume, amount, datetime_str, tick):
-        """주기적 차트 업데이트 (3분봉 등)"""
-        cycle_key = f'mi{tick}'
-        
-        # 입력 데이터 형식 검증
-        if len(datetime_str) < 12:
-            return
-        
-        # 시간 계산
-        hour = int(datetime_str[8:10])
-        minute = int(datetime_str[10:12])
-        total_minutes = hour * 60 + minute
-        
-        # tick 주기 구간 계산
-        tick_start = (total_minutes // tick) * tick
-        tick_time = f"{datetime_str[:8]}{tick_start//60:02d}{tick_start%60:02d}00"
-        
-        # 데이터 없으면 초기화
-        if cycle_key not in self._data[code]:
-            minute_data = self._data[code].get('mi1', [])
-            if minute_data:
-                self._data[code][cycle_key] = self._aggregate_minute_data(minute_data, tick)
-                self._create_index_map(code, cycle_key)
-            else:
-                self._data[code][cycle_key] = []
-            return
-        
-        # 주기 데이터 및 인덱스 맵 참조
-        cyclic_data = self._data[code][cycle_key]
-        index_map = self._index_maps[code].get(cycle_key, {})
-        
-        # 주기 데이터가 비어있으면 새로 생성
-        if not cyclic_data:
-            new_candle = self._create_candle(code, tick_time, price, price, price, price, volume, amount)
-            cyclic_data.append(new_candle)
-            
-            # 인덱스 맵 초기화
-            if cycle_key not in self._index_maps[code]:
-                self._index_maps[code][cycle_key] = {}
-            self._index_maps[code][cycle_key][tick_time] = 0
-            return
-        
-        # 현재 주기 시간 확인
-        latest_time = cyclic_data[0]['체결시간']
-        
-        # 같은 주기 내의 업데이트인 경우
-        if latest_time == tick_time:
-            # 기존 주기 캔들 업데이트
-            self._update_candle(cyclic_data[0], price, None, volume, amount)
-            return
-        
-        # 시간 차이 확인
-        time_diff = self._calculate_time_diff(latest_time, tick_time, tick)
-        
-        # 누락된 주기 캔들이 있는 경우
-        if time_diff > 1:
-            # 직전 주기 캔들의 종가
-            last_price = cyclic_data[0]['현재가']
-            
-            # 누락된 주기 시간대 목록 생성
-            missing_times = self._generate_missing_times(latest_time, tick_time, tick)
-            
-            # 누락된 주기 캔들 생성
-            for missing_time in missing_times:
-                missing_candle = self._create_candle(
-                    code, missing_time, last_price, last_price, last_price, last_price, 0, 0, True)
-                cyclic_data.insert(0, missing_candle)
-                self._update_index_map(code, cycle_key, missing_time)
-        
-        # 현재 주기 캔들 추가
-        new_candle = self._create_candle(code, tick_time, price, price, price, price, volume, amount)
-        cyclic_data.insert(0, new_candle)
-        self._update_index_map(code, cycle_key, tick_time)
-    
-    def _update_day_chart(self, code, price, volume, amount, datetime_str):
-        """일봉 데이터 업데이트 (당일) - 최적화 버전"""
-        day_data = self._data[code].get('dy', [])
-        if not day_data:
-            return
-            
-        today = datetime_str[:8]  # YYYYMMDD
-        
-        # 인덱스 맵 사용하여 오늘 데이터 빠르게 찾기
-        if code in self._index_maps and 'dy' in self._index_maps[code] and today in self._index_maps[code]['dy']:
-            idx = self._index_maps[code]['dy'][today]
-            if idx < len(day_data):
-                current = day_data[idx]
-                self._update_candle(current, price, None, volume, amount)
-                return
-        
-        # 당일 데이터가 없는 경우
-        # 전일 봉 찾기
-        if day_data:
-            last_price = day_data[0]['현재가']  # 전일 종가
-            
-            # 새 일봉 추가
-            new_day = {
-                '종목코드': code,
-                '일자': today,
-                '시가': price,  # 첫 체결가가 시가가 됨
-                '고가': price,
-                '저가': price,
-                '현재가': price,
-                '거래량': volume,
-                '거래대금': amount
-            }
-            day_data.insert(0, new_day)
-            
-            # 인덱스 맵 업데이트
-            if code not in self._index_maps:
-                self._index_maps[code] = {}
-            if 'dy' not in self._index_maps[code]:
-                self._index_maps[code]['dy'] = {}
-            
-            # 기존 인덱스 시프트
-            self._index_maps[code]['dy'] = {k: v+1 for k, v in self._index_maps[code]['dy'].items()}
-            # 새 데이터 인덱스 추가
-            self._index_maps[code]['dy'][today] = 0
-    
-    def _invalidate_aggregation_cache(self, code: str):
-        """코드 관련 집계 캐시 무효화"""
-        if code in self._cached_aggregations:
-            self._cached_aggregations[code] = {}
-    
-    def get_chart_data(self, code: str, cycle: str, tick: int = None) -> list:
-        """특정 종목, 주기의 차트 데이터 반환 (캐시 활용)"""
-        # 등록되지 않은 코드면 빈 리스트 반환
-        if code not in self._data:
-            return []
-        
-        cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
-        
-        # 1분봉, 3분봉, 일봉은 있으면 바로 반환
-        if cycle_key in ['mi1', 'mi3', 'dy'] and cycle_key in self._data[code]:
-            return self._data[code][cycle_key]
-        
-        # 다른 분봉은 캐시 확인 후 없으면 1분봉에서 생성
-        if cycle == 'mi' and 'mi1' in self._data[code]:
-            # 캐시 확인
-            if code in self._cached_aggregations and cycle_key in self._cached_aggregations[code]:
-                cache_time, cached_data = self._cached_aggregations[code][cycle_key]
-                # 캐시가 유효하면 사용
-                if time.time() - cache_time < self._cache_timeout:
-                    return cached_data
-            
-            # 캐시 없으면 생성하고 캐싱
-            aggregated_data = self._aggregate_minute_data(self._data[code]['mi1'], tick)
-            if code not in self._cached_aggregations:
-                self._cached_aggregations[code] = {}
-            self._cached_aggregations[code][cycle_key] = (time.time(), aggregated_data)
-            return aggregated_data
-        
-        # 주봉, 월봉은 없으면 서버에서 가져오기
-        if cycle in ['wk', 'mo'] and cycle not in self._data[code]:
-            data = self._get_chart_data(code, cycle)
-            if data:
-                self.set_chart_data(code, data, cycle)
-                return data
-        
-        # 이미 데이터가 있으면 반환
-        return self._data.get(code, {}).get(cycle_key, [])
-    
-    def _aggregate_minute_data(self, minute_data: list, tick: int) -> list:
-        """1분봉 데이터를 특정 tick으로 집계 (최적화 버전)"""
-        if not minute_data:
-            return []
-        
-        # 그룹별 데이터 저장용 해시맵
-        grouped_data = {}
-        
-        # 분 계산용 룩업 테이블 (캐싱)
-        minute_map = {}
-        
-        for candle in minute_data:
-            dt_str = candle['체결시간']
-            if len(dt_str) < 12:
-                continue
-            
-            # 시간 계산 최적화
-            if dt_str in minute_map:
-                group_key = minute_map[dt_str]
-            else:
-                # 분 단위로 계산
-                hour = int(dt_str[8:10])
-                minute = int(dt_str[10:12])
-                total_minutes = hour * 60 + minute
-                # tick 단위로 그룹화
-                tick_start = (total_minutes // tick) * tick
-                group_hour = tick_start // 60
-                group_minute = tick_start % 60
-                group_key = f"{dt_str[:8]}{group_hour:02d}{group_minute:02d}00"
-                minute_map[dt_str] = group_key
-            
-            if group_key not in grouped_data:
-                # 새 그룹 생성
-                grouped_data[group_key] = {
-                    '종목코드': candle['종목코드'],
-                    '체결시간': group_key,
-                    '시가': candle['시가'],
-                    '고가': candle['고가'],
-                    '저가': candle['저가'],
-                    '현재가': candle['현재가'],
-                    '거래량': candle['거래량'],
-                    '거래대금': candle.get('거래대금', 0)
-                }
-            else:
-                # 기존 그룹 업데이트
-                group = grouped_data[group_key]
-                group['현재가'] = candle['현재가']  # 마지막 값이 종가가 됨
-                group['고가'] = max(group['고가'], candle['고가'])
-                group['저가'] = min(group['저가'], candle['저가'])
-        
-        # 시간 기준 정렬하여 결과 반환 (최신이 먼저)
-        result = list(grouped_data.values())
-        result.sort(key=lambda x: x['체결시간'], reverse=True)
-        return result
+            return copy.deepcopy(shared_data['_data'].get(code, {}).get(cycle_key, []))
     
     def _get_chart_data(self, code, cycle, tick=None):
         """서버에서 차트 데이터 가져오기 (주봉과 월봉만 요청 할 것)"""
@@ -1076,98 +647,104 @@ class OriginalChartData:
             request_key = f"{code}_{cycle}_{tick}"
             current_time = time.time()
             
-            if request_key in self._active_requests:
-                last_request_time = self._active_requests[request_key]
+            shared_data = self._load_data_from_shm()
+            
+            if '_active_requests' not in shared_data:
+                shared_data['_active_requests'] = {}
+                
+            if request_key in shared_data['_active_requests']:
+                last_request_time = shared_data['_active_requests'][request_key]
                 # 5초 이상 경과한 요청은 타임아웃으로 간주하고 재시도
                 if current_time - last_request_time < 5.0:
-                    logging.debug(f"이미 요청 중인 데이터: {request_key}")
+                    logging.debug(f"[{datetime.now()}] 이미 요청 중인 데이터: {request_key}")
                     return []
             
             # 요청 시작 시간 기록
-            self._active_requests[request_key] = current_time
+            with self._write_lock:
+                updated_data = self._load_data_from_shm()
+                if '_active_requests' not in updated_data:
+                    updated_data['_active_requests'] = {}
+                updated_data['_active_requests'][request_key] = current_time
+                self._save_data_to_shm(updated_data)
+            
+            # 서버에 요청
+            from public import gm
             dict_list = gm.ipc.answer('dbm', 'dbm_get_chart_data', code, cycle, tick)
             
             return dict_list
         
         except Exception as e:
-            logging.error(f'차트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.debug(f'[{datetime.now()}] 차트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            import traceback
+            traceback.print_exc()
             return []
         finally:
             # 요청 완료 시 활성 요청 목록에서 제거
-            if request_key in self._active_requests:
-                del self._active_requests[request_key]
-
-class ChartData(OriginalChartData):
-   """기존 ChartData를 확장하여 공유 메모리 사용"""
-   
-   def __new__(cls):
-      if not hasattr(cls, '_instance'):
-         cls._instance = super(ChartData, cls).__new__(cls)
-         cls._instance._shared_chart_data = SharedMemoryChartData()
-         cls._instance._initialized = False
-      return cls._instance
-   
-   def __init__(self):
-      if not self._initialized:
-         self._initialized = True
-         print(f"[{datetime.now()}] Extended ChartData initialized in PID: {os.getpid()}")
-   
-   def set_chart_data(self, code, data, cycle, tick=None):
-      """외부에서 차트 데이터 설정"""
-      self._shared_chart_data.set_chart_data(code, data, cycle, tick)
-   
-   def update_chart(self, code, price, volume, amount, datetime_str):
-      """실시간 가격 정보로 차트 데이터 업데이트"""
-      self._shared_chart_data.update_chart(code, price, volume, amount, datetime_str)
-   
-   def get_chart_data(self, code, cycle, tick=None):
-      """특정 종목, 주기의 차트 데이터 반환"""
-      return self._shared_chart_data.get_chart_data(code, cycle, tick)
-   
-   @property
-   def _data(self):
-      """_data 속성에 직접 접근 시 공유 메모리에서 데이터 반환"""
-      chart_data = self._shared_chart_data._load_data()
-      return chart_data.get('_data', {})
-   
-   @_data.setter
-   def _data(self, value):
-      """_data 속성 설정 시 공유 메모리에 저장 (전체 덮어쓰기)"""
-      chart_data = self._shared_chart_data._load_data()
-      chart_data['_data'] = value
-      self._shared_chart_data._save_data_to_shm(chart_data)
-   
-   @property
-   def _index_maps(self):
-      """_index_maps 속성 접근 시 공유 메모리에서 데이터 반환"""
-      chart_data = self._shared_chart_data._load_data()
-      return chart_data.get('_index_maps', {})
-   
-   @_index_maps.setter
-   def _index_maps(self, value):
-      """_index_maps 속성 설정 시 공유 메모리에 저장"""
-      chart_data = self._shared_chart_data._load_data()
-      chart_data['_index_maps'] = value
-      self._shared_chart_data._save_data_to_shm(chart_data)
-   
-   @property
-   def _cached_aggregations(self):
-      """_cached_aggregations 속성 접근 시 공유 메모리에서 데이터 반환"""
-      chart_data = self._shared_chart_data._load_data()
-      return chart_data.get('_cached_aggregations', {})
-   
-   @_cached_aggregations.setter
-   def _cached_aggregations(self, value):
-      """_cached_aggregations 속성 설정 시 공유 메모리에 저장"""
-      chart_data = self._shared_chart_data._load_data()
-      chart_data['_cached_aggregations'] = value
-      self._shared_chart_data._save_data_to_shm(chart_data)
+            try:
+                with self._write_lock:
+                    updated_data = self._load_data_from_shm()
+                    if '_active_requests' in updated_data and request_key in updated_data['_active_requests']:
+                        del updated_data['_active_requests'][request_key]
+                        self._save_data_to_shm(updated_data)
+            except:
+                pass
+    
+    # 공유 메모리 관리용 메서드
+    def clean_up(self):
+        """공유 메모리 정리 - 프로그램 종료 시 호출"""
+        try:
+            logging.debug(f"[{datetime.now()}] Cleaning up shared memory in PID: {os.getpid()}")
+            if hasattr(self, '_shm') and self._shm:
+                self._shm.close()
+                self._shm.unlink()
+                logging.debug(f"[{datetime.now()}] Shared memory unlinked successfully")
+        except Exception as e:
+            logging.debug(f"[{datetime.now()}] Error cleaning up shared memory: {str(e)}", exc_info=True)
+            traceback.print_exc()
+    
+    # 원본 ChartData와의 호환성을 위한 속성 접근자
+    @property
+    def _data(self):
+        """_data 속성에 직접 접근 시 공유 메모리에서 데이터 반환"""
+        try:
+            shared_data = self._load_data_from_shm()
+            return shared_data.get('_data', {})
+        except:
+            return {}
+    
+    @property
+    def _index_maps(self):
+        """_index_maps 속성 접근 시 공유 메모리에서 데이터 반환"""
+        try:
+            shared_data = self._load_data_from_shm()
+            return shared_data.get('_index_maps', {})
+        except:
+            return {}
+    
+    @property
+    def _cached_aggregations(self):
+        """_cached_aggregations 속성 접근 시 공유 메모리에서 데이터 반환"""
+        try:
+            shared_data = self._load_data_from_shm()
+            return shared_data.get('_cached_aggregations', {})
+        except:
+            return {}
+    
+    @property
+    def _active_requests(self):
+        """_active_requests 속성 접근 시 공유 메모리에서 데이터 반환"""
+        try:
+            shared_data = self._load_data_from_shm()
+            return shared_data.get('_active_requests', {})
+        except:
+            return {}
+ctdt = ChartData()
 
 class ChartManager:
     def __init__(self, code, cycle='mi', tick=3):
         self.cycle = cycle  # 'mo', 'wk', 'dy', 'mi' 중 하나
         self.tick = tick    # 분봉일 경우 주기
-        self.chart_data = ChartData()  # 싱글톤 인스턴스
+        # self.chart_data = ChartData()  # 싱글톤 인스턴스
         self._data_cache = {}  # 종목별 데이터 캐시 {code: data}
         self.code = code    # 종목코드 (없으면 컨텍스트에서 가져옴)
 
@@ -1181,7 +758,7 @@ class ChartManager:
     
     def _load_chart_data(self, code: str) -> list:
         """차트 데이터 로드 및 변환"""
-        data = self.chart_data.get_chart_data(code, self.cycle, self.tick)
+        data = ctdt.get_chart_data(code, self.cycle, self.tick)
         
         # 데이터 변환 (API 형식 -> 내부 형식)
         result = []
@@ -3029,39 +2606,6 @@ def enhance_script_manager(script_manager, cache_dir=dc.fp.cache_path):
         logging.error(f"ScriptManager 확장 오류: {e}", exc_info=True)
         return False
     
-def init_chart_data_server():
-   """차트 데이터 서버 초기화 함수"""
-   #from shared_chart_data import SharedMemoryChartData
-   
-   print(f"[{datetime.now()}] Starting Chart Data Server in PID: {os.getpid()}")
-   
-   # 공유 메모리 초기화
-   server = SharedMemoryChartData()
-   
-   # 서버가 메모리에 계속 유지되도록 인스턴스 반환
-   return server
-
-def clean_chart_data_server():
-   """차트 데이터 서버 종료 및 메모리 정리 함수"""
-   #from shared_chart_data import SharedMemoryChartData
-   
-   try:
-      print(f"[{datetime.now()}] Cleaning up Chart Data Server in PID: {os.getpid()}")
-      
-      # 공유 메모리 인스턴스 얻기
-      server = SharedMemoryChartData()
-      
-      # 메모리 정리
-      if hasattr(server, '_shm') and server._shm:
-         server._shm.close()
-         server._shm.unlink()
-         print(f"[{datetime.now()}] Shared memory cleaned up successfully")
-      
-   except Exception as e:
-      print(f"[{datetime.now()}] Error cleaning up chart data server: {str(e)}")
-      import traceback
-      traceback.print_exc()
-
 # 예제 실행
 if __name__ == '__main__':
     # 예제 1: 기본 가격 비교 스크립트
@@ -3123,11 +2667,11 @@ if __name__ == '__main__':
     
     # 실행 (종목코드는 kwargs로 전달)
     result1 = sm.run_script('price_check', kwargs={'code': '005930'})
-    print("가격 체크 결과:", result1)
+    logging.debug("가격 체크 결과:", result1)
     
     result2 = sm.run_script('call_script', kwargs={'code': '005930'})
-    print("호출 스크립트 결과:", result2)
+    logging.debug("호출 스크립트 결과:", result2)
     
     result3 = sm.run_script('multi_stock')  # 스크립트 내에서 코드 지정
-    print("여러 종목 비교 결과:", result3)
+    logging.debug("여러 종목 비교 결과:", result3)
 
