@@ -1,5 +1,5 @@
 from classes import la
-from public import Work, dc, gm, hoga
+from public import Work, dc, gm, hoga, profile_operation
 from PyQt5.QtCore import QTimer
 from datetime import datetime
 import logging
@@ -82,6 +82,7 @@ class Strategy:
         except Exception as e:
             logging.error(f'딕셔너리 변환 오류: {self.전략} - {type(e).__name__} - {e}', exc_info=True)
 
+    @profile_operation
     def is_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         """매수 조건 충족 여부를 확인하는 메소드"""
         name = self.dict종목정보.get(code, next='종목명')
@@ -172,6 +173,7 @@ class Strategy:
 
         return is_ok, send_data, reason
 
+    @profile_operation
     def is_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
         """매도 조건 충족 여부를 확인하는 메소드"""
         try:
@@ -445,7 +447,9 @@ class Strategy:
             종목명 = gm.ipc.answer('api', 'GetMasterCodeName', code=code)
             if not self.dict종목정보.contains(code):
                 전일가 = gm.ipc.answer('api', 'GetMasterLastPrice', code=code)
-                self.dict종목정보.set(code, value={'종목명': 종목명, '전일가': 전일가, '현재가': 0})
+                value={'종목명': 종목명, '전일가': 전일가, '현재가': 0}
+                # 락 획득시간 최소화
+                self.dict종목정보.set(code, value=value)
 
             if gm.dict주문대기종목.contains(code):
                 logging.debug(f'주문 대기 종목: {code} {종목명}')

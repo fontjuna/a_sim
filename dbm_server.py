@@ -96,7 +96,6 @@ class DBMServer:
         for index in dc.ddb.CONC_INDEXES.values():
             db_cursor.execute(index)
 
-
         db_conn.commit()
 
         # 차트 디비
@@ -301,10 +300,9 @@ class DBMServer:
             logging.error(f"upsert_conclusion error: {e}", exc_info=True)
             return False
         
-    @profile_operation
     def dbm_get_chart_data(self, code, cycle, tick=None, times=1):
         try:
-
+            if not code: return []
             rqname = f'{dc.scr.차트종류[cycle]}차트'
             trcode = dc.scr.차트TR[cycle]
             screen = dc.scr.화면[rqname]
@@ -326,7 +324,6 @@ class DBMServer:
             next = '0'
             dict_list = []
             while True:
-                if not self.answer('admin', 'com_request_time_check', kind='request'): break
                 data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=2)
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
@@ -363,7 +360,7 @@ class DBMServer:
                 } for item in dict_list]
             if cycle in ['dy', 'mi']:
                 #self.upsert_chart(dict_list, cycle, tick)
-                self.update_todo_code(code, cycle)
+                self.done_todo_code(code, cycle)
                 #self.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
                 ctdt.set_chart_data(code, dict_list, cycle, tick)
             return dict_list
@@ -399,7 +396,7 @@ class DBMServer:
 
             time.sleep(0.1)
 
-    def update_todo_code(self, code, cycle):                    
+    def done_todo_code(self, code, cycle):                    
         with self._lock:
             self.todo_code[code][cycle] = True
             if all(self.todo_code[code].values()):
@@ -407,20 +404,22 @@ class DBMServer:
                 del self.todo_code[code]
 
     def register_code(self, code):
-        if not self.thread_run: return
-        with self._lock:
-            if code in self.done_code or code in self.todo_code:
-                return False
+        # if not self.thread_run: return
+        # with self._lock:
+        #     if code in self.done_code or code in self.todo_code:
+        #         return False
 
-            logging.debug(f'차트관리 종목코드 등록: {code}')
-            self.todo_code[code] = {'mi': False, 'dy': False}
+        #     logging.debug(f'차트관리 종목코드 등록: {code}')
+        #     self.todo_code[code] = {'mi': False, 'dy': False}
         return True
     
     def is_done(self, code):
         with self._lock:
             return code in self.done_code
 
-    @profile_operation
-    def update_script_chart(self, code, price, volumn, amount, datetime_str):
-        if code in self.todo_code or code in self.done_code:
-            ctdt.update_chart(code, price, volumn, amount, datetime_str)
+    def update_script_chart(self, job):
+        self.work('admin', 'on_fx실시간_주식체결', **job)
+        # code = job['code']
+        # dictFID = job['dictFID']
+        # if code in self.todo_code or code in self.done_code:
+        #     ctdt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])

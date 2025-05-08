@@ -30,8 +30,8 @@ class Admin:
         gm.connected = connected
 
     def set_globals(self):
-        gm.req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
-        gm.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
+        # gm.req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
+        # gm.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
         gm.ct = CounterTicker()
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
@@ -112,48 +112,52 @@ class Admin:
     # 매매 개시 -------------------------------------------------------------------------------------------
     def trade_start(self):
         logging.debug('trade_start')
+        codes = gm.잔고목록.get(column='종목코드')
+        # for code in codes:
+        #     gm.ipc.work('dbm', 'register_code', code)
         self.cdn_fx실행_전략매매()
+
         gm.config.ready = True
 
     # 공용 함수 -------------------------------------------------------------------------------------------
-    def com_request_time_check(self, kind='order', cond_text = None):
-        if kind == 'order':
-            wait_time = gm.ord.check_interval()
-        elif kind == 'request':
-            wait_time = max(gm.req.check_interval(), gm.req.check_condition_interval(cond_text) if cond_text else 0)
+    # def com_request_time_check(self, kind='order', cond_text = None):
+    #     if kind == 'order':
+    #         wait_time = gm.ord.check_interval()
+    #     elif kind == 'request':
+    #         wait_time = max(gm.req.check_interval(), gm.req.check_condition_interval(cond_text) if cond_text else 0)
 
-        #logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
-        if wait_time > 1666: # 1.666초 이내 주문 제한
-            msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
-                if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
-            gm.toast.toast(msg, duration=dc.td.TOAST_TIME)
-            logging.warning(msg)
-            return False
+    #     #logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
+    #     if wait_time > 1666: # 1.666초 이내 주문 제한
+    #         msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
+    #             if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
+    #         gm.toast.toast(msg, duration=dc.td.TOAST_TIME)
+    #         logging.warning(msg)
+    #         return False
         
-        elif wait_time > 1000:
-            msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-            gm.toast.toast(msg, duration=wait_time)
-            time.sleep((wait_time-200)/1000) 
-            wait_time = 0
-            logging.info(msg)
+    #     elif wait_time > 1000:
+    #         msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
+    #         gm.toast.toast(msg, duration=wait_time)
+    #         time.sleep((wait_time-200)/1000) 
+    #         wait_time = 0
+    #         logging.info(msg)
 
-        elif wait_time > 0:
-            msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-            gm.toast.toast(msg, duration=wait_time)
-            logging.info(msg)
+    #     elif wait_time > 0:
+    #         msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
+    #         gm.toast.toast(msg, duration=wait_time)
+    #         logging.info(msg)
 
-        time.sleep((wait_time + 200)/1000) 
+    #     time.sleep((wait_time + 200)/1000) 
 
-        if kind == 'order':
-            gm.ord.update_request_times()
-        elif kind == 'request':
-            if cond_text: gm.req.update_condition_time(cond_text)
-            else: gm.req.update_request_times()
+    #     if kind == 'order':
+    #         gm.ord.update_request_times()
+    #     elif kind == 'request':
+    #         if cond_text: gm.req.update_condition_time(cond_text)
+    #         else: gm.req.update_request_times()
 
-        return True
+    #     return True
 
     def com_SendRequest(self, rqname, trcode, input, output, next='0', screen=None, form='dict_list', timeout=5):
-        if not self.com_request_time_check(kind='request'): return [], False
+        # if not self.com_request_time_check(kind='request'): return [], False
         try:
             #logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} input={input} next={next} screen={screen} form={form} timeout={timeout}')
             args = {
@@ -173,9 +177,9 @@ class Admin:
 
     def com_SendCondition(self, screen, cond_name, cond_index, search=1): # search=0: 조건검색만, 1: 조건검색 + 실시간 조건검색
         cond_text = f'{cond_index:03d} : {cond_name.strip()}'
-        if not self.com_request_time_check(kind='request', cond_text=cond_text):
-            logging.warning(f'조건 검색 시간 초과: {cond_text}')
-            return [], False
+        # if not self.com_request_time_check(kind='request', cond_text=cond_text):
+        #     logging.warning(f'조건 검색 시간 초과: {cond_text}')
+        #     return [], False
 
         logging.debug(f'조건 검색 요청 전: {cond_text}')
         condition_list = gm.ipc.answer('api', 'SendCondition', screen, cond_name, cond_index, search)
@@ -187,7 +191,7 @@ class Admin:
         return condition_list, True
 
     def com_SendOrder(self, idx, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno, msg=None):
-        if not self.com_request_time_check(kind='order'): return -308 # 5회 제한 초과
+        #if not self.com_request_time_check(kind='order'): return -308 # 5회 제한 초과
 
         전략 = f'전략{idx:02d}'
         전략명칭 = gm.전략쓰레드[idx].전략명칭
@@ -332,10 +336,9 @@ class Admin:
     def on_fx실시간_주식체결(self, code, rtype, dictFID): # 실시간 시세 감시, 시장 체결데이타 분석 재료, 종목의 누적 거래향
         if not gm.config.ready: return
 
-        if gm.dict종목정보.contains(code):
-            현재가 = abs(int(dictFID['현재가']))
-            gm.dict종목정보.set(code, next='현재가', value=현재가)
-
+        현재가 = abs(int(dictFID['현재가']))
+        updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
+        if updated:
             data = gm.dict주문대기종목.get(code, None)
             if data:
                 gm.주문목록.set(key=f'{code}_{data["kind"]}', data={'상태': '요청'})
@@ -486,7 +489,9 @@ class Admin:
                 data = {}
                 for item in dict_list:
                     전일가 = gm.ipc.answer('api', 'GetMasterLastPrice', item['종목번호'])
-                    gm.dict종목정보.set(item['종목번호'], {'종목명': item['종목명'], '전일가': 전일가, "현재가": 0})
+                    종목정보 = {'종목명': item['종목명'], '전일가': 전일가, "현재가": 0}
+                    # 락 획득시간 최소화
+                    gm.dict종목정보.set(item['종목번호'], 종목정보)
                     전략정의 = gm.전략정의.get(key=item['전략명칭'])
                     if not 전략정의:
                         # strategy_set.json 에 전략명칭이 없으면 기본전략 적용 (인위적으로 삭제시 발생)
@@ -501,7 +506,7 @@ class Admin:
                     data[item['전략']][item['종목번호']] = item['종목명']
 
                     # la.work('cdr', 'register_code', item['종목번호'])
-                    gm.ipc.work('dbm', 'register_code', item['종목번호'])
+                    #gm.ipc.work('dbm', 'register_code', item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.ct.set_batch(data)
 
@@ -511,8 +516,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            # la.work('cdr', 'register_code', '005930') # 스크립트 테스트용 코드
-            gm.ipc.work('dbm', 'register_code', '005930')
+            #gm.ipc.work('dbm', 'register_code', '005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -604,9 +608,11 @@ class Admin:
             code = '005930'
             codes.extend([code])
             codes = ";".join(codes)
-            종목명 = la.answer('api', 'GetMasterCodeName', code=code)
-            전일가 = la.answer('api', 'GetMasterLastPrice', code=code)
-            gm.dict종목정보.set(code, value={'종목명': 종목명, '전일가': 전일가, '현재가': 0})
+            종목명 = gm.ipc.answer('api', 'GetMasterCodeName', code=code)
+            전일가 = gm.ipc.answer('api', 'GetMasterLastPrice', code=code)
+            value = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
+            # 락 획득시간 최소화
+            gm.dict종목정보.set(code, value=value)
 
             logging.debug(f'실시간 시세 요청: codes={codes}')
             gm.ipc.work('api', 'SetRealReg', dc.scr.화면['실시간감시'], codes, "10", 0)

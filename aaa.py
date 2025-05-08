@@ -145,9 +145,9 @@ class Main:
         self.init()
         self.show_splash()
         self.set_proc()
+        self.show()
         self.login()
         self.prepare()
-        self.show()
         self.run()
 
     def cleanup(self):

@@ -1,4 +1,4 @@
-from public import dc, get_path, save_json, load_json
+from public import dc, gm, get_path, save_json, load_json
 from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QColor
@@ -49,123 +49,96 @@ class ThreadSafeList:
 class ThreadSafeDict:
     def __init__(self):
         self.dict = {}
-        self.lock = threading.Lock()
+        # 읽기-쓰기 락 사용 (여러 스레드가 동시에 읽을 수 있음)
+        from PyQt5.QtCore import QReadWriteLock
+        self.lock = QReadWriteLock()
 
     def items(self):
-        with self.lock:
+        self.lock.lockForRead()
+        try:
             return list(self.dict.items())  # 복사본 반환
+        finally:
+            self.lock.unlock()
 
     def keys(self):
-        with self.lock:
+        self.lock.lockForRead()
+        try:
             return list(self.dict.keys())  # 복사본 반환
+        finally:
+            self.lock.unlock()
 
     def values(self):
-        with self.lock:
+        self.lock.lockForRead()
+        try:
             return list(self.dict.values())  # 복사본 반환
+        finally:
+            self.lock.unlock()
 
     def set(self, key, value=None, next=None):
-        with self.lock:
+        self.lock.lockForWrite()
+        try:
             if next is None:
                 self.dict[key] = copy.deepcopy(value) if value is not None else {}
             else:
                 if key not in self.dict:
                     self.dict[key] = {}
                 self.dict[key][next] = copy.deepcopy(value) if value is not None else {}
+        finally:
+            self.lock.unlock()
 
     def get(self, key, next=None):
-        with self.lock:
-            try:
-                if next is None:
-                    value = self.dict.get(key)
-                    return copy.deepcopy(value) if value is not None else None
-                else:
-                    if key not in self.dict:
-                        return None
-                    value = self.dict[key].get(next)
-                    return copy.deepcopy(value) if value is not None else None
-            except Exception as e:
-                logging.error(f"ThreadSafeDict get 오류: {e}")
-                return None
+        self.lock.lockForRead()
+        try:
+            if next is None:
+                value = self.dict.get(key)
+                return copy.deepcopy(value) if value is not None else None
+            else:
+                if key not in self.dict:
+                    return None
+                value = self.dict[key].get(next)
+                return copy.deepcopy(value) if value is not None else None
+        except Exception as e:
+            logging.error(f"ThreadSafeDict get 오류: {e}")
+            return None
+        finally:
+            self.lock.unlock()
 
     def contains(self, item):
-        with self.lock:
+        self.lock.lockForRead()
+        try:
             return item in self.dict
+        finally:
+            self.lock.unlock()
 
     def remove(self, key, next=None):
-        with self.lock:
-            try:
+        self.lock.lockForWrite()
+        try:
+            if next is None:
+                return copy.deepcopy(self.dict.pop(key, None))
+            elif key in self.dict:
+                return copy.deepcopy(self.dict[key].pop(next, None))
+            return None
+        except Exception as e:
+            logging.error(f"ThreadSafeDict remove 오류: {e}")
+            return None
+        finally:
+            self.lock.unlock()
+            
+    # 원자적 작업을 위한 새 메서드
+    def update_if_exists(self, key, next, value):
+        """존재하는 경우에만 업데이트 (contains + set을 원자적으로 수행)"""
+        self.lock.lockForWrite()
+        try:
+            if key in self.dict:
                 if next is None:
-                    return copy.deepcopy(self.dict.pop(key, None))
-                elif key in self.dict:
-                    return copy.deepcopy(self.dict[key].pop(next, None))
-                return None
-            except Exception as e:
-                logging.error(f"ThreadSafeDict remove 오류: {e}")
-                return None
-
-class TimeLimiter:
-    def __init__(self, name, second=5, minute=100, hour=1000):
-        self.name = name
-        self.SEC = second
-        self.MIN = minute
-        self.HOUR = hour
-        self.request_count = { 'second': 0, 'minute': 0, 'hour': 0 }
-        self.first_request_time = { 'second': 0, 'minute': 0, 'hour': 0 }
-        self.condition_times = {}  # 조건별 마지막 실행 시간
-        self.lock = threading.Lock()
-
-    def check_interval(self) -> int:
-        current_time = time.time() * 1000
-        with self.lock:
-            if current_time - self.first_request_time['second'] >= 1000:
-                self.request_count['second'] = 0
-                self.first_request_time['second'] = 0
-            if current_time - self.first_request_time['minute'] >= 60000:
-                self.request_count['minute'] = 0
-                self.first_request_time['minute'] = 0
-            if current_time - self.first_request_time['hour'] >= 3600000:
-                self.request_count['hour'] = 0
-                self.first_request_time['hour'] = 0
-
-            wait_time = 0
-            if self.request_count['second'] >= self.SEC:
-                wait_time = max(wait_time, 1000 - (current_time - self.first_request_time['second']))
-            elif self.request_count['minute'] >= self.MIN:
-                wait_time = max(wait_time, 60000 - (current_time - self.first_request_time['minute']))
-            elif self.request_count['hour'] >= self.HOUR:
-                wait_time = max(wait_time, 3600000 - (current_time - self.first_request_time['hour']))
-            return max(0, wait_time)
-
-    def check_condition_interval(self, condition) -> int:
-        current_time = time.time() * 1000
-        with self.lock:
-            last_time = self.condition_times.get(condition, 0)
-
-            if current_time - last_time >= 60000:  # 1분(60000ms) 체크
-                if condition in self.condition_times:
-                    del self.condition_times[condition]
-                return 0
-            wait_time = int(60000 - (current_time - last_time))
-            return max(0, wait_time)
-
-    def update_request_times(self):
-        current_time = time.time() * 1000
-        with self.lock:
-            if self.request_count['second'] == 0:
-                self.first_request_time['second'] = current_time
-            if self.request_count['minute'] == 0:
-                self.first_request_time['minute'] = current_time
-            if self.request_count['hour'] == 0:
-                self.first_request_time['hour'] = current_time
-
-            self.request_count['second'] += 1
-            self.request_count['minute'] += 1
-            self.request_count['hour'] += 1
-
-    def update_condition_time(self, condition):
-        with self.lock:
-            self.condition_times[condition] = time.time() * 1000
-        self.update_request_times()
+                    self.dict[key] = copy.deepcopy(value) if value is not None else {}
+                    return True
+                else:
+                    self.dict[key][next] = copy.deepcopy(value) if value is not None else {}
+                    return True
+            return False
+        finally:
+            self.lock.unlock()
 
 class Toast(QWidget):
     def __init__(self):
@@ -2711,4 +2684,69 @@ def admin_listener_thread(admin_instance, input_queue, result_dict, callbacks):
    
    finally:
       logging.info("Admin 리스너 쓰레드 종료")
+
+class TimeLimiter:
+    def __init__(self, name, second=5, minute=100, hour=1000):
+        self.name = name
+        self.SEC = second
+        self.MIN = minute
+        self.HOUR = hour
+        self.request_count = { 'second': 0, 'minute': 0, 'hour': 0 }
+        self.first_request_time = { 'second': 0, 'minute': 0, 'hour': 0 }
+        self.condition_times = {}  # 조건별 마지막 실행 시간
+        self.lock = threading.Lock()
+
+    def check_interval(self) -> int:
+        current_time = time.time() * 1000
+        with self.lock:
+            if current_time - self.first_request_time['second'] >= 1000:
+                self.request_count['second'] = 0
+                self.first_request_time['second'] = 0
+            if current_time - self.first_request_time['minute'] >= 60000:
+                self.request_count['minute'] = 0
+                self.first_request_time['minute'] = 0
+            if current_time - self.first_request_time['hour'] >= 3600000:
+                self.request_count['hour'] = 0
+                self.first_request_time['hour'] = 0
+
+            wait_time = 0
+            if self.request_count['second'] >= self.SEC:
+                wait_time = max(wait_time, 1000 - (current_time - self.first_request_time['second']))
+            elif self.request_count['minute'] >= self.MIN:
+                wait_time = max(wait_time, 60000 - (current_time - self.first_request_time['minute']))
+            elif self.request_count['hour'] >= self.HOUR:
+                wait_time = max(wait_time, 3600000 - (current_time - self.first_request_time['hour']))
+            return max(0, wait_time)
+
+    def check_condition_interval(self, condition) -> int:
+        current_time = time.time() * 1000
+        with self.lock:
+            last_time = self.condition_times.get(condition, 0)
+
+            if current_time - last_time >= 60000:  # 1분(60000ms) 체크
+                if condition in self.condition_times:
+                    del self.condition_times[condition]
+                return 0
+            wait_time = int(60000 - (current_time - last_time))
+            return max(0, wait_time)
+
+    def update_request_times(self):
+        current_time = time.time() * 1000
+        with self.lock:
+            if self.request_count['second'] == 0:
+                self.first_request_time['second'] = current_time
+            if self.request_count['minute'] == 0:
+                self.first_request_time['minute'] = current_time
+            if self.request_count['hour'] == 0:
+                self.first_request_time['hour'] = current_time
+
+            self.request_count['second'] += 1
+            self.request_count['minute'] += 1
+            self.request_count['hour'] += 1
+
+    def update_condition_time(self, condition):
+        with self.lock:
+            self.condition_times[condition] = time.time() * 1000
+        self.update_request_times()
+
 
