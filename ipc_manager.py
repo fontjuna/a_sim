@@ -892,141 +892,73 @@ class IPCManager:
 # 싱글톤 인스턴스 초기화 (올바른 방법으로)
 ipc = None #IPCManager.get_instance()
 
-# 유틸리티 함수
-def create_shared_resources():
-    """공유 자원 생성 (메인 프로세스에서 사용)"""
-    manager = multiprocessing.Manager()
-    shared_registry = manager.dict()
-    # 명시적인 dict() 대신 manager.dict() 사용 
-    shared_queues = manager.dict()
-    
-    return manager, shared_registry, shared_queues
-
-def wait_for_processes(shared_registry, process_names, timeout=30):
-    """
-    모든 프로세스가 초기화될 때까지 대기
-    
-    Args:
-        shared_registry: 공유 레지스트리
-        process_names: 대기할 프로세스 이름 목록
-        timeout: 최대 대기 시간(초)
-        
-    Returns:
-        bool: 모든 프로세스가 초기화되었으면 True, 타임아웃이면 False
-    """
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        all_registered = True
-        for name in process_names:
-            if name not in shared_registry:
-                all_registered = False
-                break
-        
-        if all_registered:
-            logging.debug(f"모든 프로세스 초기화 완료: {process_names}")
-            return True
-        
-        time.sleep(0.1)  # 잠시 대기 후 다시 확인
-    
-    # 타임아웃
-    missing = [name for name in process_names if name not in shared_registry]
-    logging.error(f"프로세스 초기화 타임아웃. 등록되지 않은 프로세스: {missing}")
-    return False
-
-# 테스트 코드 (ipc_manager.py 파일 하단에 추가)
 if __name__ == "__main__":
-    # Windows에서 멀티프로세싱을 위한 코드
     multiprocessing.freeze_support()
     
-    # 로깅 설정
     from public import init_logger
+    from worker import AdminTest, APITest, DBMTest
+
     init_logger()
    
-    # 공유 자원 생성 (메인 프로세스에서)
-    
-    # worker.py에서 클래스와 함수 가져오기
-    from worker import AdminTest, initialize_worker
-    
-    # 테스트 코드
     def test_cross_communication():
-        manager, shared_registry, shared_queues = create_shared_resources()
-
-        # 필요한 모든 큐를 시작 시 미리 생성 (중요)
-        for name in ["admin", "api", "dbm"]:
-            shared_queues[f"{name}_req"] = manager.Queue()
-            shared_queues[f"{name}_resp"] = manager.Queue()
-        
-        logging.debug(f"All queues created at startup: {list(shared_queues.keys())}")
-            
-        #IPCManager._manager = manager
-
-        # IPCManager 인스턴스 생성 (공유 자원 전달)
-        ipc = IPCManager.get_instance(shared_registry, shared_queues)
-        ipc._manager = manager
-        
-        # Admin 객체 생성 및 등록 (메인 스레드)
+        ipc = IPCManager()
         admin = AdminTest()
-        admin.ipc = ipc
-        ipc.register("admin", admin)
-        logging.debug(f"Shared queues after admin register: {list(shared_queues.keys())}")
+        api = APITest()
+        dbm = DBMTest()
 
-        # API 및 DBM 서버를 별도 프로세스로 시작
-        api_process = multiprocessing.Process(
-            target=initialize_worker, 
-            args=("api", "api", shared_registry, shared_queues),
-            daemon=True
-        )
-        
-        dbm_process = multiprocessing.Process(
-            target=initialize_worker,
-            args=("dbm", "dbm", shared_registry, shared_queues),
-            daemon=True
-        )
-        
+        admin.ipc = ipc
+        api.ipc = ipc
+        dbm.ipc = ipc
+
+        ipc.register("admin", admin)
+        ipc.register("api", api, 'process')
+        ipc.register("dbm", dbm, 'process')
+
         # 프로세스 시작
         admin.ipc.start("admin")
-        api_process.start()
-        dbm_process.start()
+        api.ipc.start("api")
+        dbm.ipc.start("dbm")
         
         # 잠시 대기하여 모든 프로세스가 초기화될 시간 제공
         logging.debug("메인 프로세스: 모든 프로세스 초기화 대기 중...")
-        # time.sleep(2)  # 고정 대기 시간 대신 초기화 완료 확인
+        time.sleep(2)  # 고정 대기 시간 대신 초기화 완료 확인
         
-        # 모든 프로세스가 초기화될 때까지 대기
-        if not wait_for_processes(shared_registry, ["admin", "api", "dbm"], timeout=10):
-            logging.error("일부 프로세스가 초기화되지 않았습니다. 테스트를 중단합니다.")
-            # 정리 및 종료
-            ipc.cleanup()
-            api_process.terminate()
-            dbm_process.terminate()
-            api_process.join()
-            dbm_process.join()
-            print("테스트 실패: 프로세스 초기화 타임아웃")
-            return
-            
         try:
             # 다양한 통신 경로 테스트
             print("\n=== Admin -> API -> DBM 통신 경로 테스트 ===")
-            result1 = ipc.answer("admin", "test_function", ["test_key"])
+            result1 = ipc.answer("admin", "test_function", "test_key")
             print(f"결과: {result1}")
             
             print("\n=== DBM -> Admin 통신 테스트 ===")
-            result2 = ipc.answer("dbm", "request_admin_action", ["urgent_action"])
+            result2 = ipc.answer("dbm", "request_admin_action", "urgent_action")
             print(f"결과: {result2}")
             
             print("\n=== DBM -> API 통신 테스트 ===")
-            result3 = ipc.answer("dbm", "store_data", ["from_dbm_test"])
+            result3 = ipc.answer("dbm", "store_data", "from_dbm_test")
             print(f"결과: {result3}")
             
             print("\n=== API -> Admin 통신 테스트 ===")
-            result4 = ipc.answer("api", "send_notification", ["system_event"])
+            result4 = ipc.answer("api", "send_notification", "system_event")
             print(f"결과: {result4}")
             
             # 대용량 데이터 전송 테스트
             print("\n=== 대용량 데이터 전송 테스트 ===")
             large_data = "X" * (1 * 1024 * 1024)  # 1MB 문자열
-            ipc.work("api", "send_notification", [large_data[:20] + "... (잘림)"])
+            ipc.work("api", "send_notification", large_data[:20] + "... (잘림)")
             print("대용량 데이터 전송 완료")
+            
+            # 키움증권 로그인 테스트
+            print("\n=== 키움증권 로그인 테스트 ===")
+            try:
+                result5 = ipc.answer("admin", "test_kiwoom_login")
+                print(f"결과: {result5}")
+                
+                # 키움증권 상태 확인
+                result6 = ipc.answer("api", "get_kiwoom_status")
+                print(f"키움증권 상태: {result6}")
+            except Exception as e:
+                print(f"키움증권 테스트 중 오류 발생: {str(e)}")
+                print("키움증권 API가 설치되어 있지 않거나 PyQt5가 설치되지 않았을 수 있습니다.")
             
         except Exception as e:
             logging.error(f"테스트 중 오류 발생: {e}")
@@ -1034,13 +966,6 @@ if __name__ == "__main__":
             # 정리
             logging.debug("자원 정리 중...")
             ipc.cleanup()
-            
-            # 프로세스 종료
-            logging.debug("프로세스 종료 중...")
-            api_process.terminate()
-            dbm_process.terminate()
-            api_process.join()
-            dbm_process.join()
             
             print("모든 테스트 완료!")
     

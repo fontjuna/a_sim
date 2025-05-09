@@ -11,6 +11,7 @@ import pythoncom
 import pandas as pd
 import copy
 import datetime
+import sys
 
 init_logger()
 
@@ -544,7 +545,7 @@ class OnReceiveRealDataSim3(QThread):
       self._stop_event.set()
 
 class APIServer():
-    app = QApplication([])
+    app = QApplication(sys.argv)
     def __init__(self):
         self.name = 'api'
         self.sim_no = 0
@@ -636,7 +637,7 @@ class APIServer():
         try:
             logging.debug(f'{self.name} api_init start')
             # if self.app is None:
-            #     self.app = QApplication([])
+            #     self.app = QApplication(sys.argv)
             pythoncom.CoInitialize()
             if self.sim_no == 1:  # 키움서버 없이 가상 데이터 사용
                 global ready_tickers
