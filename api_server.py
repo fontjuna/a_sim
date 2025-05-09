@@ -1,6 +1,5 @@
 from public import hoga, dc, gm, init_logger, profile_operation
 from classes import TimeLimiter
-from ipc_manager import work, answer, send_large_data
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread
@@ -386,7 +385,7 @@ class OnReceiveRealConditionSim(QThread):
       self.cond_index = cond_index
       self.is_running = True
       self.current_stocks = set()
-      self.api = api
+      self.ipc = api.ipc
       self._stop_event = threading.Event()
 
    def run(self):
@@ -406,7 +405,7 @@ class OnReceiveRealConditionSim(QThread):
             'cond_name': self.cond_name,
             'cond_index': int(self.cond_index),
          }
-         work('admin', 'on_fx실시간_조건검색', **data)
+         self.ipc.work('admin', 'on_fx실시간_조건검색', **data)
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -428,7 +427,7 @@ class OnReceiveRealDataSim1And2(QThread):
       self.daemon = True
       self.is_running = True
       self._stop_event = threading.Event()
-      self.api = api
+      self.ipc = api.ipc
 
    def run(self):
       while self.is_running:
@@ -463,7 +462,7 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            work('dbm', 'update_script_chart', job)
+            self.ipc.work('dbm', 'update_script_chart', job)
             #work('admin', 'on_fx실시간_주식체결', **job)
             #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
 
@@ -481,7 +480,7 @@ class OnReceiveRealDataSim3(QThread):
       self.daemon = True
       self.is_running = True
       self._stop_event = threading.Event()
-      self.api = api
+      self.ipc = api.ipc
 
    def run(self):
       while self.is_running:
@@ -522,7 +521,7 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               work('dbm', 'update_script_chart', job)
+               self.ipc.work('dbm', 'update_script_chart', job)
                #work('admin', 'on_fx실시간_주식체결', **job)
                #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
          
@@ -815,7 +814,7 @@ class APIServer():
                     pythoncom.PumpWaitingMessages()
         else:  # 키움서버 없이 가상 데이터 사용 (sim_no=1)
             self.connected = True
-            work('admin', 'set_connected', self.connected)
+            self.ipc.work('admin', 'set_connected', self.connected)
 
     def GetConditionLoad(self, block=True):
         if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
@@ -919,7 +918,7 @@ class APIServer():
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        work('admin', 'set_connected', self.connected)
+        self.ipc.work('admin', 'set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
@@ -944,7 +943,7 @@ class APIServer():
                 'screen': screen,
                 'rqname': rqname,
                 }
-                work('admin', 'on_fx수신_주문결과TR', **result)
+                self.ipc.work('admin', 'on_fx수신_주문결과TR', **result)
 
             except Exception as e:
                 logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -985,7 +984,7 @@ class APIServer():
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        work('admin', 'on_fx실시간_조건검색', **data)
+        self.ipc.work('admin', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
         # sim_no = 0일 때만 사용 (실제 API 서버)
@@ -1001,11 +1000,11 @@ class APIServer():
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    work('dbm', 'update_script_chart', job)
+                    self.ipc.work('dbm', 'update_script_chart', job)
                     #work('admin', 'on_fx실시간_주식체결', **job)
                     #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
                 elif rtype == '장시작시간': 
-                    work('admin', 'on_fx실시간_장운영감시', **job)
+                    self.ipc.work('admin', 'on_fx실시간_장운영감시', **job)
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
@@ -1023,8 +1022,8 @@ class APIServer():
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            if gubun == '0': work('admin', 'odr_recieve_chegyeol_data', dictFID)
-            elif gubun == '1': work('admin', 'odr_recieve_balance_data', dictFID)
+            if gubun == '0': self.ipc.work('admin', 'odr_recieve_chegyeol_data', dictFID)
+            elif gubun == '1': self.ipc.work('admin', 'odr_recieve_balance_data', dictFID)
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1039,7 +1038,7 @@ class APIServer():
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                work('admin', 'odr_recieve_balance_data', dictFID)
+                self.ipc.work('admin', 'odr_recieve_balance_data', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1077,7 +1076,7 @@ class APIServer():
 
                     portfolio.process_order(dictFID)
 
-                work('admin', 'odr_recieve_chegyeol_data', dictFID)
+                self.ipc.work('admin', 'odr_recieve_chegyeol_data', dictFID)
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------

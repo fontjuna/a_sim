@@ -1,5 +1,5 @@
 from public import dc, gm, profile_operation
-from ipc_manager import work, answer, send_large_data
+from ipc_manager import ipc
 from datetime import datetime
 from typing import Set, Optional, Any
 from multiprocessing import shared_memory

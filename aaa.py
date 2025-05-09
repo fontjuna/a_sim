@@ -1,8 +1,7 @@
 from public import init_logger, dc, gm
 from admin import Admin
 from gui import GUI
-from ipc_manager import IPCManager
-from chart import ctdt
+from ipc_manager import ipc, IPCManager
 from api_server import APIServer
 from dbm_server import DBMServer
 from classes import Toast
@@ -77,18 +76,18 @@ class Main:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
             gm.toast = Toast()
             gm.main = self
-            gm.ipc = IPCSystem()
-            #init_comm_functions(gm.ipc.work, gm.ipc.answer, gm.ipc.send_large_data)
-            gm.ipc.initialize('admin', Admin)
-            gm.ipc.initialize('api', APIServer, 'process')
-            gm.ipc.initialize('dbm', DBMServer, 'process')
-            
-            # 전략 쓰레드들 (멀티쓰레드로 실행)
-            # self.ipc_system.initialize('strategy1', Strategy1, 'thread')
             gm.admin = Admin()
+            gm.api = APIServer()
+            gm.dbm = DBMServer()
             gm.gui = GUI() if gm.config.gui_on else None
+            ipc = IPCManager.get_instance()
+            ipc.register('admin', gm.admin)
+            ipc.register('api', gm.api, 'process')
+            ipc.register('dbm', gm.dbm, 'process')
+            gm.api.ipc = ipc
+            gm.dbm.ipc = ipc
 
-            gm.ipc.work('api', 'api_init')
+            ipc.work('api', 'api_init')
 
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -96,7 +95,7 @@ class Main:
 
     def login(self):
         # 모든 설정이 완료된 후 CommConnect 호출
-        gm.ipc.work('api', 'CommConnect', block=False, sim_no=gm.config.sim_no)
+        ipc.work('api', 'CommConnect', block=False, sim_no=gm.config.sim_no)
 
     def show(self):
         if not gm.config.gui_on: return
@@ -108,12 +107,12 @@ class Main:
             logging.debug('prepare : 로그인 대기 시작')
             while True:
                 # api_connected는 여기 외에 사용 금지
-                if not gm.ipc.answer('api', 'api_connected'): time.sleep(0.5)
+                if not ipc.answer('api', 'api_connected'): time.sleep(0.5)
                 else: break
 
-            if gm.config.sim_on: gm.ipc.work('api', 'set_tickers', gm.config.sim_no)
+            if gm.config.sim_on: ipc.work('api', 'set_tickers', gm.config.sim_no)
 
-            gm.ipc.work('admin', 'init')
+            ipc.work('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
 
             if gm.config.gui_on: gm.gui.init()
@@ -128,7 +127,7 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            work('admin', 'trade_start')
+            ipc.work('admin', 'trade_start')
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
@@ -155,30 +154,11 @@ class Main:
 
     def cleanup(self):
         try:
-            la.is_shutting_down = True
-            if hasattr(gm, 'ipc') and gm.ipc:
-                gm.ipc.prepare_shutdown()
-                try:
-                    gm.ipc.queues['admin_to_api'].put({ 'command': 'prepare_shutdown' })
-                    gm.ipc.queues['admin_to_dbm'].put({ 'command': 'prepare_shutdown' })
-                    gm.ipc.queues['admin_to_api'].put({ 'command': 'stop' })
-                    gm.ipc.queues['admin_to_dbm'].put({ 'command': 'stop' })
-                except Exception as e:
-                    pass
-                finally:
-                    time.sleep(0.5)
-            
-            for t in gm.전략쓰레드:
-                la.stop_worker(t.name)
-            # la.stop_worker('api')
-            if hasattr(gm, 'ipc') and gm.ipc:
-                gm.ipc.stop_api_process()
-                gm.ipc.stop_dbm_process()
+            ipc.cleanup()
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:
             self.cleanup_flag = True
-            ctdt.clean_up()
             if hasattr(self, 'app'): self.app.quit()
             logging.info("cleanup completed")
             

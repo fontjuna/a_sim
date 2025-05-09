@@ -1,4 +1,4 @@
-from ipc_manager import work, answer
+from ipc_manager import ipc
 from public import Work, dc, gm, hoga, profile_operation
 from PyQt5.QtCore import QTimer
 from datetime import datetime

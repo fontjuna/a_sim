@@ -1,5 +1,4 @@
 from public import dc, get_path, profile_operation
-from ipc_manager import answer, work, send_large_data
 from chart import ctdt
 from datetime import datetime, timedelta
 import logging
@@ -51,13 +50,6 @@ class DBMServer:
         except Exception as e:
             logging.error(f"Error closing database connections: {e}", exc_info=True)
 
-    # def stop(self):
-    #     """컴포넌트 중지"""
-    #     print(f"{self.__class__.__name__} 중지 중...")
-    #     self.running = False
-    #     # 중지 관련 코드
-    #     return {"status": "stopped"}
-                
     def get_status(self):
         """상태 확인"""
         return {
@@ -194,11 +186,11 @@ class DBMServer:
 
     def send_result(self, result, error=None):
         order = 'dbm_query_result'
-        work = {
+        job = {
             'result': result,
             'error': error
         }
-        work('admin', order, **work)
+        self.ipc.work('admin', order, **job)
 
     def execute_query(self, sql, db='chart', params=None):
         try:
@@ -388,7 +380,7 @@ class DBMServer:
             if cycle in ['dy', 'mi']:
                 #self.upsert_chart(dict_list, cycle, tick)
                 self.done_todo_code(code, cycle)
-                #work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
+                #self.ipc.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
                 ctdt.set_chart_data(code, dict_list, cycle, tick)
             return dict_list
         
@@ -445,7 +437,7 @@ class DBMServer:
             return code in self.done_code
 
     def update_script_chart(self, job):
-        work('admin', 'on_fx실시간_주식체결', **job)
+        self.ipc.work('admin', 'on_fx실시간_주식체결', **job)
         # code = job['code']
         # dictFID = job['dictFID']
         # if code in self.todo_code or code in self.done_code:
