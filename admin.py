@@ -747,12 +747,12 @@ class Admin:
             success, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
             gm.전략쓰레드 = [None] * 6
             gm.전략쓰레드[0] = Strategy(name='전략00', ticker=gm.dict종목정보, 전략정의=gm.basic_strategy)
-            la.register('전략00', gm.전략쓰레드[0])
+            ipc.register('전략00', gm.전략쓰레드[0], 'thread')
             for i in range(1, 6):
                 전략 = f'전략{i:02d}'
                 전략정의 = gm.전략정의.get(key=gm.전략설정[i]['전략명칭'])
                 gm.전략쓰레드[i] = Strategy(name=전략, ticker=gm.dict종목정보, 전략정의=전략정의)
-                la.register(전략, gm.전략쓰레드[i])
+                ipc.register(전략, gm.전략쓰레드[i], 'thread')
                 logging.debug(f'{전략} {gm.전략쓰레드[i]}')
         except Exception as e:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -780,7 +780,7 @@ class Admin:
         try:
             for i in range(1, 6):
                 ipc.work(f'전략{i:02d}', 'cdn_fx실행_전략마무리')
-                la.stop_worker(f'전략{i:02d}')
+                ipc.stop(f'전략{i:02d}')
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()
