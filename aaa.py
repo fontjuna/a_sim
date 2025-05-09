@@ -80,15 +80,17 @@ class Main:
             gm.api = APIServer()
             gm.dbm = DBMServer()
             gm.gui = GUI() if gm.config.gui_on else None
+            global ipc
             ipc = IPCManager.get_instance()
             ipc.register('admin', gm.admin)
             ipc.register('api', gm.api, 'process')
             ipc.register('dbm', gm.dbm, 'process')
             gm.api.ipc = ipc
             gm.dbm.ipc = ipc
-
+            ipc.start('admin')
+            ipc.start('api')
+            ipc.start('dbm')
             ipc.work('api', 'api_init')
-
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)

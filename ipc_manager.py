@@ -1,4 +1,3 @@
-# ipc_manager.py
 import pickle
 import queue
 import logging
@@ -31,6 +30,7 @@ class IPCManager:
                 is_main_process = parent_process is None
                 
                 if is_main_process and cls._manager is None:
+                    logging.debug(f"Process {pid}: Creating multiprocessing.Manager")
                     cls._manager = multiprocessing.Manager()
                     
                     # 초기 공유 자원 생성
@@ -51,7 +51,6 @@ class IPCManager:
             shared_registry: 프로세스 간 공유 레지스트리
             shared_queues: 프로세스 간 공유 큐 딕셔너리
         """
-
         # 현재 프로세스 ID
         self._pid = multiprocessing.current_process().pid
         
@@ -59,12 +58,24 @@ class IPCManager:
         self._parent_process = multiprocessing.parent_process()
         self._is_main_process = self._parent_process is None
         
+        # 추가: 메인 프로세스일 경우 manager가 없으면 생성 (중복 방지를 위한 락 사용)
+        if self._is_main_process and IPCManager._manager is None:
+            with IPCManager._lock:
+                if IPCManager._manager is None:
+                    logging.debug(f"Process {self._pid}: Creating multiprocessing.Manager in __init__")
+                    IPCManager._manager = multiprocessing.Manager()
+        
         # 로컬 객체 저장소 (현재 프로세스 내 객체 참조)
         self._objects = {}  # name -> (object, type)
         
         # 공유 상태 설정
-        self._shared_registry = shared_registry
+        self._shared_registry = shared_registry if shared_registry is not None else {}
+        if self._is_main_process and IPCManager._manager is not None and not self._shared_registry:
+            self._shared_registry = IPCManager._manager.dict()
+            
         self._shared_queues = shared_queues if shared_queues is not None else {}
+        if self._is_main_process and IPCManager._manager is not None and not self._shared_queues:
+            self._shared_queues = IPCManager._manager.dict()
         
         # 로컬 통신 채널 캐시
         self._request_queues = {}   # name -> Queue
@@ -72,22 +83,67 @@ class IPCManager:
         self._events = {}           # name -> Event (스레드 간 동기화용)
         
         # 비동기 콜백 저장
-        self._callbacks = {}  # msg_id -> callback
+        self._callbacks = {}        # msg_id -> callback
+        self._callback_timeouts = {}  # msg_id -> timeout timestamp
         
         # 종료 플래그
-        self._running = {}  # name -> running flag
+        self._running = {}          # name -> running flag
         
         # 워커 스레드/프로세스
-        self._workers = {}  # name -> worker thread/process
+        self._workers = {}          # name -> worker thread/process
         
-        # 청크 수신 임시 저장소
-        self._chunk_buffers = {}  # msg_id -> {chunks, total_chunks}
+        # 청크 수신 임시 저장소 
+        self._chunk_buffers = {}    # msg_id -> {chunks, total_chunks, data}
         
         # 응답 체커 스레드
         self._response_checker_running = False
         self._response_checker_thread = None
         
+        # 디버그 정보
+        self._stats = {
+            'sent_messages': 0,
+            'received_messages': 0,
+            'errors': 0,
+            'timeouts': 0
+        }
+        
         logging.debug(f"Process {self._pid}: IPCManager initialized")
+
+    def _get_queue(self, name: str, queue_type: str):
+        """
+        요청/응답 큐 가져오기 (통합 메서드)
+        
+        Args:
+            name: 객체 이름
+            queue_type: 'req' 또는 'resp'
+        
+        Returns:
+            해당 큐 객체
+        """
+        queue_cache = self._request_queues if queue_type == 'req' else self._response_queues
+        
+        # 로컬 캐시 확인
+        if name in queue_cache and queue_cache[name] is not None:
+            return queue_cache[name]
+        
+        # 공유 큐 확인 및 캐싱
+        key = f"{name}_{queue_type}"
+        if self._shared_queues is not None and key in self._shared_queues:
+            queue_cache[name] = self._shared_queues[key]
+            logging.debug(f"Process {self._pid}: Loaded {queue_type} queue for {name} from shared queues")
+            return queue_cache[name]
+        
+        logging.error(f"Process {self._pid}: {queue_type.capitalize()} queue for {name} not found" + 
+                    f" (keys: {list(self._shared_queues.keys()) if self._shared_queues else 'None'})")
+        return None
+        
+    def _get_request_queue(self, name: str):
+        """요청 큐 가져오기"""
+        return self._get_queue(name, 'req')
+        
+    def _get_response_queue(self, name: str):
+        """응답 큐 가져오기"""
+        return self._get_queue(name, 'resp')
     
     def register(self, name: str, obj: Any, type_: Optional[str] = None) -> None:
         """
@@ -120,9 +176,14 @@ class IPCManager:
             if self._shared_queues is not None:
                 # 큐가 없으면 생성
                 if req_key not in self._shared_queues:
-                    self._shared_queues[req_key] = multiprocessing.Manager().Queue()
+                    # Manager가 없을 경우 생성 시도
+                    if IPCManager._manager is None:
+                        logging.debug(f"Process {self._pid}: Creating Manager on-demand during register")
+                        IPCManager._manager = multiprocessing.Manager()
+                    
+                    self._shared_queues[req_key] = IPCManager._manager.Queue()
                 if resp_key not in self._shared_queues:
-                    self._shared_queues[resp_key] = multiprocessing.Manager().Queue()
+                    self._shared_queues[resp_key] = IPCManager._manager.Queue()
                 
                 # 로그 출력
                 logging.debug(f"Process {self._pid}: Created shared queues for {name}")
@@ -158,10 +219,21 @@ class IPCManager:
             self._response_checker_running = True
             self._response_checker_thread = threading.Thread(
                 target=self._check_responses, 
-                daemon=True
+                daemon=True,
+                name="ResponseCheckerThread"
             )
             self._response_checker_thread.start()
             logging.debug(f"Process {self._pid}: Response checker thread started")
+    
+    def _receive_from_queue(self, queue_obj, timeout=0.01):
+        """큐에서 데이터 가져오기 (예외 처리 통합)"""
+        try:
+            if isinstance(queue_obj, queue.Queue):  # 일반 Queue
+                return queue_obj.get(block=False)
+            else:  # multiprocessing.Queue
+                return queue_obj.get(block=False)
+        except (queue.Empty, Exception):
+            raise queue.Empty()
     
     def _check_responses(self):
         """비동기 응답을 주기적으로 확인하는 스레드"""
@@ -172,11 +244,29 @@ class IPCManager:
                     time.sleep(0.1)
                     continue
                 
-                # 모든 객체 확인
-                for name in list(self._shared_registry.keys()):
+                # 콜백 타임아웃 체크
+                current_time = time.time()
+                timed_out_callbacks = []
+                for msg_id, timeout_time in list(self._callback_timeouts.items()):
+                    if current_time > timeout_time:
+                        timed_out_callbacks.append(msg_id)
+                
+                # 타임아웃된 콜백 처리
+                for msg_id in timed_out_callbacks:
+                    if msg_id in self._callbacks:
+                        callback = self._callbacks.pop(msg_id)
+                        self._callback_timeouts.pop(msg_id, None)
+                        try:
+                            callback(None, "Timeout waiting for response")
+                            self._stats['timeouts'] += 1
+                        except Exception as e:
+                            logging.error(f"Process {self._pid}: Error executing timeout callback for {msg_id}: {e}")
+                
+                # 응답 큐가 있는 객체만 처리
+                for name in list(self._response_queues.keys()):
                     try:
                         # 응답 큐 가져오기
-                        response_queue = self._get_response_queue(name)
+                        response_queue = self._response_queues.get(name)
                         if response_queue is None:
                             continue
                         
@@ -189,11 +279,18 @@ class IPCManager:
                             logging.error(f"Process {self._pid}: Error getting response: {e}")
                             continue
                             
+                        self._stats['received_messages'] += 1
                         msg_id = response.get('id', '')
+                        
+                        # 청크 응답 처리
+                        if 'chunk_info' in response:
+                            self._process_chunk_response(response)
+                            continue
                         
                         # 등록된 콜백이 있는지 확인
                         if msg_id in self._callbacks:
                             callback = self._callbacks.pop(msg_id)
+                            self._callback_timeouts.pop(msg_id, None)
                             result = response.get('result')
                             error = response.get('error')
                             
@@ -205,6 +302,7 @@ class IPCManager:
                                     callback(result)
                             except Exception as e:
                                 logging.error(f"Process {self._pid}: Error executing callback for {msg_id}: {e}")
+                                self._stats['errors'] += 1
                         else:
                             # 콜백이 없으면 다시 큐에 넣음
                             response_queue.put(response)
@@ -215,45 +313,63 @@ class IPCManager:
             
             # 잠시 대기
             time.sleep(0.01)    
-
-    def _get_request_queue(self, name: str):
-        """요청 큐 가져오기"""
-        # 로컬 캐시 확인
-        if name in self._request_queues and self._request_queues[name] is not None:
-            return self._request_queues[name]
-        
-        # 공유 큐 확인 및 캐싱
-        req_key = f"{name}_req"
-        if self._shared_queues is not None and req_key in self._shared_queues:
-            self._request_queues[name] = self._shared_queues[req_key]
-            logging.debug(f"Process {self._pid}: Loaded request queue for {name} from shared queues")
-            return self._request_queues[name]
-        
-        logging.error(f"Process {self._pid}: Request queue for {name} not found (keys: {list(self._shared_queues.keys()) if self._shared_queues else 'None'})")
-        return None
     
-    def _get_response_queue(self, name: str):
-        """응답 큐 가져오기"""
-        # 로컬 캐시 확인
-        if name in self._response_queues and self._response_queues[name] is not None:
-            return self._response_queues[name]
+    def _process_chunk_response(self, response):
+        """청크 응답 처리"""
+        msg_id = response.get('id', '')
+        chunk_info = response.get('chunk_info', {})
+        chunk_index = chunk_info.get('index', 0)
+        total_chunks = chunk_info.get('total', 1)
+        chunk_data = response.get('data', None)
         
-        # 공유 큐 확인 및 캐싱
-        resp_key = f"{name}_resp"
-        if self._shared_queues is not None and resp_key in self._shared_queues:
-            self._response_queues[name] = self._shared_queues[resp_key]
-            logging.debug(f"Process {self._pid}: Loaded response queue for {name} from shared queues")
-            return self._response_queues[name]
+        # 새 메시지면 버퍼 초기화
+        if msg_id not in self._chunk_buffers:
+            self._chunk_buffers[msg_id] = {
+                'chunks': {},
+                'total_chunks': total_chunks,
+                'data': None
+            }
         
-        logging.error(f"Process {self._pid}: Response queue for {name} not found (keys: {list(self._shared_queues.keys()) if self._shared_queues else 'None'})")
-        return None
-    
-    def _receive_from_queue(self, queue_obj, timeout=0.01):
-        """큐에서 데이터 가져오기 (예외 처리 통합)"""
-        try:
-            return queue_obj.get(block=False)
-        except (queue.Empty, Exception):
-            raise queue.Empty()
+        # 청크 저장
+        buffer = self._chunk_buffers[msg_id]
+        buffer['chunks'][chunk_index] = chunk_data
+        
+        # 모든 청크가 도착했는지 확인
+        if len(buffer['chunks']) == buffer['total_chunks']:
+            # 모든 청크를 순서대로 합침
+            combined_data = b''
+            for i in range(buffer['total_chunks']):
+                combined_data += buffer['chunks'][i]
+            
+            # 압축 해제
+            try:
+                decompressed_data = zlib.decompress(combined_data)
+                result = pickle.loads(decompressed_data)
+                
+                # 콜백 실행
+                if msg_id in self._callbacks:
+                    callback = self._callbacks.pop(msg_id)
+                    self._callback_timeouts.pop(msg_id, None)
+                    try:
+                        callback(result)
+                    except Exception as e:
+                        logging.error(f"Process {self._pid}: Error executing chunk callback for {msg_id}: {e}")
+                        self._stats['errors'] += 1
+            except Exception as e:
+                logging.error(f"Process {self._pid}: Error decompressing/unpickling chunks for {msg_id}: {e}")
+                self._stats['errors'] += 1
+                
+                # 콜백에 에러 전달
+                if msg_id in self._callbacks:
+                    callback = self._callbacks.pop(msg_id)
+                    self._callback_timeouts.pop(msg_id, None)
+                    try:
+                        callback(None, f"Error processing chunked data: {str(e)}")
+                    except Exception as e2:
+                        logging.error(f"Process {self._pid}: Error executing error callback for {msg_id}: {e2}")
+            
+            # 버퍼 삭제
+            del self._chunk_buffers[msg_id]
 
     def work(self, name, function, *args, **kwargs):
         """일반 함수 호출 방식의 래퍼"""
@@ -264,21 +380,8 @@ class IPCManager:
         callback = kwargs.pop('callback', None)
         return self.do_answer(name, function, list(args), kwargs, callback)
 
-    def do_work(self, name: str, function: str, args: List = None, kwargs: Dict = None) -> None:
-        """
-        다른 객체에게 작업 요청 (결과 기다리지 않음)
-        
-        Args:
-            name: 대상 객체 이름
-            function: 호출할 함수 이름
-            args: 위치 인자
-            kwargs: 키워드 인자
-        """
-        if args is None:
-            args = []
-        if kwargs is None:
-            kwargs = {}
-            
+    def _prepare_request(self, name, function, args, kwargs):
+        """요청 메시지 준비 및 유효성 검증 (중복 코드 제거)"""
         # 대상 객체가 등록되어 있는지 확인
         if self._shared_registry is None or name not in self._shared_registry:
             raise ValueError(f"Object {name} not registered in any process")
@@ -287,19 +390,19 @@ class IPCManager:
         target_pid = obj_info.get('pid')
         obj_type = obj_info.get('type')
         
-        # 로컬 객체이면 직접 호출
+        # 로컬 객체 참조 가져오기
+        local_obj = None
         if target_pid == self._pid and name in self._objects:
-            obj, _ = self._objects[name]
+            local_obj, _ = self._objects[name]
             
-            if obj_type is None:  # 메인 스레드
-                # 직접 함수 호출
-                try:
-                    func = getattr(obj, function)
-                    func(*args, **kwargs)
-                    return
-                except Exception as e:
-                    logging.error(f"Process {self._pid}: Error executing {function} on {name}: {e}")
-                    return
+            # 메인 스레드 객체면 직접 호출 가능
+            if obj_type is None:
+                return {
+                    'local_obj': local_obj,
+                    'is_direct_call': True,
+                    'target_pid': target_pid,
+                    'obj_type': obj_type
+                }
         
         # 메시지 ID 생성
         msg_id = str(uuid.uuid4())
@@ -318,9 +421,55 @@ class IPCManager:
         if request_queue is None:
             raise RuntimeError(f"Request queue for {name} not found")
             
+        return {
+            'local_obj': local_obj,
+            'is_direct_call': False,
+            'target_pid': target_pid,
+            'obj_type': obj_type,
+            'msg_id': msg_id,
+            'request': request,
+            'request_queue': request_queue
+        }
+
+    def do_work(self, name: str, function: str, args: List = None, kwargs: Dict = None) -> None:
+        """
+        다른 객체에게 작업 요청 (결과 기다리지 않음)
+        
+        Args:
+            name: 대상 객체 이름
+            function: 호출할 함수 이름
+            args: 위치 인자
+            kwargs: 키워드 인자
+        """
+        if args is None:
+            args = []
+        if kwargs is None:
+            kwargs = {}
+            
+        # 요청 준비
+        try:
+            req_data = self._prepare_request(name, function, args, kwargs)
+        except Exception as e:
+            logging.error(f"Process {self._pid}: Error preparing request for {name}.{function}: {e}")
+            raise
+        
+        # 직접 호출 가능하면 로컬 호출
+        if req_data['is_direct_call']:
+            local_obj = req_data['local_obj']
+            try:
+                func = getattr(local_obj, function)
+                func(*args, **kwargs)
+                logging.debug(f"Process {self._pid}: Direct call to {name}.{function} completed")
+                return
+            except Exception as e:
+                logging.error(f"Process {self._pid}: Error executing {function} on {name}: {e}")
+                self._stats['errors'] += 1
+                return
+        
         # 요청 전송
-        request_queue.put(request)
-        logging.debug(f"Process {self._pid}: Sent work request to {name} (pid {target_pid}): {function}")
+        req_data['request_queue'].put(req_data['request'])
+        self._stats['sent_messages'] += 1
+        logging.debug(f"Process {self._pid}: Sent work request to {name} (pid {req_data['target_pid']}): {function}")
     
     def do_answer(self, name: str, function: str, args: List = None, kwargs: Dict = None, 
               callback: Callable = None) -> Any:
@@ -342,57 +491,47 @@ class IPCManager:
         if kwargs is None:
             kwargs = {}
             
-        # 대상 객체가 등록되어 있는지 확인
-        if self._shared_registry is None or name not in self._shared_registry:
-            raise ValueError(f"Object {name} not registered in any process")
+        # 요청 준비
+        try:
+            req_data = self._prepare_request(name, function, args, kwargs)
+        except Exception as e:
+            logging.error(f"Process {self._pid}: Error preparing request for {name}.{function}: {e}")
+            if callback:
+                callback(None, str(e))
+            raise
         
-        obj_info = self._shared_registry[name]
-        target_pid = obj_info.get('pid')
-        obj_type = obj_info.get('type')
+        # 직접 호출 가능하면 로컬 호출
+        if req_data['is_direct_call']:
+            local_obj = req_data['local_obj']
+            try:
+                func = getattr(local_obj, function)
+                result = func(*args, **kwargs)
+                logging.debug(f"Process {self._pid}: Direct call to {name}.{function} completed")
+                if callback:
+                    callback(result)
+                return result
+            except Exception as e:
+                error_msg = str(e)
+                logging.error(f"Process {self._pid}: Error executing {function} on {name}: {error_msg}")
+                self._stats['errors'] += 1
+                if callback:
+                    callback(None, error_msg)
+                raise
         
-        # 로컬 객체이면 직접 호출 가능한지 확인
-        if target_pid == self._pid and name in self._objects:
-            obj, _ = self._objects[name]
-            
-            if obj_type is None:  # 메인 스레드
-                # 직접 함수 호출
-                try:
-                    func = getattr(obj, function)
-                    result = func(*args, **kwargs)
-                    if callback:
-                        callback(result)
-                    return result
-                except Exception as e:
-                    error_msg = str(e)
-                    logging.error(f"Process {self._pid}: Error executing {function} on {name}: {error_msg}")
-                    if callback:
-                        callback(None, error_msg)
-                    raise
-        
-        # 메시지 ID 생성
-        msg_id = str(uuid.uuid4())
-        
-        # 요청 메시지 생성
-        request = {
-            'sender': f"{self._pid}:{uuid.uuid4()}",
-            'function': function,
-            'args': args,
-            'kwargs': kwargs,
-            'id': msg_id
-        }
-        
-        # 요청 큐 가져오기
-        request_queue = self._get_request_queue(name)
-        if request_queue is None:
-            raise RuntimeError(f"Request queue for {name} not found")
+        msg_id = req_data['msg_id']
+        request = req_data['request']
+        request_queue = req_data['request_queue']
         
         # 비동기 호출 시 콜백 등록
         if callback:
             self._callbacks[msg_id] = callback
+            # 타임아웃 설정 (30초)
+            self._callback_timeouts[msg_id] = time.time() + 30.0
             
             # 요청 전송
             request_queue.put(request)
-            logging.debug(f"Process {self._pid}: Sent async request to {name} (pid {target_pid}): {function}")
+            self._stats['sent_messages'] += 1
+            logging.debug(f"Process {self._pid}: Sent async request to {name} (pid {req_data['target_pid']}): {function}")
             return None
             
         # 동기 호출 처리
@@ -403,10 +542,11 @@ class IPCManager:
         
         # 요청 전송
         request_queue.put(request)
-        logging.debug(f"Process {self._pid}: Sent sync request to {name} (pid {target_pid}): {function}")
+        self._stats['sent_messages'] += 1
+        logging.debug(f"Process {self._pid}: Sent sync request to {name} (pid {req_data['target_pid']}): {function}")
         
         # 응답 대기 (타임아웃 설정)
-        timeout = 30  # 30초 타임아웃
+        timeout = 30.0  # 30초 타임아웃
         start_time = time.time()
         
         while time.time() - start_time < timeout:
@@ -414,11 +554,19 @@ class IPCManager:
                 # 응답 대기
                 response = self._receive_from_queue(response_queue, timeout=0.1)
                 
+                # 청크 응답 처리
+                if 'chunk_info' in response:
+                    # 동기 호출에서는 청크를 직접 처리하지 않음 (미구현)
+                    logging.warning(f"Process {self._pid}: Received chunked response in sync call - not supported yet")
+                    continue
+                
                 # 응답 ID 확인
                 if response.get('id') == msg_id:
+                    self._stats['received_messages'] += 1
                     error = response.get('error')
                     if error:
                         logging.error(f"Process {self._pid}: Error from {name}.{function}: {error}")
+                        self._stats['errors'] += 1
                         raise RuntimeError(f"Error from {name}.{function}: {error}")
                     return response.get('result')
                 else:
@@ -428,8 +576,42 @@ class IPCManager:
                 continue
         
         # 타임아웃
+        self._stats['timeouts'] += 1
         raise TimeoutError(f"Timeout waiting for response from {name}.{function}")
     
+    def _send_large_data(self, data, response_queue, msg_id, max_chunk_size=1024*1024):
+        """대용량 데이터를 청크로 나누어 전송"""
+        try:
+            # 데이터 직렬화 및 압축
+            serialized_data = pickle.dumps(data)
+            compressed_data = zlib.compress(serialized_data)
+            
+            # 청크로 나누기
+            chunks = []
+            for i in range(0, len(compressed_data), max_chunk_size):
+                chunks.append(compressed_data[i:i+max_chunk_size])
+            
+            total_chunks = len(chunks)
+            
+            # 청크 전송
+            for i, chunk in enumerate(chunks):
+                chunk_response = {
+                    'id': msg_id,
+                    'chunk_info': {
+                        'index': i,
+                        'total': total_chunks
+                    },
+                    'data': chunk
+                }
+                response_queue.put(chunk_response)
+            
+            logging.debug(f"Process {self._pid}: Sent large data in {total_chunks} chunks for {msg_id}")
+            return True
+        except Exception as e:
+            logging.error(f"Process {self._pid}: Error sending large data for {msg_id}: {e}")
+            self._stats['errors'] += 1
+            return False
+        
     def start(self, name: str) -> None:
         """
         등록된 객체의 워커 시작
@@ -449,9 +631,10 @@ class IPCManager:
         if type_ is None:  # 메인 스레드
             # 메인 스레드 객체도 큐 기반 워커 시작
             worker = threading.Thread(
-                target=self._worker_loop_process,  # process 워커와 동일한 로직 사용
-                args=(name, obj, self._get_request_queue(name), self._get_response_queue(name)),
-                daemon=True
+                target=self._worker_loop,
+                args=(name, obj, self._get_request_queue(name), self._get_response_queue(name), False),
+                daemon=True,
+                name=f"Worker-{name}"
             )
             self._workers[name] = worker
             self._running[name] = True
@@ -459,9 +642,10 @@ class IPCManager:
             logging.debug(f"Process {self._pid}: Started worker thread for main thread object {name}")
         elif type_ == 'thread':  # 멀티 스레드
             worker = threading.Thread(
-                target=self._worker_loop_thread,
-                args=(name, obj, self._request_queues[name], self._response_queues[name]),
-                daemon=True
+                target=self._worker_loop,
+                args=(name, obj, self._request_queues[name], self._response_queues[name], False),
+                daemon=True,
+                name=f"Worker-{name}"
             )
             self._workers[name] = worker
             self._running[name] = True
@@ -469,9 +653,10 @@ class IPCManager:
             logging.debug(f"Process {self._pid}: Started thread worker for {name}")
         elif type_ == 'process':  # 멀티 프로세스
             worker = threading.Thread(
-                target=self._worker_loop_process,
-                args=(name, obj, self._get_request_queue(name), self._get_response_queue(name)),
-                daemon=True
+                target=self._worker_loop,
+                args=(name, obj, self._get_request_queue(name), self._get_response_queue(name), True),
+                daemon=True,
+                name=f"Worker-{name}"
             )
             self._workers[name] = worker
             self._running[name] = True
@@ -494,21 +679,15 @@ class IPCManager:
         
         obj, type_ = self._objects[name]
         if hasattr(obj, 'stop') and callable(obj.stop):
-            obj.stop()
+            try:
+                obj.stop()
+            except Exception as e:
+                logging.error(f"Process {self._pid}: Error calling stop() on {name}: {e}")
         
-        if type_ is None:  # 메인 스레드
-            self._running[name] = False
-        elif type_ == 'thread':  # 멀티 스레드
-            self._running[name] = False
-            # 스레드는 타임아웃으로 종료됨
-            if name in self._workers:
-                worker = self._workers[name]
-                if worker.is_alive():
-                    worker.join(timeout=2.0)
-                    if worker.is_alive():
-                        logging.warning(f"Process {self._pid}: Thread worker for {name} did not terminate")
-        elif type_ == 'process':  # 멀티 프로세스
-            self._running[name] = False
+        self._running[name] = False
+        
+        # 프로세스 종료 시그널 전송
+        if type_ == 'process':
             # 종료 요청 전송
             request_queue = self._get_request_queue(name)
             if request_queue:
@@ -516,14 +695,14 @@ class IPCManager:
                     'function': '_terminate_',
                     'id': str(uuid.uuid4())
                 })
-            
-            # 워커 스레드 종료 대기
-            if name in self._workers:
-                worker = self._workers[name]
+        
+        # 워커 스레드 종료 대기
+        if name in self._workers:
+            worker = self._workers[name]
+            if worker.is_alive():
+                worker.join(timeout=2.0)
                 if worker.is_alive():
-                    worker.join(timeout=2.0)
-                    if worker.is_alive():
-                        logging.warning(f"Process {self._pid}: Process worker thread for {name} did not terminate")
+                    logging.warning(f"Process {self._pid}: Worker thread for {name} did not terminate")
         
         logging.debug(f"Process {self._pid}: Stopped worker for {name}")
     
@@ -534,16 +713,15 @@ class IPCManager:
         # 응답 체커 중지
         self._response_checker_running = False
         if self._response_checker_thread and self._response_checker_thread.is_alive():
-            self._response_checker_thread.join(timeout=2.0)
+            try:
+                self._response_checker_thread.join(timeout=2.0)
+            except Exception as e:
+                logging.error(f"Process {self._pid}: Error stopping response checker thread: {e}")
         
         # 모든 워커 종료
         for name in list(self._objects.keys()):
             if self._running.get(name, False):
                 try:
-                    obj, _ = self._objects[name]
-                    if hasattr(obj, 'stop') and callable(obj.stop):
-                        obj.stop()
-                    
                     self.stop(name)
                 except Exception as e:
                     logging.error(f"Process {self._pid}: Error stopping worker {name}: {e}")
@@ -560,90 +738,41 @@ class IPCManager:
             except Exception:
                 pass
         
+        # 통계 정보 출력
+        logging.debug(f"Process {self._pid}: IPC Stats: {self._stats}")
         logging.debug(f"Process {self._pid}: IPCManager cleanup complete")
 
-    def _worker_loop_thread(self, name: str, obj: Any, request_queue: queue.Queue, response_queue: queue.Queue) -> None:
+    def _worker_loop(self, name: str, obj: Any, request_queue, response_queue, is_process: bool = False) -> None:
         """
-        스레드 워커 루프
+        통합된 워커 루프 (스레드/프로세스)
         
         Args:
             name: 워커 이름
             obj: 대상 객체
             request_queue: 요청 큐
             response_queue: 응답 큐
+            is_process: 프로세스 워커 여부
         """
-        logging.debug(f"Process {self._pid}: Thread worker loop for {name} started")
-        
-        while self._running.get(name, False):
-            try:
-                # 요청 대기 (최대 1초)
-                try:
-                    request = request_queue.get(timeout=1.0)
-                except queue.Empty:
-                    continue
-                
-                # 요청 처리
-                sender = request.get('sender', 'unknown')
-                func_name = request.get('function', '')
-                args = request.get('args', [])
-                kwargs = request.get('kwargs', {})
-                msg_id = request.get('id', '')
-                
-                logging.debug(f"Process {self._pid}: Worker {name} received request: {func_name} from {sender}")
-                
-                # 결과 및 오류 초기화
-                result = None
-                error = None
-                
-                # 함수 실행
-                try:
-                    func = getattr(obj, func_name)
-                    result = func(*args, **kwargs)
-                except Exception as e:
-                    error = str(e)
-                    logging.error(f"Process {self._pid}: Error executing {func_name} on {name}: {e}")
-                
-                # 응답 생성
-                response = {
-                    'result': result,
-                    'error': error,
-                    'id': msg_id
-                }
-                
-                # 응답 전송
-                response_queue.put(response)
-                logging.debug(f"Process {self._pid}: Worker {name} sent response for {func_name}")
-                
-            except Exception as e:
-                logging.error(f"Process {self._pid}: Error in worker loop for {name}: {e}")
-    
-    def _worker_loop_process(self, name: str, obj: Any, request_queue, response_queue) -> None:
-        """
-        프로세스 워커 루프 - pickle 오류 방지 처리 추가
-        
-        Args:
-            name: 워커 이름
-            obj: 대상 객체
-            request_queue: 요청 큐
-            response_queue: 응답 큐
-        """
-        logging.debug(f"Process {self._pid}: Process worker loop for {name} started")
+        logging.debug(f"Process {self._pid}: Worker loop for {name} started (is_process={is_process})")
         
         # 객체에 IPCManager 참조 설정
-        if hasattr(obj, 'ipc') and obj.ipc is None:
+        if is_process and hasattr(obj, 'ipc') and obj.ipc is None:
             obj.ipc = self
+        
+        retry_count = 0
+        max_retries = 3  # 최대 재시도 횟수
         
         while self._running.get(name, False):
             try:
                 # 요청 대기 (최대 1초)
                 try:
                     request = request_queue.get(timeout=1.0)
-                except Exception:
+                except (queue.Empty, Exception):
                     continue
                 
                 # 종료 요청 확인
                 if request.get('function') == '_terminate_':
-                    logging.debug(f"Process {self._pid}: Process worker {name} received terminate signal")
+                    logging.debug(f"Process {self._pid}: Worker {name} received terminate signal")
                     break
                 
                 # 요청 처리
@@ -664,31 +793,65 @@ class IPCManager:
                     func = getattr(obj, func_name)
                     result = func(*args, **kwargs)
                     
-                    # 결과를 pickle 가능한지 확인 (멀티프로세스 직렬화 오류 방지)
+                    # 프로세스 워커면 결과를 pickle 가능한지 확인
+                    if is_process:
+                        try:
+                            # 먼저 pickle 시도
+                            pickle.dumps(result)
+                        except Exception as e:
+                            # pickle 불가능한 경우 안전한 형태로 변환
+                            logging.warning(f"Process {self._pid}: Result of {func_name} is not pickle-able: {e}")
+                            result = self._make_pickle_safe(result)
+                            
+                    # 대용량 데이터인지 확인하여 청크 전송
+                    large_data = False
                     try:
-                        pickle.dumps(result)
+                        if result is not None:
+                            # 크기 측정을 위한 시도
+                            serialized = pickle.dumps(result)
+                            if len(serialized) > 1024 * 1024:  # 1MB 이상이면 청크 전송
+                                large_data = True
+                                self._send_large_data(result, response_queue, msg_id)
                     except Exception as e:
-                        # pickle 불가능한 경우 안전한 형태로 변환
-                        logging.warning(f"Process {self._pid}: Result of {func_name} is not pickle-able: {e}")
-                        result = self._make_pickle_safe(result)
+                        logging.error(f"Process {self._pid}: Error checking result size: {e}")
+                    
+                    if not large_data:
+                        # 일반 응답 생성
+                        response = {
+                            'result': result,
+                            'error': None,
+                            'id': msg_id
+                        }
+                        
+                        # 응답 전송
+                        response_queue.put(response)
                         
                 except Exception as e:
                     error = str(e)
                     logging.error(f"Process {self._pid}: Error executing {func_name} on {name}: {e}")
+                    
+                    # 응답 생성
+                    response = {
+                        'result': None,
+                        'error': error,
+                        'id': msg_id
+                    }
+                    
+                    # 응답 전송
+                    response_queue.put(response)
                 
-                # 응답 생성
-                response = {
-                    'result': result,
-                    'error': error,
-                    'id': msg_id
-                }
-                
-                # 응답 전송
-                response_queue.put(response)
                 logging.debug(f"Process {self._pid}: Worker {name} sent response for {func_name}")
+                retry_count = 0  # 성공 시 재시도 카운트 초기화
                 
             except Exception as e:
-                logging.error(f"Process {self._pid}: Error in process worker loop for {name}: {e}")
+                logging.error(f"Process {self._pid}: Error in worker loop for {name}: {e}")
+                retry_count += 1
+                
+                # 연속 오류 발생 시 잠시 대기
+                if retry_count > max_retries:
+                    logging.error(f"Process {self._pid}: Too many errors in worker loop for {name}, sleeping...")
+                    time.sleep(1.0)
+                    retry_count = 0
 
     def _make_pickle_safe(self, obj: Any) -> Any:
         """
@@ -721,8 +884,13 @@ class IPCManager:
             return str(obj)
         except Exception:
             return "Unpickleable object"
-ipc = None
-#ipc = IPCManager.get_instance()
+
+    def get_stats(self):
+        """통계 정보 가져오기"""
+        return self._stats.copy()
+
+# 싱글톤 인스턴스 초기화 (올바른 방법으로)
+ipc = None #IPCManager.get_instance()
 
 # 유틸리티 함수
 def create_shared_resources():
@@ -734,17 +902,46 @@ def create_shared_resources():
     
     return manager, shared_registry, shared_queues
 
+def wait_for_processes(shared_registry, process_names, timeout=30):
+    """
+    모든 프로세스가 초기화될 때까지 대기
+    
+    Args:
+        shared_registry: 공유 레지스트리
+        process_names: 대기할 프로세스 이름 목록
+        timeout: 최대 대기 시간(초)
+        
+    Returns:
+        bool: 모든 프로세스가 초기화되었으면 True, 타임아웃이면 False
+    """
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        all_registered = True
+        for name in process_names:
+            if name not in shared_registry:
+                all_registered = False
+                break
+        
+        if all_registered:
+            logging.debug(f"모든 프로세스 초기화 완료: {process_names}")
+            return True
+        
+        time.sleep(0.1)  # 잠시 대기 후 다시 확인
+    
+    # 타임아웃
+    missing = [name for name in process_names if name not in shared_registry]
+    logging.error(f"프로세스 초기화 타임아웃. 등록되지 않은 프로세스: {missing}")
+    return False
+
 # 테스트 코드 (ipc_manager.py 파일 하단에 추가)
 if __name__ == "__main__":
-    # 로깅 설정
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
     # Windows에서 멀티프로세싱을 위한 코드
     multiprocessing.freeze_support()
     
+    # 로깅 설정
+    from public import init_logger
+    init_logger()
+   
     # 공유 자원 생성 (메인 프로세스에서)
     
     # worker.py에서 클래스와 함수 가져오기
@@ -765,6 +962,7 @@ if __name__ == "__main__":
 
         # IPCManager 인스턴스 생성 (공유 자원 전달)
         ipc = IPCManager.get_instance(shared_registry, shared_queues)
+        ipc._manager = manager
         
         # Admin 객체 생성 및 등록 (메인 스레드)
         admin = AdminTest()
@@ -792,8 +990,20 @@ if __name__ == "__main__":
         
         # 잠시 대기하여 모든 프로세스가 초기화될 시간 제공
         logging.debug("메인 프로세스: 모든 프로세스 초기화 대기 중...")
-        time.sleep(2)
+        # time.sleep(2)  # 고정 대기 시간 대신 초기화 완료 확인
         
+        # 모든 프로세스가 초기화될 때까지 대기
+        if not wait_for_processes(shared_registry, ["admin", "api", "dbm"], timeout=10):
+            logging.error("일부 프로세스가 초기화되지 않았습니다. 테스트를 중단합니다.")
+            # 정리 및 종료
+            ipc.cleanup()
+            api_process.terminate()
+            dbm_process.terminate()
+            api_process.join()
+            dbm_process.join()
+            print("테스트 실패: 프로세스 초기화 타임아웃")
+            return
+            
         try:
             # 다양한 통신 경로 테스트
             print("\n=== Admin -> API -> DBM 통신 경로 테스트 ===")

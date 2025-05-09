@@ -548,6 +548,8 @@ class APIServer():
     def __init__(self):
         self.name = 'api'
         self.sim_no = 0
+        self.ipc = None
+        #self.app = None
 
         self.ocx = None
         self.connected = False
@@ -565,7 +567,7 @@ class APIServer():
         self.tr_condition_list = None       # OnReceiveTrCondition에서 리스트 담기
 
         self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
-        self.api_init()  # 초기화 바로 실행
+        # self.api_init()  # 초기화 바로 실행
 
     def stop(self):
         """APIServer 종료 시 실행되는 메서드"""
@@ -598,7 +600,10 @@ class APIServer():
                         del cond_thread[screen]
                     except Exception as e:
                         logging.error(f"조건검색 스레드 정리 오류: {e}")
-        
+        try:
+            pythoncom.CoUninitialize()
+        except Exception as e:
+            logging.error(f"CoUninitialize 오류: {e}")
         # 연결 상태 변경
         self.connected = False
         logging.info("APIServer 종료 완료")
@@ -630,16 +635,16 @@ class APIServer():
     def api_init(self):
         try:
             logging.debug(f'{self.name} api_init start')
-            if self.sim_no == 0:  # 실제 API 서버
-                self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
-                self._set_signal_slots()
-                logging.debug(f'{self.name} api_init success: ocx={self.ocx}')
-            elif self.sim_no == 1:  # 키움서버 없이 가상 데이터 사용
+            # if self.app is None:
+            #     self.app = QApplication([])
+            pythoncom.CoInitialize()
+            if self.sim_no == 1:  # 키움서버 없이 가상 데이터 사용
                 global ready_tickers
                 ready_tickers = True
                 logging.debug(f'{self.name} api_init success (Sim mode {self.sim_no})')
             else:  # 키움서버 사용 (sim_no=2, 3)
                 self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+                logging.debug(f'{self.name} api_init success: ocx={self.ocx} (Sim mode {self.sim_no})')
                 self._set_signal_slots()
                 if self.sim_no == 3:  # 차트 데이터 로드
                     sim.chart_data = self.get_simulation_data()
@@ -703,11 +708,19 @@ class APIServer():
         logging.getLogger().setLevel(level)
         logging.debug(f'API 로그 레벨 설정: {level}')
 
+    def waiting_in_loop(self, wait_boolean, failed_msg, timeout=5):
+        start_time = time.time()
+        while not wait_boolean:
+            pythoncom.PumpWaitingMessages()
+            if time.time() - start_time > timeout:
+                logging.warning(f"Timeout while waiting for {failed_msg}")
+                return False
+        return True
+
     # 추가 메서드 --------------------------------------------------------------------------------------------------
     def api_connected(self):
         if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
-            while not self.connected:
-                pythoncom.PumpWaitingMessages()
+            self.connected = self.waiting_in_loop(self.connected, "API 연결 대기", 5)
         else:  # 키움서버 없이 가상 데이터 사용 (sim_no=1)
             self.connected = True
         return self.connected
@@ -736,12 +749,9 @@ class APIServer():
             for key, value in input.items(): self.SetInputValue(key, value)
             ret = self.CommRqData(rqname, trcode, next, screen)
 
-            start_time = time.time()
-            while not self.tr_received:
-                pythoncom.PumpWaitingMessages()
-                if time.time() - start_time > timeout:
-                    logging.warning(f"Timeout while waiting for {rqname} data")
-                    return [], False
+            self.tr_received = self.waiting_in_loop(self.tr_received, f"{rqname} data", timeout)
+            if not self.tr_received:
+                return [], False
 
             return self.tr_result, self.tr_remained
 
@@ -810,8 +820,7 @@ class APIServer():
         if sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
             self.ocx.dynamicCall("CommConnect()")
             if block:
-                while not self.connected:
-                    pythoncom.PumpWaitingMessages()
+                self.connected = self.waiting_in_loop(self.connected, "로그인 대기", 5)
         else:  # 키움서버 없이 가상 데이터 사용 (sim_no=1)
             self.connected = True
             self.ipc.work('admin', 'set_connected', self.connected)
@@ -822,8 +831,7 @@ class APIServer():
             result = self.ocx.dynamicCall("GetConditionLoad()")
             logging.debug(f'전략 요청 : {"성공" if result==1 else "실패"}')
             if block:
-                while not self.strategy_loaded:
-                    pythoncom.PumpWaitingMessages()
+                self.strategy_loaded = self.waiting_in_loop(self.strategy_loaded, "전략 로드", 5)
         else:  # 키움서버 없이 가상 데이터 사용 (sim_no=1)
             self.strategy_loaded = True
         return self.strategy_loaded
@@ -902,12 +910,9 @@ class APIServer():
                     return False
                 
                 if block is True:
-                    start_time = time.time()
-                    while not self.tr_condition_loaded:
-                        pythoncom.PumpWaitingMessages()
-                        if time.time() - start_time > 5:  # 5초 타임아웃
-                            logging.warning(f'조건 검색 시간 초과: {screen} {cond_name} {cond_index} {search}')
-                            return False
+                    self.tr_condition_loaded = self.waiting_in_loop(self.tr_condition_loaded, f"{screen} {cond_name} {cond_index} {search}", 5)
+                    if not self.tr_condition_loaded:
+                        return False
                     data = self.tr_condition_list
                 return data
             except Exception as e:

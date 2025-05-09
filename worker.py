@@ -81,7 +81,7 @@ def initialize_worker(name, worker_type, shared_registry, shared_queues):
     )
     
     pid = multiprocessing.current_process().pid
-    logging.debug(f"Process {pid}: Initializing worker for {name}")
+    logging.debug(f"초기화: PID={pid} 클래스={name}")
     
     # IPCManager 가져오기
     from ipc_manager import IPCManager
@@ -113,6 +113,6 @@ def initialize_worker(name, worker_type, shared_registry, shared_queues):
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logging.debug(f"Process {pid}: Worker for {name} terminated by keyboard interrupt")
+        logging.debug(f"종료: PID={pid} 클래스={name} 키보드 인터럽트")
         ipc.cleanup()
 

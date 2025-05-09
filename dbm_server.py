@@ -10,6 +10,7 @@ import time
 
 class DBMServer:
     def __init__(self):
+        self.ipc = None
         self.running = False
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
