@@ -1,17 +1,17 @@
 from public import init_logger, dc, gm
 from admin import Admin
 from gui import GUI
+from ipc_manager import IPCSystem, init_comm_functions, work, answer, send_large_data
 from chart import ctdt
 from api_server import APIServer
 from dbm_server import DBMServer
-from classes import Toast, la, IPCManager
+from classes import Toast
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QPixmap, QGuiApplication
 import logging
 import time
 import sys
-import pythoncom
 from datetime import datetime
 
 init_logger()
@@ -76,15 +76,18 @@ class Main:
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
             gm.toast = Toast()
-            gm.ipc = IPCManager()
             gm.main = self
+            gm.ipc = IPCSystem()
+            #init_comm_functions(gm.ipc.work, gm.ipc.answer, gm.ipc.send_large_data)
+            gm.ipc.initialize('admin', Admin)
+            gm.ipc.initialize('api', APIServer, 'process')
+            gm.ipc.initialize('dbm', DBMServer, 'process')
+            
+            # 전략 쓰레드들 (멀티쓰레드로 실행)
+            # self.ipc_system.initialize('strategy1', Strategy1, 'thread')
             gm.admin = Admin()
-            la.register('admin', gm.admin, use_thread=False)
             gm.gui = GUI() if gm.config.gui_on else None
 
-            gm.ipc.start_api_process(APIServer) # if not gm.config.sim_on else SIMServer)
-            gm.ipc.start_dbm_process(DBMServer)
-            gm.ipc.start_admin_listener(gm.admin) # 위에 두개 먼저 실행 후 이 코드 실행
             gm.ipc.work('api', 'api_init')
 
         except Exception as e:
@@ -110,7 +113,7 @@ class Main:
 
             if gm.config.sim_on: gm.ipc.work('api', 'set_tickers', gm.config.sim_no)
 
-            la.work('admin', 'init')
+            gm.ipc.work('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
 
             if gm.config.gui_on: gm.gui.init()
@@ -125,7 +128,7 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            la.work('admin', 'trade_start')
+            work('admin', 'trade_start')
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
@@ -187,6 +190,7 @@ if __name__ == "__main__":
         main = Main()
         exit_code = main.main()
         logging.info(f"{'#'*10} System Shutdown {'#'*10}")
+
     except Exception as e:
         logging.error(str(e), exc_info=e)
         exit_code = 1

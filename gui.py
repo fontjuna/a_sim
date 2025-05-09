@@ -1,5 +1,5 @@
 from public import get_path, gm, dc, save_json, load_json, hoga
-from classes import la
+from ipc_manager import work, answer, send_large_data
 from PyQt5.QtWidgets import QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox, QTableWidget, QTableWidgetItem
 from PyQt5.QtGui import QIcon, QTextCursor
 from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate, Qt
@@ -622,7 +622,7 @@ class GUI(QMainWindow, form_class):
     def gui_tr_code_changed(self):
         code = self.leTrCode.text().strip()
         if code:
-            self.leTrName.setText(gm.ipc.answer('api', 'GetMasterCodeName', code).strip())
+            self.leTrName.setText(answer('api', 'GetMasterCodeName', code).strip())
 
     def gui_tr_order(self):
         kind = '매수' if self.rbTrBuy.isChecked() else '매도'
@@ -631,7 +631,7 @@ class GUI(QMainWindow, form_class):
         else:
             전략 = self.leTrStrategy.text().strip()
             if 전략: 
-                if 전략 not in la.workers.keys():
+                if 전략 not in workers.keys():
                     logging.warning(f'전략이 실행중이지 않습니다. {전략}')
                     return
             
@@ -682,7 +682,7 @@ class GUI(QMainWindow, form_class):
             'ordno': ''
         }
         if kind == '매수':
-            gm.ipc.work('api', 'SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
+            work('api', 'SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
         else:
             if row['주문가능수량'] == 0:
                 QMessageBox.warning(self, '알림', '주문가능수량이 없습니다.')
@@ -1087,7 +1087,7 @@ class GUI(QMainWindow, form_class):
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
             self.lbl2.setText('연결됨' if gm.connected else '끊어짐')
             self.lbl2.setStyleSheet("color: green;" if gm.connected else "color: red;")
-            self.lbl4.setText(la.answer('admin', 'com_market_status'))
+            self.lbl4.setText(answer('admin', 'com_market_status'))
 
             # 큐 메시지 처리
             while not gm.qwork['msg'].empty():

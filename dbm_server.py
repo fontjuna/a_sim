@@ -1,4 +1,5 @@
 from public import dc, get_path, profile_operation
+from ipc_manager import answer, work, send_large_data
 from chart import ctdt
 from datetime import datetime, timedelta
 import logging
@@ -10,24 +11,33 @@ import time
 
 class DBMServer:
     def __init__(self):
+        self.running = False
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
         self.done_code = []
         self.todo_code = {}
+
         self._lock = threading.Lock()
         self.thread_local = threading.local()  # 스레드 로컬 변수 추가
-
         self.thread_run = False
         self.thread_chart = None    
 
         self.init_dbm()
         #self.start_request_chart_data()
 
-    def stop(self):
-        self.stop_request_chart_data()
+    def start(self):
+        """컴포넌트 시작"""
+        print(f"{self.__class__.__name__} 시작 중...")
+        self.running = True
+        # 시작 관련 코드
+        return {"status": "started"}
         
+    def stop(self):
         # 모든 연결 닫기 시도 (각 스레드의 연결)
         try:
+            print(f"{self.__class__.__name__} 중지 중...")
+            self.running = False
+            # 중지 관련 코드
             self.stop_request_chart_data()
             self.thread_chart = None
             if hasattr(self.thread_local, 'chart'):
@@ -36,9 +46,26 @@ class DBMServer:
             if hasattr(self.thread_local, 'db'):
                 conn = self.thread_local.db
                 conn.close()
+
+            return {"status": "stopped"}
         except Exception as e:
             logging.error(f"Error closing database connections: {e}", exc_info=True)
 
+    # def stop(self):
+    #     """컴포넌트 중지"""
+    #     print(f"{self.__class__.__name__} 중지 중...")
+    #     self.running = False
+    #     # 중지 관련 코드
+    #     return {"status": "stopped"}
+                
+    def get_status(self):
+        """상태 확인"""
+        return {
+            "name": self.__class__.__name__,
+            "running": self.running,
+            # 추가 상태 정보
+        }
+    
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
         logging.debug(f'DBM 로그 레벨 설정: {level}')
@@ -171,7 +198,7 @@ class DBMServer:
             'result': result,
             'error': error
         }
-        self.work('admin', order, **work)
+        work('admin', order, **work)
 
     def execute_query(self, sql, db='chart', params=None):
         try:
@@ -324,7 +351,7 @@ class DBMServer:
             next = '0'
             dict_list = []
             while True:
-                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=2)
+                data, remain = answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=2)
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
                 times -= 1
@@ -361,7 +388,7 @@ class DBMServer:
             if cycle in ['dy', 'mi']:
                 #self.upsert_chart(dict_list, cycle, tick)
                 self.done_todo_code(code, cycle)
-                #self.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
+                #work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
                 ctdt.set_chart_data(code, dict_list, cycle, tick)
             return dict_list
         
@@ -418,7 +445,7 @@ class DBMServer:
             return code in self.done_code
 
     def update_script_chart(self, job):
-        self.work('admin', 'on_fx실시간_주식체결', **job)
+        work('admin', 'on_fx실시간_주식체결', **job)
         # code = job['code']
         # dictFID = job['dictFID']
         # if code in self.todo_code or code in self.done_code:

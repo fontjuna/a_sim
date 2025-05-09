@@ -1,4 +1,5 @@
 from public import dc, gm, profile_operation
+from ipc_manager import work, answer, send_large_data
 from datetime import datetime
 from typing import Set, Optional, Any
 from multiprocessing import shared_memory
@@ -499,7 +500,7 @@ class ChartData:
                 # 서버에서 가져오기
                 from public import gm
                 try:
-                    data = gm.ipc.answer('dbm', 'dbm_get_chart_data', code, cycle, tick)
+                    data = answer('dbm', 'dbm_get_chart_data', code, cycle, tick)
                     if data:
                         chart_data[cycle] = data
                         self._save_code_data(code, chart_data)

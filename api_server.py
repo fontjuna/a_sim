@@ -1,5 +1,6 @@
 from public import hoga, dc, gm, init_logger, profile_operation
 from classes import TimeLimiter
+from ipc_manager import work, answer, send_large_data
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread
@@ -405,7 +406,7 @@ class OnReceiveRealConditionSim(QThread):
             'cond_name': self.cond_name,
             'cond_index': int(self.cond_index),
          }
-         self.api.work('admin', 'on_fx실시간_조건검색', **data)
+         work('admin', 'on_fx실시간_조건검색', **data)
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -462,9 +463,9 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            self.api.work('dbm', 'update_script_chart', job)
-            #self.api.work('admin', 'on_fx실시간_주식체결', **job)
-            #self.api.work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+            work('dbm', 'update_script_chart', job)
+            #work('admin', 'on_fx실시간_주식체결', **job)
+            #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
 
             if self._stop_event.wait(timeout=0.2/len(sim.ticker)):
                return
@@ -521,9 +522,9 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               self.api.work('dbm', 'update_script_chart', job)
-               #self.api.work('admin', 'on_fx실시간_주식체결', **job)
-               #self.api.work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+               work('dbm', 'update_script_chart', job)
+               #work('admin', 'on_fx실시간_주식체결', **job)
+               #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -570,7 +571,9 @@ class APIServer():
     def stop(self):
         """APIServer 종료 시 실행되는 메서드"""
         logging.info(f"APIServer 종료 시작 (sim_no={self.sim_no})")
-        
+        print(f"{self.__class__.__name__} 중지 중...")
+        self.running = False     
+   
         # 시뮬레이션 모드에서만 추가 정리 필요
         if self.sim_no > 0:
             # 실시간 데이터 스레드 정리
@@ -601,6 +604,30 @@ class APIServer():
         self.connected = False
         logging.info("APIServer 종료 완료")
 
+        return {"status": "stopped"}
+
+    def start(self):
+        """컴포넌트 시작"""
+        print(f"{self.__class__.__name__} 시작 중...")
+        self.running = True
+        # 시작 관련 코드
+        return {"status": "started"}
+        
+    # def stop(self):
+    #     """컴포넌트 중지"""
+    #     print(f"{self.__class__.__name__} 중지 중...")
+    #     self.running = False
+    #     # 중지 관련 코드
+    #     return {"status": "stopped"}
+        
+    def get_status(self):
+        """상태 확인"""
+        return {
+            "name": self.__class__.__name__,
+            "running": self.running,
+            # 추가 상태 정보
+        }
+    
     def api_init(self):
         try:
             logging.debug(f'{self.name} api_init start')
@@ -788,7 +815,7 @@ class APIServer():
                     pythoncom.PumpWaitingMessages()
         else:  # 키움서버 없이 가상 데이터 사용 (sim_no=1)
             self.connected = True
-            self.work('admin', 'set_connected', self.connected)
+            work('admin', 'set_connected', self.connected)
 
     def GetConditionLoad(self, block=True):
         if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
@@ -892,7 +919,7 @@ class APIServer():
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        self.work('admin', 'set_connected', self.connected)
+        work('admin', 'set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
@@ -917,7 +944,7 @@ class APIServer():
                 'screen': screen,
                 'rqname': rqname,
                 }
-                self.work('admin', 'on_fx수신_주문결과TR', **result)
+                work('admin', 'on_fx수신_주문결과TR', **result)
 
             except Exception as e:
                 logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -958,7 +985,7 @@ class APIServer():
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        self.work('admin', 'on_fx실시간_조건검색', **data)
+        work('admin', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
         # sim_no = 0일 때만 사용 (실제 API 서버)
@@ -974,11 +1001,11 @@ class APIServer():
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    self.work('dbm', 'update_script_chart', job)
-                    #self.work('admin', 'on_fx실시간_주식체결', **job)
-                    #self.work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+                    work('dbm', 'update_script_chart', job)
+                    #work('admin', 'on_fx실시간_주식체결', **job)
+                    #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
                 elif rtype == '장시작시간': 
-                    self.work('admin', 'on_fx실시간_장운영감시', **job)
+                    work('admin', 'on_fx실시간_장운영감시', **job)
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
@@ -996,8 +1023,8 @@ class APIServer():
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            if gubun == '0': self.work('admin', 'odr_recieve_chegyeol_data', dictFID)
-            elif gubun == '1': self.work('admin', 'odr_recieve_balance_data', dictFID)
+            if gubun == '0': work('admin', 'odr_recieve_chegyeol_data', dictFID)
+            elif gubun == '1': work('admin', 'odr_recieve_balance_data', dictFID)
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1012,7 +1039,7 @@ class APIServer():
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                self.work('admin', 'odr_recieve_balance_data', dictFID)
+                work('admin', 'odr_recieve_balance_data', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1050,7 +1077,7 @@ class APIServer():
 
                     portfolio.process_order(dictFID)
 
-                self.work('admin', 'odr_recieve_chegyeol_data', dictFID)
+                work('admin', 'odr_recieve_chegyeol_data', dictFID)
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------
