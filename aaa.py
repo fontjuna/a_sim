@@ -1,7 +1,7 @@
 from public import init_logger, dc, gm
 from admin import Admin
 from gui import GUI
-from ipc_manager import IPCSystem, init_comm_functions, work, answer, send_large_data
+from ipc_manager import IPCManager
 from chart import ctdt
 from api_server import APIServer
 from dbm_server import DBMServer
