@@ -145,7 +145,7 @@ class IPCManager:
         """응답 큐 가져오기"""
         return self._get_queue(name, 'resp')
     
-    def register(self, name: str, obj: Any, type_: Optional[str] = None, start: bool = False) -> Any:
+    def register(self, name: str, obj: Any, type_: Optional[str] = None, start: bool = False, shared: bool = False) -> Any:
         """
         통신 객체 등록
         
@@ -154,11 +154,12 @@ class IPCManager:
             obj: 등록할 객체
             type_: 객체 유형 (None=메인스레드, 'thread'=멀티스레드, 'process'=멀티프로세스)
             start: 등록 후 즉시 워커 시작 여부
+            shared: 스레드 객체를 프로세스 간 공유 여부 (type_='thread'일 때만 적용)
         
         Returns:
             등록된 객체
         """
-        logging.debug(f"Process {self._pid}: Registering {name} as {type_}")
+        #logging.debug(f"Process {self._pid}: Registering {name} as {type_}")
         
         # 객체에 ipc 속성 설정
         setattr(obj, 'ipc', self)
@@ -172,15 +173,19 @@ class IPCManager:
         if self._shared_registry is not None:
             self._shared_registry[name] = {
                 'pid': self._pid,
-                'type': type_
+                'type': type_,
+                'shared': shared if type_ == 'thread' else False
             }
         
-        # 통신 채널 생성 - 모든 객체 타입에 대해 공유 큐 생성
+        # 통신 채널 생성
         req_key = f"{name}_req"
         resp_key = f"{name}_resp"
         
+        # 공유 큐가 필요한 경우: 프로세스 또는 shared=True인 스레드
+        needs_shared_queue = type_ == 'process' or (type_ == 'thread' and shared)
+        
         # 메인 프로세스에서만 공유 큐 생성
-        if self._is_main_process:
+        if self._is_main_process and needs_shared_queue:
             if self._shared_queues is not None:
                 # 큐가 없으면 생성
                 if req_key not in self._shared_queues:
@@ -197,25 +202,28 @@ class IPCManager:
                 logging.debug(f"Process {self._pid}: Created shared queues for {name}")
                 logging.debug(f"Process {self._pid}: Shared queues: {list(self._shared_queues.keys())}")
         
-        # 로컬 큐 캐시에 저장 (무조건 로컬 캐싱 시도)
-        if self._shared_queues is not None:
-            if req_key in self._shared_queues:
-                self._request_queues[name] = self._shared_queues[req_key]
-                logging.debug(f"Process {self._pid}: Cached request queue for {name}")
-            else:
-                logging.error(f"Process {self._pid}: Shared request queue for {name} not found")
-                
-            if resp_key in self._shared_queues:
-                self._response_queues[name] = self._shared_queues[resp_key]
-                logging.debug(f"Process {self._pid}: Cached response queue for {name}")
-            else:
-                logging.error(f"Process {self._pid}: Shared response queue for {name} not found")
-        
-        # 스레드 객체용 로컬 큐 생성 (항상, 앞의 과정과 무관하게)
-        if type_ == 'thread':
-            # 스레드는 프로세스 내 로컬 큐 사용
+        # 로컬 큐 캐시에 저장
+        if needs_shared_queue:
+            # 공유 큐 사용 (프로세스 또는 shared=True인 스레드)
+            if self._shared_queues is not None:
+                if req_key in self._shared_queues:
+                    self._request_queues[name] = self._shared_queues[req_key]
+                    logging.debug(f"Process {self._pid}: Cached request queue for {name}")
+                else:
+                    logging.error(f"Process {self._pid}: Shared request queue for {name} not found")
+                    
+                if resp_key in self._shared_queues:
+                    self._response_queues[name] = self._shared_queues[resp_key]
+                    logging.debug(f"Process {self._pid}: Cached response queue for {name}")
+                else:
+                    logging.error(f"Process {self._pid}: Shared response queue for {name} not found")
+        elif type_ == 'thread':
+            # 로컬 큐 사용 (shared=False인 스레드만)
             self._request_queues[name] = queue.Queue()
             self._response_queues[name] = queue.Queue()
+        
+        # 스레드용 로컬 이벤트 생성 (shared 여부와 관계없이)
+        if type_ == 'thread':
             self._events[name] = threading.Event()
         
         # 응답 체커 스레드 시작
@@ -473,7 +481,7 @@ class IPCManager:
             try:
                 func = getattr(local_obj, function)
                 func(*args, **kwargs)
-                logging.debug(f"Process {self._pid}: Direct call to {name}.{function} completed")
+                #logging.debug(f"Process {self._pid}: Direct call to {name}.{function} completed")
                 return
             except Exception as e:
                 logging.error(f"Process {self._pid}: Error executing {function} on {name}: {e}")
@@ -483,7 +491,7 @@ class IPCManager:
         # 요청 전송
         req_data['request_queue'].put(req_data['request'])
         self._stats['sent_messages'] += 1
-        logging.debug(f"Process {self._pid}: Sent work request to {name} (pid {req_data['target_pid']}): {function}")
+        #logging.debug(f"Process {self._pid}: Sent work request to {name} (pid {req_data['target_pid']}): {function}")
     
     def do_answer(self, name: str, function: str, args: List = None, kwargs: Dict = None, 
               callback: Callable = None) -> Any:
@@ -520,7 +528,7 @@ class IPCManager:
             try:
                 func = getattr(local_obj, function)
                 result = func(*args, **kwargs)
-                logging.debug(f"Process {self._pid}: Direct call to {name}.{function} completed")
+                #logging.debug(f"Process {self._pid}: Direct call to {name}.{function} completed")
                 if callback:
                     callback(result)
                 return result
@@ -557,7 +565,7 @@ class IPCManager:
         # 요청 전송
         request_queue.put(request)
         self._stats['sent_messages'] += 1
-        logging.debug(f"Process {self._pid}: Sent sync request to {name} (pid {req_data['target_pid']}): {function}")
+        #logging.debug(f"Process {self._pid}: Sent sync request to {name} (pid {req_data['target_pid']}): {function}")
         
         # 응답 대기 (타임아웃 설정)
         timeout = 30.0  # 30초 타임아웃
@@ -771,7 +779,7 @@ class IPCManager:
             response_queue: 응답 큐
             is_process: 프로세스 워커 여부
         """
-        logging.debug(f"Process {self._pid}: Worker loop for {name} started (is_process={is_process})")
+        #logging.debug(f"Process {self._pid}: Worker loop for {name} started (is_process={is_process})")
         
         # 객체에 IPCManager 참조 설정
         if is_process and hasattr(obj, 'ipc') and obj.ipc is None:
@@ -790,7 +798,7 @@ class IPCManager:
                 
                 # 종료 요청 확인
                 if request.get('function') == '_terminate_':
-                    logging.debug(f"Process {self._pid}: Worker {name} received terminate signal")
+                    #logging.debug(f"Process {self._pid}: Worker {name} received terminate signal")
                     break
                 
                 # 요청 처리
@@ -800,7 +808,7 @@ class IPCManager:
                 kwargs = request.get('kwargs', {})
                 msg_id = request.get('id', '')
                 
-                logging.debug(f"Process {self._pid}: Worker {name} received request: {func_name} from {sender}")
+                #logging.debug(f"Process {self._pid}: Worker {name} received request: {func_name} from {sender}")
                 
                 # 결과 및 오류 초기화
                 result = None
@@ -858,7 +866,7 @@ class IPCManager:
                     # 응답 전송
                     response_queue.put(response)
                 
-                logging.debug(f"Process {self._pid}: Worker {name} sent response for {func_name}")
+                #logging.debug(f"Process {self._pid}: Worker {name} sent response for {func_name}")
                 retry_count = 0  # 성공 시 재시도 카운트 초기화
                 
             except Exception as e:
@@ -911,7 +919,7 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     
     from public import init_logger
-    from worker import AdminTest, APITest, DBMTest
+    from worker import AdminTest, APITest, DBMTest, SharedThreadWorker, LocalThreadWorker
 
     init_logger()
    
@@ -920,6 +928,9 @@ if __name__ == "__main__":
         admin = ipc.register("admin", AdminTest(), start=True)
         api = ipc.register("api", APITest(), 'process', start=True)
         dbm = ipc.register("dbm", DBMTest(), 'process', start=True)
+        # 공유 스레드와 로컬 스레드 등록
+        shared_thread = ipc.register("shared_thread", SharedThreadWorker(), 'thread', shared=True, start=True)
+        local_thread = ipc.register("local_thread", LocalThreadWorker(), 'thread', start=True)
 
         # 잠시 대기하여 모든 프로세스가 초기화될 시간 제공
         logging.debug("메인 프로세스: 모든 프로세스 초기화 대기 중...")
@@ -961,7 +972,83 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"키움증권 테스트 중 오류 발생: {str(e)}")
                 print("키움증권 API가 설치되어 있지 않거나 PyQt5가 설치되지 않았을 수 있습니다.")
+
+            # 스레드 테스트 추가
+            print("\n=== 스레드 통신 테스트 ===")
             
+            # 로컬 스레드 접근 테스트
+            print("\n--- 로컬 스레드 테스트 ---")
+            try:
+                result_local = ipc.answer("local_thread", "set_data", "test_key", "test_value")
+                print(f"로컬 스레드 설정 결과: {result_local}")
+            except Exception as e:
+                print(f"로컬 스레드 설정 실패: {str(e)}")
+            try:
+                result_local = ipc.answer("local_thread", "get_data")
+                print(f"로컬 스레드 데이터: {result_local}")
+            except Exception as e:
+                print(f"로컬 스레드 데이터 가져오기 실패: {str(e)}")
+            
+            # 공유 스레드 접근 테스트
+            print("\n--- 공유 스레드 테스트 ---")
+            try:
+                result_shared = ipc.answer("shared_thread", "set_data", "shared_key", "shared_value")
+                print(f"공유 스레드 설정 결과: {result_shared}")
+            except Exception as e:
+                print(f"공유 스레드 설정 실패: {str(e)}")
+            try:
+                result_shared = ipc.answer("shared_thread", "get_data")
+                print(f"공유 스레드 데이터: {result_shared}")
+            except Exception as e:
+                print(f"공유 스레드 데이터 가져오기 실패: {str(e)}")
+            
+            # DBM 프로세스에서 공유 스레드 접근 테스트
+            print("\n--- DBM에서 공유 스레드 접근 테스트 ---")
+            try:
+                result_dbm_shared = ipc.answer("dbm", "call_thread", "shared_thread", "echo", "테스트 메시지")
+                print(f"DBM -> 공유 스레드 접근 결과: {result_dbm_shared}")
+            except Exception as e:
+                print(f"DBM -> 공유 스레드 접근 실패: {str(e)}")
+            
+            # API 프로세스에서 공유 스레드 접근 테스트
+            print("\n--- API에서 공유 스레드 접근 테스트 ---")
+            try:
+                api_result = ipc.answer("api", "test_shared_thread_access", "테스트 메시지")
+                print(f"API -> 공유 스레드 접근 결과: {api_result}")
+            except Exception as e:
+                print(f"API -> 공유 스레드 접근 실패: {str(e)}")
+                        
+            # DBM 프로세스에서 로컬 스레드 접근 테스트
+            print("\n--- DBM에서 로컬 스레드 접근 시도 (실패 예상) ---")
+            try:
+                result_dbm_local = ipc.answer("dbm", "call_thread", "local_thread", "echo", "테스트 메시지")
+                print(f"DBM -> 로컬 스레드 접근 결과: {result_dbm_local}")
+                print("⚠️ 기대와 다르게 로컬 스레드에 접근 가능합니다.")
+            except Exception as e:
+                print(f"✓ 예상대로 로컬 스레드 접근 실패: {str(e)}")
+            
+            # test_cross_communication 함수에 추가
+            print("\n=== DBM 내부 스레드 생성 및 통신 테스트 ===")
+            try:
+                result_create = ipc.answer("dbm", "create_internal_thread")
+                print(f"✓ DBM 내부 스레드 생성 결과: {result_create}")
+                
+                # 잠시 대기
+                time.sleep(0.5)
+                
+                # DBM 내부 스레드에서 Admin 접근 테스트
+                print("\n--- DBM 내부 스레드에서 Admin 접근 테스트 ---")
+                result_thread_to_admin = ipc.answer("dbm", "test_thread_to_admin", "Admin 테스트 메시지")
+                print(f"✓ DBM 스레드->Admin 테스트 결과: {result_thread_to_admin}")
+                
+                # DBM 내부 스레드에서 API 접근 테스트
+                print("\n--- DBM 내부 스레드에서 API 접근 테스트 ---")
+                result_thread_to_api = ipc.answer("dbm", "test_thread_to_api", "API 테스트 메시지")
+                print(f"✓ DBM 스레드->API 테스트 결과: {result_thread_to_api}")
+                
+            except Exception as e:
+                print(f"✗ DBM 내부 스레드 테스트 실패: {e}")
+                
         except Exception as e:
             logging.error(f"테스트 중 오류 발생: {e}")
         finally:
