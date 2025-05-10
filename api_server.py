@@ -545,12 +545,11 @@ class OnReceiveRealDataSim3(QThread):
       self._stop_event.set()
 
 class APIServer():
-    app = QApplication(sys.argv)
+    #app = QApplication(sys.argv)
     def __init__(self):
         self.name = 'api'
         self.sim_no = 0
         self.ipc = None
-        #self.app = None
 
         self.ocx = None
         self.connected = False
@@ -568,7 +567,6 @@ class APIServer():
         self.tr_condition_list = None       # OnReceiveTrCondition에서 리스트 담기
 
         self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
-        # self.api_init()  # 초기화 바로 실행
 
     def stop(self):
         """APIServer 종료 시 실행되는 메서드"""
@@ -618,13 +616,6 @@ class APIServer():
         # 시작 관련 코드
         return {"status": "started"}
         
-    # def stop(self):
-    #     """컴포넌트 중지"""
-    #     print(f"{self.__class__.__name__} 중지 중...")
-    #     self.running = False
-    #     # 중지 관련 코드
-    #     return {"status": "stopped"}
-        
     def get_status(self):
         """상태 확인"""
         return {
@@ -633,32 +624,32 @@ class APIServer():
             # 추가 상태 정보
         }
     
-    def api_init(self):
+    def api_init(self, sim_no=0):
         try:
-            logging.debug(f'{self.name} api_init start')
-            # if self.app is None:
-            #     self.app = QApplication(sys.argv)
-            pythoncom.CoInitialize()
-            if self.sim_no == 1:  # 키움서버 없이 가상 데이터 사용
-                global ready_tickers
-                ready_tickers = True
-                logging.debug(f'{self.name} api_init success (Sim mode {self.sim_no})')
-            else:  # 키움서버 사용 (sim_no=2, 3)
+            logging.debug(f'{self.name} api_init start (sim_no={sim_no})')
+            self.sim_no = sim_no
+            if self.sim_no != 1:  # 키움서버 없이 가상 데이터 사용
+                # QApplication 인스턴스 생성
+                if not QApplication.instance():
+                    self.app = QApplication(sys.argv)
+                else:
+                    self.app = QApplication.instance()
+                    
+                # import pythoncom
+                # pythoncom.CoInitialize()
+
                 self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
-                logging.debug(f'{self.name} api_init success: ocx={self.ocx} (Sim mode {self.sim_no})')
                 self._set_signal_slots()
-                if self.sim_no == 3:  # 차트 데이터 로드
-                    sim.chart_data = self.get_simulation_data()
-                    sim.extract_ticker_info()
                 logging.debug(f'{self.name} api_init success: ocx={self.ocx} (Sim mode {self.sim_no})')
+            self.set_tickers()
         except Exception as e:
             logging.error(f"API 초기화 오류: {type(e).__name__} - {e}")
 
-    def set_tickers(self, sim_no=None):
+    def set_tickers(self):
         """종목 정보 설정 및 시뮬레이션 모드 변경"""
-        if sim_no is not None:
-            self.sim_no = sim_no
-            logging.info(f"시뮬레이션 모드 변경: {sim_no}")
+        if self.sim_no is not None:
+            self.sim_no = self.sim_no
+            logging.info(f"시뮬레이션 모드 변경: {self.sim_no}")
             
             # 기존 쓰레드 정리
             for screen in list(real_thread.keys()):
@@ -695,13 +686,10 @@ class APIServer():
         # 이 함수는 외부에서 구현 예정
         return []
     
-    # 각 클래스(Admin, API, DBM)에 추가할 메서드
     def get_var(self, var_name, default=None):
-        """인스턴스 변수 가져오기"""
         return getattr(self, var_name, default)
 
     def set_var(self, var_name, value):
-        """인스턴스 변수 설정하기"""
         setattr(self, var_name, value)
         return True
 
@@ -713,6 +701,7 @@ class APIServer():
         start_time = time.time()
         while not wait_boolean:
             pythoncom.PumpWaitingMessages()
+            self.app.processEvents()
             if time.time() - start_time > timeout:
                 logging.warning(f"Timeout while waiting for {failed_msg}")
                 return False
@@ -720,11 +709,8 @@ class APIServer():
 
     # 추가 메서드 --------------------------------------------------------------------------------------------------
     def api_connected(self):
-        if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
-            self.connected = self.waiting_in_loop(self.connected, "API 연결 대기", 5)
-        else:  # 키움서버 없이 가상 데이터 사용 (sim_no=1)
-            self.connected = True
-        return self.connected
+        if self.sim_no == 1: return True
+        else: return self.waiting_in_loop(self.connected, "API 연결 대기", 5)
 
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         try:
@@ -762,15 +748,14 @@ class APIServer():
 
     # 설정 관련 메소드 ---------------------------------------------------------------------------------------------
     def _set_signal_slots(self):
-        if self.ocx:
-            self.ocx.OnEventConnect.connect(self.OnEventConnect)
-            self.ocx.OnReceiveConditionVer.connect(self.OnReceiveConditionVer)
-            self.ocx.OnReceiveTrCondition.connect(self.OnReceiveTrCondition)
-            self.ocx.OnReceiveTrData.connect(self.OnReceiveTrData)
-            self.ocx.OnReceiveRealData.connect(self.OnReceiveRealData)
-            self.ocx.OnReceiveChejanData.connect(self.OnReceiveChejanData)
-            self.ocx.OnReceiveRealCondition.connect(self.OnReceiveRealCondition)
-            self.ocx.OnReceiveMsg.connect(self.OnReceiveMsg)
+        self.ocx.OnEventConnect.connect(self.OnEventConnect)
+        self.ocx.OnReceiveConditionVer.connect(self.OnReceiveConditionVer)
+        self.ocx.OnReceiveTrCondition.connect(self.OnReceiveTrCondition)
+        self.ocx.OnReceiveTrData.connect(self.OnReceiveTrData)
+        self.ocx.OnReceiveRealData.connect(self.OnReceiveRealData)
+        self.ocx.OnReceiveChejanData.connect(self.OnReceiveChejanData)
+        self.ocx.OnReceiveRealCondition.connect(self.OnReceiveRealCondition)
+        self.ocx.OnReceiveMsg.connect(self.OnReceiveMsg)
 
     def DisconnectRealData(self, screen):
         logging.debug(f'screen={screen}')
@@ -816,15 +801,15 @@ class APIServer():
 
     # 요청 메서드(일회성 콜백 발생 ) ---------------------------------------------------------------------------------
     @profile_operation
-    def CommConnect(self, block=True, sim_no=0):
+    def CommConnect(self, block=True):
         logging.debug(f'CommConnect: block={block}')
-        if sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
+        if self.sim_no == 1:  
+            self.connected = True
+            self.ipc.work('admin', 'set_connected', self.connected) # OnEventConnect를 안 거치므로 여기서 처리
+        else:
             self.ocx.dynamicCall("CommConnect()")
             if block:
                 self.connected = self.waiting_in_loop(self.connected, "로그인 대기", 5)
-        else:  # 키움서버 없이 가상 데이터 사용 (sim_no=1)
-            self.connected = True
-            self.ipc.work('admin', 'set_connected', self.connected)
 
     def GetConditionLoad(self, block=True):
         if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)

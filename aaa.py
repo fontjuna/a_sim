@@ -1,9 +1,9 @@
 from public import init_logger, dc, gm
-from admin import Admin
 from gui import GUI
-from ipc_manager import ipc, IPCManager
+from admin import Admin
 from api_server import APIServer
 from dbm_server import DBMServer
+from ipc_manager import IPCManager
 from classes import Toast
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtCore import QTimer, Qt
@@ -74,30 +74,23 @@ class Main:
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
+            gm.ipc = IPCManager.get_instance()
             gm.toast = Toast()
             gm.main = self
-            gm.admin = Admin()
-            gm.api = APIServer()
-            gm.dbm = DBMServer()
             gm.gui = GUI() if gm.config.gui_on else None
-            global ipc
-            ipc = IPCManager.get_instance()
-            ipc.register('admin', gm.admin)
-            ipc.register('api', gm.api, 'process')
-            ipc.register('dbm', gm.dbm, 'process')
-            gm.api.ipc = ipc
-            gm.dbm.ipc = ipc
-            ipc.start('admin')
-            ipc.start('api')
-            ipc.start('dbm')
-            ipc.work('api', 'api_init')
+
+            gm.admin = gm.ipc.register("admin", Admin(), start=True)
+            gm.api = gm.ipc.register("api", APIServer(), 'process', start=True)
+            gm.dbm = gm.ipc.register("dbm", DBMServer(), 'process', start=True)
+
+            gm.ipc.work('api', 'api_init', sim_no=gm.config.sim_no)
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
 
     def login(self):
         # 모든 설정이 완료된 후 CommConnect 호출
-        ipc.work('api', 'CommConnect', block=False, sim_no=gm.config.sim_no)
+        gm.ipc.work('api', 'CommConnect', block=True)
 
     def show(self):
         if not gm.config.gui_on: return
@@ -106,15 +99,14 @@ class Main:
 
     def prepare(self):
         try:
-            logging.debug('prepare : 로그인 대기 시작')
-            while True:
-                # api_connected는 여기 외에 사용 금지
-                if not ipc.answer('api', 'api_connected'): time.sleep(0.5)
-                else: break
+            if gm.config.sim_no != 1:
+                logging.debug('prepare : 로그인 대기 시작')
+                while True:
+                    # api_connected는 여기 외에 사용 금지
+                    if not gm.connected: time.sleep(0.5)
+                    else: break
 
-            if gm.config.sim_on: ipc.work('api', 'set_tickers', gm.config.sim_no)
-
-            ipc.work('admin', 'init')
+            gm.ipc.work('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
 
             if gm.config.gui_on: gm.gui.init()
@@ -129,7 +121,7 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            ipc.work('admin', 'trade_start')
+            gm.ipc.work('admin', 'trade_start')
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
@@ -156,7 +148,7 @@ class Main:
 
     def cleanup(self):
         try:
-            ipc.cleanup()
+            gm.ipc.cleanup()
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:

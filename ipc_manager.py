@@ -145,7 +145,7 @@ class IPCManager:
         """응답 큐 가져오기"""
         return self._get_queue(name, 'resp')
     
-    def register(self, name: str, obj: Any, type_: Optional[str] = None) -> None:
+    def register(self, name: str, obj: Any, type_: Optional[str] = None, start: bool = False) -> Any:
         """
         통신 객체 등록
         
@@ -153,8 +153,16 @@ class IPCManager:
             name: 등록할 객체 이름
             obj: 등록할 객체
             type_: 객체 유형 (None=메인스레드, 'thread'=멀티스레드, 'process'=멀티프로세스)
+            start: 등록 후 즉시 워커 시작 여부
+        
+        Returns:
+            등록된 객체
         """
         logging.debug(f"Process {self._pid}: Registering {name} as {type_}")
+        
+        # 객체에 ipc 속성 설정
+        setattr(obj, 'ipc', self)
+        setattr(obj, 'is_ready', False)
         
         # 로컬 등록
         self._objects[name] = (obj, type_)
@@ -203,7 +211,7 @@ class IPCManager:
             else:
                 logging.error(f"Process {self._pid}: Shared response queue for {name} not found")
         
-        # 추가: 스레드 객체용 로컬 큐 생성 (항상, 앞의 과정과 무관하게)
+        # 스레드 객체용 로컬 큐 생성 (항상, 앞의 과정과 무관하게)
         if type_ == 'thread':
             # 스레드는 프로세스 내 로컬 큐 사용
             self._request_queues[name] = queue.Queue()
@@ -212,6 +220,12 @@ class IPCManager:
         
         # 응답 체커 스레드 시작
         self._start_response_checker()
+        
+        # 워커 즉시 시작 옵션
+        if start:
+            self.start(name)
+        
+        return obj  # 등록된 객체 반환
 
     def _start_response_checker(self):
         """응답 체커 스레드 시작 (한 번만)"""
@@ -639,6 +653,7 @@ class IPCManager:
             self._workers[name] = worker
             self._running[name] = True
             worker.start()
+            setattr(obj, 'is_ready', True)
             logging.debug(f"Process {self._pid}: Started worker thread for main thread object {name}")
         elif type_ == 'thread':  # 멀티 스레드
             worker = threading.Thread(
@@ -650,6 +665,7 @@ class IPCManager:
             self._workers[name] = worker
             self._running[name] = True
             worker.start()
+            setattr(obj, 'is_ready', True)
             logging.debug(f"Process {self._pid}: Started thread worker for {name}")
         elif type_ == 'process':  # 멀티 프로세스
             worker = threading.Thread(
@@ -661,6 +677,7 @@ class IPCManager:
             self._workers[name] = worker
             self._running[name] = True
             worker.start()
+            setattr(obj, 'is_ready', True)
             logging.debug(f"Process {self._pid}: Started process worker thread for {name}")
     
     def stop(self, name: str) -> None:
@@ -681,6 +698,7 @@ class IPCManager:
         if hasattr(obj, 'stop') and callable(obj.stop):
             try:
                 obj.stop()
+                setattr(obj, 'is_ready', False)
             except Exception as e:
                 logging.error(f"Process {self._pid}: Error calling stop() on {name}: {e}")
         
@@ -889,9 +907,6 @@ class IPCManager:
         """통계 정보 가져오기"""
         return self._stats.copy()
 
-# 싱글톤 인스턴스 초기화 (올바른 방법으로)
-ipc = None #IPCManager.get_instance()
-
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     
@@ -902,23 +917,10 @@ if __name__ == "__main__":
    
     def test_cross_communication():
         ipc = IPCManager()
-        admin = AdminTest()
-        api = APITest()
-        dbm = DBMTest()
+        admin = ipc.register("admin", AdminTest(), start=True)
+        api = ipc.register("api", APITest(), 'process', start=True)
+        dbm = ipc.register("dbm", DBMTest(), 'process', start=True)
 
-        admin.ipc = ipc
-        api.ipc = ipc
-        dbm.ipc = ipc
-
-        ipc.register("admin", admin)
-        ipc.register("api", api, 'process')
-        ipc.register("dbm", dbm, 'process')
-
-        # 프로세스 시작
-        admin.ipc.start("admin")
-        api.ipc.start("api")
-        dbm.ipc.start("dbm")
-        
         # 잠시 대기하여 모든 프로세스가 초기화될 시간 제공
         logging.debug("메인 프로세스: 모든 프로세스 초기화 대기 중...")
         time.sleep(2)  # 고정 대기 시간 대신 초기화 완료 확인
