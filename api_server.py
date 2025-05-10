@@ -545,7 +545,7 @@ class OnReceiveRealDataSim3(QThread):
       self._stop_event.set()
 
 class APIServer():
-    #app = QApplication(sys.argv)
+    app = QApplication(sys.argv)
     def __init__(self):
         self.name = 'api'
         self.sim_no = 0
@@ -626,24 +626,26 @@ class APIServer():
     
     def api_init(self, sim_no=0):
         try:
-            logging.debug(f'{self.name} api_init start (sim_no={sim_no})')
+            import os
+            pid = os.getpid()
+            logging.debug(f'{self.name} api_init start (sim_no={sim_no}, pid={pid})')
             self.sim_no = sim_no
-            if self.sim_no != 1:  # 키움서버 없이 가상 데이터 사용
-                # QApplication 인스턴스 생성
-                if not QApplication.instance():
-                    self.app = QApplication(sys.argv)
-                else:
-                    self.app = QApplication.instance()
-                    
-                # import pythoncom
-                # pythoncom.CoInitialize()
-
+            
+            if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용
+                # ActiveX 컨트롤 생성
+                logging.debug(f"ActiveX 컨트롤 생성 시작: KHOPENAPI.KHOpenAPICtrl.1")
                 self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+                logging.debug(f"ActiveX 컨트롤 생성 완료: {self.ocx}")
+                
+                logging.debug(f"시그널 슬롯 연결 시작")
                 self._set_signal_slots()
+                logging.debug(f"시그널 슬롯 연결 완료")
+                
                 logging.debug(f'{self.name} api_init success: ocx={self.ocx} (Sim mode {self.sim_no})')
+            
             self.set_tickers()
         except Exception as e:
-            logging.error(f"API 초기화 오류: {type(e).__name__} - {e}")
+            logging.error(f"API 초기화 오류: {type(e).__name__} - {e}", exc_info=True)
 
     def set_tickers(self):
         """종목 정보 설정 및 시뮬레이션 모드 변경"""
