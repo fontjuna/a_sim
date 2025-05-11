@@ -379,9 +379,8 @@ class DBMServer:
                     '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
                 } for item in dict_list]
             if cycle in ['dy', 'mi']:
-                #self.upsert_chart(dict_list, cycle, tick)
+                self.upsert_chart(dict_list, cycle, tick)
                 self.done_todo_code(code, cycle)
-                #self.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
                 ctdt.set_chart_data(code, dict_list, cycle, tick)
             return dict_list
         

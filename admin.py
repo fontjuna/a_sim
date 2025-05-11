@@ -1013,12 +1013,6 @@ class Admin:
         if error is not None:
             logging.debug(f'디비 요청 결과: result={result} error={error}')
 
-    # def dbm_update_chart(self, code, dict_data, cycle, tick=1):
-    #     try:
-    #         gm.ipc.work('cdt', 'set_chart_data', code, dict_data, cycle, tick)
-    #     except Exception as e:
-    #         logging.error(f"dbm_update_chart 오류: {type(e).__name__} - {e}", exc_info=True)
-
     def dbm_fx실시간_수신데이타(self, data):
         # 디비에서 작업결과를 실시간으로 내보내는걸 수신 (예: 차트 분석 후 매매 신호)
         pass

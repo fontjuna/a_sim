@@ -249,123 +249,6 @@ class IPCManager:
             if name in self.threads and not self.threads[name].is_alive():
                 self.threads[name].start()
                 
-                # 리스너 스레드 시작 (결과 처리용)
-                # if name not in self.listeners:
-                #     listener = threading.Thread(
-                #         target=self._thread_listener,
-                #         args=(name,),
-                #         daemon=True
-                #     )
-                #     self.listeners[name] = listener
-                #     listener.start()
-                
-                logging.debug(f"'{name}' 스레드 시작됨")
-                return True
-        
-        elif type_ == 'process':
-            # 프로세스 시작
-            if name in self.processes and not self.processes[name].is_alive():
-                self.processes[name].start()
-                
-                # 리스너 스레드 시작 (결과 처리용)
-                if name not in self.listeners:
-                    listener = threading.Thread(
-                        target=self._process_listener,
-                        args=(name,),
-                        daemon=True
-                    )
-                    self.listeners[name] = listener
-                    listener.start()
-                
-                logging.debug(f"'{name}' 프로세스 시작됨 (PID: {self.processes[name].pid})")
-                return True
-        
-        return False
-    
-    def stop(self, name):
-        """
-        등록된 객체 중지
-        
-        Args:
-            name (str): 중지할 객체의 이름
-        
-        Returns:
-            bool: 성공 여부
-        """
-        if name not in self.types:
-            logging.error(f"'{name}'은(는) 등록되지 않은 이름입니다.")
-            return False
-        
-        type_ = self.types[name]
-        
-        if type_ is None:
-            # 메인스레드는 별도 중지 과정 없음
-            return True
-        
-        elif type_ == 'thread':
-            # 스레드 중지
-            if name in self.threads:
-                thread = self.threads[name]
-                thread.stop()  # 새로운 stop 메서드 호출
-                thread.join(1.0)  # 최대 1초 대기
-                
-                # 리스너 제거
-                if name in self.listeners:
-                    self.listeners.pop(name, None)
-                
-                logging.debug(f"'{name}' 스레드 중지됨")
-                return True
-        
-        elif type_ == 'process':
-            # 프로세스 중지
-            if name in self.processes:
-                process = self.processes[name]
-                
-                # 종료 명령 전송
-                self.queues[name]['input'].put({
-                    'command': 'stop'
-                })
-                
-                # 프로세스 종료 대기
-                process.join(2.0)
-                if process.is_alive():
-                    process.terminate()
-                    process.join(1.0)
-                
-                # 리스너 제거
-                if name in self.listeners:
-                    self.listeners.pop(name, None)
-                
-                logging.debug(f"'{name}' 프로세스 중지됨")
-                return True
-        
-        return False
-    
-    def start(self, name):
-        """
-        등록된 객체 시작
-        
-        Args:
-            name (str): 시작할 객체의 이름
-        
-        Returns:
-            bool: 성공 여부
-        """
-        if name not in self.types:
-            logging.error(f"'{name}'은(는) 등록되지 않은 이름입니다.")
-            return False
-        
-        type_ = self.types[name]
-        
-        if type_ is None:
-            # 메인스레드는 별도 시작 과정 없음
-            return True
-        
-        elif type_ == 'thread':
-            # 스레드 시작
-            if name in self.threads and not self.threads[name].is_alive():
-                self.threads[name].start()
-                
                 # # 리스너 스레드 시작 (결과 처리용)
                 # if name not in self.listeners:
                 #     listener = threading.Thread(
@@ -605,6 +488,7 @@ class IPCManager:
                 return
             
             output_queue = queues['output']
+            input_queue = queues['input']
             
             while not self.shutting_down:
                 try:
@@ -629,7 +513,12 @@ class IPCManager:
                             kwargs = response.get('kwargs', {})
                             
                             # work 실행
-                            self.work(target, method, *args, **kwargs)
+                            success = self.work(target, method, *args, **kwargs)
+                            input_queue.put({
+                                'id': res_id,
+                                'status': 'success' if success else 'error',
+                                'result': success
+                            })
                         
                         elif cmd == 'answer':
                             # 동기 호출 처리
@@ -639,16 +528,147 @@ class IPCManager:
                             args = response.get('args', ())
                             kwargs = response.get('kwargs', {})
                             
-                            # answer 실행하고 결과 반환
-                            result = self.answer(target, method, *args, **kwargs)
+                            logging.debug(f"[{name}_listener] answer 명령 수신: {target}.{method}, res_id={res_id}")
                             
-                            # 결과 전송
-                            output_queue.put({
+                            # 메인 프로세스를 통해 다른 객체 호출 (self.answer 대신 직접 호출)
+                            result = None
+                            try:
+                                # 이 부분을 수정: 명령 라우팅을 위해 올바른 큐에 메시지 전달
+                                # 메인 프로세스에 전달하기 위해 output_queue 사용
+                                output_queue.put({
+                                    'command': 'route_request',
+                                    'id': res_id,
+                                    'target': target,
+                                    'method': method,
+                                    'args': args,
+                                    'kwargs': kwargs,
+                                    'source': name  # 출처 추가
+                                })
+                                
+                                # 결과 대기
+                                logging.debug(f"[{name}_listener] 대상 객체 호출 후 결과 대기: {target}.{method}")
+                                wait_start = time.time()
+                                wait_timeout = 10  # 10초 타임아웃
+                                
+                                while time.time() - wait_start < wait_timeout:
+                                    try:
+                                        # 입력 큐에서 결과 확인
+                                        resp = input_queue.get(block=False)
+                                        
+                                        # 우리가 기다리는 응답인지 확인
+                                        if resp.get('response_for') == res_id:
+                                            result = resp.get('result')
+                                            logging.debug(f"[{name}_listener] 응답 수신 성공: {target}.{method}")
+                                            break
+                                        else:
+                                            # 다른 응답은 다시 큐에 넣음
+                                            input_queue.put(resp)
+                                    except queue.Empty:
+                                        time.sleep(0.0001)
+                                
+                                if result is None:
+                                    logging.warning(f"[{name}_listener] 응답 대기 타임아웃: {target}.{method}")
+                            
+                            except Exception as e:
+                                logging.error(f"[{name}_listener] 호출 중 오류: {e}", exc_info=True)
+                            
+                            # 결과를 원래 요청 프로세스에 전달
+                            logging.debug(f"[{name}_listener] 호출 결과 전송: {res_id}, 결과 타입={type(result)}")
+                            output_queue.put({  # output_queue로 수정
                                 'id': res_id,
-                                'status': 'success',
+                                'status': 'success' if result is not None else 'error',
                                 'result': result
                             })
-                        
+                        # 'route_request' 명령 처리 추가
+                        elif cmd == 'route_request':
+                            req_id = response.get('id')
+                            target = response.get('target')
+                            method = response.get('method')
+                            args = response.get('args', ())
+                            kwargs = response.get('kwargs', {})
+                            source = response.get('source')
+                            
+                            logging.debug(f"라우팅 요청 수신: {source} -> {target}.{method}, req_id={req_id}")
+                            
+                            # 목표 객체의 type 확인
+                            if target not in self.types:
+                                logging.error(f"타겟 '{target}'이 등록되지 않았습니다. req_id={req_id}")
+                                if source in self.queues:
+                                    self.queues[source]['input'].put({
+                                        'response_for': req_id,
+                                        'result': None
+                                    })
+                                continue
+                                
+                            target_type = self.types[target]
+                            
+                            # 타겟이 프로세스인 경우 해당 프로세스의 큐로 직접 전달
+                            if target_type == 'process' and target in self.queues:
+                                logging.debug(f"프로세스간 직접 라우팅: {source} -> {target}.{method}, req_id={req_id}")
+                                # 목표 프로세스의 입력 큐로 요청 전달
+                                target_req_id = str(uuid.uuid4())
+                                self.queues[target]['input'].put({
+                                    'id': target_req_id,
+                                    'method': method,
+                                    'args': args,
+                                    'kwargs': kwargs
+                                })
+                                
+                                # 결과 기다리기
+                                wait_start = time.time()
+                                wait_timeout = 5
+                                result = None
+                                
+                                while time.time() - wait_start < wait_timeout:
+                                    try:
+                                        # 목표 프로세스의 출력 큐에서 결과 확인
+                                        resp = self.queues[target]['output'].get(block=False)
+                                        if resp.get('id') == target_req_id:
+                                            result = resp.get('result')
+                                            break
+                                        else:
+                                            # 다른 응답은 큐에 다시 넣기
+                                            self.queues[target]['output'].put(resp)
+                                    except queue.Empty:
+                                        time.sleep(0.001)
+                            # 다른 모든 경우(메인스레드, 멀티스레드)는 메인스레드에서 처리
+                            else:
+                                # 안전하게 메인스레드에서 실행
+                                result = self.answer(target, method, *args, **kwargs)
+                            
+                            # 결과를 출처 프로세스로 다시 보냄
+                            if source in self.queues:
+                                logging.debug(f"라우팅 결과 전송: {target}.{method} -> {source}, req_id={req_id}, result={result}")
+                                self.queues[source]['input'].put({
+                                    'response_for': req_id,
+                                    'result': result
+                                })
+                            else:
+                                logging.error(f"출처 프로세스 큐를 찾을 수 없음: {source}")   
+                        elif cmd == 'process_call':
+                            # 프로세스에서 발생한 호출 처리 (단순화된 버전)
+                            req_id = response.get('id')
+                            target = response.get('target')
+                            method = response.get('method')
+                            args = response.get('args', ())
+                            kwargs = response.get('kwargs', {})
+                            
+                            #logging.debug(f"프로세스 호출 처리: {name} -> {target}.{method}, req_id={req_id}")
+                            
+                            # 목표 객체 메서드 호출 (IPCManager가 직접 처리)
+                            result = None
+                            try:
+                                result = self.answer(target, method, *args, **kwargs)
+                            except Exception as e:
+                                logging.error(f"메서드 호출 오류: {e}", exc_info=True)
+                            
+                            # 결과를 요청 프로세스로 다시 보냄
+                            #logging.debug(f"프로세스 호출 결과 전송: {target}.{method}, req_id={req_id}")
+                            input_queue.put({
+                                'id': req_id,
+                                'status': 'success',
+                                'result': result
+                            })                                              
                         continue
                     
                     # 응답 처리
@@ -681,26 +701,6 @@ class IPCManager:
         finally:
             logging.debug(f"'{name}' 프로세스 리스너 종료")
     
-    # def _thread_listener(self, name):
-    #     """
-    #     스레드 응답 리스너 (내부 메서드)
-    #     현재는 필요 없지만 확장성을 위해 남겨둠
-        
-    #     Args:
-    #         name (str): 리스닝할 스레드의 이름
-    #     """
-    #     try:
-    #         # 스레드 리스너는 콜백 기반으로 동작하므로 별도 처리 불필요
-    #         # 확장성을 위해 최소 대기 루프만 유지
-    #         # while not self.shutting_down:
-    #         #     time.sleep(0.001)
-    #         pass
-    #     except Exception as e:
-    #         logging.error(f"스레드 리스너 오류: {e}", exc_info=True)
-        
-    #     # finally:
-    #     #     logging.debug(f"'{name}' 스레드 리스너 종료")
-
     def cleanup(self):
         """모든 리소스 정리"""
         self.shutting_down = True
@@ -738,7 +738,7 @@ class _WorkerThread(threading.Thread):
         self.task_queue = queue.Queue()
     
     def run(self):
-        logging.debug(f"{self.name} 스레드 시작")
+        #logging.debug(f"{self.name} 스레드 시작")
         
         while self.running:
             try:
@@ -777,7 +777,7 @@ class _WorkerThread(threading.Thread):
                 logging.error(f"스레드 처리 오류: {e}", exc_info=True)
                 time.sleep(0.0001)  # 오류 발생 시 짧은 대기
         
-        logging.debug(f"{self.name} 스레드 종료")
+        #logging.debug(f"{self.name} 스레드 종료")
     
     def add_task(self, task_id, method_name, task_data, callback=None):
         """태스크 추가"""
@@ -822,57 +822,46 @@ def _process_worker(class_, name, input_queue, output_queue):
                 'kwargs': kwargs
             })
             
+            # 결과를 기다리지 않고 성공 여부만 반환
             return True
         
         def answer(target, method, *args, timeout=10, **kwargs):
             """동기 함수 호출"""
             res_id = str(uuid.uuid4())
-            
+
+            # 요청 전송 로그 추가
+            #logging.debug(f"[{name}] answer 요청 전송: {target}.{method}, req_id={res_id}")
+                        
             # 요청 전송
             output_queue.put({
                 'id': res_id,
-                'command': 'answer',
+                'command': 'process_call',
                 'target': target,
                 'method': method,
                 'args': args,
                 'kwargs': kwargs
             })
+
+            # 응답 대기 시작 로그 추가
+            #logging.debug(f"[{name}] answer 응답 대기 시작: {target}.{method}, req_id={res_id}")
+                
+            # 응답 대기
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                try:
+                    response = input_queue.get(block=False)
+                    if response.get('id') == res_id:
+                        # 응답 수신 로그 추가
+                        #logging.debug(f"[{name}] answer 응답 수신: {target}.{method}, req_id={res_id}")
+                        return response.get('result')
+                    else:
+                        # 다른 응답은 다시 큐에 넣음
+                        input_queue.put(response)
+                except queue.Empty:
+                    time.sleep(0.0001)
             
-            # 결과 대기용 큐 생성
-            result_queue = queue.Queue()
-            
-            # 결과 처리용 스레드 생성
-            def _wait_result():
-                start_time = time.time()
-                while True:
-                    try:
-                        # 최대 타임아웃 체크
-                        if time.time() - start_time > timeout:
-                            result_queue.put(None)
-                            return
-                        
-                        response = output_queue.get(block=False)
-                        if response.get('id') == res_id:
-                            result_queue.put(response.get('result'))
-                            return
-                        
-                        # 다른 응답은, 다시 큐에 넣어줌
-                        output_queue.put(response)
-                    
-                    except queue.Empty:
-                        time.sleep(0.0001)
-            
-            # 결과 대기 스레드 시작
-            wait_thread = threading.Thread(target=_wait_result)
-            wait_thread.daemon = True
-            wait_thread.start()
-            
-            # 결과 대기
-            try:
-                result = result_queue.get(timeout=timeout)
-                return result
-            except queue.Empty:
-                return None
+            #logging.warning(f"[{name}] 요청 타임아웃: {target}.{method}, req_id={res_id}")
+            return None
         
         # 인스턴스에 메서드 추가
         instance.work = work
@@ -888,6 +877,18 @@ def _process_worker(class_, name, input_queue, output_queue):
                 except queue.Empty:
                     time.sleep(0.0001)  # 최소 대기
                     continue
+
+                # 응답 메시지와 요청 메시지 구분
+                if 'status' in request and 'id' in request and 'method' not in request:
+                    # 이것은 응답 메시지임 - 다른 처리 로직으로 라우팅
+                    try:
+                        # 여기서는 프로세스 내 응답 처리 로직을 구현
+                        # 예: 콜백 호출 또는 비동기 작업 완료 처리
+                        #logging.debug(f"[{name}] 응답 메시지 처리: {request}")
+                        continue  # 다음 메시지로 진행
+                    except Exception as e:
+                        logging.error(f"응답 처리 오류: {e}", exc_info=True)
+                        continue
                 
                 # 종료 명령 확인
                 if 'command' in request:
@@ -899,6 +900,23 @@ def _process_worker(class_, name, input_queue, output_queue):
                 # 요청 정보 파싱
                 req_id = request.get('id')
                 method_name = request.get('method')
+
+                # 필수 필드 검증
+                if req_id is None:
+                    logging.error(f"요청 ID가 없는 잘못된 메시지 무시: {request}")
+                    continue
+
+                # method_name이 문자열인지 확인
+                if not isinstance(method_name, str):
+                    logging.error(f"메서드 이름이 문자열이 아닙니다: {type(method_name)}, 요청: {request}")
+                    output_queue.put({
+                        'id': req_id,
+                        'status': 'error',
+                        'error': f"메서드 이름이 문자열이 아닙니다: {type(method_name)}",
+                        'result': None
+                    })
+                    continue
+
                 args = request.get('args', ())
                 kwargs = request.get('kwargs', {})
                 
@@ -941,314 +959,98 @@ def _process_worker(class_, name, input_queue, output_queue):
     finally:
         logging.info(f"{name} 프로세스 종료")
 
-# # 모듈 레벨 IPCManager 인스턴스
-# _ipc_manager = None
+if __name__ == "__main__":
+    import logging
+    import threading
+    import time
+    from worker import Admin, Strategy, DBManager, APIModule, ChartManager
+    from worker import test_stg_to_api, test_stg_to_cht
+    
+    # 로깅 설정
+    logging.basicConfig(
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
+    
+    # 글로벌 매니저 생성
+    class GlobalManager:
+        def __init__(self):
+            self.ipc = IPCManager()
+    
+    gm = GlobalManager()
+    
+    # 객체 생성 및 등록
+    admin = Admin()
+    gm.ipc.register('admin', admin)
+    
+    stg = Strategy()
+    gm.ipc.register('stg', stg, 'thread', start=True)
+    
+    dbm = DBManager()
+    gm.ipc.register('dbm', dbm, 'process', start=True)
+    
+    api = APIModule()
+    gm.ipc.register('api', api, 'process', start=True)
+    
+    # 원래 의도는 api 프로세스에서 초기화 하는 것이었음 에러 때문에 그냥 둠
+    # 여기서 생성하면 stg와 같은 것이 됨
+    # 멀티 프로세스 내의 쓰레드는 프로세스내에서 간접적으로 연결 해야 함
+    cht = ChartManager() 
+    gm.ipc.register('cht', cht, 'thread', start=True) 
+    
+    # 모든 객체가 시작될 때까지 잠시 대기
+    time.sleep(1)
 
-# def get_ipc_manager():
-#     """
-#     IPCManager 인스턴스를 반환
+    # cht 초기화
+    #gm.ipc.work('api', 'init_chart_thread')
     
-#     Returns:
-#         IPCManager: 전역 IPCManager 인스턴스
-#     """
-#     global _ipc_manager
+    # 테스트 시작
+    logging.info("===== 테스트 시작 =====")
     
-#     if _ipc_manager is None:
-#         _ipc_manager = IPCManager()
+    # 1. admin -> dbm (work & answer)
+    logging.info("\n----- admin -> dbm 테스트 -----")
+    gm.ipc.work('dbm', 'echo_test', "Admin에서 DBM으로 work")
+    data, success = gm.ipc.answer('dbm', 'echo_test', "Admin에서 DBM으로 answer")
+    logging.info(f"결과: {data}, {success}")
     
-#     return _ipc_manager
-
-# def register(name, instance, type_=None, start=False):
-#     """
-#     객체 등록 (모듈 레벨 함수)
+    # 2. admin -> api (work & answer)
+    logging.info("\n----- admin -> api 테스트 -----")
+    gm.ipc.work('api', 'echo_test', "Admin에서 API로 work")
+    data, success = gm.ipc.answer('api', 'api_request', "파라미터1", "파라미터2")
+    logging.info(f"결과 타입: {type(data)}, 성공: {success}")
+    if isinstance(data, list):
+        logging.info(f"리스트 길이: {len(data)}")
     
-#     Args:
-#         name (str): 등록할 객체의 이름
-#         instance: 등록할 객체 인스턴스
-#         type_ (str, optional): 객체 유형 (None=메인스레드, 'thread'=멀티스레드, 'process'=멀티프로세스)
-#         start (bool, optional): 등록 후 바로 시작할지 여부
+    # 3. admin -> cht (work & answer)
+    logging.info("\n----- admin -> cht 테스트 -----")
+    gm.ipc.work('cht', 'echo_test', "Admin에서 CHT로 work")
+    data, success = gm.ipc.answer('cht', 'echo_test', "Admin에서 CHT로 answer")
+    logging.info(f"결과: {data}, {success}")
     
-#     Returns:
-#         instance: 등록된 객체 인스턴스
-#     """
-#     return get_ipc_manager().register(name, instance, type_, start)
-
-# def work(name, method, *args, **kwargs):
-#     """
-#     비동기 작업 요청 (모듈 레벨 함수)
+    # 4. stg -> api (work & answer)
+    logging.info("\n----- stg -> api 테스트 -----")
+    stg_test_thread = threading.Thread(target=test_stg_to_api, args=(stg,))
+    stg_test_thread.start()
+    stg_test_thread.join()
     
-#     Args:
-#         name (str): 작업을 요청할 객체의 이름
-#         method (str): 호출할 메서드 이름
-#         *args: 메서드에 전달할 위치 인자
-#         **kwargs: 메서드에 전달할 키워드 인자
+    # 5. stg -> cht (work & answer)
+    logging.info("\n----- stg -> cht 테스트 -----")
+    stg_to_cht_thread = threading.Thread(target=test_stg_to_cht, args=(stg,))
+    stg_to_cht_thread.start()
+    stg_to_cht_thread.join()
     
-#     Returns:
-#         bool: 요청 성공 여부
-#     """
-#     return get_ipc_manager().work(name, method, *args, **kwargs)
-
-# def answer(name, method, *args, callback=None, timeout=30, **kwargs):
-#     """
-#     동기 작업 요청 (모듈 레벨 함수)
+    # 6. dbm -> api (work & answer)
+    logging.info("\n----- dbm -> api 테스트 -----")
+    result = gm.ipc.answer('dbm', 'call_api')
+    logging.info(f"DBM->API 결과: {result}")
     
-#     Args:
-#         name (str): 작업을 요청할 객체의 이름
-#         method (str): 호출할 메서드 이름
-#         *args: 메서드에 전달할 위치 인자
-#         callback (callable, optional): 비동기 결과 처리를 위한 콜백 함수
-#         timeout (int, optional): 응답 대기 시간 (초)
-#         **kwargs: 메서드에 전달할 키워드 인자
+    # 7. dbm -> cht (work & answer)
+    logging.info("\n----- dbm -> cht 테스트 -----")
+    result = gm.ipc.answer('dbm', 'call_cht')
+    logging.info(f"DBM->CHT 결과: {result}")
     
-#     Returns:
-#         any: 작업 결과 (callback이 None이 아니면 None 반환)
-#     """
-#     return get_ipc_manager().answer(name, method, *args, callback=callback, timeout=timeout, **kwargs)
-
-# def start(name):
-#     """
-#     등록된 객체 시작 (모듈 레벨 함수)
+    # 테스트 종료
+    logging.info("\n===== 테스트 완료 =====")
     
-#     Args:
-#         name (str): 시작할 객체의 이름
-    
-#     Returns:
-#         bool: 성공 여부
-#     """
-#     return get_ipc_manager().start(name)
-
-# def stop(name):
-#     """
-#     등록된 객체 중지 (모듈 레벨 함수)
-    
-#     Args:
-#         name (str): 중지할 객체의 이름
-    
-#     Returns:
-#         bool: 성공 여부
-#     """
-#     return get_ipc_manager().stop(name)
-
-# def cleanup():
-#     """
-#     모든 리소스 정리 (모듈 레벨 함수)
-#     """
-#     global _ipc_manager
-    
-#     if _ipc_manager is not None:
-#         _ipc_manager.cleanup()
-#         _ipc_manager = None
-
-# if __name__ == "__main__":
-#     import multiprocessing
-
-#     from worker import MainWorker, ThreadWorker, ProcessWorker, APITest
-#     from public import init_logger
-    
-#     # 로깅 설정
-#     init_logger()
-    
-#     # Windows에서는 'spawn'을 기본으로 설정
-#     multiprocessing.set_start_method('spawn', force=True)
-    
-#     try:
-#         logging.info("=== IPCManager 테스트 시작 ===")
-        
-#         # 1. 등록 및 시작 테스트
-#         logging.info("=== 등록 및 시작 테스트 ===")
-        
-#         # 메인스레드 워커 등록
-#         main_worker = register('main', MainWorker("Main"), start=True)
-#         logging.info(f"메인스레드 워커 등록: {main_worker is not None}")
-        
-#         # 스레드 워커 등록
-#         thread_worker = register('thread', ThreadWorker("Thread"), 'thread', start=True)
-#         logging.info(f"스레드 워커 등록: {thread_worker is not None}")
-        
-#         # 프로세스 워커 등록
-#         process_worker = register('process', ProcessWorker(), 'process', start=True)
-#         logging.info(f"프로세스 워커 등록: {process_worker is not None}")
-        
-#         # 추가 스레드 워커 등록 (나중에 사용)
-#         thread_worker2 = register('thread2', ThreadWorker("Thread2"), 'thread', start=True)
-#         logging.info(f"추가 스레드 워커 등록: {thread_worker2 is not None}")
-        
-#         # 추가 프로세스 워커 등록 (나중에 사용)
-#         process_worker2 = register('process2', ProcessWorker(), 'process', start=True)
-#         logging.info(f"추가 프로세스 워커 등록: {process_worker2 is not None}")
-        
-#         # 잠시 대기
-#         time.sleep(1)
-
-#             # 키움 API 테스트
-#         logging.info("=== 키움 API 테스트 ===")
-#         api_server = register('api', APITest(), 'process', start=True)
-#         work('api', 'kiwoom_login')
-#         result = answer('api', 'fetch_data', param='005930')
-#         logging.info(f"API 서버 연결 상태: {result}")
-        
-#         # 2. 메인 → 다른 객체 통신 테스트
-#         logging.info("=== 메인 → 다른 객체 통신 테스트 ===")
-        
-#         # 메인 → 스레드 (동기)
-#         start_time = time.time()
-#         result = answer('thread', 'echo', "메인에서 스레드로 동기 호출")
-#         elapsed = time.time() - start_time
-#         logging.info(f"메인 → 스레드 (동기) 결과: {result}, 소요시간: {elapsed:.6f}초")
-        
-#         # 메인 → 스레드 (비동기)
-#         callback_result = [None]
-#         callback_event = threading.Event()
-        
-#         def on_result(result):
-#             callback_result[0] = result
-#             callback_event.set()
-        
-#         start_time = time.time()
-#         answer('thread', 'echo', "메인에서 스레드로 비동기 호출", callback=on_result)
-#         callback_event.wait(timeout=1)
-#         elapsed = time.time() - start_time
-#         logging.info(f"메인 → 스레드 (비동기) 결과: {callback_result[0]}, 소요시간: {elapsed:.6f}초")
-        
-#         # 메인 → 프로세스 (동기)
-#         start_time = time.time()
-#         result = answer('process', 'echo', "메인에서 프로세스로 동기 호출")
-#         elapsed = time.time() - start_time
-#         logging.info(f"메인 → 프로세스 (동기) 결과: {result}, 소요시간: {elapsed:.6f}초")
-        
-#         # 메인 → 프로세스 (비동기)
-#         callback_result = [None]
-#         callback_event = threading.Event()
-        
-#         def on_result(result):
-#             callback_result[0] = result
-#             callback_event.set()
-        
-#         start_time = time.time()
-#         answer('process', 'echo', "메인에서 프로세스로 비동기 호출", callback=on_result)
-#         callback_event.wait(timeout=1)
-#         elapsed = time.time() - start_time
-#         logging.info(f"메인 → 프로세스 (비동기) 결과: {callback_result[0]}, 소요시간: {elapsed:.6f}초")
-        
-#         # ID 확인
-#         main_thread_id = threading.get_ident()
-#         main_process_id = multiprocessing.current_process().pid
-        
-#         thread_thread_id = answer('thread', 'get_thread_id')
-#         thread_process_id = answer('thread', 'get_process_id')
-        
-#         process_thread_id = answer('process', 'get_thread_id')
-#         process_process_id = answer('process', 'get_process_id')
-        
-#         logging.info(f"메인 ID: 스레드={main_thread_id}, 프로세스={main_process_id}")
-#         logging.info(f"스레드 ID: 스레드={thread_thread_id}, 프로세스={thread_process_id}")
-#         logging.info(f"프로세스 ID: 스레드={process_thread_id}, 프로세스={process_process_id}")
-        
-#         # 3. 스레드 → 다른 객체 통신 테스트
-#         logging.info("=== 스레드 → 다른 객체 통신 테스트 ===")
-        
-#         # 스레드 → 메인
-#         result = answer('thread', 'call_another', 'main', 'echo', "스레드에서 메인으로 호출")
-#         logging.info(f"스레드 → 메인 결과: {result}")
-        
-#         # 스레드 → 다른 스레드
-#         result = answer('thread', 'call_another', 'thread2', 'echo', "스레드에서 다른 스레드로 호출")
-#         logging.info(f"스레드 → 다른 스레드 결과: {result}")
-        
-#         # 스레드 → 프로세스
-#         result = answer('thread', 'call_another', 'process', 'echo', "스레드에서 프로세스로 호출")
-#         logging.info(f"스레드 → 프로세스 결과: {result}")
-        
-#         # 4. 프로세스 → 다른 객체 통신 테스트
-#         logging.info("=== 프로세스 → 다른 객체 통신 테스트 ===")
-        
-#         # 프로세스 → 메인
-#         result = answer('process', 'call_another', 'main', 'echo', "프로세스에서 메인으로 호출")
-#         logging.info(f"프로세스 → 메인 결과: {result}")
-        
-#         # 프로세스 → 스레드
-#         result = answer('process', 'call_another', 'thread', 'echo', "프로세스에서 스레드로 호출")
-#         logging.info(f"프로세스 → 스레드 결과: {result}")
-        
-#         # 프로세스 → 다른 프로세스
-#         result = answer('process', 'call_another', 'process2', 'echo', "프로세스에서 다른 프로세스로 호출")
-#         logging.info(f"프로세스 → 다른 프로세스 결과: {result}")
-        
-#         # 5. 속도 테스트
-#         logging.info("=== 속도 테스트 ===")
-        
-#         iterations = 100
-#         total_time_main = 0
-#         total_time_thread = 0
-#         total_time_process = 0
-        
-#         # 메인 호출 속도
-#         for i in range(iterations):
-#             start_time = time.time()
-#             answer('main', 'add', i, i+1)
-#             elapsed = time.time() - start_time
-#             total_time_main += elapsed
-        
-#         avg_time_main = total_time_main / iterations
-#         logging.info(f"메인 호출 평균 시간: {avg_time_main:.6f}초")
-        
-#         # 스레드 호출 속도
-#         for i in range(iterations):
-#             start_time = time.time()
-#             answer('thread', 'add', i, i+1)
-#             elapsed = time.time() - start_time
-#             total_time_thread += elapsed
-        
-#         avg_time_thread = total_time_thread / iterations
-#         logging.info(f"스레드 호출 평균 시간: {avg_time_thread:.6f}초")
-        
-#         # 프로세스 호출 속도
-#         for i in range(iterations):
-#             start_time = time.time()
-#             answer('process', 'add', i, i+1)
-#             elapsed = time.time() - start_time
-#             total_time_process += elapsed
-        
-#         avg_time_process = total_time_process / iterations
-#         logging.info(f"프로세스 호출 평균 시간: {avg_time_process:.6f}초")
-        
-#         # 6. 오류 처리 테스트
-#         logging.info("=== 오류 처리 테스트 ===")
-        
-#         # 존재하지 않는 객체 호출
-#         result = answer('non_existent', 'echo', "이 호출은 실패해야 함")
-#         logging.info(f"존재하지 않는 객체 호출 결과: {result}")
-        
-#         # 존재하지 않는 메서드 호출
-#         result = answer('main', 'non_existent_method', "이 호출은 실패해야 함")
-#         logging.info(f"존재하지 않는 메서드 호출 결과: {result}")
-        
-#         # 타임아웃 테스트
-#         start_time = time.time()
-#         result = answer('thread', 'sleep', 3, timeout=1)
-#         elapsed = time.time() - start_time
-#         logging.info(f"타임아웃 테스트 결과: {result}, 소요시간: {elapsed:.6f}초")
-        
-#         # 7. 자원 정리 테스트
-#         logging.info("=== 자원 정리 테스트 ===")
-        
-#         # 개별 객체 중지
-#         result = stop('thread2')
-#         logging.info(f"thread2 중지 결과: {result}")
-        
-#         result = stop('process2')
-#         logging.info(f"process2 중지 결과: {result}")
-        
-#         # 8. 전체 정리
-#         logging.info("=== 모든 자원 정리 ===")
-#         cleanup()
-#         logging.info("모든 자원 정리 완료")
-        
-#         logging.info("=== IPCManager 테스트 완료 ===")
-        
-#     except Exception as e:
-#         logging.error(f"테스트 중 오류 발생: {e}", exc_info=True)
-        
-#         # 오류 발생 시에도 자원 정리
-#         cleanup()
-
+    # 모든 리소스 정리
+    gm.ipc.cleanup()
