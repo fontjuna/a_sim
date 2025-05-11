@@ -751,10 +751,10 @@ class APIServer():
                 pythoncom.PumpWaitingMessages()
                 if time.time() - start_time > timeout:
                     logging.warning(f"Timeout while waiting for {rqname} data")
-                    return None, False
+                    return [], False
 
-            logging.debug(f'{rqname} 요청 결과: {self.tr_result}')
-            return self.tr_result, self.tr_remained
+            #logging.debug(f'{rqname} 요청 결과: {self.tr_result}')
+            return self.tr_result[:10], self.tr_remained
 
         except Exception as e:
             logging.error(f"TR 요청 오류: {type(e).__name__} - {e}")
@@ -800,6 +800,7 @@ class APIServer():
         global cond_thread
         if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
             self.ocx.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, cond_index)
+            logging.debug(f'전략 중지: screen={screen}, cond_name={cond_name}, cond_index={cond_index} {"*"*50}')
         
         # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 종료
         if screen in cond_thread and cond_thread[screen]:

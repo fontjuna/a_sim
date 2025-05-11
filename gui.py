@@ -553,10 +553,9 @@ class GUI(QMainWindow, form_class):
             logging.debug('전략매매 시작 취소')
 
     def gui_strategy_stop(self, question=True):
+        response = True
         if question:
             response = QMessageBox.question(None, '전략매매 중지', '전략매매를 중지하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
-        else:
-            response = True
         if response:
             gm.admin.cdn_fx중지_전략매매()
             self.set_strategy_toggle(run=False)

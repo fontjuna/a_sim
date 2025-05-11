@@ -344,7 +344,7 @@ class DBMServer:
             next = '0'
             dict_list = []
             while True:
-                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=2)
+                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list')
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
                 times -= 1
@@ -424,13 +424,13 @@ class DBMServer:
                 del self.todo_code[code]
 
     def register_code(self, code):
-        # if not self.thread_run: return
-        # with self._lock:
-        #     if code in self.done_code or code in self.todo_code:
-        #         return False
+        if not self.thread_run: return
+        with self._lock:
+            if code in self.done_code or code in self.todo_code:
+                return False
 
-        #     logging.debug(f'차트관리 종목코드 등록: {code}')
-        #     self.todo_code[code] = {'mi': False, 'dy': False}
+            logging.debug(f'차트관리 종목코드 등록: {code}')
+            self.todo_code[code] = {'mi': False, 'dy': False}
         return True
     
     def is_done(self, code):

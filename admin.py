@@ -121,60 +121,24 @@ class Admin:
         gm.config.ready = True
 
     # 공용 함수 -------------------------------------------------------------------------------------------
-    # def com_request_time_check(self, kind='order', cond_text = None):
-    #     if kind == 'order':
-    #         wait_time = gm.ord.check_interval()
-    #     elif kind == 'request':
-    #         wait_time = max(gm.req.check_interval(), gm.req.check_condition_interval(cond_text) if cond_text else 0)
-
-    #     #logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
-    #     if wait_time > 1666: # 1.666초 이내 주문 제한
-    #         msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
-    #             if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
-    #         gm.toast.toast(msg, duration=dc.td.TOAST_TIME)
-    #         logging.warning(msg)
-    #         return False
-        
-    #     elif wait_time > 1000:
-    #         msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-    #         gm.toast.toast(msg, duration=wait_time)
-    #         time.sleep((wait_time-200)/1000) 
-    #         wait_time = 0
-    #         logging.info(msg)
-
-    #     elif wait_time > 0:
-    #         msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-    #         gm.toast.toast(msg, duration=wait_time)
-    #         logging.info(msg)
-
-    #     time.sleep((wait_time + 200)/1000) 
-
-    #     if kind == 'order':
-    #         gm.ord.update_request_times()
-    #     elif kind == 'request':
-    #         if cond_text: gm.req.update_condition_time(cond_text)
-    #         else: gm.req.update_request_times()
-
-    #     return True
-
-    def com_SendRequest(self, rqname, trcode, input, output, next='0', screen=None, form='dict_list', timeout=5):
-        # if not self.com_request_time_check(kind='request'): return [], False
-        try:
-            #logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} input={input} next={next} screen={screen} form={form} timeout={timeout}')
-            args = {
-                'rqname': rqname,
-                'trcode': trcode,
-                'input': input,
-                'output': output,
-                'next': next if next else '0',
-                'screen': screen if screen else dc.scr.화면[rqname],
-                'form': form if form else 'dict_list',
-                'timeout': timeout if timeout else 5
-            }
-            return gm.ipc.answer('api', 'api_request', **args)
-        except Exception as e:
-            logging.error(f'com_SendRequest 오류: {e}')
-            return [], False
+    # def com_SendRequest(self, rqname, trcode, input, output, next='0', screen=None, form='dict_list', timeout=5):
+    #     # if not self.com_request_time_check(kind='request'): return [], False
+    #     try:
+    #         #logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} input={input} next={next} screen={screen} form={form} timeout={timeout}')
+    #         args = {
+    #             'rqname': rqname,
+    #             'trcode': trcode,
+    #             'input': input,
+    #             'output': output,
+    #             'next': next if next else '0',
+    #             'screen': screen if screen else dc.scr.화면[rqname],
+    #             'form': form if form else 'dict_list',
+    #             'timeout': timeout if timeout else 5
+    #         }
+    #         return gm.ipc.answer('api', 'api_request', **args)
+    #     except Exception as e:
+    #         logging.error(f'com_SendRequest 오류: {e}')
+    #         return [], False
 
     def com_SendCondition(self, screen, cond_name, cond_index, search=1): # search=0: 조건검색만, 1: 조건검색 + 실시간 조건검색
         cond_text = f'{cond_index:03d} : {cond_name.strip()}'
