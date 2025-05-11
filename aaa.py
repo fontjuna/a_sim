@@ -74,7 +74,7 @@ class Main:
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
-            gm.ipc = IPCManager.get_instance()
+            gm.ipc = IPCManager()
             gm.toast = Toast()
             gm.main = self
             gm.gui = GUI() if gm.config.gui_on else None
@@ -90,7 +90,7 @@ class Main:
 
     def login(self):
         # 모든 설정이 완료된 후 CommConnect 호출
-        gm.ipc.work('api', 'CommConnect', block=True)
+        gm.ipc.work('api', 'CommConnect', block=False)
 
     def show(self):
         if not gm.config.gui_on: return
@@ -103,7 +103,7 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    if not gm.connected: time.sleep(0.5)
+                    if not gm.ipc.answer('api', 'api_connected'): time.sleep(0.5)
                     else: break
 
             gm.ipc.work('admin', 'init')

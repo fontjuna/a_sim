@@ -1,9 +1,10 @@
 # worker.py
 import logging
-import multiprocessing
+import multiprocessing as mp
 import time
 import sys
 import os
+import threading
 
 # 테스트 클래스 정의
 class AdminTest:
@@ -110,7 +111,7 @@ class APITest:
     def fetch_data(self, param):
         logging.info(f"APITest.fetch_data called with {param}")
         # DBM 서버 함수 호출 테스트
-        result = self.ipc.answer("dbm", "get_data", param)
+        result = self.answer("dbm", "get_data", param)
         return f"API fetched: {param}, DB had: {result}"
     
     # worker.py (계속)
@@ -279,3 +280,126 @@ def call_thread(self, thread_name, method, *args, **kwargs):
     """스레드 메서드 호출"""
     logging.info(f"DBMTest.call_thread: {thread_name}.{method} 호출")
     return self.ipc.answer(thread_name, method, *args, **kwargs)
+
+# 아래 코드를 worker.py 파일에 추가합니다.
+# 기존 코드는 그대로 유지됩니다.
+
+# 테스트용 메인스레드 클래스
+class MainWorker:
+    def __init__(self, name="MainWorker"):
+        self.name = name
+        logging.debug(f"{name} 초기화됨")
+    
+    def echo(self, message):
+        logging.debug(f"[{self.name}] Echo: {message}")
+        return f"[{self.name}] {message}"
+    
+    def add(self, a, b):
+        result = a + b
+        logging.debug(f"[{self.name}] 계산: {a} + {b} = {result}")
+        return result
+    
+    def sleep(self, seconds):
+        logging.debug(f"[{self.name}] {seconds}초 대기 시작")
+        time.sleep(seconds)
+        logging.debug(f"[{self.name}] {seconds}초 대기 완료")
+        return seconds
+    
+    def get_thread_id(self):
+        thread_id = threading.get_ident()
+        logging.debug(f"[{self.name}] 스레드 ID: {thread_id}")
+        return thread_id
+    
+    def get_process_id(self):
+        process_id = mp.current_process().pid
+        logging.debug(f"[{self.name}] 프로세스 ID: {process_id}")
+        return process_id
+    
+    def call_another(self, name, method, *args, **kwargs):
+        """다른 워커 호출 테스트 (IPCManager가 연결되면 작동)"""
+        if hasattr(self, 'answer'):
+            logging.debug(f"[{self.name}] {name}.{method} 호출")
+            result = self.answer(name, method, *args, **kwargs)
+            logging.debug(f"[{self.name}] {name}.{method} 결과: {result}")
+            return result
+        return None
+
+# 테스트용 스레드 워커 클래스
+class ThreadWorker:
+    def __init__(self, name="ThreadWorker"):
+        self.name = name
+        logging.debug(f"{name} 초기화됨")
+    
+    def echo(self, message):
+        logging.debug(f"[{self.name}] Echo: {message}")
+        return f"[{self.name}] {message}"
+    
+    def add(self, a, b):
+        result = a + b
+        logging.debug(f"[{self.name}] 계산: {a} + {b} = {result}")
+        return result
+    
+    def sleep(self, seconds):
+        logging.debug(f"[{self.name}] {seconds}초 대기 시작")
+        time.sleep(seconds)
+        logging.debug(f"[{self.name}] {seconds}초 대기 완료")
+        return seconds
+    
+    def get_thread_id(self):
+        thread_id = threading.get_ident()
+        logging.debug(f"[{self.name}] 스레드 ID: {thread_id}")
+        return thread_id
+    
+    def get_process_id(self):
+        process_id = mp.current_process().pid
+        logging.debug(f"[{self.name}] 프로세스 ID: {process_id}")
+        return process_id
+    
+    def call_another(self, name, method, *args, **kwargs):
+        """다른 워커 호출 테스트"""
+        if hasattr(self, 'answer'):
+            logging.debug(f"[{self.name}] {name}.{method} 호출")
+            result = self.answer(name, method, *args, **kwargs)
+            logging.debug(f"[{self.name}] {name}.{method} 결과: {result}")
+            return result
+        return None
+
+# 테스트용 프로세스 워커 클래스
+class ProcessWorker:
+    def __init__(self, name="ProcessWorker"):
+        self.name = name
+        logging.debug(f"{name} 초기화됨")
+    
+    def echo(self, message):
+        logging.debug(f"[{self.name}] Echo: {message}")
+        return f"[{self.name}] {message}"
+    
+    def add(self, a, b):
+        result = a + b
+        logging.debug(f"[{self.name}] 계산: {a} + {b} = {result}")
+        return result
+    
+    def sleep(self, seconds):
+        logging.debug(f"[{self.name}] {seconds}초 대기 시작")
+        time.sleep(seconds)
+        logging.debug(f"[{self.name}] {seconds}초 대기 완료")
+        return seconds
+    
+    def get_thread_id(self):
+        thread_id = threading.get_ident()
+        logging.debug(f"[{self.name}] 스레드 ID: {thread_id}")
+        return thread_id
+    
+    def get_process_id(self):
+        process_id = mp.current_process().pid
+        logging.debug(f"[{self.name}] 프로세스 ID: {process_id}")
+        return process_id
+    
+    def call_another(self, name, method, *args, **kwargs):
+        """다른 워커 호출 테스트"""
+        if hasattr(self, 'answer'):
+            logging.debug(f"[{self.name}] {name}.{method} 호출")
+            result = self.answer(name, method, *args, **kwargs)
+            logging.debug(f"[{self.name}] {name}.{method} 결과: {result}")
+            return result
+        return None

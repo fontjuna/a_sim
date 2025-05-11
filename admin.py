@@ -26,8 +26,8 @@ class Admin:
         self.json_load_define_sets()
 
     # 준비 작업 -------------------------------------------------------------------------------------------
-    def set_connected(self, connected):
-        gm.connected = connected
+    # def set_connected(self, connected):
+    #     gm.connected = connected
 
     def set_globals(self):
         # gm.req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
@@ -415,7 +415,7 @@ class Admin:
             output = gm.tbl.hd잔고합산['컬럼']
             next = '0'
             screen = dc.scr.화면[rqname]
-            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+            data, remain = gm.ipc.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen)
             dict_list.extend(data)
             if dict_list:
                 for i, item in enumerate(dict_list):
@@ -440,7 +440,7 @@ class Admin:
             next = '0'
             screen = dc.scr.화면[rqname]
             while True:
-                data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+                data, remain = gm.ipc.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen)
                 logging.debug(f'잔고목록 얻기: data count={len(data)}, remain={remain}')
                 dict_list.extend(data)
                 if not remain: break
@@ -630,7 +630,7 @@ class Admin:
             output = gm.tbl.hd일지합산['컬럼']
             next = '0'
             screen = dc.scr.화면['일지합산']
-            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+            data, remain = gm.ipc.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen)
             if data:
                 for i, item in enumerate(data):
                     item.update({'순번':i})
@@ -647,7 +647,7 @@ class Admin:
             screen = dc.scr.화면['일지목록']
             next = '0'
             while True:
-                data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+                data, remain = gm.ipc.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen)
                 logging.debug(f'일지목록 얻기: data count={len(data)}, remain={remain}')
                 dict_list.extend(data)
                 if not remain: break
@@ -672,7 +672,7 @@ class Admin:
             output = gm.tbl.hd예수금['컬럼']
             next = '0'
             screen = dc.scr.화면['예수금']
-            data, remain = self.com_SendRequest(rqname, trcode, input, output, next, screen)
+            data, remain = gm.ipc.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen)
             if data:
                 for i, item in enumerate(data):
                     item.update({'순번':i})

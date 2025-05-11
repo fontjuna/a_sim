@@ -699,20 +699,20 @@ class APIServer():
         logging.getLogger().setLevel(level)
         logging.debug(f'API 로그 레벨 설정: {level}')
 
-    def waiting_in_loop(self, wait_boolean, failed_msg, timeout=5):
+    def waiting_in_loop(self, wait_boolean, failed_msg, timeout=10):
         start_time = time.time()
         while not wait_boolean:
             pythoncom.PumpWaitingMessages()
-            self.app.processEvents()
+            # self.app.processEvents()
             if time.time() - start_time > timeout:
                 logging.warning(f"Timeout while waiting for {failed_msg}")
                 return False
         return True
 
     # 추가 메서드 --------------------------------------------------------------------------------------------------
-    def api_connected(self):
-        if self.sim_no == 1: return True
-        else: return self.waiting_in_loop(self.connected, "API 연결 대기", 5)
+    # def api_connected(self):
+    #     if self.sim_no == 1: return True
+    #     else: return self.waiting_in_loop(self.connected, "API 연결 대기", 15)
 
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         try:
@@ -741,7 +741,7 @@ class APIServer():
             self.tr_received = self.waiting_in_loop(self.tr_received, f"{rqname} data", timeout)
             if not self.tr_received:
                 return [], False
-
+            logging.debug(f'{rqname} 요청 결과: {self.tr_result}')
             return self.tr_result, self.tr_remained
 
         except Exception as e:
@@ -811,18 +811,18 @@ class APIServer():
         else:
             self.ocx.dynamicCall("CommConnect()")
             if block:
-                self.connected = self.waiting_in_loop(self.connected, "로그인 대기", 5)
+                self.connected = self.waiting_in_loop(self.connected, "로그인 대기", 15)
 
     def GetConditionLoad(self, block=True):
-        if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
+        if self.sim_no == 1:  
+            self.strategy_loaded = True
+        else:  
             self.strategy_loaded = False
             result = self.ocx.dynamicCall("GetConditionLoad()")
             logging.debug(f'전략 요청 : {"성공" if result==1 else "실패"}')
             if block:
-                self.strategy_loaded = self.waiting_in_loop(self.strategy_loaded, "전략 로드", 5)
-        else:  # 키움서버 없이 가상 데이터 사용 (sim_no=1)
-            self.strategy_loaded = True
-        return self.strategy_loaded
+                self.strategy_loaded = self.waiting_in_loop(self.strategy_loaded, "전략 로드", 15)
+        return result
 
     def SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno):
         if not com_request_time_check(kind='order'): return -308 # 5회 제한 초과
@@ -898,7 +898,7 @@ class APIServer():
                     return False
                 
                 if block is True:
-                    self.tr_condition_loaded = self.waiting_in_loop(self.tr_condition_loaded, f"{screen} {cond_name} {cond_index} {search}", 5)
+                    self.tr_condition_loaded = self.waiting_in_loop(self.tr_condition_loaded, f"{screen} {cond_name} {cond_index} {search}", 15)
                     if not self.tr_condition_loaded:
                         return False
                     data = self.tr_condition_list
@@ -911,7 +911,7 @@ class APIServer():
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        self.ipc.work('admin', 'set_connected', self.connected)
+        self.work('admin', 'set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
