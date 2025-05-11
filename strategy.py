@@ -362,7 +362,7 @@ class Strategy:
             gm.ct.set_strategy(self.전략, self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
             if gm.config.gui_on: 
-                gm.qgm.ipc.work['gui'].put(Work('set_strategy_toggle', {'run': any(gm.매수문자열들) or any(gm.매도문자열들)}))
+                gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any(gm.매수문자열들) or any(gm.매도문자열들)}))
 
         except Exception as e:
             logging.error(f'전략 초기화 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -490,7 +490,7 @@ class Strategy:
                     gm.매수조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
                     gm.ipc.work('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
                     gm.ipc.work('dbm', 'register_code', code)
-                    gm.qgm.ipc.work['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
+                    gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.dict조건종목감시:
                     self.cdn_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가

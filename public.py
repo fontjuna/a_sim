@@ -105,7 +105,7 @@ def profile_operation(func):
         result = func(*args, **kwargs)
         elapsed = time.time() - start_time
         if elapsed > 0.1:  # 100ms 이상 걸리는 작업 로깅
-            logging.debug(f"[PROFILE] {func.__name__} took {elapsed:.3f} seconds {'*'*70}")
+            logging.debug(f"[PROFILE] {func.__name__} took {elapsed:.3f} seconds {'*'*5}")
         return result
     return wrapper
 

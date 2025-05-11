@@ -191,7 +191,7 @@ class DBMServer:
             'result': result,
             'error': error
         }
-        self.ipc.work('admin', order, **job)
+        self.work('admin', order, **job)
 
     def execute_query(self, sql, db='chart', params=None):
         try:
@@ -344,7 +344,7 @@ class DBMServer:
             next = '0'
             dict_list = []
             while True:
-                data, remain = answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=2)
+                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=2)
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
                 times -= 1
@@ -381,7 +381,7 @@ class DBMServer:
             if cycle in ['dy', 'mi']:
                 #self.upsert_chart(dict_list, cycle, tick)
                 self.done_todo_code(code, cycle)
-                #self.ipc.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
+                #self.work('admin', 'dbm_update_chart', code, dict_list, cycle, tick)
                 ctdt.set_chart_data(code, dict_list, cycle, tick)
             return dict_list
         
@@ -438,8 +438,8 @@ class DBMServer:
             return code in self.done_code
 
     def update_script_chart(self, job):
-        self.ipc.work('admin', 'on_fx실시간_주식체결', **job)
-        # code = job['code']
-        # dictFID = job['dictFID']
-        # if code in self.todo_code or code in self.done_code:
-        #     ctdt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+        self.work('admin', 'on_fx실시간_주식체결', **job)
+        code = job['code']
+        dictFID = job['dictFID']
+        if code in self.todo_code or code in self.done_code:
+            ctdt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])

@@ -1,5 +1,5 @@
 from public import hoga, dc, gm, init_logger, profile_operation
-from classes import TimeLimiter
+from classes import TimeLimiter, Toast
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread
@@ -14,7 +14,7 @@ import datetime
 import sys
 
 init_logger()
-
+toast = None #Toast()
 ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
 req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
 def com_request_time_check(kind='order', cond_text = None):
@@ -27,20 +27,20 @@ def com_request_time_check(kind='order', cond_text = None):
     if wait_time > 1666: # 1.666초 이내 주문 제한
         msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
             if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
-        gm.toast.toast(msg, duration=dc.td.TOAST_TIME)
+        toast.toast(msg, duration=dc.td.TOAST_TIME)
         logging.warning(msg)
         return False
     
     elif wait_time > 1000:
         msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-        gm.toast.toast(msg, duration=wait_time)
+        toast.toast(msg, duration=wait_time)
         time.sleep((wait_time-200)/1000) 
         wait_time = 0
         logging.info(msg)
 
     elif wait_time > 0:
         msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-        gm.toast.toast(msg, duration=wait_time)
+        toast.toast(msg, duration=wait_time)
         logging.info(msg)
 
     time.sleep((wait_time + 200)/1000) 
@@ -386,7 +386,8 @@ class OnReceiveRealConditionSim(QThread):
       self.cond_index = cond_index
       self.is_running = True
       self.current_stocks = set()
-      self.ipc = api.ipc
+      self.api = api
+      self.work = api.work
       self._stop_event = threading.Event()
 
    def run(self):
@@ -406,7 +407,7 @@ class OnReceiveRealConditionSim(QThread):
             'cond_name': self.cond_name,
             'cond_index': int(self.cond_index),
          }
-         self.ipc.work('admin', 'on_fx실시간_조건검색', **data)
+         self.work('admin', 'on_fx실시간_조건검색', **data)
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -428,7 +429,8 @@ class OnReceiveRealDataSim1And2(QThread):
       self.daemon = True
       self.is_running = True
       self._stop_event = threading.Event()
-      self.ipc = api.ipc
+      self.api = api
+      self.work = api.work
 
    def run(self):
       while self.is_running:
@@ -463,7 +465,7 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            self.ipc.work('dbm', 'update_script_chart', job)
+            self.work('dbm', 'update_script_chart', job)
             #work('admin', 'on_fx실시간_주식체결', **job)
             #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
 
@@ -481,7 +483,8 @@ class OnReceiveRealDataSim3(QThread):
       self.daemon = True
       self.is_running = True
       self._stop_event = threading.Event()
-      self.ipc = api.ipc
+      self.api = api
+      self.work = api.work
 
    def run(self):
       while self.is_running:
@@ -522,7 +525,7 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               self.ipc.work('dbm', 'update_script_chart', job)
+               self.work('dbm', 'update_script_chart', job)
                #work('admin', 'on_fx실시간_주식체결', **job)
                #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
          
@@ -549,7 +552,7 @@ class APIServer():
     def __init__(self):
         self.name = 'api'
         self.sim_no = 0
-        self.ipc = None
+        self.work = None
 
         self.ocx = None
         self.connected = False
@@ -626,6 +629,8 @@ class APIServer():
     
     def api_init(self, sim_no=0):
         try:
+            global toast
+            toast = Toast()
             import os
             pid = os.getpid()
             logging.debug(f'{self.name} api_init start (sim_no={sim_no}, pid={pid})')
@@ -643,7 +648,7 @@ class APIServer():
                 
                 logging.debug(f'{self.name} api_init success: ocx={self.ocx} (Sim mode {self.sim_no})')
             
-            self.set_tickers()
+            # self.set_tickers()
         except Exception as e:
             logging.error(f"API 초기화 오류: {type(e).__name__} - {e}", exc_info=True)
 
@@ -666,8 +671,12 @@ class APIServer():
             sim._initialize_data()
         elif self.sim_no == 2:  # 키움서버 사용, 실시간 데이터 가상 생성
             codes = self.GetCodeListByMarket('NXT')
-            selected_codes = random.sample(codes, 30)
-            logging.debug(f'len={len(selected_codes)} codes={selected_codes}')
+            if codes:
+                selected_codes = random.sample(codes, 30)
+                logging.debug(f'len={len(selected_codes)} codes={selected_codes}')
+            else:
+                logging.warning('GetCodeListByMarket 결과 없음 *************')
+                raise
 
             sim.ticker = {}
             for code in selected_codes:
@@ -710,9 +719,9 @@ class APIServer():
         return True
 
     # 추가 메서드 --------------------------------------------------------------------------------------------------
-    # def api_connected(self):
-    #     if self.sim_no == 1: return True
-    #     else: return self.waiting_in_loop(self.connected, "API 연결 대기", 15)
+    def api_connected(self):
+        if self.sim_no == 1: return True
+        else: return self.waiting_in_loop(self.connected, "API 연결 대기", 15)
 
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         try:
@@ -729,7 +738,6 @@ class APIServer():
                     self.tr_result = holdings
                 return self.tr_result, self.tr_remained
 
-
             self.tr_coulmns = output
             self.tr_result_format = form
             self.tr_received = False
@@ -738,9 +746,13 @@ class APIServer():
             for key, value in input.items(): self.SetInputValue(key, value)
             ret = self.CommRqData(rqname, trcode, next, screen)
 
-            self.tr_received = self.waiting_in_loop(self.tr_received, f"{rqname} data", timeout)
-            if not self.tr_received:
-                return [], False
+            start_time = time.time()
+            while not self.tr_received:
+                pythoncom.PumpWaitingMessages()
+                if time.time() - start_time > timeout:
+                    logging.warning(f"Timeout while waiting for {rqname} data")
+                    return None, False
+
             logging.debug(f'{rqname} 요청 결과: {self.tr_result}')
             return self.tr_result, self.tr_remained
 
@@ -807,11 +819,12 @@ class APIServer():
         logging.debug(f'CommConnect: block={block}')
         if self.sim_no == 1:  
             self.connected = True
-            self.ipc.work('admin', 'set_connected', self.connected) # OnEventConnect를 안 거치므로 여기서 처리
+            self.work('admin', 'set_connected', self.connected) # OnEventConnect를 안 거치므로 여기서 처리
         else:
             self.ocx.dynamicCall("CommConnect()")
             if block:
-                self.connected = self.waiting_in_loop(self.connected, "로그인 대기", 15)
+                while not self.connected:
+                    pythoncom.PumpWaitingMessages()
 
     def GetConditionLoad(self, block=True):
         if self.sim_no == 1:  
@@ -821,7 +834,8 @@ class APIServer():
             result = self.ocx.dynamicCall("GetConditionLoad()")
             logging.debug(f'전략 요청 : {"성공" if result==1 else "실패"}')
             if block:
-                self.strategy_loaded = self.waiting_in_loop(self.strategy_loaded, "전략 로드", 15)
+                while not self.strategy_loaded:
+                    pythoncom.PumpWaitingMessages()
         return result
 
     def SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno):
@@ -872,7 +886,7 @@ class APIServer():
             real_tickers.update(codes)
             return 0
 
-    def SendCondition(self, screen, cond_name, cond_index, search, block=True):
+    def SendCondition(self, screen, cond_name, cond_index, search, block=True, timeout=15):
         cond_text = f'{cond_index:03d} : {cond_name.strip()}'
         if not com_request_time_check(kind='request', cond_text=cond_text): return [], False
 
@@ -898,9 +912,12 @@ class APIServer():
                     return False
                 
                 if block is True:
-                    self.tr_condition_loaded = self.waiting_in_loop(self.tr_condition_loaded, f"{screen} {cond_name} {cond_index} {search}", 15)
-                    if not self.tr_condition_loaded:
-                        return False
+                    start_time = time.time()
+                    while not self.tr_condition_loaded:
+                        pythoncom.PumpWaitingMessages()
+                        if time.time() - start_time > timeout:
+                            logging.warning(f'조건 검색 시간 초과: {screen} {cond_name} {cond_index} {search}')
+                            return False
                     data = self.tr_condition_list
                 return data
             except Exception as e:
@@ -936,7 +953,7 @@ class APIServer():
                 'screen': screen,
                 'rqname': rqname,
                 }
-                self.ipc.work('admin', 'on_fx수신_주문결과TR', **result)
+                self.work('admin', 'on_fx수신_주문결과TR', **result)
 
             except Exception as e:
                 logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -977,7 +994,7 @@ class APIServer():
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        self.ipc.work('admin', 'on_fx실시간_조건검색', **data)
+        self.work('admin', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
         # sim_no = 0일 때만 사용 (실제 API 서버)
@@ -993,11 +1010,11 @@ class APIServer():
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    self.ipc.work('dbm', 'update_script_chart', job)
+                    self.work('dbm', 'update_script_chart', job)
                     #work('admin', 'on_fx실시간_주식체결', **job)
                     #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
                 elif rtype == '장시작시간': 
-                    self.ipc.work('admin', 'on_fx실시간_장운영감시', **job)
+                    self.work('admin', 'on_fx실시간_장운영감시', **job)
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
@@ -1015,8 +1032,8 @@ class APIServer():
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            if gubun == '0': self.ipc.work('admin', 'odr_recieve_chegyeol_data', dictFID)
-            elif gubun == '1': self.ipc.work('admin', 'odr_recieve_balance_data', dictFID)
+            if gubun == '0': self.work('admin', 'odr_recieve_chegyeol_data', dictFID)
+            elif gubun == '1': self.work('admin', 'odr_recieve_balance_data', dictFID)
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1031,7 +1048,7 @@ class APIServer():
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                self.ipc.work('admin', 'odr_recieve_balance_data', dictFID)
+                self.work('admin', 'odr_recieve_balance_data', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1069,7 +1086,7 @@ class APIServer():
 
                     portfolio.process_order(dictFID)
 
-                self.ipc.work('admin', 'odr_recieve_chegyeol_data', dictFID)
+                self.work('admin', 'odr_recieve_chegyeol_data', dictFID)
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------
@@ -1153,12 +1170,12 @@ class APIServer():
                     8: ETF, 9: 하이일드펀드, 10: 코스닥, 30: K-OTC, 50: 코넥스(KONEX)
         :return: 종목코드 리스트 예: ["000020", "000040", ...]
         """
-        if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
+        if self.sim_no == 1:
+            return list(sim.ticker.keys())
+        else:
             data = self.ocx.dynamicCall("GetCodeListByMarket(QString)", market)
             tokens = data.split(';')[:-1]
             return tokens
-        else:  # 키움서버 없이 가상 데이터 사용 (sim_no=1)
-            return list(sim.ticker.keys())
         
     # 기타 함수 ----------------------------------------------------------------------------------------------------
     def GetCommDataEx(self, trcode, rqname):

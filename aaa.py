@@ -79,18 +79,19 @@ class Main:
             gm.main = self
             gm.gui = GUI() if gm.config.gui_on else None
 
-            gm.admin = gm.ipc.register("admin", Admin(), start=True)
             gm.api = gm.ipc.register("api", APIServer(), 'process', start=True)
+            gm.ipc.work('api', 'api_init', sim_no=gm.config.sim_no)
+
+            gm.admin = gm.ipc.register("admin", Admin(), start=True)
             gm.dbm = gm.ipc.register("dbm", DBMServer(), 'process', start=True)
 
-            gm.ipc.work('api', 'api_init', sim_no=gm.config.sim_no)
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
 
     def login(self):
         # 모든 설정이 완료된 후 CommConnect 호출
-        gm.ipc.work('api', 'CommConnect', block=False)
+        gm.ipc.work('api', 'CommConnect', block=True)
 
     def show(self):
         if not gm.config.gui_on: return
@@ -103,14 +104,16 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    if not gm.ipc.answer('api', 'api_connected'): time.sleep(0.5)
+                    if not gm.ipc.answer('api', 'api_connected'): time.sleep(0.1)
                     else: break
+            gm.ipc.work('api', 'set_tickers')
 
             gm.ipc.work('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
 
             if gm.config.gui_on: gm.gui.init()
             logging.debug('prepare : gui 초기화 완료')
+
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)

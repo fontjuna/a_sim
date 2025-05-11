@@ -630,7 +630,7 @@ class GUI(QMainWindow, form_class):
         else:
             전략 = self.leTrStrategy.text().strip()
             if 전략: 
-                if 전략 not in workers.keys():
+                if 전략 not in gm.ipc.instances:
                     logging.warning(f'전략이 실행중이지 않습니다. {전략}')
                     return
             

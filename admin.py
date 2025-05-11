@@ -26,8 +26,8 @@ class Admin:
         self.json_load_define_sets()
 
     # 준비 작업 -------------------------------------------------------------------------------------------
-    # def set_connected(self, connected):
-    #     gm.connected = connected
+    def set_connected(self, connected):
+        gm.connected = connected
 
     def set_globals(self):
         # gm.req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
@@ -78,7 +78,7 @@ class Admin:
             dict_data.append({'스크립트명': k, '스크립트': v.get('script', ''), '변수': json.dumps(v.get('vars', {})), '타입': v.get('type', ''), '설명': v.get('desc', '')})
         gm.스크립트.set(data=dict_data)
         gm.list스크립트 = gm.스크립트.get(column='스크립트명')
-        gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
+        # gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
 
     def get_conditions(self):
         try:
@@ -112,9 +112,10 @@ class Admin:
     # 매매 개시 -------------------------------------------------------------------------------------------
     def trade_start(self):
         logging.debug('trade_start')
+        gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
         codes = gm.잔고목록.get(column='종목코드')
-        # for code in codes:
-        #     gm.ipc.work('dbm', 'register_code', code)
+        for code in codes:
+            gm.ipc.work('dbm', 'register_code', code)
         self.cdn_fx실행_전략매매()
 
         gm.config.ready = True
@@ -505,8 +506,7 @@ class Admin:
                     if item['전략'] not in data: data[item['전략']] = {}
                     data[item['전략']][item['종목번호']] = item['종목명']
 
-                    # gm.ipc.work('cdr', 'register_code', item['종목번호'])
-                    #work('dbm', 'register_code', item['종목번호'])
+                    gm.ipc.work('dbm', 'register_code', item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.ct.set_batch(data)
 
@@ -516,7 +516,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            #work('dbm', 'register_code', '005930')
+            gm.ipc.work('dbm', 'register_code', '005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -592,7 +592,7 @@ class Admin:
         if row['보유수량'] == 0: return
         if row['현재가'] == 0: return
         if row['상태'] == 0: return
-        if 전략 not in gm.ipc.workers.keys(): return
+        if 전략 not in gm.ipc.instances: return
         key = f'{code}_매도'
         data={'키': key, '구분': '매도', '상태': '요청', '전략': 전략, '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
         if gm.주문목록.in_key(key): return
@@ -746,12 +746,12 @@ class Admin:
             success, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
             gm.전략쓰레드 = [None] * 6
             gm.전략쓰레드[0] = Strategy(name='전략00', ticker=gm.dict종목정보, 전략정의=gm.basic_strategy)
-            gm.ipc.register('전략00', gm.전략쓰레드[0], 'thread')
+            gm.ipc.register('전략00', gm.전략쓰레드[0], 'thread', start=True)
             for i in range(1, 6):
                 전략 = f'전략{i:02d}'
                 전략정의 = gm.전략정의.get(key=gm.전략설정[i]['전략명칭'])
                 gm.전략쓰레드[i] = Strategy(name=전략, ticker=gm.dict종목정보, 전략정의=전략정의)
-                gm.ipc.register(전략, gm.전략쓰레드[i], 'thread')
+                gm.ipc.register(전략, gm.전략쓰레드[i], 'thread', start=True)
                 logging.debug(f'{전략} {gm.전략쓰레드[i]}')
         except Exception as e:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
