@@ -139,6 +139,10 @@ class STG:
         logging.info(f"Strategy({self.name}): Admin의 admin_method 호출")
         return self.answer('admin', 'admin_method', data)
     
+    def call_api(self, data):
+        logging.info(f"Strategy({self.name}): APIServer의 api_method 호출")
+        return self.answer('api', 'api_method', data)
+    
     def call_other_strategy(self, other_stg, data):
         logging.info(f"Strategy({self.name}): {other_stg}의 process_data 호출")
         return self.answer(other_stg, 'process_data', data)
