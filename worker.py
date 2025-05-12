@@ -133,7 +133,7 @@ class STG:
         logging.info(f"Strategy({self.name}): process_data 호출됨, 데이터: {data[:1]}")
         # 시간이 걸리는 작업 시뮬레이션
         time.sleep(0.1)
-        return f"Strategy({self.name}) 처리 결과: {data}"
+        return f"Strategy({self.name}) 처리 결과: {data[:1]}"
     
     def call_admin(self, data):
         logging.info(f"Strategy({self.name}): Admin의 admin_method 호출")
@@ -159,7 +159,7 @@ class API:
         logging.info(f"APIServer: DBManager의 db_query 메서드 비동기 호출")
         
         def callback(result):
-            logging.info(f"APIServer: DBManager로부터 콜백 결과 수신: {result}")
+            logging.info(f"APIServer: DBManager로부터 콜백 결과 수신: {result[:1]}")
         
         self.work('dbm', 'db_query', data, callback=callback)
         return "비동기 호출 완료"
@@ -169,10 +169,14 @@ class DBM:
         logging.info("DBManager 초기화 완료")
     
     def db_query(self, query):
-        logging.info(f"DBManager: db_query 호출됨, 쿼리: {query}")
+        logging.info(f"DBManager: db_query 호출됨, 쿼리: {query[:1]}")
         # 데이터베이스 쿼리 시뮬레이션
         time.sleep(0.2)
         return f"DBManager 쿼리 결과: {query}"
+    
+    def call_strategy(self, stg_name, data):
+        logging.info(f"DBManager: {stg_name}의 process_data 메서드 호출")
+        return self.answer(stg_name, 'process_data', data)
     
     def call_api(self, data):
         logging.info(f"DBManager: APIServer의 api_method 호출")
@@ -182,7 +186,7 @@ class DBM:
         logging.info(f"DBManager: APIServer의 api_method 비동기 호출")
         
         def callback(result):
-            logging.info(f"DBManager: APIServer로부터 콜백 결과 수신: {result}")
+            logging.info(f"DBManager: APIServer로부터 콜백 결과 수신: {result[:1]}")
         
         self.work('api', 'api_method', data, callback=callback)
         return "비동기 호출 완료"

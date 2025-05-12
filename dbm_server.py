@@ -22,7 +22,7 @@ class DBMServer:
         self.thread_run = False
         self.thread_chart = None    
 
-        self.init_dbm()
+        #self.init_dbm()
         #self.start_request_chart_data()
 
     def start(self):
@@ -321,7 +321,6 @@ class DBMServer:
             return False
         
     def dbm_get_chart_data(self, code, cycle, tick=None, times=1):
-        re
         try:
             if not code: return []
             rqname = f'{dc.scr.차트종류[cycle]}차트'

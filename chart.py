@@ -23,7 +23,7 @@ class ChartData:
     """차트 데이터를 관리하는 최적화된 공유 메모리 기반 싱글톤 클래스"""
     _instance = None
     _lock = threading.RLock()
-    
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
@@ -497,9 +497,8 @@ class ChartData:
             # 주봉, 월봉은 없으면 서버에서 가져오기
             if cycle in ['wk', 'mo'] and cycle not in chart_data:
                 # 서버에서 가져오기
-                from public import gm
                 try:
-                    data = answer('dbm', 'dbm_get_chart_data', code, cycle, tick)
+                    data = gm.ipc.answer('dbm', 'dbm_get_chart_data', code, cycle, tick)
                     if data:
                         chart_data[cycle] = data
                         self._save_code_data(code, chart_data)
@@ -514,7 +513,7 @@ class ChartData:
             
             # 비어있는 경우
             return []
-
+        
     def _create_index_map(self, chart_data, code: str, cycle_key: str):
         """시간 -> 인덱스 매핑 생성 (빠른 검색용)"""
         if 'index_maps' not in chart_data:
