@@ -321,6 +321,7 @@ class DBMServer:
             return False
         
     def dbm_get_chart_data(self, code, cycle, tick=None, times=1):
+        re
         try:
             if not code: return []
             rqname = f'{dc.scr.차트종류[cycle]}차트'
@@ -344,7 +345,7 @@ class DBMServer:
             next = '0'
             dict_list = []
             while True:
-                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list')
+                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=1)
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
                 times -= 1
@@ -437,8 +438,8 @@ class DBMServer:
             return code in self.done_code
 
     def update_script_chart(self, job):
-        self.work('admin', 'on_fx실시간_주식체결', **job)
+        #self.work('admin', 'on_fx실시간_주식체결', **job)
         code = job['code']
-        dictFID = job['dictFID']
-        if code in self.todo_code or code in self.done_code:
-            ctdt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+        #dictFID = job['dictFID']
+        #if code in self.todo_code or code in self.done_code:
+        #    ctdt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])

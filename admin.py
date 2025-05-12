@@ -114,8 +114,8 @@ class Admin:
         logging.debug('trade_start')
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
         codes = gm.잔고목록.get(column='종목코드')
-        for code in codes:
-            gm.ipc.work('dbm', 'register_code', code)
+        #for code in codes:
+        #    gm.ipc.work('dbm', 'register_code', code)
         self.cdn_fx실행_전략매매()
 
         gm.config.ready = True
@@ -315,7 +315,8 @@ class Admin:
                     gm.ipc.work(f'전략{data["idx"]:02d}', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
 
-            #work('dbm', 'update_script_chart', code, 현재가, abs(int(dictFID['누적거래량'])), abs(int(dictFID['누적거래대금'])), dictFID['체결시간'])
+            #job = {'code': code, 'dictFID': dictFID}
+            #gm.ipc.work('dbm', 'update_script_chart', job)
 
         try:
             if gm.잔고목록.in_key(code):
@@ -470,7 +471,7 @@ class Admin:
                     if item['전략'] not in data: data[item['전략']] = {}
                     data[item['전략']][item['종목번호']] = item['종목명']
 
-                    gm.ipc.work('dbm', 'register_code', item['종목번호'])
+                    #gm.ipc.work('dbm', 'register_code', item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.ct.set_batch(data)
 
@@ -480,7 +481,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            gm.ipc.work('dbm', 'register_code', '005930')
+            #gm.ipc.work('dbm', 'register_code', '005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -707,7 +708,7 @@ class Admin:
     def cdn_fx준비_전략매매(self):
         try:
             self.json_load_strategy_sets()
-            success, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
+            _, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
             gm.전략쓰레드 = [None] * 6
             gm.전략쓰레드[0] = Strategy(name='전략00', ticker=gm.dict종목정보, 전략정의=gm.basic_strategy)
             gm.ipc.register('전략00', gm.전략쓰레드[0], 'thread', start=True)
@@ -743,7 +744,7 @@ class Admin:
         try:
             for i in range(1, 6):
                 gm.ipc.work(f'전략{i:02d}', 'cdn_fx실행_전략마무리')
-                gm.ipc.stop(f'전략{i:02d}')
+                gm.ipc.unregister(f'전략{i:02d}')
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()

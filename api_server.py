@@ -465,9 +465,9 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            self.work('dbm', 'update_script_chart', job)
-            #work('admin', 'on_fx실시간_주식체결', **job)
-            #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+            #self.work('dbm', 'update_script_chart', job)
+            self.work('admin', 'on_fx실시간_주식체결', **job)
+
 
             if self._stop_event.wait(timeout=0.2/len(sim.ticker)):
                return
@@ -525,9 +525,8 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               self.work('dbm', 'update_script_chart', job)
-               #work('admin', 'on_fx실시간_주식체결', **job)
-               #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+               #self.work('dbm', 'update_script_chart', job)
+               self.work('admin', 'on_fx실시간_주식체결', **job)
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -1011,9 +1010,8 @@ class APIServer():
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    self.work('dbm', 'update_script_chart', job)
-                    #work('admin', 'on_fx실시간_주식체결', **job)
-                    #work('dbm', 'update_script_chart', code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+                    #self.work('dbm', 'update_script_chart', job)
+                    self.work('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.work('admin', 'on_fx실시간_장운영감시', **job)
         except Exception as e:

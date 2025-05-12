@@ -4,7 +4,7 @@ from admin import Admin
 from api_server import APIServer
 from dbm_server import DBMServer
 from ipc_manager import IPCManager
-from classes import Toast
+from classes import Toast, IPCM
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QPixmap, QGuiApplication
@@ -74,7 +74,7 @@ class Main:
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
-            gm.ipc = IPCManager()
+            gm.ipc = IPCM()
             gm.toast = Toast()
             gm.main = self
             gm.gui = GUI() if gm.config.gui_on else None
