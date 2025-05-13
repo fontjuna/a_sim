@@ -1,4 +1,6 @@
 from public import dc, gm, get_path, save_json, load_json
+from api_server import APIServer
+from dbm_server import DBMServer
 from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
 from typing import Dict, Any, List, Callable, Optional, Tuple, Union
@@ -1191,16 +1193,7 @@ config = {
 }
 table = TableManager(config)
 """
-import logging
-import threading
-import multiprocessing as mp
-import queue
-import time
-import uuid
-import types
-from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
 
-# 쓰레드 워커 클래스 - 기존과 동일
 class TRDThread(QThread):
     taskReceived = pyqtSignal(str, str, object, object)
     
@@ -1209,798 +1202,481 @@ class TRDThread(QThread):
         self.name = name
         self.target = target
         self.running = True
+        
+        # 이 쓰레드에서 처리할 시그널 연결
         self.taskReceived.connect(self._processTask)
     
     def run(self):
         logging.debug(f"{self.name} 쓰레드 시작")
-        self.exec_()
+        self.exec_()  # 이벤트 루프 시작
         logging.debug(f"{self.name} 쓰레드 종료")
 
+    def _get_var(self, var_name):
+        """타겟 객체의 변수 값을 가져오는 내부 메서드"""
+        try:
+            return getattr(self.target, var_name, None)
+        except Exception as e:
+            logging.error(f"변수 접근 오류: {e}", exc_info=True)
+            return None
+
+    def _set_var(self, var_name, value):
+        """타겟 객체의 변수 값을 설정하는 내부 메서드"""
+        try:
+            setattr(self.target, var_name, value)
+            return True
+        except Exception as e:
+            logging.error(f"변수 설정 오류: {e}", exc_info=True)
+            return None
+            
     @pyqtSlot(str, str, object, object)
     def _processTask(self, task_id, method_name, task_data, callback):
+        # 메서드 찾기
         method = getattr(self.target, method_name, None)
         if not method:
-            logging.error(f"메서드 없음: {method_name}")
-            if callback: callback(None)
+            if callback:
+                callback(None)
             return
         
+        # 메서드 실행
         args, kwargs = task_data
         try:
             result = method(*args, **kwargs)
-            if callback: callback(result)
+            if callback:
+                callback(result)
         except Exception as e:
             logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-            if callback: callback(None)
+            if callback:
+                callback(None)
 
-# 프로세스 워커 함수
-def process_worker(name, target_class_name, input_queue, output_queue, shared_dict):
-    try:
-        # 타겟 클래스 동적 임포트
-        import importlib
-        module_name, class_name = target_class_name.rsplit('.', 1)
-        module = importlib.import_module(module_name)
-        target_class = getattr(module, class_name)
-        
-        # 타겟 인스턴스 생성
-        target = target_class()
-        logging.info(f"프로세스 워커 초기화 완료: {name} ({target_class.__name__})")
-        
-        # answer, work 메서드 바인딩 (프로세스 내에서도 필요함)
-        def answer_method(self, target_name, method_name, *args, **kwargs):
-            """다른 워커에게 동기 작업 요청 (결과 대기)"""
-            req_id = str(uuid.uuid4())
-            
-            # 메인 프로세스에 프록시 요청 전송
-            output_queue.put({
-                'command': 'relay_answer',
-                'id': req_id,
-                'target': target_name,
-                'method': method_name,
-                'args': args,
-                'kwargs': kwargs
-            })
-            
-            # 결과 대기
-            start_time = time.time()
-            timeout = 5.0
-            while req_id not in shared_dict:
-                if time.time() - start_time > timeout:
-                    logging.warning(f"동기 호출 타임아웃: {target_name}.{method_name}")
-                    return None
-                time.sleep(0.001)
-            
-            # 결과 반환
-            result = shared_dict[req_id]
-            del shared_dict[req_id]
-            return result.get('result')
-        
-        def work_method(self, target_name, method_name, *args, callback=None, **kwargs):
-            """다른 워커에게 비동기 작업 요청"""
-            req_id = str(uuid.uuid4())
-            need_callback = callback is not None
-            
-            # 메인 프로세스에 프록시 요청 전송
-            output_queue.put({
-                'command': 'relay_work',
-                'id': req_id,
-                'target': target_name,
-                'method': method_name,
-                'args': args,
-                'kwargs': kwargs,
-                'need_callback': need_callback
-            })
-            
-            # 비동기 요청은 즉시 반환
+class TRDManager:
+    def __init__(self):
+        self.workers = {}  # name -> worker thread
+        self.targets = {}  # name -> target object
+
+        self.manager = None
+        self.task_queues = {} # name -> manager.list
+        self.result_dicts = {} # name -> manager.dict
+
+        self.is_shutting_down = False
+
+    def register(self, name, target_class=None, use_thread=True):
+        if use_thread:
+            target = target_class() if isinstance(target_class, type) else target_class
+            worker = TRDThread(name, target)
+            worker.start()
+            self.workers[name] = worker
+        else:
+            target = target_class() if isinstance(target_class, type) else target_class
+            self.targets[name] = target
+        return self
+
+    def unregister(self, worker_name):
+        """워커 제거"""
+        if worker_name in self.workers:
+            self.stop(worker_name)
+            time.sleep(0.01)
+            self.workers.pop(worker_name, None)
+            logging.debug(f"워커 제거: {worker_name} (쓰레드)")
             return True
-        
-        # 메서드 바인딩
-        import types
-        target.answer = types.MethodType(answer_method, target)
-        target.work = types.MethodType(work_method, target)
-        
-        # 메시지 처리 루프
-        while True:
-            try:
-                request = input_queue.get(timeout=0.1)
-            except queue.Empty:
-                continue
-                
-            # 종료 명령 처리
-            if request.get('cmd') == 'stop':
-                break
-                
-            # 작업 처리
-            req_id = request.get('id', '')
             
-            # 중계 명령 처리
-            if 'relay' in request:
-                relay_type = request.get('relay')
-                target_name = request.get('target')
-                method_name = request.get('method')
-                args = request.get('args', ())
-                kwargs = request.get('kwargs', {})
-                need_callback = request.get('need_callback', False)
-                
-                logging.debug(f"[{name}] 중계 요청 처리: {relay_type} - {target_name}.{method_name}")
-                
-                # 다른 프로세스/쓰레드 접근 처리
-                if relay_type == 'answer':
-                    # 동기 중계 (결과 반환)
-                    try:
-                        result = target.answer(target_name, method_name, *args, **kwargs)
-                        output_queue.put({'id': req_id, 'result': result})
-                    except Exception as e:
-                        logging.error(f"중계 오류: {e}", exc_info=True)
-                        output_queue.put({'id': req_id, 'result': None, 'error': str(e)})
-                
-                elif relay_type == 'work':
-                    # 비동기 중계
-                    try:
-                        if need_callback:
-                            def relay_callback(result):
-                                output_queue.put({'id': req_id, 'result': result})
-                            callback = relay_callback
-                        else:
-                            callback = None
-                            
-                        success = target.work(target_name, method_name, *args, callback=callback, **kwargs)
-                        
-                        # 콜백이 없는 경우 즉시 결과 반환
-                        if not need_callback:
-                            output_queue.put({'id': req_id, 'result': success})
-                    except Exception as e:
-                        logging.error(f"중계 오류: {e}", exc_info=True)
-                        output_queue.put({'id': req_id, 'result': None, 'error': str(e)})
-                
-                continue
-                
-            # 일반 메서드 호출 처리
-            method_name = request.get('method', '')
-            args = request.get('args', ())
-            kwargs = request.get('kwargs', {})
+    def start(self, worker_name):
+        """워커 시작"""
+        if worker_name in self.workers:
+            self.workers[worker_name].start()
+            return True
+        return False
+
+    def stop(self, worker_name):
+        """워커 중지"""
+        # 쓰레드 워커 중지
+        if worker_name in self.workers:
+            worker = self.workers[worker_name]
+            worker.running = False
+            worker.quit()  # 이벤트 루프 종료
+            worker.wait(1000)  # 최대 1초간 대기
+            self.workers.pop(worker_name, None)
+            logging.debug(f"워커 종료: {worker_name} (쓰레드)")
+            return True
             
-            # 메서드 찾기 및 실행
+        # 메인 쓰레드 워커 제거
+        elif worker_name in self.targets:
+            self.targets.pop(worker_name, None)
+            logging.debug(f"워커 제거: {worker_name} (메인 쓰레드)")
+            return True
+            
+        return False
+
+    def answer(self, worker_name, method_name, *args, **kwargs):
+        """동기식 함수 호출"""
+        if self.is_shutting_down:
+            return None
+        
+        # 워커 찾기
+        if worker_name not in self.workers and worker_name not in self.targets:
+            logging.error(f"워커 없음: {worker_name}")
+            return None
+        
+        # 메인 쓰레드에서 실행하는 경우
+        if worker_name in self.targets:
+            target = self.targets[worker_name]
             method = getattr(target, method_name, None)
             if not method:
-                output_queue.put({'id': req_id, 'result': None, 'error': f"메서드 없음: {method_name}"})
-                continue
-                
-            try:
-                result = method(*args, **kwargs)
-                output_queue.put({'id': req_id, 'result': result})
-            except Exception as e:
-                logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-                output_queue.put({'id': req_id, 'result': None, 'error': str(e)})
-    
-    except Exception as e:
-        logging.error(f"프로세스 워커 초기화 오류: {e}", exc_info=True)
-    
-    finally:
-        logging.info(f"프로세스 워커 종료: {name}")
-
-# 통합 IPC 매니저
-class IPCM:
-    def __init__(self):
-        self.workers = {}  # name -> {type, instance, handle, process}
-        self.is_shutting_down = False
-        
-        # 프로세스 통신용
-        self.manager = mp.Manager()
-        self.shared_dict = self.manager.dict()
-        self.queues = {}  # name -> (input_queue, output_queue)
-        self.callbacks = {}  # id -> callback
-        self.listeners = {}  # name -> thread
-        
-        # 현재 프로세스 이름 (메인 프로세스면 'main')
-        self.current_process = mp.current_process().name
-        if self.current_process == 'MainProcess':
-            self.current_process = 'main'
-        
-        # 글로벌 레퍼런스 설정
-        try:
-            import sys
-            main_module = sys.modules['__main__']
-            setattr(main_module, 'ipc', self)
-        except Exception as e:
-            logging.error(f"글로벌 레퍼런스 설정 오류: {e}")
-    
-    def register(self, name, target_instance, type=None, start=True, process=None):
-        """워커 등록"""
-        # 이미 등록된 경우 제거
-        if name in self.workers:
-            self.unregister(name)
-            
-        # 소속 프로세스 정보
-        process = process or self.current_process
-            
-        # 타입에 따른 다른 처리
-        if type == 'thread':
-            # 쓰레드 워커
-            thread = TRDThread(name, target_instance)
-            self.workers[name] = {
-                'type': 'thread',
-                'instance': target_instance,
-                'handle': thread,
-                'process': process
-            }
-            
-            # work, answer 메서드 바인딩
-            self._bind_methods(target_instance)
-            
-            # 시작
-            if start:
-                thread.start()
-                logging.info(f"쓰레드 워커 시작: {name}")
-                
-        elif type == 'process':
-            # 프로세스 워커
-            input_queue = mp.Queue()
-            output_queue = mp.Queue()
-            self.queues[name] = (input_queue, output_queue)
-            
-            # 타겟 클래스 이름
-            target_path = f"{target_instance.__class__.__module__}.{target_instance.__class__.__name__}"
-            
-            # 프로세스 생성
-            process_obj = mp.Process(
-                name=name,
-                target=process_worker,
-                args=(name, target_path, input_queue, output_queue, self.shared_dict),
-                daemon=True
-            )
-            
-            self.workers[name] = {
-                'type': 'process',
-                'instance': target_instance,
-                'handle': process_obj,
-                'process': name  # 프로세스는 자신이 자신의 소속
-            }
-            
-            # work, answer 메서드 바인딩
-            self._bind_methods(target_instance)
-            
-            # 시작
-            if start:
-                process_obj.start()
-                logging.info(f"프로세스 워커 시작: {name} (PID: {process_obj.pid})")
-                self._start_listener(name)
-                
-        else:
-            # 일반 객체 워커
-            self.workers[name] = {
-                'type': 'main',
-                'instance': target_instance,
-                'handle': None,
-                'process': process
-            }
-            
-            # work, answer 메서드 바인딩
-            self._bind_methods(target_instance)
-            logging.info(f"메인 워커 등록: {name}")
-            
-        return target_instance
-        
-    def _bind_methods(self, target):
-        """work, answer 메서드 바인딩"""
-        ipcm = self  # self 캡처
-        
-        def work_method(self, target_name, method_name, *args, callback=None, **kwargs):
-            return ipcm.work(target_name, method_name, *args, callback=callback, **kwargs)
-            
-        def answer_method(self, target_name, method_name, *args, **kwargs):
-            return ipcm.answer(target_name, method_name, *args, **kwargs)
-            
-        target.work = types.MethodType(work_method, target)
-        target.answer = types.MethodType(answer_method, target)
-    
-    def _start_listener(self, name):
-        """프로세스 응답 리스너 시작"""
-        if name not in self.queues:
-            return False
-            
-        _, output_queue = self.queues[name]
-        listener = threading.Thread(
-            target=self._listener_thread,
-            args=(name, output_queue),
-            daemon=True
-        )
-        listener.start()
-        self.listeners[name] = listener
-        return True
-        
-    def _listener_thread(self, name, output_queue):
-        """프로세스 응답 처리 쓰레드"""
-        logging.info(f"{name} 리스너 쓰레드 시작")
-        
-        while not self.is_shutting_down:
-            try:
-                # 응답 가져오기
-                try:
-                    response = output_queue.get(timeout=0.1)
-                except queue.Empty:
-                    continue
-                    
-                # 중계 명령 처리
-                if 'command' in response:
-                    command = response.get('command')
-                    req_id = response.get('id')
-                    
-                    if command == 'relay_answer':
-                        # 동기 중계 요청 처리
-                        target_name = response.get('target')
-                        method_name = response.get('method')
-                        args = response.get('args', ())
-                        kwargs = response.get('kwargs', {})
-                        
-                        logging.debug(f"[{name}] relay_answer 요청 처리: {target_name}.{method_name}")
-                        
-                        # 타겟 호출 
-                        try:
-                            result = self.answer(target_name, method_name, *args, **kwargs)
-                            self.shared_dict[req_id] = {'result': result}
-                        except Exception as e:
-                            logging.error(f"[{name}] relay_answer 처리 중 오류: {e}", exc_info=True)
-                            self.shared_dict[req_id] = {'result': None, 'error': str(e)}
-                        continue
-                        
-                    elif command == 'relay_work':
-                        # 비동기 중계 요청 처리
-                        target_name = response.get('target')
-                        method_name = response.get('method')
-                        args = response.get('args', ())
-                        kwargs = response.get('kwargs', {})
-                        need_callback = response.get('need_callback', False)
-                        
-                        logging.debug(f"[{name}] relay_work 요청 처리: {target_name}.{method_name}")
-                        
-                        # 콜백 설정
-                        if need_callback:
-                            def relay_callback(result):
-                                self.shared_dict[req_id] = {'result': result}
-                            callback = relay_callback
-                        else:
-                            callback = None
-                        
-                        # 타겟 호출
-                        try:
-                            success = self.work(target_name, method_name, *args, callback=callback, **kwargs)
-                            if not need_callback:
-                                self.shared_dict[req_id] = {'result': success}
-                        except Exception as e:
-                            logging.error(f"[{name}] relay_work 처리 중 오류: {e}", exc_info=True)
-                            if not need_callback:
-                                self.shared_dict[req_id] = {'result': False, 'error': str(e)}
-                        continue
-                    
-                # 응답 처리
-                req_id = response.get('id', '')
-                result = response.get('result')
-                
-                # 콜백 실행
-                if req_id in self.callbacks:
-                    callback = self.callbacks.pop(req_id)
-                    callback(result)
-                
-                # 공유 딕셔너리에 결과 저장
-                self.shared_dict[req_id] = response
-                
-            except Exception as e:
-                logging.error(f"응답 처리 중 오류: {e}", exc_info=True)
-                
-        logging.info(f"{name} 리스너 쓰레드 종료")
-    
-    def unregister(self, name):
-        """워커 등록 해제"""
-        if self.is_shutting_down or name not in self.workers:
-            return False
-            
-        worker = self.workers[name]
-        type = worker['type']
-        handle = worker['handle']
-        
-        if type == 'thread' and handle:
-            # 쓰레드 종료
-            handle.running = False
-            handle.quit()
-            handle.wait(1000)
-            
-        elif type == 'process' and handle:
-            # 프로세스 종료
-            if handle.is_alive():
-                # 종료 명령 전송
-                input_queue, _ = self.queues[name]
-                input_queue.put({'cmd': 'stop'})
-                
-                # 종료 대기
-                handle.join(2.0)
-                if handle.is_alive():
-                    handle.terminate()
-                    handle.join(1.0)
-            
-            # 리소스 정리
-            self.queues.pop(name, None)
-            if name in self.listeners:
-                self.listeners.pop(name, None)
-                
-        # 워커 제거
-        self.workers.pop(name, None)
-        logging.info(f"워커 등록 해제: {name}")
-        return True
-        
-    def work(self, worker_name, method_name, *args, callback=None, **kwargs):
-        """비동기 메서드 호출"""
-        if self.is_shutting_down:
-            return False
-            
-        # 워커 확인
-        if worker_name not in self.workers:
-            logging.error(f"워커 없음: {worker_name}")
-            if callback: callback(None)
-            return False
-            
-        worker = self.workers[worker_name]
-        type = worker['type']
-        worker_process = worker['process']
-        
-        # 다른 프로세스 접근 처리 (프로세스 간 통신)
-        if worker_process != self.current_process:
-            # 다른 프로세스에 있는 경우 중계
-            if worker_process == 'main':
-                # 메인 프로세스에 있는 경우 (쓰레드/메인 워커)
-                return self._relay_to_main(worker_name, method_name, args, kwargs, callback)
-            else:
-                # 다른 프로세스에 있는 경우
-                return self._relay_to_process(worker_process, worker_name, method_name, args, kwargs, callback)
-        
-        # 동일 프로세스 내 호출
-        if type == 'main':
-            # 메인 워커 호출
-            return self._call_main(worker_name, method_name, args, kwargs, callback)
-            
-        elif type == 'thread':
-            # 쓰레드 워커 호출
-            return self._call_thread(worker_name, method_name, args, kwargs, callback)
-            
-        elif type == 'process':
-            # 프로세스 워커 호출
-            return self._call_process(worker_name, method_name, args, kwargs, callback)
-    
-    def answer(self, worker_name, method_name, *args, **kwargs):
-        """동기 메서드 호출"""
-        if self.is_shutting_down:
-            return None
-            
-        # 워커 확인
-        if worker_name not in self.workers:
-            logging.error(f"워커 없음: {worker_name}")
-            return None
-            
-        worker = self.workers[worker_name]
-        type = worker['type']
-        worker_process = worker['process']
-        
-        # 다른 프로세스 접근 처리 (프로세스 간 통신)
-        if worker_process != self.current_process:
-            # 다른 프로세스에 있는 경우 중계
-            if worker_process == 'main':
-                # 메인 프로세스에 있는 경우 (쓰레드/메인 워커)
-                return self._relay_to_main_sync(worker_name, method_name, args, kwargs)
-            else:
-                # 다른 프로세스에 있는 경우
-                return self._relay_to_process_sync(worker_process, worker_name, method_name, args, kwargs)
-        
-        # 동일 프로세스 내 호출
-        if type == 'main':
-            # 메인 워커 호출
-            return self._call_main_sync(worker_name, method_name, args, kwargs)
-            
-        elif type == 'thread':
-            # 쓰레드 워커 호출
-            return self._call_thread_sync(worker_name, method_name, args, kwargs)
-            
-        elif type == 'process':
-            # 프로세스 워커 호출
-            return self._call_process_sync(worker_name, method_name, args, kwargs)
-    
-    def _relay_to_main(self, target_name, method_name, args, kwargs, callback):
-        """메인 프로세스에 비동기 중계 요청"""
-        # 현재 메인 프로세스에서 호출한 경우는 처리하지 않음
-        if self.current_process == 'main':
-            logging.error("메인 프로세스에서 자신에게 중계할 수 없음")
-            if callback: callback(None)
-            return False
-            
-        # 메인 프로세스에 대한 큐가 없는 경우 (직접 통신 불가)
-        if 'main' not in self.queues:
-            logging.error("메인 프로세스에 대한 큐 없음")
-            if callback: callback(None)
-            return False
-            
-        # 메인 프로세스에 중계 요청
-        input_queue, _ = self.queues['main']
-        req_id = str(uuid.uuid4())
-        
-        # 콜백 등록
-        if callback:
-            self.callbacks[req_id] = callback
-            
-        # 요청 전송
-        input_queue.put({
-            'id': req_id,
-            'relay': 'work',
-            'target': target_name,
-            'method': method_name,
-            'args': args,
-            'kwargs': kwargs,
-            'need_callback': callback is not None
-        })
-        
-        return True
-    
-    def _relay_to_main_sync(self, target_name, method_name, args, kwargs):
-        """메인 프로세스에 동기 중계 요청"""
-        # 현재 메인 프로세스에서 호출한 경우는 처리하지 않음
-        if self.current_process == 'main':
-            logging.error("메인 프로세스에서 자신에게 중계할 수 없음")
-            return None
-            
-        # 메인 프로세스에 대한 큐가 없는 경우 (직접 통신 불가)
-        if 'main' not in self.queues:
-            logging.error("메인 프로세스에 대한 큐 없음")
-            return None
-            
-        # 메인 프로세스에 중계 요청
-        input_queue, _ = self.queues['main']
-        req_id = str(uuid.uuid4())
-        
-        # 요청 전송
-        input_queue.put({
-            'id': req_id,
-            'relay': 'answer',
-            'target': target_name,
-            'method': method_name,
-            'args': args,
-            'kwargs': kwargs
-        })
-        
-        # 결과 대기
-        start_time = time.time()
-        timeout = 5.0
-        
-        while req_id not in self.shared_dict:
-            if time.time() - start_time > timeout:
-                logging.warning(f"메인 프로세스 중계 타임아웃: {target_name}.{method_name}")
                 return None
-            time.sleep(0.001)
-            
-        # 결과 반환
-        response = self.shared_dict.pop(req_id)
-        return response.get('result')
-    
-    def _relay_to_process(self, process_name, target_name, method_name, args, kwargs, callback):
-        """다른 프로세스에 비동기 중계 요청"""
-        # 프로세스에 대한 큐가 없는 경우
-        if process_name not in self.queues:
-            logging.error(f"프로세스 큐 없음: {process_name}")
-            if callback: callback(None)
-            return False
-            
-        # 프로세스에 중계 요청
-        input_queue, _ = self.queues[process_name]
-        req_id = str(uuid.uuid4())
-        
-        # 콜백 등록
-        if callback:
-            self.callbacks[req_id] = callback
-            
-        # 요청 전송
-        input_queue.put({
-            'id': req_id,
-            'relay': 'work',
-            'target': target_name,
-            'method': method_name,
-            'args': args,
-            'kwargs': kwargs,
-            'need_callback': callback is not None
-        })
-        
-        return True
-    
-    def _relay_to_process_sync(self, process_name, target_name, method_name, args, kwargs):
-        """다른 프로세스에 동기 중계 요청"""
-        # 프로세스에 대한 큐가 없는 경우
-        if process_name not in self.queues:
-            logging.error(f"프로세스 큐 없음: {process_name}")
-            return None
-            
-        # 프로세스에 중계 요청
-        input_queue, _ = self.queues[process_name]
-        req_id = str(uuid.uuid4())
-        
-        # 요청 전송
-        input_queue.put({
-            'id': req_id,
-            'relay': 'answer',
-            'target': target_name,
-            'method': method_name,
-            'args': args,
-            'kwargs': kwargs
-        })
-        
-        # 결과 대기
-        start_time = time.time()
-        timeout = 5.0
-        
-        while req_id not in self.shared_dict:
-            if time.time() - start_time > timeout:
-                logging.warning(f"프로세스 중계 타임아웃: {process_name}.{target_name}.{method_name}")
+            try:
+                return method(*args, **kwargs)
+            except Exception as e:
+                logging.error(f"직접 호출 오류: {e}", exc_info=True)
                 return None
-            time.sleep(0.001)
-            
-        # 결과 반환
-        response = self.shared_dict.pop(req_id)
-        return response.get('result')
-    
-    def _call_main(self, name, method_name, args, kwargs, callback):
-        """메인 워커 비동기 호출"""
-        target = self.workers[name]['instance']
-        method = getattr(target, method_name, None)
         
-        if not method:
-            logging.error(f"메서드 없음: {name}.{method_name}")
-            if callback: callback(None)
-            return False
-            
-        try:
-            result = method(*args, **kwargs)
-            if callback: callback(result)
-            return True
-        except Exception as e:
-            logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-            if callback: callback(None)
-            return False
-    
-    def _call_main_sync(self, name, method_name, args, kwargs):
-        """메인 워커 동기 호출"""
-        target = self.workers[name]['instance']
-        method = getattr(target, method_name, None)
-        
-        if not method:
-            logging.error(f"메서드 없음: {name}.{method_name}")
-            return None
-            
-        try:
-            return method(*args, **kwargs)
-        except Exception as e:
-            logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-            return None
-    
-    def _call_thread(self, name, method_name, args, kwargs, callback):
-        """쓰레드 워커 비동기 호출"""
-        thread = self.workers[name]['handle']
-        req_id = str(uuid.uuid4())
-        thread.taskReceived.emit(req_id, method_name, (args, kwargs), callback)
-        return True
-    
-    def _call_thread_sync(self, name, method_name, args, kwargs):
-        """쓰레드 워커 동기 호출"""
-        thread = self.workers[name]['handle']
-        
-        # 결과 기다림
+        # 쓰레드로 실행하는 경우
+        worker = self.workers[worker_name]
         result = [None]
         event = threading.Event()
         
         def callback(res):
             result[0] = res
             event.set()
-            
-        # 요청 전송
-        req_id = str(uuid.uuid4())
-        thread.taskReceived.emit(req_id, method_name, (args, kwargs), callback)
+        
+        # 시그널로 태스크 전송
+        task_id = str(uuid.uuid4())
+        task_data = (args, kwargs)
+        worker.taskReceived.emit(task_id, method_name, task_data, callback)
         
         # 결과 대기
-        if not event.wait(5.0):
-            logging.warning(f"쓰레드 호출 타임아웃: {name}.{method_name}")
+        if not event.wait(3.0):
+            logging.warning(f"호출 타임아웃: {worker_name}.{method_name}")
             return None
-            
+        
         return result[0]
-    
-    def _call_process(self, name, method_name, args, kwargs, callback):
-        """프로세스 워커 비동기 호출"""
-        if name not in self.queues:
-            logging.error(f"프로세스 큐 없음: {name}")
-            if callback: callback(None)
-            return False
-            
-        input_queue, _ = self.queues[name]
-        req_id = str(uuid.uuid4())
-        
-        # 콜백 등록
-        if callback:
-            self.callbacks[req_id] = callback
-            
-        # 요청 전송
-        input_queue.put({
-            'id': req_id,
-            'method': method_name,
-            'args': args,
-            'kwargs': kwargs
-        })
-        
-        return True
-    
-    def _call_process_sync(self, name, method_name, args, kwargs):
-        """프로세스 워커 동기 호출"""
-        if name not in self.queues:
-            logging.error(f"프로세스 큐 없음: {name}")
+
+    def work(self, worker_name, method_name, *args, callback=None, **kwargs):
+        """비동기 함수 호출"""
+        if self.is_shutting_down:
             return None
-            
-        input_queue, _ = self.queues[name]
-        req_id = str(uuid.uuid4())
         
-        # 요청 전송
-        input_queue.put({
-            'id': req_id,
-            'method': method_name,
-            'args': args,
-            'kwargs': kwargs
-        })
-        
-        # 결과 대기
-        start_time = time.time()
-        timeout = 5.0
-        
-        while req_id not in self.shared_dict:
-            if time.time() - start_time > timeout:
-                logging.warning(f"프로세스 호출 타임아웃: {name}.{method_name}")
-                return None
-            time.sleep(0.001)
-            
-        # 결과 반환
-        response = self.shared_dict.pop(req_id)
-        return response.get('result')
-    
-    def start(self, name):
-        """워커 시작"""
-        if name not in self.workers:
+        # 워커 찾기
+        if worker_name not in self.workers and worker_name not in self.targets:
+            logging.error(f"워커 없음: {worker_name}")
             return False
-            
-        worker = self.workers[name]
-        handle = worker['handle']
         
-        if worker['type'] == 'thread':
-            if not handle.isRunning():
-                handle.start()
+        # 메인 쓰레드에서 실행하는 경우
+        if worker_name in self.targets:
+            target = self.targets[worker_name]
+            method = getattr(target, method_name, None)
+            if not method:
+                return False
+            try:
+                result = method(*args, **kwargs)
+                if callback:
+                    callback(result)
                 return True
-        elif worker['type'] == 'process':
-            if not handle.is_alive():
-                handle.start()
-                self._start_listener(name)
-                return True
-                
-        return False
-    
-    def stop(self, name):
-        """워커 중지"""
-        return self.unregister(name)
-    
+            except Exception as e:
+                logging.error(f"직접 호출 오류: {e}", exc_info=True)
+                if callback:
+                    callback(None)
+                return False
+        
+        # 쓰레드로 실행하는 경우
+        worker = self.workers[worker_name]
+        task_id = str(uuid.uuid4())
+        task_data = (args, kwargs)
+        worker.taskReceived.emit(task_id, method_name, task_data, callback)
+        return True
+
     def cleanup(self):
-        """모든 워커 정리"""
+        """모든 워커 중지"""
+        # 모든 쓰레드 워커 중지
         self.is_shutting_down = True
-        
-        # 모든 워커 등록 해제
+
+        logging.info("모든 워커 중지 중...")
         for name in list(self.workers.keys()):
-            self.unregister(name)
+            self.stop(name)
             
-        # 자원 정리
-        if hasattr(self, 'manager') and self.manager:
+        # 모든 메인 쓰레드 워커 제거
+        self.targets.clear()
+        
+        # Manager 종료
+        if self.manager is not None:
             try:
                 self.manager.shutdown()
-            except Exception:
+            except:
                 pass
             self.manager = None
+
+        logging.debug("모든 워커 종료")
+        
+class IPCManager:
+   def __init__(self):
+      self.manager = mp.Manager()
+      self.queues = {}  # name -> Queue
+      self.result_dict = self.manager.dict()  # id -> result
+      self.ipc_process = None
+      self.shutting_down = False
+   
+   def create_queue(self, name):
+      """특정 이름의 큐 생성"""
+      if name not in self.queues:
+         self.queues[name] = mp.Queue()
+      return self.queues[name]
+   
+   def get_queue(self, name):
+      """큐 가져오기"""
+      if name not in self.queues:
+         self.create_queue(name)
+      return self.queues[name]
+   
+   def prepare_shutdown(self):
+      self.shutting_down = True
+      logging.info("종료 준비 중 ...")
+   
+   def start_ipc_process(self, ipc_process):
+      if self.ipc_process is not None:
+         logging.warning("IPC 프로세스가 이미 실행 중입니다")
+         return
+      
+      # 필요한 큐 생성
+      self.create_queue('admin_to_ipc')
+      self.create_queue('ipc_to_admin')
+      
+      # 프로세스 시작
+      self.ipc_process = mp.Process(
+         target=ipc_worker,
+         args=(ipc_process, self.queues['admin_to_ipc'], 
+               self.queues['ipc_to_admin'], self.result_dict),
+         daemon=True
+      )
+      self.ipc_process.start()
+      logging.info(f"IPC 프로세스 시작됨 (PID: {self.ipc_process.pid})")
+      return self.ipc_process.pid
+   
+   def stop_ipc_process(self):
+      if self.ipc_process is None:
+         return
+      
+      # 종료 명령 전송
+      self.queues['admin_to_ipc'].put({
+         'command': 'stop'
+      })
+      
+      # 프로세스 종료 대기
+      self.ipc_process.join(2.0)
+      if self.ipc_process.is_alive():
+         self.ipc_process.terminate()
+         self.ipc_process.join(1.0)
+      
+      self.ipc_process = None
+      logging.info("IPC 프로세스 종료됨")
+   
+   def start_admin_listener(self, admin_instance):
+      """Admin의 메시지 리스너 시작"""
+      self.admin_listener = threading.Thread(
+         target=ipc_listener,
+         args=(admin_instance, self.queues['ipc_to_admin'], self.result_dict),
+         daemon=True
+      )
+      self.admin_listener.start()
+      logging.info("Admin 리스너 쓰레드 시작")
+   
+   def request_to_ipc(self, method, *args, wait_result=True, timeout=10, **kwargs):
+      if self.shutting_down:
+         return None
+      
+      req_id = str(uuid.uuid4())
+
+      # 요청 전송
+      self.queues['admin_to_ipc'].put({
+         'id': req_id,
+         'method': method,
+         'args': args,
+         'kwargs': kwargs
+      })
+      
+      # 결과를 기다리지 않으면 바로 반환
+      if not wait_result:
+         return req_id
+      
+      # 결과 대기
+      start_time = time.time()
+      while req_id not in self.result_dict:
+         if time.time() - start_time > timeout:
+            logging.warning(f"요청 타임아웃: {method}")
+            return None
+         time.sleep(0.01)
+      
+      # 결과 반환 및 정리
+      result = self.result_dict[req_id]
+      del self.result_dict[req_id]
+      return result.get('result', None)
+
+def ipc_worker(ipc_process, input_queue, output_queue, result_dict):
+   """DBM 프로세스 메인 함수"""
+   try:
+      # DBM 인스턴스 생성
+      dbm = ipc_process()
+      logging.info("DBM 프로세스 초기화 완료")
+      
+      # Admin으로 요청 보내는 함수
+      def request_to_admin(method, *args, wait_result=True, timeout=10, **kwargs):
+         req_id = str(uuid.uuid4())
+         
+         # 요청 전송
+         output_queue.put({
+            'id': req_id,
+            'method': method,
+            'args': args,
+            'kwargs': kwargs
+         })
+         
+         # 결과를 기다리지 않으면 바로 반환
+         if not wait_result:
+            return req_id
+         
+         # 결과 대기
+         start_time = time.time()
+         while req_id not in result_dict:
+            if time.time() - start_time > timeout:
+               logging.warning(f"요청 타임아웃: {method}")
+               return None
+            time.sleep(0.01)
+         
+         # 결과 반환 및 정리
+         result = result_dict[req_id]
+         del result_dict[req_id]
+         return result.get('result', None)
+      
+      # DBM 인스턴스에 request_to_admin 함수 추가
+      dbm.request_to_admin = request_to_admin
+      
+      shutting_down = False
+      # 메시지 처리 루프
+      while not shutting_down:
+         try:
+            # 요청 가져오기 (타임아웃 설정하여 간격적으로 체크)
+            try:
+               request = input_queue.get(timeout=0.1)
+            except queue.Empty:
+               continue
             
-        logging.info("모든 자원 정리 완료")
+            # 종료 명령 확인
+            if 'command' in request:
+                if request['command'] == 'stop':
+                    shutting_down = True
+                    logging.info("종료 명령 수신")
+                    break
+                elif request['command'] == 'prepare_shutdown':
+                    shutting_down = True
+                    continue
+
+            # 요청 정보 파싱
+            req_id = request.get('id')
+            method_name = request.get('method')
+            args = request.get('args', ())
+            kwargs = request.get('kwargs', {})
+            
+            # 메서드 찾기
+            method = getattr(dbm, method_name, None)
+            if method is None:
+               logging.error(f"메서드 없음: {method_name}")
+               result_dict[req_id] = {
+                  'status': 'error',
+                  'error': f"메서드 없음: {method_name}",
+                  'result': None
+               }
+               continue
+            
+            # 메서드 실행
+            try:
+               result = method(*args, **kwargs)
+               result_dict[req_id] = {
+                  'status': 'success',
+                  'result': result
+               }
+               #logging.debug(f"메서드 실행 완료: {method_name}, 결과: {result}")
+            except Exception as e:
+               logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+               result_dict[req_id] = {
+                  'status': 'error',
+                  'error': str(e),
+                  'result': None
+               }
+         except Exception as e:
+            logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
+   
+   except Exception as e:
+      logging.error(f"DBM 프로세스 오류: {e}", exc_info=True)
+   
+   finally:
+      logging.info("DBM 프로세스 종료")
+
+def ipc_listener(admin_instance, input_queue, result_dict):
+   """Admin 메시지 리스너 쓰레드"""
+   try:
+      logging.info("Admin 리스너 쓰레드 시작")
+      
+      while True:
+         try:
+            # 요청 가져오기 (타임아웃 설정하여 간격적으로 체크)
+            try:
+               request = input_queue.get(timeout=0.1)
+            except queue.Empty:
+               continue
+            
+            # 요청 정보 파싱
+            req_id = request.get('id')
+            method_name = request.get('method')
+            args = request.get('args', ())
+            kwargs = request.get('kwargs', {})
+            
+            # 메서드 찾기
+            method = getattr(admin_instance, method_name, None)
+            if method is None:
+               logging.error(f"메서드 없음: {method_name}")
+               result_dict[req_id] = {
+                  'status': 'error',
+                  'error': f"메서드 없음: {method_name}",
+                  'result': None
+               }
+               continue
+            
+            # 메서드 실행
+            try:
+               result = method(*args, **kwargs)
+               result_dict[req_id] = {
+                  'status': 'success',
+                  'result': result
+               }
+               
+               #logging.debug(f"메서드 실행 완료: {method_name}, 결과: {result}")
+            except Exception as e:
+               logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+               result_dict[req_id] = {
+                  'status': 'error',
+                  'error': str(e),
+                  'result': None
+               }
+         except Exception as e:
+            logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
+   
+   except Exception as e:
+      logging.error(f"Admin 리스너 쓰레드 오류: {e}", exc_info=True)
+   
+   finally:
+      logging.info("Admin 리스너 쓰레드 종료")
+
+class IPC_Process:
+    def __init__(self):
+        self.api = None
+        self.dbm = None
+    
+    def init(self):
+        self.api = APIServer()
+        self.dbm = DBMServer()
+
+    def call_function(self, cls_name, method_name, *args, **kwargs):
+        if cls_name == 'api':
+            return self.api.work(method_name, *args, **kwargs)
+        elif cls_name == 'dbm':
+            return self.dbm.work(method_name, *args, **kwargs)
 
 # 메인 테스트 코드
 if __name__ == "__main__":
