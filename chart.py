@@ -20,7 +20,10 @@ import msgpack
 import struct
 
 class ChartData:
-    """차트 데이터를 관리하는 최적화된 공유 메모리 기반 싱글톤 클래스"""
+    """
+    차트 데이터를 관리하는 최적화된 공유 메모리 기반 싱글톤 클래스
+    이는 멀티프로세스 환경에서 사용되며, 각 프로세스는 공유 메모리를 통해 데이터를 공유합니다.
+    """
     _instance = None
     _lock = threading.RLock()
 

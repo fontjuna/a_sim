@@ -1192,21 +1192,3 @@ class APIServer():
             return data
         return None
     
-    # 테스트용 더미 메서드
-    def increment(self, value=1):
-        self.counter += value
-        logging.info(f"카운터 증가: {self.counter}")
-        return self.counter
-    
-    def get_counter(self):
-        logging.info(f"현재 카운터: {self.counter}")
-        return self.counter
-
-    def test_request_to_main(self, test_value):
-        """메인으로 요청 테스트"""
-        # 여기서는 부모의 request_to_admin 함수 사용
-        # 이 함수는 IPC_Process에서 주입됨
-        if hasattr(self, 'parent') and hasattr(self.parent, 'request_to_admin'):
-            result = self.parent.request_to_admin("main_handler", test_value)
-            return f"메인에서 받은 응답: {result}"
-        return "요청 실패: parent.request_to_admin 없음"
