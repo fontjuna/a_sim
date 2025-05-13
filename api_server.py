@@ -570,6 +570,8 @@ class APIServer():
 
         self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
 
+        self.counter = 0 # 테스트용
+
     def stop(self):
         """APIServer 종료 시 실행되는 메서드"""
         logging.info(f"APIServer 종료 시작 (sim_no={self.sim_no})")
@@ -711,7 +713,6 @@ class APIServer():
         start_time = time.time()
         while not wait_boolean:
             pythoncom.PumpWaitingMessages()
-            # self.app.processEvents()
             if time.time() - start_time > timeout:
                 logging.warning(f"Timeout while waiting for {failed_msg}")
                 return False
@@ -720,7 +721,15 @@ class APIServer():
     # 추가 메서드 --------------------------------------------------------------------------------------------------
     def api_connected(self):
         if self.sim_no == 1: return True
-        else: return self.waiting_in_loop(self.connected, "API 연결 대기", 15)
+        else: 
+            start_time = time.time()
+            while not self.connected:
+                pythoncom.PumpWaitingMessages()
+                if time.time() - start_time > 15:
+                    logging.warning(f"Timeout while waiting for API 연결")
+                    return False
+            logging.debug(f"API 연결 완료: {self.connected}")
+            return self.connected
 
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         try:
@@ -928,7 +937,7 @@ class APIServer():
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        self.work('admin', 'set_connected', self.connected)
+        #self.work('admin', 'set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
@@ -1182,3 +1191,22 @@ class APIServer():
             data = self.ocx.dynamicCall("GetCommDataEx(QString, QString)", trcode, rqname)
             return data
         return None
+    
+    # 테스트용 더미 메서드
+    def increment(self, value=1):
+        self.counter += value
+        logging.info(f"카운터 증가: {self.counter}")
+        return self.counter
+    
+    def get_counter(self):
+        logging.info(f"현재 카운터: {self.counter}")
+        return self.counter
+
+    def test_request_to_main(self, test_value):
+        """메인으로 요청 테스트"""
+        # 여기서는 부모의 request_to_admin 함수 사용
+        # 이 함수는 IPC_Process에서 주입됨
+        if hasattr(self, 'parent') and hasattr(self.parent, 'request_to_admin'):
+            result = self.parent.request_to_admin("main_handler", test_value)
+            return f"메인에서 받은 응답: {result}"
+        return "요청 실패: parent.request_to_admin 없음"

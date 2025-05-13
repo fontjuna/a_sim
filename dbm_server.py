@@ -22,6 +22,7 @@ class DBMServer:
         self.thread_run = False
         self.thread_chart = None    
 
+        self.database = {} # 테스트용
         #self.init_dbm()
         #self.start_request_chart_data()
 
@@ -442,3 +443,24 @@ class DBMServer:
         #dictFID = job['dictFID']
         #if code in self.todo_code or code in self.done_code:
         #    ctdt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+
+    # 테스트용 더미 메서드
+    def save(self, key, value):
+        self.database[key] = value
+        logging.info(f"저장: {key}={value}")
+        return True
+    
+    def load(self, key):
+        value = self.database.get(key)
+        logging.info(f"로드: {key}={value}")
+        return value
+
+    def test_request_to_main(self, test_key, test_value):
+        """메인으로 요청 테스트"""
+        if hasattr(self, 'parent') and hasattr(self.parent, 'request_to_admin'):
+            # 메인에 저장 요청
+            self.parent.request_to_admin("main_handler", "save", test_key, test_value)
+            # 메인에서 로드 요청
+            result = self.parent.request_to_admin("main_handler", "load", test_key)
+            return f"메인에 저장/로드: {test_key}={result}"
+        return "요청 실패: parent.request_to_admin 없음"
