@@ -26,14 +26,14 @@ class DBMServer:
         #self.init_dbm()
         #self.start_request_chart_data()
 
-    def start(self):
+    def dbm_start(self):
         """컴포넌트 시작"""
         print(f"{self.__class__.__name__} 시작 중...")
         self.running = True
         # 시작 관련 코드
         return {"status": "started"}
         
-    def stop(self):
+    def dbm_stop(self):
         # 모든 연결 닫기 시도 (각 스레드의 연결)
         try:
             print(f"{self.__class__.__name__} 중지 중...")
@@ -345,7 +345,8 @@ class DBMServer:
             next = '0'
             dict_list = []
             while True:
-                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=1)
+                #data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=1)
+                data, remain = self.api_request(rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=1)
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
                 times -= 1
@@ -414,7 +415,7 @@ class DBMServer:
                 if not codes[code]['mi']: self.dbm_get_chart_data(code, cycle='mi', tick=1)
                 if not codes[code]['dy']: self.dbm_get_chart_data(code, cycle='dy')
 
-            time.sleep(0.1)
+            time.sleep(0.2)
 
     def done_todo_code(self, code, cycle):                    
         with self._lock:

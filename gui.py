@@ -244,7 +244,7 @@ class GUI(QMainWindow, form_class):
             tab = self.findChild(QTabWidget, "tabDeca")
             chk_run = tab.findChild(QCheckBox, f'chkRun_{seq}')
             led_condition = tab.findChild(QLineEdit, f'ledTabStrategy_{seq}')
-            전략명칭 = led_condition.text().strip()
+            전략명칭 = led_condition.text()
 
             if chk_run.isChecked() and not 전략명칭:
                 QMessageBox.warning(None, '경고', '전략명칭이 입력되지 않았습니다.')
@@ -264,9 +264,9 @@ class GUI(QMainWindow, form_class):
 
             # 전략명칭 중복 검사 - 빈 문자열 제외
             strategy_names = [
-                d['전략명칭'].strip()
+                d['전략명칭']
                 for d in gm.전략설정
-                if '전략명칭' in d and d['전략명칭'].strip()
+                if '전략명칭' in d and d['전략명칭']
             ]
             if len(strategy_names) != len(set(strategy_names)):
                 QMessageBox.warning(None, '경고', f'전략명칭 {전략명칭}이 중복되었습니다.')
@@ -275,10 +275,10 @@ class GUI(QMainWindow, form_class):
 
             # 매수전략 중복 검사 - 빈 문자열과 None 제외
             buy_strategies = [
-                gm.전략정의.get(key=strategy.get('전략명칭', '').strip(), column='매수전략')
+                gm.전략정의.get(key=strategy.get('전략명칭', ''), column='매수전략')
                 for strategy in gm.전략설정
-                if strategy.get('전략명칭', '').strip() and
-                   gm.전략정의.get(key=strategy.get('전략명칭', '').strip(), column='매수전략') not in ['', 'None', None]
+                if strategy.get('전략명칭', '') and
+                   gm.전략정의.get(key=strategy.get('전략명칭', ''), column='매수전략') not in ['', 'None', None]
             ]
             if len(buy_strategies) != len(set(buy_strategies)):
                 QMessageBox.warning(None, '경고', f'{전략명칭}의 매수전략이 중복되었습니다.')
@@ -287,10 +287,10 @@ class GUI(QMainWindow, form_class):
 
             # 매도전략 중복 검사 - 빈 문자열과 None 제외
             sell_strategies = [
-                gm.전략정의.get(key=strategy.get('전략명칭', '').strip(), column='매도전략')
+                gm.전략정의.get(key=strategy.get('전략명칭', ''), column='매도전략')
                 for strategy in gm.전략설정
-                if strategy.get('전략명칭', '').strip() and
-                   gm.전략정의.get(key=strategy.get('전략명칭', '').strip(), column='매도전략') not in ['', 'None', None]
+                if strategy.get('전략명칭', '') and
+                   gm.전략정의.get(key=strategy.get('전략명칭', ''), column='매도전략') not in ['', 'None', None]
             ]
             if len(sell_strategies) != len(set(sell_strategies)):
                 QMessageBox.warning(None, '경고', f'{전략명칭}의 매도전략이 중복되었습니다.')
@@ -334,7 +334,7 @@ class GUI(QMainWindow, form_class):
     def gui_strategy_save(self):
         """현재 위젯값을 dict주문설정에 옮기기"""
         try:
-            name = self.ledStrategyName.text().strip()
+            name = self.ledStrategyName.text()
             if not name:
                 QMessageBox.warning(self, '알림', '설정 이름을 입력하세요.')
                 return
@@ -393,7 +393,7 @@ class GUI(QMainWindow, form_class):
     def gui_strategy_delete(self):
         """설정 삭제 버튼 클릭시"""
         try:
-            name = self.ledStrategyName.text().strip()
+            name = self.ledStrategyName.text()
             if not name:
                 QMessageBox.warning(self, '알림', '삭제할 전략명칭을 확인 하세요.')
                 return
@@ -618,23 +618,23 @@ class GUI(QMainWindow, form_class):
             self.leTrCancelKey.setText(row['키'])
 
     def gui_tr_code_changed(self):
-        code = self.leTrCode.text().strip()
+        code = self.leTrCode.text()
         if code:
-            self.leTrName.setText(gm.ipc.answer('api', 'GetMasterCodeName', code).strip())
+            self.leTrName.setText(gm.ipc.answer('api', 'GetMasterCodeName', code))
 
     def gui_tr_order(self):
         kind = '매수' if self.rbTrBuy.isChecked() else '매도'
         if kind == '매수':
             전략 = '전략00'
         else:
-            전략 = self.leTrStrategy.text().strip()
+            전략 = self.leTrStrategy.text()
             if 전략: 
-                if 전략 not in gm.ipc.instances:
+                if 전략 not in gm.trd.workers:
                     logging.warning(f'전략이 실행중이지 않습니다. {전략}')
                     return
             
         전략번호 = int(전략[-2:])
-        code = self.leTrCode.text().strip()
+        code = self.leTrCode.text()
         price = self.spbTrPrice.value()
         qty = self.spbTrQty.value()
         row = gm.잔고목록.get(key=code)
@@ -695,7 +695,7 @@ class GUI(QMainWindow, form_class):
         gm.admin.com_SendOrder(전략번호, **send_data)
 
     def gui_tr_cancel(self):
-        key = self.leTrCancelKey.text().strip()
+        key = self.leTrCancelKey.text()
         row = gm.주문목록.get(key=key)
         if not row:
             QMessageBox.warning(self, '알림', '주문접수목록에서 취소할 항목을 선택하세요.')
@@ -773,7 +773,7 @@ class GUI(QMainWindow, form_class):
 
     def gui_script_delete(self):
         try:
-            name = self.ledScriptName.text().strip()
+            name = self.ledScriptName.text()
             if not name:
                 QMessageBox.warning(self, '알림', '삭제할 스크립트명을 확인 하세요.')
                 return
@@ -810,14 +810,14 @@ class GUI(QMainWindow, form_class):
 
     def gui_script_check(self):
         try:
-            script_name = self.ledScriptName.text().strip()
+            script_name = self.ledScriptName.text()
             script = self.txtScript.toPlainText()
-            if len(script_name.strip()) == 0 or len(script.strip()) == 0:
+            if len(script_name) == 0 or len(script) == 0:
                 QMessageBox.information(self, '알림', '스크립트명과 스크립트를 입력하세요.')
                 return
             vars_dict = {}
             for row in range(self.tblScriptVar.rowCount()):
-                key = self.tblScriptVar.item(row, 0).text().strip()
+                key = self.tblScriptVar.item(row, 0).text()
                 value = self.tblScriptVar.item(row, 1).text()
                 vars_dict[key] = float(value) if value else 0.0
             result = gm.scm.run_script(script_name, check_only=True, script_data={'script': script, 'vars': vars_dict}, kwargs={'code': '005930'})
@@ -835,13 +835,13 @@ class GUI(QMainWindow, form_class):
 
     def gui_script_save(self):
         try:
-            script_name = self.ledScriptName.text() #.strip()
-            script = self.txtScript.toPlainText() #.strip()
-            desc = self.txtScriptDesc.toPlainText() #.strip()
+            script_name = self.ledScriptName.text() #
+            script = self.txtScript.toPlainText() #
+            desc = self.txtScriptDesc.toPlainText() #
             vars = {}
             kwargs = {'code': '005930', 'name': '', 'price': 0, 'qty': 0}
             for row in range(self.tblScriptVar.rowCount()):
-                key = self.tblScriptVar.item(row, 0).text().strip()
+                key = self.tblScriptVar.item(row, 0).text()
                 value = self.tblScriptVar.item(row, 1).text()
                 vars[key] = float(value) if value else 0.0
             script_type = gm.scm.set_script_compiled(script_name, script, vars, desc, kwargs) # 실패시 False, 성공시 스크립트 타입 반환
@@ -870,7 +870,7 @@ class GUI(QMainWindow, form_class):
 
     def gui_var_delete(self):
         try:
-            name = self.ledVarName.text().strip()
+            name = self.ledVarName.text()
             if not name:
                 QMessageBox.warning(self, '알림', '삭제할 변수명을 확인 하세요.')
                 return
@@ -893,8 +893,8 @@ class GUI(QMainWindow, form_class):
 
     def gui_var_save(self):
         try:
-            name = self.ledVarName.text().strip()
-            value = self.ledVarValue.text().strip()
+            name = self.ledVarName.text()
+            value = self.ledVarValue.text()
             gm.스크립트변수.set(key=name, data={'변수명': name, '값': value})
             gm.스크립트변수.update_table_widget(self.tblScriptVar)
             self.ledVarName.setText('')
@@ -907,7 +907,7 @@ class GUI(QMainWindow, form_class):
     def gui_fx채움_계좌콤보(self):
         try:
             self.cbAccounts.clear()
-            self.cbAccounts.addItems([account for account in gm.list계좌콤보 if account.strip()])
+            self.cbAccounts.addItems([account for account in gm.list계좌콤보 if account])
             self.cbAccounts.setCurrentIndex(0)
         except Exception as e:
             logging.error(f'계좌콤보 채움 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -916,7 +916,7 @@ class GUI(QMainWindow, form_class):
         try:
             self.cbCondition.clear()
             self.cbCondition.addItem(dc.const.NON_STRATEGY)  # 선택없음 추가
-            self.cbCondition.addItems([strategy for strategy in gm.list전략콤보 if strategy.strip()])
+            self.cbCondition.addItems([strategy for strategy in gm.list전략콤보 if strategy])
             self.cbCondition.setCurrentIndex(0)
         except Exception as e:
             logging.error(f'조건콤보 채움 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -924,7 +924,7 @@ class GUI(QMainWindow, form_class):
     def gui_fx채움_스크립트콤보(self):
         try:
             self.cbScript.clear()
-            self.cbScript.addItems([script for script in gm.list스크립트 if script.strip()])
+            self.cbScript.addItems([script for script in gm.list스크립트 if script])
             self.cbScript.setCurrentIndex(0)
         except Exception as e:
             logging.error(f'스크립트콤보 채움 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -932,7 +932,7 @@ class GUI(QMainWindow, form_class):
     def gui_fx채움_전략정의(self):
         try:
             self.cbTabStrategy.clear()
-            self.cbTabStrategy.addItems([name for name in gm.전략정의.get(column='전략명칭') if name.strip()])
+            self.cbTabStrategy.addItems([name for name in gm.전략정의.get(column='전략명칭') if name])
             self.cbTabStrategy.setCurrentIndex(0)
             gm.전략정의.update_table_widget(self.tblStrategy)
         except Exception as e:

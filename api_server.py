@@ -572,7 +572,7 @@ class APIServer():
 
         self.counter = 0 # 테스트용
 
-    def stop(self):
+    def api_stop(self):
         """APIServer 종료 시 실행되는 메서드"""
         logging.info(f"APIServer 종료 시작 (sim_no={self.sim_no})")
         print(f"{self.__class__.__name__} 중지 중...")
@@ -613,7 +613,7 @@ class APIServer():
 
         return {"status": "stopped"}
 
-    def start(self):
+    def api_start(self):
         """컴포넌트 시작"""
         print(f"{self.__class__.__name__} 시작 중...")
         self.running = True
@@ -881,6 +881,7 @@ class APIServer():
     def SetRealReg(self, screen, code_list, fid_list, opt_type):
         if self.sim_no == 0:  # 실제 API 서버
             ret = self.ocx.dynamicCall("SetRealReg(QString, QString, QString, QString)", screen, code_list, fid_list, opt_type)
+            logging.debug(f'SetRealReg{"**성공**" if ret==0 else "**실패**"}: screen={screen}, code_list={code_list}, fid_list={fid_list}, opt_type={opt_type}')
             return ret
         else:  # 시뮬레이션 모드
             global real_thread
@@ -1023,6 +1024,7 @@ class APIServer():
                     self.work('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.work('admin', 'on_fx실시간_장운영감시', **job)
+                logging.debug(f"OnReceiveRealData: {job}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
@@ -1194,7 +1196,7 @@ class APIServer():
     
     def test_request_to_main(self, test_value):
         """메인으로 요청 테스트"""
-        logging.debug(f"메인에서 요청 테스트: {test_value}")
+        logging.debug(f"메인에서 요청 테스트: 전달 된 값 = {test_value}")
         result = self.answer('admin', 'return_value', test_value)
-        logging.debug(f"메인에서 받은 응답: {result}")
+        logging.debug(f"메인으로 부터 받은 응답: 반환 된 값 = {result}")
         return result
