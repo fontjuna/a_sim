@@ -878,6 +878,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     cdt = None # 차트 데이타
     scm = None # 스크립트 매니저
     ipc = None # 프로세스 매니저
+    trd = None # 쓰레드 매니저
 
     toast = None
     json_config = dc.log_config

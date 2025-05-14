@@ -1,10 +1,8 @@
-from public import init_logger, dc, gm
 from gui import GUI
 from admin import Admin
-from api_server import APIServer
-from dbm_server import DBMServer
-from ipc_manager import IPCManager
-from classes import Toast, IPCM
+from ipc_manager import IPCManager, TRDManager
+from public import init_logger, dc, gm
+from classes import Toast
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QPixmap, QGuiApplication
@@ -74,16 +72,16 @@ class Main:
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
-            gm.ipc = IPCM()
+            gm.trd = TRDManager()
+            gm.ipc = IPCManager(gm.trd)
             gm.toast = Toast()
             gm.main = self
             gm.gui = GUI() if gm.config.gui_on else None
+            gm.admin = gm.trd.register("admin", Admin(), start=True)
 
-            gm.api = gm.ipc.register("api", APIServer(), 'process', start=True)
+            gm.ipc.start()
             gm.ipc.work('api', 'api_init', sim_no=gm.config.sim_no)
 
-            gm.admin = gm.ipc.register("admin", Admin(), start=True)
-            gm.dbm = gm.ipc.register("dbm", DBMServer(), 'process', start=True)
 
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -108,7 +106,7 @@ class Main:
                     else: break
             gm.ipc.work('api', 'set_tickers')
 
-            gm.ipc.work('admin', 'init')
+            gm.trd.work('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
 
             if gm.config.gui_on: gm.gui.init()
@@ -124,7 +122,7 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            gm.ipc.work('admin', 'trade_start')
+            gm.trd.work('admin', 'trade_start')
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):

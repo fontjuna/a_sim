@@ -1192,3 +1192,9 @@ class APIServer():
             return data
         return None
     
+    def test_request_to_main(self, test_value):
+        """메인으로 요청 테스트"""
+        logging.debug(f"메인에서 요청 테스트: {test_value}")
+        result = self.answer('admin', 'return_value', test_value)
+        logging.debug(f"메인에서 받은 응답: {result}")
+        return result
