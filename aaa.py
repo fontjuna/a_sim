@@ -1,8 +1,10 @@
 from gui import GUI
 from admin import Admin
-from ipc_manager import IPCManager, TRDManager
+from ipc_manager import IPCManager, init_ipc_manager, cleanup_ipc_manager
 from public import init_logger, dc, gm
 from classes import Toast
+from dbm_server import DBMServer
+from api_server import APIServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QPixmap, QGuiApplication
@@ -27,6 +29,7 @@ class Main:
     def init(self):
         self.app = QApplication(sys.argv)
         args = [arg.lower() for arg in sys.argv]
+        init_ipc_manager()
         gm.config.gui_on = 'off' not in args
         gm.config.sim_no = 1 if 'sim1' in args else 2 if 'sim2' in args else 3 if 'sim3' in args else 0
         if 'sim' in args and gm.config.sim_no == 0: gm.config.sim_no = 1
@@ -72,16 +75,13 @@ class Main:
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
-            gm.trd = TRDManager()
-            gm.ipc = IPCManager(gm.trd)
+            gm.ipc = IPCManager()
             gm.toast = Toast()
             gm.main = self
             gm.gui = GUI() if gm.config.gui_on else None
-            gm.admin = gm.trd.register("admin", Admin(), start=True)
-
-            gm.ipc.start()
+            gm.admin = gm.ipc.register("admin", Admin('admin'), start=True)
+            gm.api =gm.ipc.register('api', APIServer('api'), type='process', start=True)
             gm.ipc.work('api', 'api_init', sim_no=gm.config.sim_no)
-
 
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -105,8 +105,8 @@ class Main:
                     if not gm.ipc.answer('api', 'api_connected'): time.sleep(0.1)
                     else: break
             gm.ipc.work('api', 'set_tickers')
-
-            gm.trd.work('admin', 'init')
+            gm.ipc.register('dbm', DBMServer('dbm'), type='process', start=True)
+            gm.ipc.work('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
 
             if gm.config.gui_on: gm.gui.init()
@@ -122,7 +122,7 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            gm.trd.work('admin', 'trade_start')
+            gm.ipc.work('admin', 'trade_start')
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
@@ -153,6 +153,7 @@ class Main:
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:
+            cleanup_ipc_manager()
             self.cleanup_flag = True
             if hasattr(self, 'app'): self.app.quit()
             logging.info("cleanup completed")

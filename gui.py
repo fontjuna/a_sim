@@ -629,7 +629,7 @@ class GUI(QMainWindow, form_class):
         else:
             전략 = self.leTrStrategy.text()
             if 전략: 
-                if 전략 not in gm.trd.workers:
+                if 전략 not in gm.ipc.workers:
                     logging.warning(f'전략이 실행중이지 않습니다. {전략}')
                     return
             
@@ -1085,7 +1085,7 @@ class GUI(QMainWindow, form_class):
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
             self.lbl2.setText('연결됨' if gm.connected else '끊어짐')
             self.lbl2.setStyleSheet("color: green;" if gm.connected else "color: red;")
-            self.lbl4.setText(gm.trd.answer('admin', 'com_market_status'))
+            self.lbl4.setText(gm.ipc.answer('admin', 'com_market_status'))
 
             # 큐 메시지 처리
             while not gm.qwork['msg'].empty():

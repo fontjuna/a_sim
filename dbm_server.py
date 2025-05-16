@@ -9,7 +9,8 @@ import copy
 import time
 
 class DBMServer:
-    def __init__(self):
+    def __init__(self, name='dbm'):
+        self.name = name
         self.ipc = None
         self.running = False
         self.fee_rate = 0.00015
@@ -345,8 +346,7 @@ class DBMServer:
             next = '0'
             dict_list = []
             while True:
-                #data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=1)
-                data, remain = self.api_request(rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=1)
+                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=1)
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
                 times -= 1
@@ -381,7 +381,7 @@ class DBMServer:
                     '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
                 } for item in dict_list]
             if cycle in ['dy', 'mi']:
-                self.upsert_chart(dict_list, cycle, tick)
+                #self.upsert_chart(dict_list, cycle, tick)
                 self.done_todo_code(code, cycle)
                 ctdt.set_chart_data(code, dict_list, cycle, tick)
             return dict_list

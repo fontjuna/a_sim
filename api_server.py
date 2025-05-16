@@ -23,7 +23,7 @@ def com_request_time_check(kind='order', cond_text = None):
     elif kind == 'request':
         wait_time = max(req.check_interval(), req.check_condition_interval(cond_text) if cond_text else 0)
 
-    #logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
+    logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
     if wait_time > 1666: # 1.666초 이내 주문 제한
         msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
             if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
@@ -548,8 +548,8 @@ class OnReceiveRealDataSim3(QThread):
 
 class APIServer():
     app = QApplication(sys.argv)
-    def __init__(self):
-        self.name = 'api'
+    def __init__(self, name='api'):
+        self.name = name
         self.sim_no = 0
         self.work = None
 
@@ -850,8 +850,10 @@ class APIServer():
     def SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno):
         if not com_request_time_check(kind='order'): return -308 # 5회 제한 초과
         if self.sim_no == 0:  # 실제 API 서버
+            logging.debug(f'api 내부 SendOrder 호출전')
             ret = self.ocx.dynamicCall("SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)",
                                     [rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno])
+            logging.debug(f'api 내부 SendOrder 호출후')
             return ret
         else:  # 시뮬레이션 모드
             self.order_no += 1
@@ -881,7 +883,7 @@ class APIServer():
     def SetRealReg(self, screen, code_list, fid_list, opt_type):
         if self.sim_no == 0:  # 실제 API 서버
             ret = self.ocx.dynamicCall("SetRealReg(QString, QString, QString, QString)", screen, code_list, fid_list, opt_type)
-            logging.debug(f'SetRealReg{"**성공**" if ret==0 else "**실패**"}: screen={screen}, code_list={code_list}, fid_list={fid_list}, opt_type={opt_type}')
+            #logging.debug(f'SetRealReg{"**성공**" if ret==0 else "**실패**"}: screen={screen}, code_list={code_list}, fid_list={fid_list}, opt_type={opt_type}')
             return ret
         else:  # 시뮬레이션 모드
             global real_thread
@@ -1024,7 +1026,7 @@ class APIServer():
                     self.work('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.work('admin', 'on_fx실시간_장운영감시', **job)
-                logging.debug(f"OnReceiveRealData: {job}")
+                #logging.debug(f"OnReceiveRealData: {job}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
