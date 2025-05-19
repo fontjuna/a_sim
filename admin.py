@@ -713,12 +713,12 @@ class Admin:
             _, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
             gm.전략쓰레드 = [None] * 6
             gm.전략쓰레드[0] = Strategy(name='전략00', ticker=gm.dict종목정보, 전략정의=gm.basic_strategy)
-            gm.ipc.register('전략00', gm.전략쓰레드[0], type='qthread', start=True)
+            gm.ipc.register('전략00', gm.전략쓰레드[0], type='thread', start=True)
             for i in range(1, 6):
                 전략 = f'전략{i:02d}'
                 전략정의 = gm.전략정의.get(key=gm.전략설정[i]['전략명칭'])
                 gm.전략쓰레드[i] = Strategy(name=전략, ticker=gm.dict종목정보, 전략정의=전략정의)
-                gm.ipc.register(전략, gm.전략쓰레드[i], type='qthread', start=False)
+                gm.ipc.register(전략, gm.전략쓰레드[i], type='thread', start=False)
                 logging.debug(f'{전략} {gm.전략쓰레드[i]}')
         except Exception as e:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -735,6 +735,7 @@ class Admin:
                 msg = gm.ipc.answer(f'전략{i:02d}', 'cdn_fx실행_전략매매', timeout=1)
                 logging.debug(f'전략{i:02d} msg={msg}')
                 if msg:
+                    gm.ipc.stop(f'전략{i:02d}')
                     msgs += f'\n{msg}' if msgs else msg
             if msgs: gm.toast.toast(msgs, duration=3000) #dc.TOAST_TIME
             if gm.config.gui_on: 

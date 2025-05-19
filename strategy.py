@@ -343,15 +343,18 @@ class Strategy:
         current = now.strftime('%H:%M')
         if self.당일청산:
             if self.clear_timer is None:
-                self.clear_timer = QTimer()
                 row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 0, '매수가': 0, '수익률(%)': 0 }
-                self.clear_timer.timeout.connect(lambda: self.order_sell(row))
-            if self.clear_timer.isActive():
-                self.clear_timer.stop()
+                self.clear_timer = threading.Timer(1, lambda: self.order_sell(row))
+                self.clear_timer.daemon = True
+            else:
+                self.clear_timer.cancel()
+                
             start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.청산시간}", '%Y-%m-%d %H:%M')
-            delay_ms = int((start_time - now).total_seconds() * 1000)
-            self.clear_timer.setSingleShot(True)
-            self.clear_timer.start(delay_ms)
+            delay_secs = max(0, (start_time - now).total_seconds())
+            
+            self.clear_timer = threading.Timer(delay_secs, lambda: self.order_sell(row))
+            self.clear_timer.daemon = True
+            self.clear_timer.start()
 
     def cdn_fx실행_전략매매(self):
         try:
@@ -396,10 +399,10 @@ class Strategy:
         try:
             if not (gm.매수문자열들[self.전략번호] or  gm.매도문자열들[self.전략번호]): return
             if self.end_timer:
-                self.end_timer.stop()
+                self.end_timer.cancel()
                 self.end_timer = None
             if self.start_timer:
-                self.start_timer.stop()
+                self.start_timer.cancel()
                 self.start_timer = None
 
             self.cdn_fx중지_전략매매(buy_stop, sell_stop)
@@ -473,11 +476,11 @@ class Strategy:
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'전략': self.전략, '종목명': 종목명})
                     self.work('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략': self.전략, '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                #    logging.debug(f'매도 조건 추가: {self.전략} ** {code} {종목명}')
-                #else:
-                #    logging.debug(f'매도 조건 이미 있음: {self.전략} ** {code} {종목명}')
-                    
-                gm.잔고목록.set(key=code, data={'주문가능수량': 0}) # 취소될 경우도 있으니 SendOrder 에서 처리
+                    self.work('dbm', 'register_code', code)
+                    gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
+
+                if code not in gm.dict조건종목감시:
+                    self.cdn_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
 
             else: # if kind == '매수':
                 if gm.잔고목록.in_key(code): 
@@ -591,20 +594,25 @@ class Strategy:
                     return msg
                 else:
                     end_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.stop_time}", '%Y-%m-%d %H:%M')
-                    remain_ms = int((end_time - now).total_seconds() * 1000)
-                    self.end_timer = QTimer()
-                    self.end_timer.timeout.connect(lambda: self.cdn_fx실행_전략마무리(sell_stop=self.매도도같이적용))
-                    self.end_timer.setSingleShot(True)
-                    self.end_timer.start(remain_ms)
+                    remain_secs = max(0, (end_time - now).total_seconds())
+                    
+                    if self.end_timer is not None:
+                        self.end_timer.cancel()
+                    
+                    self.end_timer = threading.Timer(remain_secs, lambda: self.cdn_fx실행_전략마무리(sell_stop=self.매도도같이적용))
+                    self.end_timer.daemon = True
+                    self.end_timer.start()
 
                 if current < self.start_time:
                     start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.start_time}", '%Y-%m-%d %H:%M')
-                    delay_ms = int((start_time - now).total_seconds() * 1000)
-                    self.start_timer = QTimer()
-                    #self.start_timer.timeout.connect(lambda: self.cdn_fx실행_전략매매())
-                    self.start_timer.timeout.connect(lambda: gm.toast.toast(f'{self.전략} 전략을 시작합니다. {self.start_time} {current}'))
-                    self.start_timer.setSingleShot(True)
-                    self.start_timer.start(delay_ms)
+                    delay_secs = max(0, (start_time - now).total_seconds())
+                    
+                    if self.start_timer is not None:
+                        self.start_timer.cancel()
+                    
+                    self.start_timer = threading.Timer(delay_secs, lambda: gm.toast.toast(f'{self.전략} 전략을 시작합니다. {self.start_time} {current}'))
+                    self.start_timer.daemon = True
+                    self.start_timer.start()
 
         except Exception as e:
             logging.error(f'전략매매 체크 오류: {type(e).__name__} - {e}', exc_info=True)

@@ -1,4 +1,3 @@
-# 수정된 worker.py
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QAxContainer import QAxWidget
 import time
@@ -6,7 +5,7 @@ import logging
 import sys
 import pythoncom
 import os
-from ipc_manager import IPCManager, init_ipc_manager, cleanup_ipc_manager
+from ipc_manager import IPCManager
 
 def init_logger(log_path='', filename='log_message'):
     import logging.config
@@ -51,9 +50,6 @@ def init_logger(log_path='', filename='log_message'):
             handler.close()
 
 class GlobalSharedMemory:
-    # 이 곳에 shared_memory.SharedMemory로 공유 할 변수 선언(단순히 선언 위치로 변수 용도를 파악하기 위함)
-    _shared_vars = {}
-    
     def __init__(self):
         # 여기에 일반 공유변수 추가 (메인 프로세스 내에서 공유)
         self.main = None
@@ -61,57 +57,73 @@ class GlobalSharedMemory:
         self.api = None
         self.gui = None
         self.dbm = None
-        self.stg1 = None
-        self.stg2 = None
+        self.전략01 = None
+        self.전략02 = None
         self.ipc = None
-
-    def get_shm(self, var_name):
-        return self._shared_vars[var_name]
-
-    def set_shm(self, var_name, value):
-        self._shared_vars[var_name] = value
-
 gm = GlobalSharedMemory()
 
 # 테스트 클래스들
 class TestClass:
-    def __init__(self, name="Admin"):
+    def __init__(self, name, *args, **kwargs):
         self.name = name
-        logging.info(f"{self.name} 초기화 완료")
+        self.qdict = {}
     
-    def get_shm(self, var_name):
-        return gm.get_shm(var_name)
-
-    def set_shm(self, var_name, value):
-        gm.set_shm(var_name, value)
-
     def run_method(self, data):
-        logging.info(f"{self.name}: 호출됨, 데이터:{data}")
-        return f"{self.name}에서 처리 후 리턴: {data}"
+        logging.info(f"호출됨, 데이터:{data}")
+        return f"처리 후 리턴: {data}"
     
-    def call_other(self, target, data):
-        logging.info(f"{self.name}: {target} 메서드 호출")
-        return (target, data)
+    def call_other(self, target, func, *args, **kwargs):
+        result = self.order(target, func, *args, **kwargs)
+        logging.info(f"{self.name} 에서 {target} {func} 메서드 호출 결과: {result}")
+        return result
     
     def call_async(self, data, callback=None):
-        logging.info(f"{self.name}: 비동기 receive_callback 호출 완료")
+        logging.info(f"{self.name} 에서 비동기 receive_callback 호출 완료")
         self.receive_callback(data)
         return "비동기 호출 완료"
     
     def receive_callback(self, data):
-        logging.info(f"{self.name}: 콜백 결과 수신: {data}")
-        return f"{self.name}에서 처리 후 리턴: {data}"
+        logging.info(f"{self.name} 에서 콜백 결과 수신: {data}")
+        return f"{self.name} 에서 콜백 요청 데이타: {data}"
+
+class Strategy(TestClass):
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(name, *args, **kwargs)
+
+    def stop(self):
+        # 뒷정리
+        pass
+
+class DBM(TestClass):
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(name, *args, **kwargs)
+
+    def stop(self):
+        # 뒷정리
+        pass
+
+    def get_name(self, code):
+        name = self.answer('api', 'GetMasterCodeName', code)
+        logging.info(f"dbm: GetMasterCodeName 결과: {name}")
+        return name
 
 class API(TestClass):
-    app = QApplication(sys.argv)
-    def __init__(self, name="api"):
-        super().__init__(name)
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(name, *args, **kwargs)
         self.connected = False
-        self.init()
 
     def init(self):
+        app = QApplication(sys.argv)
         self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
         self.ocx.OnEventConnect.connect(self.OnEventConnect)
+        self.stg3 = gm.ipc.register('stg3', Strategy, type='thread', start=True)
+
+    def stop(self):
+        gm.ipc.stop('stg3')
+        gm.ipc.unregister('stg3')
+
+    def is_connected(self):
+        return self.connected
 
     def OnEventConnect(self, err_code):
         if err_code == 0:
@@ -125,11 +137,58 @@ class API(TestClass):
         start_time = time.time()
         while not self.connected:
             pythoncom.PumpWaitingMessages()
-            if time.time() - start_time > 10:
-                logging.error("로그인 실패: 10초 초과")
+            if time.time() - start_time > 20:
+                logging.error("로그인 실패: 20초 초과")
                 break
 
-# IPCManager 클래스는 ipc_manager.py에서 가져옴
+    def GetMasterCodeName(self, code):
+        data = self.ocx.dynamicCall("GetMasterCodeName(QString)", code)
+        logging.info(f"GetMasterCodeName 호출: {code} {data}")
+        return data
+
+class Admin(TestClass):
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(name, *args, **kwargs)
+
+    # Admin이 전체 프로그램을 관리하는 클래스
+    def start_test(self):
+        
+        logging.info(' === 테스트 코드 === ')
+
+        gm.전략01 = gm.ipc.register('전략01', Strategy, type='thread', start=True)
+        gm.전략02 = gm.ipc.register('전략02', Strategy, type='thread', start=True)
+
+        logging.info('--- 서버 접속 로그인 실행 ---')
+        gm.ipc.order('api', 'init')
+        gm.ipc.order('api', 'login')
+
+        logging.info('\n--- 메인 쓰레드에서 실행 ---')
+        gm.ipc.order('전략01', 'run_method', "gm.ipc.order('전략01', 'run_method', 'work :test-1')")
+        result = gm.ipc.answer('전략01', 'call_other', '전략02', 'run_method', 'answer : test-2')
+        logging.info(f"전략01: result = gm.ipc.answer('전략01', 'call_other', '전략02', 'run_method', 'answer : test-2') 결과: {result}")
+        result = gm.ipc.answer('전략01', 'call_other', 'api', 'run_method', 'answer : test-3')
+        logging.info(f"전략01: result = gm.ipc.answer('전략01', 'call_other', 'api', 'run_method', 'answer : test-3') 결과: {result}")
+        gm.ipc.order('전략01', 'call_async', 'async : test-4', callback=('전략01', 'receive_callback'))
+
+        logging.info('\n--- 멀티 쓰레드 전략01 클래스 메소드 내에서 실행 ---')
+        result = gm.ipc.answer('전략01', 'call_other', '전략02', 'run_method', 'answer : test-6')
+        logging.info(f"전략01: result = gm.ipc.answer('전략01', 'call_other', '전략02', 'run_method', 'answer : test-6') 결과: {result}")
+        result = gm.ipc.answer('전략01', 'call_other', 'api', 'GetMasterCodeName', '005930')
+        logging.info(f"전략01: result = gm.ipc.answer('전략01', 'call_other', 'api', 'GetMasterCodeName', '005930') 결과: {result}")
+        gm.ipc.stop('전략01')
+        gm.ipc.stop('전략02')
+
+        logging.info('\n--- 멀티 프로세스 api 클래스 매소드 내에서 실행 ---')
+        result = gm.ipc.answer('dbm', 'get_name', '005930')
+        logging.info(f"dbm: result = gm.ipc.answer('dbm', 'get_name', '005930') 결과: {result}")
+        result = gm.ipc.answer('api', 'call_other', 'stg3', 'run_method', 'answer : test-9')
+        logging.info(f"api: result = gm.ipc.answer('api', 'call_other', 'stg3', 'run_method', 'answer : test-9') 결과: {result}")
+        result = gm.ipc.answer('api', 'call_other', 'dbm', 'run_method', 'answer : test-10')
+        logging.info(f"api: result = gm.ipc.answer('api', 'call_other', 'dbm', 'run_method', 'answer : test-10') 결과: {result}")
+        gm.ipc.order('api', 'call_async', 'async : test-11', callback=('api', 'receive_callback'))
+
+        time.sleep(3)
+        logging.info(' === 테스트 코드 끝 === ')
 
 class Main:
     def __init__(self):
@@ -137,15 +196,18 @@ class Main:
 
     def init(self):
         try:
-            gm.ipc = IPCManager()
-            gm.admin = gm.ipc.register('admin', TestClass('admin'), start=True) # type=None이면 메인 쓰레드에서 실행 start=True이면 등록하고 바로 start() 실행
-            gm.api = gm.ipc.register('api', API('api'), type='process', start=True) # type='process'이면 멀티 프로세스에서 실행 
-            gm.dbm = gm.ipc.register('dbm', TestClass('dbm'), type='process', start=False) # type='process'이면 멀티 프로세스에서 실행 
-            gm.stg1 = gm.ipc.register('stg1', TestClass('stg1'), type='thread', start=True) # type='thread'이면 멀티 쓰레드에서 실행 admin 클래스 내에서 생성 했다고 가정함
-            gm.stg2 = gm.ipc.register('stg2', TestClass('stg2'), type='thread', start=False) # type='thread'이면 멀티 쓰레드에서 실행 dbm 클래스 내에서 생성 했다고 가정함
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
+            gm.ipc = IPCManager()
+            gm.admin = gm.ipc.register('admin', Admin, start=True) # type=None이면 메인 쓰레드에서 실행 start=True이면 등록하고 바로 start() 실행
+            gm.api = gm.ipc.register('api', API, type='process', start=True) # type='process'이면 멀티 프로세스에서 실행 
+            gm.dbm = gm.ipc.register('dbm', DBM, type='process', start=True) # type='process'이면 멀티 프로세스에서 실행 
+            logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 종료')
+
         except Exception as e:
             logging.error(str(e), exc_info=e)
+
+    def run_admin(self):
+        gm.ipc.order('admin', 'start_test')
 
 if __name__ == "__main__":
     import multiprocessing
@@ -153,79 +215,12 @@ if __name__ == "__main__":
     multiprocessing.freeze_support() # 없으면 실행파일(exe)로 실행시 DBMServer멀티프로세스 생성시 프로그램 리셋되어 시작 반복 하는 것 방지
     init_logger()
     try:
-        # IPC 관리자 초기화
-        init_ipc_manager()
-
         gm.main = Main()
-        logging.info(' === 테스트 코드 === ')
-        gm.ipc.start('dbm')
-        gm.ipc.start('stg2') # 실제는 dbm 클래스 내에서 생성 하고 시작 함
-
-        logging.info('--- 메인 쓰레드에서 실행 ---')
-        # gm.admin.set_shm('test_var', '공유변수 저장 admin') # 메인 쓰레드이면 gm.ipc.set_shm('test_var', 'admin')로 바꾸고 기타 멀티 쓰레드나 프로세스면 self.set_shm('test_var', 'admin')로 바꾸어야 함.
-        gm.ipc.set_shm('test_var', '공유변수 저장 admin')
-        
-        # gm.admin.call_other('api', 'test') # 이게 api 클래스의 메서드 호출이라면 gm.ipc.work('api', 'call_other', 'test')로 바꿔야 함.
-        gm.ipc.work('api', 'call_other', 'api', 'test')
-        
-        # gm.admin.run_method('test') # 이게 dbm 클래스의 메서드 호출이라면 gm.ipc.work('dbm', 'run_method', 'test')로 바꿔야 함.
-        gm.ipc.work('dbm', 'run_method', 'test')
-        
-        # result = gm.admin.run_method('test') # 이게 api 클래스의 메서드 호출이라면 gm.ipc.answer('api', 'run_method', 'test')로 바꿔야 함.
-        result = gm.ipc.answer('api', 'run_method', 'test')
-        
-        # gm.admin.call_async('stg1', 'test') # 이게 stg1 클래스의 메서드 호출이라면 gm.ipc.work('stg1', 'call_async', 'test', callback=receive_callback)로 바꿔야 함.
-        gm.ipc.work('stg1', 'call_async', 'test', callback=('admin', 'receive_callback'))
-
-        logging.info('--- 멀티 쓰레드 stg1 클래스 메소드 내에서 실행 ---')
-        # 다음 코드는 stg1 클래스 내부에서 실행되는 것으로 가정한 테스트 코드입니다.
-        # logging.info(gm.stg1.get_shm('test_var')) # 멀티 쓰레드 stg1 에서 실행이므로 self.get_shm('test_var')로 바꾸어야 함.
-        logging.info("stg1에서 실행 시: " + str(gm.ipc.get_shm('test_var')))
-        
-        # gm.stg1.call_other('api', 'test') # 이게 api 클래스의 메서드 호출이라면 self.ipc.work('api', 'call_other', 'test')로 바꿔야 함.
-        gm.ipc.work('api', 'call_other', 'api', 'test')
-        
-        # gm.stg1.run_method('test') # 이게 dbm 클래스의 메서드 호출이라면 self.ipc.work('dbm', 'run_method', 'test')로 바꿔야 함.
-        gm.ipc.work('dbm', 'run_method', 'test')
-        gm.ipc.work('api', 'login')
-        
-        # result = gm.stg1.run_method('test') # 이게 api 클래스의 메서드 호출이라면 self.ipc.answer('api', 'run_method', 'test')로 바꿔야 함.
-        result = gm.ipc.answer('api', 'run_method', 'test')
-        
-        # gm.stg1.call_async('stg2', 'test') # 이게 dbm클래스의 stg2 쓰레드 호출이라면 self.ipc.work('stg2', 'call_async', 'test', callback=receive_callback)로 바꿔야 함.
-        gm.ipc.work('stg2', 'call_async', 'test', callback=('stg1', 'receive_callback'))
-        
-        # gm.stg1.set_shm('test_var', '공유변수 저장 stg1') # self.set_shm('test_var', 'stg1')로 바꾸어야 함.
-        gm.ipc.set_shm('test_var', '공유변수 저장 stg1')
-
-        logging.info('--- 멀티 프로세스 api 클래스 매소드 내에서 실행 ---')
-        # 다음 코드는 api 클래스 내부에서 실행되는 것으로 가정한 테스트 코드입니다.
-        # logging.info(gm.api.get_shm('test_var')) # 멀티 프로세스 api 에서 실행이므로 self.get_shm('test_var')로 바꾸어야 함.
-        logging.info("api에서 실행 시: " + str(gm.ipc.get_shm('test_var')))
-        
-        # gm.api.run_method('test') # 이게 admin 클래스의 메서드 호출이라면 self.work('admin', 'run_method', 'test')로 바꿔야 함.
-        gm.ipc.work('admin', 'run_method', 'test')
-        
-        # result = gm.api.run_method('test') # 이게 admin 클래스의 메서드 호출이라면 self.answer('admin', 'run_method', 'test')로 바꿔야 함.
-        result = gm.ipc.answer('admin', 'run_method', 'test')
-        
-        # gm.api.call_other('stg2', 'test') # 이게 dbm클래스의 stg2 쓰레드 호출이라면 self.work('stg2', 'call_other', 'test')로 바꿔야 함.
-        gm.ipc.work('stg2', 'call_other', 'api', 'test')
-        
-        # gm.api.call_async('dbm', 'test') # 이게 dbm 클래스의 메서드 호출이라면 self.work('dbm', 'call_async', 'test', callback=receive_callback)로 바꿔야 함.
-        gm.ipc.work('dbm', 'call_async', 'test', callback=('api', 'receive_callback'))
-
-        logging.info(' === 테스트 코드 끝 === ')
-
-        gm.ipc.stop('stg2')
-        gm.ipc.stop('dbm')
-        gm.ipc.unregister('stg2')
-        gm.ipc.unregister('dbm')
+        gm.main.run_admin()
 
     except Exception as e:
         logging.error(str(e), exc_info=e)
 
     finally:
-        cleanup_ipc_manager()
         gm.ipc.cleanup() # 
         logging.shutdown()
