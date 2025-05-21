@@ -80,7 +80,7 @@ class Model():
         if not isinstance(order, Order):
             raise ValueError('Order 객체가 필요합니다.')
 
-        receiver_q = qdict.get(receiver, None)
+        receiver_q = self.qdict.get(receiver, None)
         if receiver_q == None:
             logging.debug(f"{self.name}: Target '{receiver}' not found in qdict")
             return
@@ -101,7 +101,7 @@ class Model():
             응답 결과 또는 타임아웃시 None
         """
         # 요청자 큐 찾기
-        sender_q = qdict[sender]
+        sender_q = self.qdict[sender]
 
         if not sender_q:
             logging.debug(f"{self.name}: Target '{sender}' not found in qdict")

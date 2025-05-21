@@ -5,6 +5,7 @@ from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate, Qt
 from PyQt5 import uic
 from datetime import datetime, timedelta
 from queue import Queue
+from worker import Order, Answer
 import logging
 import os
 import json
@@ -620,7 +621,7 @@ class GUI(QMainWindow, form_class):
     def gui_tr_code_changed(self):
         code = self.leTrCode.text()
         if code:
-            self.leTrName.setText(gm.ipc.answer('api', 'GetMasterCodeName', code))
+            self.leTrName.setText(gm.ipc.direct_answer(Answer(receiver='api', order='GetMasterCodeName', sender='gui', args=(code,))))
 
     def gui_tr_order(self):
         kind = '매수' if self.rbTrBuy.isChecked() else '매도'
@@ -680,7 +681,7 @@ class GUI(QMainWindow, form_class):
             'ordno': ''
         }
         if kind == '매수':
-            gm.ipc.work('api', 'SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
+            gm.ipc.direct_order(Order(receiver='api', order='SetRealReg', args=(dc.scr.화면['실시간감시'], code, '10', '1')))
         else:
             if row['주문가능수량'] == 0:
                 QMessageBox.warning(self, '알림', '주문가능수량이 없습니다.')
@@ -1085,7 +1086,7 @@ class GUI(QMainWindow, form_class):
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
             self.lbl2.setText('연결됨' if gm.connected else '끊어짐')
             self.lbl2.setStyleSheet("color: green;" if gm.connected else "color: red;")
-            self.lbl4.setText(gm.ipc.answer('admin', 'com_market_status'))
+            self.lbl4.setText(gm.ipc.direct_answer(Answer(receiver='admin', order='com_market_status', sender='gui')))
 
             # 큐 메시지 처리
             while not gm.qwork['msg'].empty():

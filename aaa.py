@@ -1,6 +1,6 @@
 from gui import GUI
 from admin import Admin
-from ipc_manager import IPCManager, init_ipc_manager, cleanup_ipc_manager
+from worker import IPCManager, Order, Answer
 from public import init_logger, dc, gm
 from classes import Toast
 from dbm_server import DBMServer
@@ -14,6 +14,7 @@ import sys
 from datetime import datetime
 
 init_logger()
+
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
     """예상치 못한 예외에 대한 글로벌 핸들러"""
     # 로그에만 기록하고 GUI 팝업 방지
@@ -29,7 +30,6 @@ class Main:
     def init(self):
         self.app = QApplication(sys.argv)
         args = [arg.lower() for arg in sys.argv]
-        init_ipc_manager()
         gm.config.gui_on = 'off' not in args
         gm.config.sim_no = 1 if 'sim1' in args else 2 if 'sim2' in args else 3 if 'sim3' in args else 0
         if 'sim' in args and gm.config.sim_no == 0: gm.config.sim_no = 1
@@ -79,9 +79,9 @@ class Main:
             gm.toast = Toast()
             gm.main = self
             gm.gui = GUI() if gm.config.gui_on else None
-            gm.admin = gm.ipc.register("admin", Admin('admin'), start=True)
-            gm.api =gm.ipc.register('api', APIServer('api'), type='process', start=True)
-            gm.ipc.work('api', 'api_init', sim_no=gm.config.sim_no)
+            gm.admin = gm.ipc.register("admin", Admin, start=True)
+            gm.api =gm.ipc.register('api', APIServer, type='process', start=True)
+            gm.ipc.direct_order(Order(receiver='api', order='api_init', args=(gm.config.sim_no,)))
 
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -89,7 +89,7 @@ class Main:
 
     def login(self):
         # 모든 설정이 완료된 후 CommConnect 호출
-        gm.ipc.work('api', 'CommConnect', block=True)
+        gm.ipc.direct_order(Order(receiver='api', order='CommConnect', args=()))
 
     def show(self):
         if not gm.config.gui_on: return
@@ -102,11 +102,11 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    if not gm.ipc.answer('api', 'api_connected'): time.sleep(0.1)
+                    if not gm.ipc.direct_answer(Answer(receiver='api', order='GetConnectState')): time.sleep(0.1)
                     else: break
-            gm.ipc.work('api', 'set_tickers')
-            gm.ipc.register('dbm', DBMServer('dbm'), type='process', start=True)
-            gm.ipc.work('admin', 'init')
+            gm.ipc.direct_order(Order(receiver='api', order='set_tickers'))
+            gm.ipc.register('dbm', DBMServer, type='process', start=True)
+            gm.ipc.direct_order(Order(receiver='admin', order='init'))
             logging.debug('prepare : admin 초기화 완료')
 
             if gm.config.gui_on: gm.gui.init()
@@ -122,7 +122,7 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            gm.ipc.work('admin', 'trade_start')
+            gm.ipc.direct_order(Order(receiver='admin', order='trade_start'))
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
@@ -153,7 +153,6 @@ class Main:
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:
-            cleanup_ipc_manager()
             self.cleanup_flag = True
             if hasattr(self, 'app'): self.app.quit()
             logging.info("cleanup completed")

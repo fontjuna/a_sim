@@ -1,5 +1,6 @@
 from public import dc, get_path, profile_operation
 from chart import ctdt
+from worker import ModelProcess
 from datetime import datetime, timedelta
 import logging
 import sqlite3
@@ -8,9 +9,9 @@ import threading
 import copy
 import time
 
-class DBMServer:
-    def __init__(self, name='dbm'):
-        self.name = name
+class DBMServer(ModelProcess):
+    def __init__(self, name='dbm', myq=None, daemon=True):
+        ModelProcess.__init__(self, name=name, myq=myq, daemon=daemon)
         self.ipc = None
         self.running = False
         self.fee_rate = 0.00015
@@ -18,8 +19,8 @@ class DBMServer:
         self.done_code = []
         self.todo_code = {}
 
-        self._lock = threading.Lock()
-        self.thread_local = threading.local()  # 스레드 로컬 변수 추가
+        self._lock = None#threading.Lock()
+        self.thread_local = None#threading.local()  # 스레드 로컬 변수 추가
         self.thread_run = False
         self.thread_chart = None    
 
@@ -27,14 +28,15 @@ class DBMServer:
         #self.init_dbm()
         #self.start_request_chart_data()
 
-    def dbm_start(self):
+    def start(self):
         """컴포넌트 시작"""
         print(f"{self.__class__.__name__} 시작 중...")
         self.running = True
-        # 시작 관련 코드
-        return {"status": "started"}
+        ModelProcess.start(self)
+        self._lock = threading.Lock()
+        self.thread_local = threading.local()  # 스레드 로컬 변수 추가
         
-    def dbm_stop(self):
+    def stop(self):
         # 모든 연결 닫기 시도 (각 스레드의 연결)
         try:
             print(f"{self.__class__.__name__} 중지 중...")
@@ -48,8 +50,8 @@ class DBMServer:
             if hasattr(self.thread_local, 'db'):
                 conn = self.thread_local.db
                 conn.close()
-
-            return {"status": "stopped"}
+            self.thread_local = None
+            self._lock = None
         except Exception as e:
             logging.error(f"Error closing database connections: {e}", exc_info=True)
 

@@ -1,5 +1,6 @@
 from public import hoga, dc, gm, init_logger, profile_operation
 from classes import TimeLimiter, Toast
+from worker import ModelProcess, Order, Answer
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread
@@ -387,7 +388,7 @@ class OnReceiveRealConditionSim(QThread):
       self.is_running = True
       self.current_stocks = set()
       self.api = api
-      self.work = api.work
+      self.proxy_order = api.proxy_order
       self._stop_event = threading.Event()
 
    def run(self):
@@ -407,7 +408,7 @@ class OnReceiveRealConditionSim(QThread):
             'cond_name': self.cond_name,
             'cond_index': int(self.cond_index),
          }
-         self.work('admin', 'on_fx실시간_조건검색', **data)
+         self.proxy_order('admin', 'on_fx실시간_조건검색', **data)
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -430,7 +431,7 @@ class OnReceiveRealDataSim1And2(QThread):
       self.is_running = True
       self._stop_event = threading.Event()
       self.api = api
-      self.work = api.work
+      self.proxy_order = api.proxy_order
 
    def run(self):
       while self.is_running:
@@ -465,8 +466,8 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            #self.work('dbm', 'update_script_chart', job)
-            self.work('admin', 'on_fx실시간_주식체결', **job)
+            #self.proxy_order('dbm', 'update_script_chart', job)
+            self.proxy_order('admin', 'on_fx실시간_주식체결', **job)
 
 
             if self._stop_event.wait(timeout=0.2/len(sim.ticker)):
@@ -484,7 +485,7 @@ class OnReceiveRealDataSim3(QThread):
       self.is_running = True
       self._stop_event = threading.Event()
       self.api = api
-      self.work = api.work
+      self.proxy_order = api.proxy_order
 
    def run(self):
       while self.is_running:
@@ -525,8 +526,8 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               #self.work('dbm', 'update_script_chart', job)
-               self.work('admin', 'on_fx실시간_주식체결', **job)
+               #self.proxy_order('dbm', 'update_script_chart', job)
+               self.proxy_order('admin', 'on_fx실시간_주식체결', **job)
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -546,13 +547,11 @@ class OnReceiveRealDataSim3(QThread):
       self.is_running = False
       self._stop_event.set()
 
-class APIServer():
+class APIServer(ModelProcess):
     app = QApplication(sys.argv)
-    def __init__(self, name='api'):
-        self.name = name
+    def __init__(self, name='api', myq=None, daemon=True):
+        ModelProcess.__init__(self, name=name, myq=myq, daemon=daemon)
         self.sim_no = 0
-        self.work = None
-
         self.ocx = None
         self.connected = False
 
@@ -568,7 +567,7 @@ class APIServer():
         self.tr_condition_loaded = False    # SendCondition에서 대기 플래그로 사용 OnReceiveTrCondition에서 조건 로드 완료 플래그로 사용
         self.tr_condition_list = None       # OnReceiveTrCondition에서 리스트 담기
 
-        self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
+        self.proxy_order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
 
         self.counter = 0 # 테스트용
 
@@ -731,6 +730,12 @@ class APIServer():
             logging.debug(f"API 연결 완료: {self.connected}")
             return self.connected
 
+    def GetConnectState(self):
+        if self.sim_no == 1:
+            return self.ocx.dynamicCall("GetConnectState()")
+        else:
+            return 1
+
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         try:
             if not com_request_time_check(kind='request'): return [], False
@@ -828,7 +833,7 @@ class APIServer():
         logging.debug(f'CommConnect: block={block}')
         if self.sim_no == 1:  
             self.connected = True
-            self.work('admin', 'set_connected', self.connected) # OnEventConnect를 안 거치므로 여기서 처리
+            self.proxy_order('admin', 'set_connected', self.connected) # OnEventConnect를 안 거치므로 여기서 처리
         else:
             self.ocx.dynamicCall("CommConnect()")
             if block:
@@ -856,8 +861,8 @@ class APIServer():
             logging.debug(f'api 내부 SendOrder 호출후')
             return ret
         else:  # 시뮬레이션 모드
-            self.order_no += 1
-            orderno = f'{self.order_no:07d}'
+            self.proxy_order_no += 1
+            orderno = f'{self.proxy_order_no:07d}'
             order = {
                 'rqname': rqname,
                 'screen': screen,
@@ -940,7 +945,7 @@ class APIServer():
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        #self.work('admin', 'set_connected', self.connected)
+        #self.proxy_order('admin', 'set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
@@ -965,7 +970,7 @@ class APIServer():
                 'screen': screen,
                 'rqname': rqname,
                 }
-                self.work('admin', 'on_fx수신_주문결과TR', **result)
+                self.proxy_order('admin', 'on_fx수신_주문결과TR', **result)
 
             except Exception as e:
                 logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -1006,7 +1011,7 @@ class APIServer():
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        self.work('admin', 'on_fx실시간_조건검색', **data)
+        self.myq['real'].put(Order(receiver='admin', order='on_fx실시간_조건검색', kwargs=data))
 
     def OnReceiveRealData(self, code, rtype, data):
         # sim_no = 0일 때만 사용 (실제 API 서버)
@@ -1022,10 +1027,10 @@ class APIServer():
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    #self.work('dbm', 'update_script_chart', job)
-                    self.work('admin', 'on_fx실시간_주식체결', **job)
+                    #self.proxy_order('dbm', 'update_script_chart', job)
+                    self.myq['real'].put(Order(receiver='admin', order='on_fx실시간_주식체결', kwargs=job))
                 elif rtype == '장시작시간': 
-                    self.work('admin', 'on_fx실시간_장운영감시', **job)
+                    self.myq['real'].put(Order(receiver='admin', order='on_fx실시간_장운영감시', kwargs=job))
                 #logging.debug(f"OnReceiveRealData: {job}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
@@ -1044,8 +1049,8 @@ class APIServer():
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            if gubun == '0': self.work('admin', 'odr_recieve_chegyeol_data', dictFID)
-            elif gubun == '1': self.work('admin', 'odr_recieve_balance_data', dictFID)
+            if gubun == '0': self.myq['real'].put(Order(receiver='admin', order='odr_recieve_chegyeol_data', kwargs=dictFID))
+            elif gubun == '1': self.myq['real'].put(Order(receiver='admin', order='odr_recieve_balance_data', kwargs=dictFID))
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1060,7 +1065,7 @@ class APIServer():
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                self.work('admin', 'odr_recieve_balance_data', dictFID)
+                self.proxy_order('admin', 'odr_recieve_balance_data', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1098,7 +1103,7 @@ class APIServer():
 
                     portfolio.process_order(dictFID)
 
-                self.work('admin', 'odr_recieve_chegyeol_data', dictFID)
+                self.myq['real'].put(Order(receiver='admin', order='odr_recieve_chegyeol_data', kwargs=dictFID))
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------
@@ -1196,9 +1201,3 @@ class APIServer():
             return data
         return None
     
-    def test_request_to_main(self, test_value):
-        """메인으로 요청 테스트"""
-        logging.debug(f"메인에서 요청 테스트: 전달 된 값 = {test_value}")
-        result = self.answer('admin', 'return_value', test_value)
-        logging.debug(f"메인으로 부터 받은 응답: 반환 된 값 = {result}")
-        return result
