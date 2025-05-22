@@ -1,166 +1,237 @@
-from dataclasses import dataclass, field
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QAxContainer import QAxWidget
-from PyQt5.QtCore import QThread, pyqtSignal, QTimer
-from queue import Queue, Empty
-import threading
-import pythoncom
-import multiprocessing as mp
+# 표준 라이브러리
+import copy
 import logging
-import logging.config
+import os
+import sys
+import threading
 import time
 import uuid
-import sys
-import os
-import copy
 from dataclasses import dataclass, field
+from queue import Empty, Queue
 
-def init_logger():
-    # 로깅 초기화 코드 (간단하게 표준 로거 사용)
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s.%(msecs)03d-%(levelname)s-[%(filename)s(%(lineno)d) / %(funcName)s] %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+# 멀티프로세싱
+import multiprocessing as mp
 
-init_logger()
-app = QApplication(sys.argv)
+# PyQt5 관련
+import pythoncom
+from PyQt5.QAxContainer import QAxWidget
+from PyQt5.QtCore import QThread
+from PyQt5.QtWidgets import QApplication
+
+# 프로젝트 모듈
+from public import init_logger
 
 @dataclass
 class Order:
-    receiver: str          # 응답자 이름
-    order: str             # 응답자가 실행할 함수명 또는 메세지(루프에서 인식할 조건)
-    args: tuple = ()
-    kwargs: dict = field(default_factory=dict)
+    """비동기 요청 객체"""
+    receiver: str          # 수신자 이름
+    order: str             # 수신자가 실행할 함수명
+    args: tuple = ()       # 위치 인자
+    kwargs: dict = field(default_factory=dict)  # 키워드 인자
 
 @dataclass
 class Answer:
-    receiver: str          # 응답자 이름
-    order: str             # 응답자가 실행할 함수명 또는 메세지(루프에서 인식할 조건)
-    args: tuple = ()
-    sender: str = None     # 요청자 이름
-    kwargs: dict = field(default_factory=dict)
-    qid: str = None        # 동기식 요청에 대한 답변 식별자
-    
+    """동기 요청 객체 (응답 필요)"""
+    receiver: str          # 수신자 이름
+    order: str             # 수신자가 실행할 함수명
+    args: tuple = ()       # 위치 인자
+    sender: str = None     # 발신자 이름 (응답 수신용)
+    kwargs: dict = field(default_factory=dict)  # 키워드 인자
+    qid: str = field(default_factory=lambda: str(uuid.uuid4()))  # 고유 ID
+
 class ThreadDict:
+    """쓰레드 안전 딕셔너리"""
+    
     def __init__(self):
         self._dict = {}
         self._lock = threading.Lock()
 
     def get(self, key, default=None):
+        """키에 해당하는 값 반환 (없으면 기본값 반환)"""
         with self._lock:
             return self._dict.get(key, default)
 
     def set(self, key, value):
+        """키-값 쌍 저장"""
         with self._lock:
             self._dict[key] = value
 
     def remove(self, key):
+        """키 삭제 (키가 있는 경우만)"""
         with self._lock:
             if key in self._dict:
                 del self._dict[key]
+                
+    def items(self):
+        """현재 모든 항목의 복사본 반환"""
+        with self._lock:
+            return list(self._dict.items())
+            
+    def keys(self):
+        """현재 모든 키의 복사본 반환"""
+        with self._lock:
+            return list(self._dict.keys())
+            
+    def values(self):
+        """현재 모든 값의 복사본 반환"""
+        with self._lock:
+            return list(self._dict.values())
+            
+    def clear(self):
+        """모든 항목 삭제"""
+        with self._lock:
+            self._dict.clear()
 
-"""
-## 호출 패턴 정리 (올바른 문법)
-
-1. **등록되지 않은 클래스(위치)에서 호출**:
-   - `ipc.direct_order(Order객체)` - 비동기 요청 (응답 필요 없음)
-   - `ipc.direct_answer(Answer객체)` - 동기 요청 (응답 필요)
-
-2. **메인 쓰레드에서 호출** (IPCManager에 등록된 컴포넌트):
-   - `ipc.order(Order객체)` - 비동기 요청
-   - `ipc.answer(Answer객체)` - 동기 요청
-
-3. **멀티 쓰레드, 멀티 프로세스에서 호출**:
-   - `self.proxy_order(target, method, *args, **kwargs)` - 비동기 요청 (내부적으로 특수 명령 처리)
-   - `self.proxy_answer(target, method, *args, **kwargs)` - 동기 요청 (내부적으로 특수 명령 처리)
-"""
+import logging
+import time
+import threading
+from queue import Empty
+from PyQt5.QtCore import QThread
+import multiprocessing as mp
 
 class Model():
     def __init__(self, name, myq=None):
-        super().__init__()
+        """
+        기본 초기화
+        
+        Args:
+            name (str): 컴포넌트 이름
+            myq (dict): 컴포넌트의 큐 딕셔너리 {'receive', 'request', 'real'}
+        """
         self.name = name
         self.myq = myq
         self.is_running = True
-        self.is_stopping = False  # 중지 중 플래그 추가
-
+        self.is_stopping = False
+        
+        # 응답 추적을 위한 딕셔너리
+        self._response_results = {}
+        self._response_callbacks = {}
+        self._pending_requests = set()
+        
+        # 성능 측정용 타이머
+        self._perf_timers = {}
+        
     def run(self):
+        """컴포넌트 메인 루프"""
         logging.debug(f'{self.name} 시작...')
+        last_housekeeping = time.time()
+        
         while self.is_running:
-            self.run_loop()
-            time.sleep(0.001)
+            now = time.time()
             
+            # 메시지 처리
+            self.run_loop()
+            
+            # 1초마다 타임아웃된 응답 정리 (성능 영향 최소화)
+            if now - last_housekeeping > 1.0:
+                self._cleanup_timeouts(now)
+                last_housekeeping = now
+                
+            # 초고속 루프를 위한 최소 슬립
+            time.sleep(0.0001)  # 100 마이크로초 (일반 time.sleep보다 10배 빠름)
+            
+    def _cleanup_timeouts(self, now):
+        """오래된 응답 요청 정리 (성능 최적화)"""
+        # 시간 초과된 요청 찾기 (기본 3초)
+        timeout_requests = []
+        for qid in self._pending_requests:
+            start_time = self._perf_timers.get(qid, 0)
+            if start_time and now - start_time > 3.0:
+                timeout_requests.append(qid)
+                
+        # 시간 초과된 요청 처리
+        for qid in timeout_requests:
+            # 콜백이 등록된 경우 실행
+            if qid in self._response_callbacks:
+                callback = self._response_callbacks.pop(qid)
+                if callable(callback):
+                    callback(None, "timeout")  # 콜백 인자: (결과, 상태)
+            
+            # 타이머 및 추적 정보 정리
+            self._pending_requests.discard(qid)
+            if qid in self._perf_timers:
+                del self._perf_timers[qid]
+                
     def run_loop(self):
+        """메시지 처리 루프"""
         if self.is_stopping:  # 중지 중이면 새 요청 처리 안함
             return
             
-        if not self.myq['order'].empty():
+        if not self.myq['receive'].empty():
             try:
-                data = self.myq['order'].get()
+                data = self.myq['receive'].get()
                 if not isinstance(data, (Order, Answer)):
                     logging.debug(f'{self.name} 에 잘못된 요청: {data}')
                     return
                 
-                # stop 명령이면 is_stopping 플래그 설정
+                # stop 명령이면 중지
                 if isinstance(data, Order) and data.order == 'stop':
                     self.is_stopping = True
                     self.stop()
                     return
                 
-                # 프록시 요청 처리 (프로세스 간 통신용)
-                if data.order.startswith('_proxy_request_'):
-                    parts = data.order.split('_', 3)  # _proxy_request_TARGET_METHOD
-                    if len(parts) >= 4:
-                        target = parts[2]
-                        method = parts[3]
-                        # 메인 프로세스에 요청 전달을 위해 real 큐 사용
-                        self.myq['real'].put(Order(
-                            receiver=target,
-                            order=method,
-                            args=data.args,
-                            kwargs=data.kwargs
-                        ))
-                    else:
-                        logging.error(f"잘못된 프록시 요청 형식: {data.order}")
-                    return
-                elif data.order.startswith('_proxy_answer_'):
-                    parts = data.order.split('_', 3)  # _proxy_answer_TARGET_METHOD
-                    if len(parts) >= 4:
-                        target = parts[2]
-                        method = parts[3]
-                        
-                        # 요청 ID 추출
-                        req_id = data.kwargs.pop('_proxy_req_id', str(uuid.uuid4()))
-                        
-                        # 메인 프로세스에 요청 전달을 위해 real 큐 사용
-                        self.myq['real'].put(Answer(
-                            receiver=target,
-                            order=method,
-                            sender=self.name,
-                            args=data.args,
-                            kwargs=data.kwargs,
-                            qid=req_id  # 요청 ID를 qid로 사용
-                        ))
-                    else:
-                        logging.error(f"잘못된 프록시 응답 요청 형식: {data.order}")
+                # 특수 응답 메서드 처리
+                if isinstance(data, Order) and data.order == '_response':
+                    self._handle_response(data.args[0], data.args[1])
                     return
                 
+                # 일반 메서드 호출
                 method = getattr(self, data.order)
                 if isinstance(data, Order):
+                    # 비동기 요청 처리
                     method(*data.args, **data.kwargs)
                 else:
+                    # 동기 요청 처리 및 결과 반환
                     result = method(*data.args, **data.kwargs)
-                    # Answer 응답은 자신의 answer 큐에 반환
-                    self.myq['answer'].put((data.qid, result))
+                    # 응답이 필요한 경우 request 큐에 결과 추가
+                    if data.sender:
+                        response_obj = Order(
+                            receiver=data.sender,
+                            order='_response',  # 특수 응답 메서드
+                            args=(data.qid, result)
+                        )
+                        self.myq['request'].put(response_obj)
             except Exception as e:
                 logging.error(f"{self.name} 메시지 처리 중 오류: {e}", exc_info=True)
 
+    def _handle_response(self, qid, result):
+        """응답 처리 내부 메서드 (논블로킹)"""
+        # 응답 결과 저장
+        self._response_results[qid] = result
+        
+        # 응답 대기 추적 정보 정리
+        self._pending_requests.discard(qid)
+        
+        # 성능 측정 로깅 (디버그용)
+        if qid in self._perf_timers:
+            elapsed = time.time() - self._perf_timers[qid]
+            if elapsed > 0.001:  # 1밀리초 이상 걸린 경우만 로깅
+                logging.debug(f"{self.name}: 응답 수신 (qid={qid}, 응답시간={elapsed:.6f}초)")
+            del self._perf_timers[qid]
+        
+        # 콜백이 등록된 경우 실행
+        if qid in self._response_callbacks:
+            callback = self._response_callbacks.pop(qid)
+            if callable(callback):
+                callback(result, "success")  # 콜백 인자: (결과, 상태)
+
     def stop(self):
+        """컴포넌트 중지"""
         logging.debug(f'{self.name} 중지 요청...')
-        self.is_stopping = True  # 중지 중 플래그 설정
+        self.is_stopping = True
         self.is_running = False
-        # 큐 비우기
         self._clear_queues()
+        
+        # 대기 중인 모든 응답에 대한 콜백 실행
+        for qid in list(self._response_callbacks.keys()):
+            callback = self._response_callbacks.pop(qid)
+            if callable(callback):
+                callback(None, "cancelled")  # 콜백 인자: (결과, 상태)
+        
+        # 추적 정보 정리
+        self._response_results.clear()
+        self._pending_requests.clear()
+        self._perf_timers.clear()
         
     def _clear_queues(self):
         """큐 비우기"""
@@ -168,84 +239,197 @@ class Model():
             return
             
         try:
-            # 남은 order 큐 비우기
-            while not self.myq['order'].empty():
-                try:
-                    self.myq['order'].get_nowait()
-                except Empty:
-                    break
-                    
-            # 남은 answer 큐 비우기 (응답 대기 중인 요청에 대해 None 응답 반환)
-            while not self.myq['answer'].empty():
-                try:
-                    self.myq['answer'].get_nowait()
-                except Empty:
-                    break
+            for queue_name in ['receive', 'request', 'real']:
+                queue = self.myq.get(queue_name)
+                if queue:
+                    while not queue.empty():
+                        try:
+                            queue.get_nowait()
+                        except Empty:
+                            break
         except Exception as e:
             logging.error(f"{self.name} 큐 비우기 중 오류: {e}", exc_info=True)
     
-    # Model.proxy_order
-    def proxy_order(self, target, method, *args, **kwargs):
+    # 기존 메서드 유지 (order, send_real)
+    def order(self, receiver, method=None, *args, **kwargs):
         """
-        다른 컴포넌트에 비동기 요청을 보내는 프록시 메서드
+        비동기 요청 전송
+        
+        사용 방법:
+            order(Order객체)
+            order(receiver, method, *args, **kwargs)
         """
-        # 특수 명령 형식: _proxy_request_TARGET_METHOD
-        special_order = f"_proxy_request_{target}_{method}"
-        self.myq['order'].put(Order(
-            receiver=self.name,  # 자신에게 요청
-            order=special_order,
-            args=args,
-            kwargs=kwargs
-        ))
+        if method is None and isinstance(receiver, Order):
+            # Order 객체가 직접 전달된 경우
+            order_obj = receiver
+        else:
+            # 인자로 전달된 경우
+            order_obj = Order(receiver=receiver, order=method, args=args, kwargs=kwargs)
+        
+        self.myq['request'].put(order_obj)
         return True
-
-    def proxy_answer(self, target, method, *args, timeout=10, **kwargs):
+    
+    def send_real(self, receiver, order, *args, **kwargs):
         """
-        다른 컴포넌트에 동기 요청을 보내고 응답을 받는 프록시 메서드
-        프로세스 간 통신에 적합
+        실시간 데이터 전송 (비동기)
+        
+        Args:
+            receiver (str): 수신자 이름
+            order (str): 수신자가 실행할 메서드 이름
+            *args: 위치 인자
+            **kwargs: 키워드 인자
         """
-        answer_obj = Answer(
-            receiver=self.name,  # 자신을 수신자로
-            order="_proxy_answer_" + target + "_" + method,  # 특수 명령 형식
-            args=args,
-            kwargs=kwargs,
-            sender=self.name  # 자신을 발신자로
-        )
+        order_obj = Order(receiver=receiver, order=order, args=args, kwargs=kwargs)
+        self.myq['real'].put(order_obj)
+    
+    # ======== 초고속 처리를 위한 새로운 응답 메서드 ========
+    
+    def answer_async(self, receiver, method=None, *args, callback=None, **kwargs):
+        """
+        비동기 요청 전송 및 콜백 등록 (논블로킹)
+        
+        사용 방법:
+            answer_async(Answer객체, callback=callback_func)
+            answer_async(receiver, method, *args, callback=callback_func, **kwargs)
+            
+        Args:
+            receiver: Answer 객체 또는 수신자 이름
+            method: 메서드 이름 (Answer 객체 전달 시 None)
+            callback: 결과 처리 콜백 함수 callback(result, status)
+            *args, **kwargs: 요청 인자
+            
+        Returns:
+            str: 요청 ID
+        """
+        # Answer 객체 생성
+        if method is None and isinstance(receiver, Answer):
+            # Answer 객체가 직접 전달된 경우
+            answer_obj = receiver
+            callback = kwargs.get('callback')
+        else:
+            # 인자로 전달된 경우 (callback을 kwargs에서 제거)
+            if 'callback' in kwargs:
+                callback = kwargs.pop('callback')
+                
+            answer_obj = Answer(
+                receiver=receiver, 
+                order=method, 
+                sender=self.name,
+                args=args, 
+                kwargs=kwargs
+            )
+        
+        # 요청 추적 정보 설정
+        qid = answer_obj.qid
+        self._pending_requests.add(qid)
+        self._perf_timers[qid] = time.time()  # 타이머 시작
+        
+        # 콜백 등록
+        if callback:
+            self._response_callbacks[qid] = callback
         
         # 요청 전송
-        self.myq['order'].put(answer_obj)
+        self.myq['request'].put(answer_obj)
+        return qid
+    
+    def answer_nonblocking(self, receiver, method=None, *args, **kwargs):
+        """
+        논블로킹 요청 전송 (요청 ID 반환)
         
-        # 응답 대기
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                if not self.myq['answer'].empty():
-                    qid, result = self.myq['answer'].get_nowait()
-                    return result
-            except Empty:
-                pass
-            time.sleep(0.001)
+        사용 방법:
+            qid = answer_nonblocking(Answer객체)
+            qid = answer_nonblocking(receiver, method, *args, **kwargs)
+            
+            # 응답 확인 (논블로킹)
+            result = check_response(qid)
+            
+        Returns:
+            str: 요청 ID
+        """
+        return self.answer_async(receiver, method, *args, **kwargs)
+    
+    def check_response(self, qid):
+        """
+        응답 확인 (논블로킹)
         
-        logging.error(f"proxy_answer 요청 시간 초과: {self.name} -> {target}.{method}")
+        Args:
+            qid (str): 요청 ID
+            
+        Returns:
+            결과 또는 None (아직 응답이 없는 경우)
+        """
+        return self._response_results.get(qid)
+    
+    def answer_poll(self, answer_obj, retry_count=10, retry_interval=0.0001):
+        """
+        폴링 방식의 응답 확인 (타임아웃까지 주기적으로 확인)
+        
+        Args:
+            answer_obj (Answer): 응답 요청 객체
+            retry_count (int): 재시도 횟수
+            retry_interval (float): 재시도 간격 (초)
+            
+        Returns:
+            결과 또는 None (타임아웃)
+        """
+        # 요청 전송
+        qid = self.answer_nonblocking(answer_obj)
+        
+        # 폴링 (재시도 횟수만큼)
+        for _ in range(retry_count):
+            # 다른 메시지 처리
+            if not self.myq['receive'].empty():
+                self.run_loop()
+                
+            # 응답 확인
+            result = self.check_response(qid)
+            if result is not None:
+                return result
+                
+            # 짧은 대기
+            time.sleep(retry_interval)
+        
+        # 타임아웃 (결과 없음)
         return None
     
-    def proxy_answer_internal(self, answer_obj, timeout=10):
+    def answer(self, receiver, method=None, *args, timeout=0.001, **kwargs):
         """
-        내부 응답 처리용 메서드
+        동기 요청 전송 및 응답 대기 (짧은 타임아웃)
+        - 호환성을 위해 유지, 고성능 처리에는 answer_async 또는 answer_poll 권장
+        
+        사용 방법:
+            answer(Answer객체, timeout=0.001)
+            answer(receiver, method, *args, timeout=0.001, **kwargs)
+            
+        Args:
+            timeout (float): 응답 대기 최대 시간 (초)
+            
+        Returns:
+            응답 결과 또는 None (타임아웃 시)
         """
-        try:
-            # 메서드 직접 호출
-            if hasattr(self, answer_obj.order):
-                method = getattr(self, answer_obj.order)
-                return method(*answer_obj.args, **answer_obj.kwargs)
-            else:
-                logging.error(f"{self.name}에 메서드 없음: {answer_obj.order}")
-                return None
-        except Exception as e:
-            logging.error(f"proxy_answer_internal 오류: {e}", exc_info=True)
-            return None
-
+        # 기존 호환성을 위해 블로킹 방식 유지
+        # Answer 객체 생성
+        if method is None and isinstance(receiver, Answer):
+            # Answer 객체가 직접 전달된 경우
+            answer_obj = receiver
+            timeout = kwargs.get('timeout', timeout)
+        else:
+            # 인자로 전달된 경우
+            answer_obj = Answer(
+                receiver=receiver, 
+                order=method, 
+                sender=self.name,
+                args=args, 
+                kwargs={k: v for k, v in kwargs.items() if k != 'timeout'}
+            )
+        
+        # 폴링 방식으로 구현 (매우 짧은 주기로 확인)
+        retry_count = max(int(timeout / 0.0001), 1)  # 최소 1회
+        return self.answer_poll(answer_obj, retry_count=retry_count, retry_interval=0.0001)
+    
 class ModelThread(Model, QThread):
+    """쓰레드 기반 컴포넌트"""
+    
     def __init__(self, name, myq=None, daemon=True):
         Model.__init__(self, name, myq)
         QThread.__init__(self)
@@ -257,19 +441,26 @@ class ModelThread(Model, QThread):
     def stop(self):
         Model.stop(self)
         logging.debug(f'{self.name} 쓰레드 종료...')
-        self.quit()
-        self.wait()
+        # 자기 자신에서 wait 호출 방지
+        if QThread.currentThread() != self:
+            self.quit()
+            self.wait()
 
     def start(self):
         QThread.start(self)
         return self
 
 class ModelProcess(Model, mp.Process):
+    """프로세스 기반 컴포넌트"""
+    
     def __init__(self, name, myq=None, daemon=True):
         Model.__init__(self, name, myq)
         mp.Process.__init__(self, name=name, daemon=daemon)
 
     def run(self):
+        # 프로세스 시작 시 초기화
+        import threading
+        threading.current_thread().name = f"{self.name}_main"
         Model.run(self)
 
     def stop(self):
@@ -279,20 +470,25 @@ class ModelProcess(Model, mp.Process):
     def start(self):
         mp.Process.start(self)
         return self
-
-class IPCManager():
+    
+class IPCManager:
+    """프로세스/쓰레드 간 통신 관리자"""
+    
     def __init__(self):
-        self.qdict = {}
-        self.admin_work = {}
-        self.thread_work = {}
-        self.process_work = {}
-        self.instances = {}
-        self.result_dict = ThreadDict()  # IPCManager에만 ThreadDict
-        self.pending_answers = ThreadDict()  # 대기 중인 응답 추적
-        self.stopped_components = set()  # 중지된 컴포넌트 추적
-        self.global_responses = ThreadDict()  # 글로벌 응답 메커니즘 (등록되지 않은 위치를 위한)
+        # 컴포넌트 관리
+        self.qdict = {}  # 컴포넌트별 큐
+        self.admin_work = {}  # 메인 쓰레드 컴포넌트
+        self.thread_work = {}  # 쓰레드 컴포넌트
+        self.process_work = {}  # 프로세스 컴포넌트
+        self.instances = {}  # 모든 컴포넌트 인스턴스
         
-        # 메시지 처리 및 프록시 스레드
+        # 상태 관리
+        self.result_dict = ThreadDict()  # 응답 결과 저장
+        self.pending_answers = ThreadDict()  # 대기 중인 응답 추적
+        self.stopped_components = set()  # 중지된 컴포넌트
+        self.direct_responses = ThreadDict()  # 직접 호출 응답
+        
+        # 통신 처리 쓰레드
         self.running = True
         self.message_thread = threading.Thread(target=self.message_loop)
         self.message_thread.daemon = True
@@ -300,124 +496,134 @@ class IPCManager():
         
     def message_loop(self):
         """
-        메시지 처리 루프: 
-        1. 모든 컴포넌트의 real 큐에서 메시지를 읽어 적절한 receiver로 전달
-        2. 모든 컴포넌트의 answer 큐를 확인하고 응답 처리
-        3. type=None 컴포넌트(메인 스레드)의 메시지 처리
+        메시지 처리 루프:
+        1. 모든 컴포넌트의 real 큐 처리
+        2. 모든 컴포넌트의 request 큐 처리
+        3. 메인 쓰레드 컴포넌트의 receive 큐 처리
         """
         while self.running:
             # 1. 모든 컴포넌트의 real 큐 처리
             for name, queues in list(self.qdict.items()):
-                if name not in self.stopped_components:  # 중지되지 않은 컴포넌트만 처리
+                if name not in self.stopped_components:
                     self.process_real_queue(name, queues['real'])
             
-            # 2. 모든 컴포넌트의 answer 큐 처리 (핵심 개선 부분)
+            # 2. 모든 컴포넌트의 request 큐 처리
             for name, queues in list(self.qdict.items()):
-                if name not in self.stopped_components:  # 중지되지 않은 컴포넌트만 처리
-                    self.process_answer_queue(name, queues['answer'])
+                if name not in self.stopped_components:
+                    self.process_request_queue(name, queues['request'])
             
-            # 3. type=None인 컴포넌트(메인 스레드)의 메시지 처리
+            # 3. 메인 쓰레드 컴포넌트의 receive 큐 처리
             for name, instance in list(self.admin_work.items()):
-                if name not in self.stopped_components:  # 중지되지 않은 컴포넌트만 처리
-                    self.process_component_messages(name, instance)
+                if name not in self.stopped_components:
+                    self.process_component_receives(name, instance)
             
             time.sleep(0.001)
     
     def process_real_queue(self, sender_name, real_queue):
         """
-        real 큐에서 메시지를 읽어 적절한 receiver로 전달
+        실시간 큐 처리: real 큐에서 메시지를 읽어 적절한 receiver로 전달
         """
         try:
             while not real_queue.empty():
                 data = real_queue.get_nowait()
-                if not isinstance(data, Order):
-                    logging.debug(f'{sender_name}의 real 큐에 잘못된 데이터: {data}')
-                    continue
                 
-                receiver = data.receiver
-                # 중지된 컴포넌트로는 메시지 전달 안함
-                if receiver in self.qdict and receiver not in self.stopped_components:
-                    # 실시간 데이터는 receiver의 order 큐로 전달
-                    self.qdict[receiver]['order'].put(data)
+                # Order 처리
+                if isinstance(data, Order):
+                    receiver = data.receiver
+                    # 중지된 컴포넌트로는 메시지 전달 안함
+                    if receiver in self.qdict and receiver not in self.stopped_components:
+                        # 수신자의 receive 큐로 전달
+                        self.qdict[receiver]['receive'].put(data)
+                    else:
+                        logging.debug(f"실시간 메시지 전달 불가: {receiver}가 존재하지 않거나 중지됨")
                 else:
-                    logging.debug(f"메시지 전달 불가: {receiver}가 존재하지 않거나 중지됨, 데이터 무시")
+                    logging.debug(f'{sender_name}의 real 큐에 잘못된 데이터: {data}')
         except Empty:
             pass
         except Exception as e:
             logging.error(f"Real 큐 처리 중 오류: {e}", exc_info=True)
     
-    def process_answer_queue(self, sender_name, answer_queue):
+    def process_request_queue(self, sender_name, request_queue):
         """
-        answer 큐에서 응답을 읽어 적절한 대상에게 전달 (새로 추가된 함수)
+        요청 큐 처리: request 큐에서 메시지를 읽어 적절한 receiver로 전달
         """
         try:
-            while not answer_queue.empty():
-                data = answer_queue.get_nowait()
-                if not isinstance(data, tuple) or len(data) != 2:
-                    logging.debug(f'{sender_name}의 answer 큐에 잘못된 데이터: {data}')
-                    continue
+            while not request_queue.empty():
+                data = request_queue.get_nowait()
                 
-                qid, result = data
-                # 결과를 저장하여 원래 요청자가 사용할 수 있도록 함
-                self.result_dict.set(qid, result)
-                
-                # 1. 대기 중인 응답 정보가 있으면 처리
-                pending_info = self.pending_answers.get(qid)
-                if pending_info:
-                    self.pending_answers.remove(qid)
-                    sender, receiver, result_event, result_container = pending_info
-                    result_container['value'] = result
-                    result_event.set()
-                    logging.debug(f"응답 처리 완료: {sender} -> {receiver}, qid={qid}")
-                    continue
-                
-                # 2. 글로벌 응답 처리 (등록되지 않은 위치에서의 요청)
-                global_info = self.global_responses.get(qid)
-                if global_info:
-                    self.global_responses.remove(qid)
-                    result_event, result_container = global_info
-                    result_container['value'] = result
-                    result_event.set()
-                    logging.debug(f"글로벌 응답 처리 완료: direct -> {sender_name}, qid={qid}")
+                # Order 또는 Answer 처리
+                if isinstance(data, (Order, Answer)):
+                    receiver = data.receiver
+                    # 중지된 컴포넌트로는 메시지 전달 안함
+                    if receiver in self.qdict and receiver not in self.stopped_components:
+                        # 수신자의 receive 큐로 전달
+                        self.qdict[receiver]['receive'].put(data)
+                    elif receiver == '_direct_':
+                        # 직접 호출 응답 처리
+                        if isinstance(data, Order) and len(data.args) >= 2:
+                            qid, result = data.args
+                            # 대기 중인 직접 호출 응답 처리
+                            response_info = self.direct_responses.get(qid)
+                            if response_info:
+                                event, container = response_info
+                                container['value'] = result
+                                event.set()
+                                self.direct_responses.remove(qid)
+                    else:
+                        logging.debug(f"요청 전달 불가: {receiver}가 존재하지 않거나 중지됨")
+                else:
+                    logging.debug(f'{sender_name}의 request 큐에 잘못된 데이터: {data}')
         except Empty:
             pass
         except Exception as e:
-            logging.error(f"Answer 큐 처리 중 오류: {e}", exc_info=True)
+            logging.error(f"Request 큐 처리 중 오류: {e}", exc_info=True)
     
-    def process_component_messages(self, name, instance):
+    def process_component_receives(self, name, instance):
         """
-        메인 스레드에서 실행되는 컴포넌트의 큐 메시지 처리
+        메인 쓰레드 컴포넌트의 메시지 처리
         """
-        if name in self.qdict and not self.qdict[name]['order'].empty():
-            try:
-                data = self.qdict[name]['order'].get_nowait()
+        try:
+            if name in self.qdict and not self.qdict[name]['receive'].empty():
+                # 이 부분은 Model.run_loop와 동일한 로직이지만
+                # 메인 쓰레드 컴포넌트는 자체 쓰레드가 없으므로 여기서 처리
+                data = self.qdict[name]['receive'].get_nowait()
                 if not isinstance(data, (Order, Answer)):
                     logging.debug(f'{name} 에 잘못된 요청: {data}')
                     return
                 
-                # stop 명령이면 중지된 컴포넌트 목록에 추가
+                # stop 명령이면 중지 상태로 표시
                 if isinstance(data, Order) and data.order == 'stop':
                     self.stopped_components.add(name)
+                    if hasattr(instance, 'stop'):
+                        instance.stop()
+                    return
                 
+                # 특수 응답 메서드 처리
+                if isinstance(data, Order) and data.order == '_response':
+                    if hasattr(instance, '_handle_response'):
+                        instance._handle_response(data.args[0], data.args[1])
+                    return
+                
+                # 일반 메서드 호출
                 method = getattr(instance, data.order)
                 if isinstance(data, Order):
+                    # 비동기 요청 처리
                     method(*data.args, **data.kwargs)
-                else:  # Answer인 경우
+                else:
+                    # 동기 요청 처리 및 결과 반환
                     result = method(*data.args, **data.kwargs)
-                    
-                    # 특수 sender 'direct'인 경우 글로벌 응답으로 처리
-                    if data.sender == 'direct':
-                        self.qdict[name]['answer'].put((data.qid, result))
-                    # 등록된 컴포넌트로의 응답
-                    elif data.sender in self.qdict and data.sender not in self.stopped_components:
-                        self.qdict[data.sender]['answer'].put((data.qid, result))
-                    else:
-                        # 요청자가 없으면 결과를 저장
-                        self.result_dict.set(data.qid, result)
-            except Empty:
-                pass
-            except Exception as e:
-                logging.error(f"{name} 메시지 처리 중 오류: {e}", exc_info=True)
+                    # 응답이 필요한 경우 request 큐에 결과 추가
+                    if data.sender:
+                        response_obj = Order(
+                            receiver=data.sender,
+                            order='_response',
+                            args=(data.qid, result)
+                        )
+                        self.qdict[name]['request'].put(response_obj)
+        except Empty:
+            pass
+        except Exception as e:
+            logging.error(f"{name} 메시지 처리 중 오류: {e}", exc_info=True)
                     
     def register(self, name, cls, *args, type=None, start=False, **kwargs):
         """
@@ -430,14 +636,15 @@ class IPCManager():
         if name in self.stopped_components:
             self.stopped_components.remove(name)
 
+        # 큐 타입 결정 (프로세스면 mp.Queue, 아니면 Queue)
         is_process = type == 'process'
         queue_type = mp.Queue if is_process else Queue
         
         # 컴포넌트별 큐 생성
         self.qdict[name] = {
-            'order': queue_type(),
-            'answer': queue_type(),
-            'real': queue_type()
+            'receive': queue_type(),  # 외부에서 받는 큐
+            'request': queue_type(),  # 외부로 보내는 큐
+            'real': queue_type()      # 실시간 데이터 큐
         }
         
         # 타입에 따라 적절한 모델 클래스 상속 및 인스턴스 생성
@@ -464,25 +671,19 @@ class IPCManager():
         """
         등록된 컴포넌트 제거
         """
-        if name in self.admin_work: 
-            return False
+        if name in self.admin_work and name == 'admin': 
+            return False  # admin은 제거 불가
             
         if name in self.qdict:
             try:
                 # 먼저 중지된 컴포넌트로 표시
                 self.stopped_components.add(name)
                 
-                # 이 컴포넌트를 대상으로 하는 모든 대기 중인 응답 처리 취소
-                for qid, info in list(self.pending_answers._dict.items()):
-                    sender, receiver, result_event, result_container = info
-                    if receiver == name or sender == name:
-                        self.pending_answers.remove(qid)
-                        result_container['value'] = None
-                        result_event.set()
+                # 컴포넌트 중지 요청
+                self.qdict[name]['receive'].put(Order(receiver=name, order='stop'))
+                time.sleep(0.1)  # 중지 요청 처리 시간
                 
-                self.qdict[name]['order'].put(Order(receiver=name, order='stop'))
-                time.sleep(0.1)  # 메시지 처리 확인 시간
-                
+                # 인스턴스 정리
                 if name in self.thread_work:
                     self.thread_work[name].stop()
                     time.sleep(0.1)
@@ -498,6 +699,7 @@ class IPCManager():
             logging.error(f"IPCManager에 없는 이름입니다: {name}")
             return False
             
+        # 정리
         if name in self.instances:
             self.instances.pop(name)
         if name in self.qdict:
@@ -516,7 +718,7 @@ class IPCManager():
         if name in self.stopped_components:
             self.stopped_components.remove(name)
             
-        self.qdict[name]['order'].put(Order(receiver=name, order='start'))
+        self.qdict[name]['receive'].put(Order(receiver=name, order='start'))
         return True
         
     def stop(self, name):
@@ -529,12 +731,12 @@ class IPCManager():
             
         # 중지된 컴포넌트 목록에 추가
         self.stopped_components.add(name)
-        self.qdict[name]['order'].put(Order(receiver=name, order='stop'))
+        self.qdict[name]['receive'].put(Order(receiver=name, order='stop'))
         return True
 
     def order(self, order_obj):
         """
-        Order 객체를 통한 비동기 요청
+        Order 객체를 통한 비동기 요청 (직접 호출 및 등록된 컴포넌트 모두 지원)
         """
         if not isinstance(order_obj, Order):
             logging.error(f"order_obj가 잘못된 타입입니다: {order_obj}")
@@ -550,90 +752,27 @@ class IPCManager():
             logging.debug(f"중지된 컴포넌트로 요청 무시: {receiver}")
             return False
             
-        self.qdict[receiver]['order'].put(order_obj)
+        self.qdict[receiver]['receive'].put(order_obj)
         return True
 
     def answer(self, answer_obj, timeout=10):
         """
-        Answer 객체를 통한 동기식 요청/응답
-        """
-        if not isinstance(answer_obj, Answer):
-            logging.error(f"answer_obj가 잘못된 타입입니다. {answer_obj}")
-            return None
-        
-        sender = answer_obj.sender
-        receiver = answer_obj.receiver
-        
-        if sender is None:
-            logging.error(f"sender가 없습니다. {answer_obj}")
-            return None
-        
-        if receiver not in self.qdict:
-            logging.error(f"존재하지 않는 receiver입니다: {receiver}")
-            return None
-            
-        # 중지된 컴포넌트로는 요청 안보냄
-        if receiver in self.stopped_components:
-            logging.debug(f"중지된 컴포넌트로 answer 요청 무시: {receiver}")
-            return None
-        
-        # 응답을 저장할 공간과 이벤트 생성
-        result_container = {'value': None}
-        result_event = threading.Event()
-        
-        # 요청 전송 및 응답 대기
-        qid = str(uuid.uuid4())
-        answer_obj.qid = qid
-        
-        # 응답 추적 정보 저장
-        self.pending_answers.set(qid, (sender, receiver, result_event, result_container))
-        
-        # 요청 전송
-        self.qdict[receiver]['order'].put(answer_obj)
-        
-        # 결과 대기
-        if result_event.wait(timeout):
-            # 응답이 왔으면 pending_answers에서 제거 (이미 처리됐을 수도 있음)
-            if self.pending_answers.get(qid):
-                self.pending_answers.remove(qid)
-            return result_container['value']
-        else:
-            # 타임아웃 시 추적 정보 제거
-            self.pending_answers.remove(qid)
-            logging.error(f"answer 요청 시간 초과: {sender} -> {receiver}: {answer_obj.order}")
-            return None
-            
-    def direct_order(self, order_obj):
-        """
-        등록되지 않은 위치에서 사용할 수 있는 직접 호출 메서드
-        비동기 요청만 가능 (응답 받지 않음)
-        """
-        if not isinstance(order_obj, Order):
-            logging.error(f"order_obj가 잘못된 타입입니다: {order_obj}")
-            return False
-            
-        receiver = order_obj.receiver
-        if receiver not in self.qdict:
-            logging.error(f"존재하지 않는 receiver입니다: {receiver}")
-            return False
-            
-        # 중지된 컴포넌트로는 요청 안보냄
-        if receiver in self.stopped_components:
-            logging.debug(f"중지된 컴포넌트로 direct_order 요청 무시: {receiver}")
-            return False
-            
-        self.qdict[receiver]['order'].put(order_obj)
-        return True
-
-    def direct_answer(self, answer_obj, timeout=10):
-        """
-        등록되지 않은 위치에서 사용할 수 있는 직접 응답 호출 메서드
-        동기식 요청/응답, sender는 'direct'로 설정됨
+        Answer 객체를 통한 동기식 요청/응답 (직접 호출 및 등록된 컴포넌트 모두 지원)
         """
         if not isinstance(answer_obj, Answer):
             logging.error(f"answer_obj가 잘못된 타입입니다: {answer_obj}")
             return None
         
+        # 내부 호출인지 직접 호출인지 확인
+        is_direct_call = False
+        sender = answer_obj.sender
+        
+        if not sender:
+            # 발신자가 없으면 직접 호출로 간주
+            is_direct_call = True
+            answer_obj = copy.copy(answer_obj)
+            answer_obj.sender = '_direct_'
+        
         receiver = answer_obj.receiver
         if receiver not in self.qdict:
             logging.error(f"존재하지 않는 receiver입니다: {receiver}")
@@ -641,38 +780,36 @@ class IPCManager():
             
         # 중지된 컴포넌트로는 요청 안보냄
         if receiver in self.stopped_components:
-            logging.debug(f"중지된 컴포넌트로 direct_answer 요청 무시: {receiver}")
+            logging.debug(f"중지된 컴포넌트로 동기 요청 무시: {receiver}")
             return None
         
-        # sender가 없으면 'direct'로 설정
-        if not answer_obj.sender:
-            answer_obj = copy.copy(answer_obj)
-            answer_obj.sender = 'direct'
-        
-        # 고유 ID 생성
-        qid = str(uuid.uuid4())
-        answer_obj.qid = qid
-        
-        # 응답을 저장할 이벤트와 컨테이너 생성
-        result_container = {'value': None}
-        result_event = threading.Event()
-        
-        # 글로벌 응답 저장소에 이벤트와 컨테이너 등록
-        self.global_responses.set(qid, (result_event, result_container))
-        
-        # 요청 전송
-        self.qdict[receiver]['order'].put(answer_obj)
-        
-        # 결과 대기
-        if result_event.wait(timeout):
-            # 응답이 왔으면 global_responses에서 제거
-            self.global_responses.remove(qid)
-            return result_container['value']
+        # 직접 호출인 경우 응답 대기 이벤트 설정(등록 되지 않은 컴포넌트에서 호출 되는 경우)
+        if is_direct_call:
+            # 응답 대기를 위한 준비
+            result_container = {'value': None}
+            result_event = threading.Event()
+
+            # 응답 추적 설정
+            qid = answer_obj.qid
+            self.direct_responses.set(qid, (result_event, result_container))
+            
+            # 요청 전송
+            self.qdict[receiver]['receive'].put(answer_obj)
+
+            # 응답 대기
+            if result_event.wait(timeout):
+                # 정리 후 결과 반환
+                self.direct_responses.remove(qid)
+                return result_container['value']
+            else:
+                # 타임아웃 시 리소스 정리
+                self.direct_responses.remove(qid)
+                logging.error(f"응답 대기 시간 초과: {answer_obj.sender} -> {receiver}.{answer_obj.order}")
+                return None
         else:
-            # 타임아웃 시 정보 제거
-            self.global_responses.remove(qid)
-            logging.error(f"direct_answer 요청 시간 초과: {answer_obj.sender} -> {receiver}: {answer_obj.order}")
-            return None
+            # 등록된 컴포넌트에서의 호출
+            self.qdict[receiver]['receive'].put(answer_obj)
+            return True
 
     def cleanup(self):
         """
@@ -681,25 +818,17 @@ class IPCManager():
         logging.debug('IPCManager 리소스 정리 시작')
         self.running = False
         
-        # 먼저 모든 대기 중인 요청 취소
+        # 모든 컴포넌트 중지
         for name in list(self.qdict.keys()):
-            # 모든 컴포넌트를 중지 상태로 표시
+            # 중지 상태 표시 및 중지 요청
             self.stopped_components.add(name)
             self.stop(name)
         
-        # 모든 대기 중인 응답에 None 반환하여 대기 상태 해제
-        for qid, info in list(self.pending_answers._dict.items()):
-            _, _, result_event, result_container = info
-            result_container['value'] = None
-            result_event.set()
-            self.pending_answers.remove(qid)
-        
-        # 모든 대기 중인 글로벌 응답에 None 반환
-        for qid, info in list(self.global_responses._dict.items()):
-            result_event, result_container = info
-            result_container['value'] = None
-            result_event.set()
-            self.global_responses.remove(qid)
+        # 대기 중인 모든 응답 취소
+        for qid, (event, container) in list(self.direct_responses.items()):
+            container['value'] = None
+            event.set()
+            self.direct_responses.remove(qid)
         
         time.sleep(0.5)  # 정지 요청 처리 대기
         
@@ -722,137 +851,131 @@ class IPCManager():
             
         logging.debug('IPCManager 리소스 정리 완료')
 
-# 이하 테스트 코드 *********************************************************
-class GlobalSharedMemory:
-    def __init__(self):
-        # 여기에 일반 공유변수 추가 (메인 프로세스 내에서 공유)
-        self.main = None
-        self.admin = None
-        self.api = None
-        self.gui = None
-        self.dbm = None
-        self.전략01 = None
-        self.전략02 = None
-        self.ipc = None
-gm = GlobalSharedMemory()
+app = QApplication(sys.argv)
 
-# 테스트 클래스들
 class TestClass:
+    """기본 테스트 클래스"""
+    
     def __init__(self, name, *args, **kwargs):
         self.name = name
     
     def run_method(self, data, *args, **kwargs):
+        """테스트용 메서드: 입력 데이터를 로깅하고 결과 반환"""
         logging.info(f"{self.name} 이 호출됨, 데이터:{data}")
         return f"{self.name} 에서 반환: *{data}*"
 
-    def call_other(self, target, func, *args, **kwargs):
-        """
-        다른 컴포넌트 호출
-        프로세스 간 통신인 경우 proxy_order/proxy_answer 사용
-        """
-        logging.info(f"{self.name}에서 {target}.{func} 호출 시도")
-        
-        # 프로세스 간 통신이면 프록시 메서드 사용
-        if hasattr(self, 'proxy_order') and isinstance(self, ModelProcess):
-            logging.debug(f"프로세스 간 통신: {self.name} -> {target}")
-            if kwargs.get('need_answer', False):
-                return self.proxy_answer(target, func, *args, **{k: v for k, v in kwargs.items() if k != 'need_answer'})
-            else:
-                return self.proxy_order(target, func, *args, **{k: v for k, v in kwargs.items() if k != 'need_answer'})
-        
-        # 같은 프로세스 내 통신은 gm.ipc 사용
-        order_obj = Order(receiver=target, order=func, args=args, kwargs=kwargs)
-        result = gm.ipc.order(order_obj)
-        logging.info(f"{self.name} 에서 {target} {func} 메서드 호출 결과: {result}")
-        return result
-    
     def call_async(self, data, *args, **kwargs):
+        """비동기 호출 테스트 메서드"""
         logging.info(f"{self.name} 에서 비동기 receive_callback 호출 완료")
         self.receive_callback(data)
         return "비동기 호출 완료"
     
     def receive_callback(self, data):
+        """콜백 테스트 메서드"""
         logging.info(f"{self.name} 에서 콜백 결과 수신: {data}")
         return f"{self.name} 에서 콜백 요청 데이타: {data}"
 
-class TestThread(TestClass, ModelThread):
+class Strategy(TestClass, ModelThread):
+    """쓰레드 기반 전략 클래스"""
+    
     def __init__(self, name, myq=None, daemon=True, *args, **kwargs):
         TestClass.__init__(self, name, *args, **kwargs)
         ModelThread.__init__(self, name, myq, daemon)
 
-class TestProcess(TestClass, ModelProcess):
+    def stop(self):
+        """전략 중지 및 리소스 정리"""
+        ModelThread.stop(self)
+
+class DBM(TestClass, ModelProcess):
+    """프로세스 기반 DBM 클래스"""
+    
     def __init__(self, name, myq=None, daemon=True, *args, **kwargs):
         TestClass.__init__(self, name, *args, **kwargs)
         ModelProcess.__init__(self, name, myq, daemon)
 
-class Strategy(TestThread):
-    def __init__(self, name, myq=None, daemon=True, *args, **kwargs):
-        super().__init__(name, myq, daemon, *args, **kwargs)
-
     def stop(self):
-        # 뒷정리
-        ModelThread.stop(self)
-
-class DBM(TestProcess):
-    def __init__(self, name, myq=None, daemon=True, *args, **kwargs):
-        super().__init__(name, myq, daemon, *args, **kwargs)
-
-    def stop(self):
-        # 뒷정리
+        """DBM 중지 및 리소스 정리"""
         ModelProcess.stop(self)
 
     def get_name(self, code):
-        # API 호출은 gm.ipc를 통해서만 가능
-        answer_obj = Answer(receiver='api', order='GetMasterCodeName', sender=self.name, args=(code,))
-        name = gm.ipc.answer(answer_obj)
-        logging.info(f"dbm: GetMasterCodeName 결과: {name}")
-        return name
+        """종목 코드로 종목명 조회"""
+        # API에 종목명 요청
+        logging.info(f"DBM: {code} 종목명 조회 요청")
+        
+        # API 호출 (동기식)
+        answer_obj = Answer(
+            receiver='api', 
+            order='GetMasterCodeName', 
+            sender=self.name, 
+            args=(code,)
+        )
+        
+        # 요청 전송 및 응답 대기
+        result = self.answer(answer_obj)
+        logging.info(f"DBM: 종목명 조회 결과: {result}")
+        return result
 
-class API(TestProcess):
+class API(TestClass, ModelProcess):
+    """프로세스 기반 API 클래스"""
+    
     def __init__(self, name, myq=None, daemon=True, *args, **kwargs):
-        super().__init__(name, myq, daemon, *args, **kwargs)
+        TestClass.__init__(self, name, *args, **kwargs)
+        ModelProcess.__init__(self, name, myq, daemon)
         self.connected = False
         self.send_real_data_running = False
         self.send_real_data_thread = None
         self.ocx = None
 
     def init(self):
+        """API 초기화"""
         # QAxWidget 초기화 및 콜백 설정
         self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
         self.ocx.OnEventConnect.connect(self.OnEventConnect)
+        logging.info("API 초기화 완료")
 
     def GetConnectState(self):
+        """연결 상태 확인"""
         if self.ocx:
-            return self.ocx.dynamicCall("GetConnectState()")
+            state = self.ocx.dynamicCall("GetConnectState()")
+            logging.info(f"API 연결 상태: {state}")
+            return state
+        logging.warning("OCX가 초기화되지 않았습니다")
         return 0
 
     def send_real_data_start(self):
+        """실시간 데이터 전송 시작"""
         self.send_real_data_running = True
         self.send_real_data_thread = threading.Thread(target=self.send_real_data)
         self.send_real_data_thread.daemon = True
         self.send_real_data_thread.start()
+        logging.info("실시간 데이터 전송 시작")
 
     def send_real_data_stop(self):
+        """실시간 데이터 전송 중지"""
         self.send_real_data_running = False
         if self.send_real_data_thread and self.send_real_data_thread.is_alive():
             self.send_real_data_thread.join(timeout=1.0)
+        logging.info("실시간 데이터 전송 중지")
 
     def send_real_data(self):
-        # real 데이터는 자신의 real 큐로 전송, IPCManager가 이를 분배
+        """실시간 데이터 전송 스레드 메서드"""
         while self.send_real_data_running:
             # admin 컴포넌트로 실시간 데이터 전송
-            self.myq['real'].put(Order(receiver='admin', order='real_data_receive', args=(f'real_data {time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}',)))
+            self.send_real('admin', 'real_data_receive', f'real_data {time.strftime("%Y-%m-%d %H:%M:%S")}')
             time.sleep(0.01)
 
     def stop(self):
+        """API 중지 및 리소스 정리"""
         if hasattr(self, 'send_real_data_running') and self.send_real_data_running:
             self.send_real_data_stop()
         ModelProcess.stop(self)
 
     def is_connected(self):
+        """연결 상태 반환"""
         return self.connected
 
     def OnEventConnect(self, err_code):
+        """로그인 이벤트 처리"""
         if err_code == 0:
             self.connected = True
             logging.info("로그인 성공")
@@ -860,17 +983,22 @@ class API(TestProcess):
             logging.error(f"로그인 실패: {err_code}")
 
     def login(self):
+        """로그인 요청"""
         if not self.ocx:
             logging.error("OCX가 초기화되지 않았습니다. init()을 먼저 호출하세요.")
             return False
         
         self.connected = False
         self.ocx.dynamicCall("CommConnect()")
+        
+        # 로그인 완료 대기
         while not self.connected:
             pythoncom.PumpWaitingMessages()
+        
         return True
 
     def GetMasterCodeName(self, code):
+        """종목 코드로 종목명 조회"""
         if not self.ocx:
             logging.error("OCX가 초기화되지 않았습니다. init()을 먼저 호출하세요.")
             return ""
@@ -880,6 +1008,8 @@ class API(TestProcess):
         return data
 
 class Admin(TestClass, Model):
+    """메인 스레드 관리자 클래스"""
+    
     def __init__(self, name, myq=None, *args, **kwargs):
         TestClass.__init__(self, name, *args, **kwargs)
         Model.__init__(self, name, myq)
@@ -888,6 +1018,7 @@ class Admin(TestClass, Model):
         self.testing_complete = False
 
     def real_data_receive(self, data):
+        """실시간 데이터 처리"""
         self.counter += 1
         if time.time() - self.start_time > 2:
             logging.info(f"Admin: 2초간 받은 real_data 횟수={self.counter} 마지막 데이터={data}")
@@ -895,16 +1026,14 @@ class Admin(TestClass, Model):
             self.counter = 0
     
     def start_test(self):
+        """통합 테스트 실행"""
         try:
             logging.info(' === 테스트 코드 === ')
 
-            # 테스트용 쓰레드 및 프로세스 등록
+            # 테스트용 쓰레드 등록 (API와 DBM은 Main.init에서 등록됨)
             gm.전략01 = gm.ipc.register('전략01', Strategy, type='thread', start=True)
             gm.전략02 = gm.ipc.register('전략02', Strategy, type='thread', start=True)
-            
-            gm.ipc.order(Order(receiver='api', order='send_real_data_start'))
-
-            logging.info('--- 메인 쓰레드에서 실행 ---')
+                
             # 멀티 쓰레드 호출
             gm.ipc.order(Order(receiver='전략01', order='run_method', args=("admin 에서 order 호출",)))
             
@@ -920,17 +1049,20 @@ class Admin(TestClass, Model):
             
             # 멀티 프로세스 dbm 비동기 호출
             gm.ipc.order(Order(receiver='dbm', order='call_async', args=('async : admin 에서 dbm 호출',)))
-            
+
             # 멀티 프로세스 dbm 에서 api 호출
-            answer = Answer(receiver='dbm', order='call_other', sender='admin', args=('api', 'GetMasterCodeName', '005930'))
+            answer = Answer(receiver='dbm', order='get_name', sender='admin', args=("005930",))
             result = gm.ipc.answer(answer)
-            logging.info(f"dbm 에서 api 호출 결과: {result}")
+            logging.info(f"dbm의 get_name 호출 결과: {result}")
 
             logging.info('--- 전략01 클래스 메소드 내에서 실행 ---')
             # 전략01에서 admin 호출
-            answer = Answer(receiver='전략01', order='call_other', sender='admin', args=('admin', 'run_method', '전략01 에서 admin 호출'))
-            result = gm.ipc.answer(answer)
-            logging.info(f"전략01에서 admin 호출 결과: {result}")
+            gm.ipc.order(Order(receiver='전략01', order='order', args=('admin', 'run_method', '전략01 에서 admin 호출')))
+            time.sleep(0.1)  # 비동기 요청 처리 대기
+
+            logging.info('--- 직접 호출 테스트 ---')
+            result = gm.ipc.answer(Answer(receiver='api', order='GetMasterCodeName', args=("000660",)))
+            logging.info(f"직접 호출 결과: {result}")
 
             logging.info('--- 실시간 데이터 처리 테스트 ---')
             time.sleep(3)  # 실시간 데이터 카운터 테스트를 위한 대기
@@ -945,57 +1077,80 @@ class Admin(TestClass, Model):
             logging.info(' === 테스트 코드 끝 === ')
             self.testing_complete = True
             
-            # 프로그램 종료 (모든 테스트 완료 후)
+            # 프로그램 종료
             time.sleep(1)
             os._exit(0)
+            
         except Exception as e:
             logging.error(f"테스트 실행 중 오류 발생: {e}", exc_info=True)
             os._exit(1)
 
+class GlobalSharedMemory:
+    """전역 공유 변수 (메인 프로세스에서만 사용)"""
+    def __init__(self):
+        self.main = None
+        self.admin = None
+        self.api = None
+        self.gui = None
+        self.dbm = None
+        self.전략01 = None
+        self.전략02 = None
+        self.ipc = None
+gm = GlobalSharedMemory()
+
 class Main:
+    """메인 클래스"""
     def __init__(self):
         self.init()
 
     def init(self):
+        """초기화: IPC 및 기본 컴포넌트 생성"""
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
+            
+            # IPC Manager 생성
             gm.ipc = IPCManager()
-            gm.admin = gm.ipc.register('admin', Admin, start=True) # type=None이면 메인 쓰레드에서 실행 start=True이면 등록하고 바로 start() 실행
-
-            # 프로세스는 별도 큐 사용
+            
+            # 기본 컴포넌트 등록
+            gm.admin = gm.ipc.register('admin', Admin, start=True) # 메인 쓰레드 컴포넌트
+            
+            # API 및 DBM 컴포넌트 등록
             gm.api = gm.ipc.register('api', API, type='process', start=True)
             gm.dbm = gm.ipc.register('dbm', DBM, type='process', start=True)
 
             # 초기화를 위한 대기
             time.sleep(1)
 
-            logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 종료')
             logging.info('--- 서버 접속 로그인 실행 ---')
-            gm.ipc.direct_order(Order(receiver='api', order='init'))
+            gm.ipc.order(Order(receiver='api', order='init'))
             
             # 초기화 완료 확인을 위한 대기
             time.sleep(1)
             
-            gm.ipc.direct_order(Order(receiver='api', order='login'))
+            # 로그인 요청
+            gm.ipc.order(Order(receiver='api', order='login'))
             
             # 로그인 완료 확인
             con_result = 0
-            while con_result == 0:  # 최대 3초 대기
-                logging.info(f"API 로그인 완료 확인 대기 중: {con_result}")
-                con_result = gm.ipc.direct_answer(Answer(receiver='api', order='GetConnectState', sender='admin'))
+            while con_result == 0:
+                con_result = gm.ipc.answer(Answer(receiver='api', order='GetConnectState', sender='admin'))
                 if con_result == 1:
                     logging.info("API 로그인 완료")
                     break
                 time.sleep(0.1)
             
-            if con_result != 1:
-                logging.error("API 로그인 실패 또는 시간 초과")
-      
+            # 실시간 데이터 전송 시작
+            gm.ipc.order(Order(receiver='api', order='send_real_data_start'))
+            
+            logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 종료')
+
         except Exception as e:
-            logging.error(str(e), exc_info=True)
+            logging.error(f"초기화 중 오류: {e}", exc_info=True)
 
     def run_admin(self):
+        """Admin 테스트 실행"""
         gm.ipc.order(Order(receiver='admin', order='start_test'))
+        
         # 테스트가 완료될 때까지 대기
         for _ in range(300):  # 최대 30초 대기
             if hasattr(gm.admin, 'testing_complete') and gm.admin.testing_complete:
@@ -1003,16 +1158,23 @@ class Main:
             time.sleep(0.1)
 
 if __name__ == "__main__":
-    import multiprocessing
-    multiprocessing.freeze_support() # 없으면 실행파일(exe)로 실행시 DBMServer멀티프로세스 생성시 프로그램 리셋되어 시작 반복 하는 것 방지
+    # 멀티프로세싱 지원
+    mp.freeze_support()
+    
+    # 초기화
+    init_logger()
+    
     try:
+        # 메인 실행
         gm.main = Main()
         gm.main.run_admin()
     except Exception as e:
-        logging.error(str(e), exc_info=True)
-
+        logging.error(f"메인 실행 중 오류: {e}", exc_info=True)
     finally:
+        # 정리
         if hasattr(gm, 'ipc') and gm.ipc:
             gm.ipc.cleanup() # 모든 쓰레드와 프로세스 정리
         logging.shutdown()
         os._exit(0)
+
+
