@@ -1,6 +1,5 @@
 from public import dc, get_path, profile_operation
 from chart import ctdt
-from worker import ModelProcess
 from datetime import datetime, timedelta
 import logging
 import sqlite3
@@ -9,10 +8,9 @@ import threading
 import copy
 import time
 
-class DBMServer(ModelProcess):
-    def __init__(self, name='dbm', myq=None, daemon=True):
-        ModelProcess.__init__(self, name=name, myq=myq, daemon=daemon)
-        self.ipc = None
+class DBMServer:
+    def __init__(self):
+        self.name = 'dbm'
         self.running = False
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
@@ -32,7 +30,6 @@ class DBMServer(ModelProcess):
         """컴포넌트 시작"""
         print(f"{self.__class__.__name__} 시작 중...")
         self.running = True
-        ModelProcess.start(self)
         self._lock = threading.Lock()
         self.thread_local = threading.local()  # 스레드 로컬 변수 추가
         
@@ -195,7 +192,7 @@ class DBMServer(ModelProcess):
             'result': result,
             'error': error
         }
-        self.work('admin', order, **job)
+        self.order('admin', order, **job)
 
     def execute_query(self, sql, db='chart', params=None):
         try:
@@ -441,7 +438,7 @@ class DBMServer(ModelProcess):
             return code in self.done_code
 
     def update_script_chart(self, job):
-        #self.work('admin', 'on_fx실시간_주식체결', **job)
+        #self.order('admin', 'on_fx실시간_주식체결', **job)
         code = job['code']
         #dictFID = job['dictFID']
         #if code in self.todo_code or code in self.done_code:

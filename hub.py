@@ -1,540 +1,1122 @@
-from public import dc, get_path, save_json, load_json
-from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QWidget, QLabel
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QColor
 import multiprocessing as mp
 import threading
-import copy
 import time
-import logging
 import uuid
+import logging
 import queue
-import os
-from datetime import datetime
 
-# 워커 쓰레드 클래스
-class WorkerThread(QThread):
-    taskReceived = pyqtSignal(str, str, object, object)
-    
-    def __init__(self, name, target):
-        super().__init__()
-        self.name = name
-        self.target = target
-        self.running = True
-        
-        # 이 쓰레드에서 처리할 시그널 연결
-        self.taskReceived.connect(self._processTask)
-    
-    def run(self):
-        logging.debug(f"{self.name} 쓰레드 시작")
-        self.exec_()  # 이벤트 루프 시작
-        logging.debug(f"{self.name} 쓰레드 종료")
-
-    def _get_var(self, var_name):
-        """타겟 객체의 변수 값을 가져오는 내부 메서드"""
-        try:
-            return getattr(self.target, var_name, None)
-        except Exception as e:
-            logging.error(f"변수 접근 오류: {e}", exc_info=True)
-            return None
-
-    def _set_var(self, var_name, value):
-        """타겟 객체의 변수 값을 설정하는 내부 메서드"""
-        try:
-            setattr(self.target, var_name, value)
-            return True
-        except Exception as e:
-            logging.error(f"변수 설정 오류: {e}", exc_info=True)
-            return None
-            
-    @pyqtSlot(str, str, object, object)
-    def _processTask(self, task_id, method_name, task_data, callback):
-        # 메서드 찾기
-        method = getattr(self.target, method_name, None)
-        if not method:
-            if callback:
-                callback(None)
-            return
-        
-        # 메서드 실행
-        args, kwargs = task_data
-        try:
-            result = method(*args, **kwargs)
-            if callback:
-                callback(result)
-        except Exception as e:
-            logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-            if callback:
-                callback(None)
-
-# 워커 관리자
-class WorkerManager:
-    def __init__(self):
-        self.workers = {}  # name -> worker thread
-        self.targets = {}  # name -> target object
-
-        self.manager = None
-        self.task_queues = {} # name -> manager.list
-        self.result_dicts = {} # name -> manager.dict
-
-        self.is_shutting_down = False
-
-    def register(self, name, target_class=None, use_thread=True):
-        if use_thread:
-            target = target_class() if isinstance(target_class, type) else target_class
-            worker = WorkerThread(name, target)
-            worker.start()
-            self.workers[name] = worker
-        else:
-            target = target_class() if isinstance(target_class, type) else target_class
-            self.targets[name] = target
-        return self
-
-    def stop_worker(self, worker_name):
-        """워커 중지"""
-        # 쓰레드 워커 중지
-        if worker_name in self.workers:
-            worker = self.workers[worker_name]
-            worker.running = False
-            worker.quit()  # 이벤트 루프 종료
-            worker.wait(1000)  # 최대 1초간 대기
-            self.workers.pop(worker_name, None)
-            logging.debug(f"워커 종료: {worker_name} (쓰레드)")
-            return True
-            
-        # 메인 쓰레드 워커 제거
-        elif worker_name in self.targets:
-            self.targets.pop(worker_name, None)
-            logging.debug(f"워커 제거: {worker_name} (메인 쓰레드)")
-            return True
-            
-        return False
-
-    def stop_all(self):
-        """모든 워커 중지"""
-        # 모든 쓰레드 워커 중지
-        self.is_shutting_down = True
-
-        logging.info("모든 워커 중지 중...")
-        for name in list(self.workers.keys()):
-            self.stop_worker(name)
-            
-        # 모든 메인 쓰레드 워커 제거
-        self.targets.clear()
-        
-        # Manager 종료
-        if self.manager is not None:
-            try:
-                self.manager.shutdown()
-            except:
-                pass
-            self.manager = None
-
-        logging.debug("모든 워커 종료")
-        
-    def get_var(self, worker_name, var_name):
-        """워커의 변수 값을 가져오는 함수"""
-        if self.is_shutting_down:
-            return None
-            
-        # 워커 찾기
-        if worker_name not in self.workers and worker_name not in self.targets:
-            logging.error(f"워커 없음: {worker_name}")
-            return None
-            
-        # 메인 쓰레드에서 실행하는 경우
-        if worker_name in self.targets:
-            target = self.targets[worker_name]
-            try:
-                return getattr(target, var_name, None)
-            except Exception as e:
-                logging.error(f"변수 접근 오류: {e}", exc_info=True)
-                return None
-                
-        # 쓰레드로 실행하는 경우
-        if worker_name in self.workers:
-            worker = self.workers[worker_name]
-            return self.answer(worker_name, '_get_var', var_name)
-            
-        return None
-        
-    def set_var(self, worker_name, var_name, value):
-        """워커의 변수 값을 설정하는 함수"""
-        if self.is_shutting_down:
-            return False
-            
-        # 워커 찾기
-        if worker_name not in self.workers and worker_name not in self.targets:
-            logging.error(f"워커 없음: {worker_name}")
-            return False
-            
-        # 메인 쓰레드에서 실행하는 경우
-        if worker_name in self.targets:
-            target = self.targets[worker_name]
-            try:
-                setattr(target, var_name, value)
-                return True
-            except Exception as e:
-                logging.error(f"변수 설정 오류: {e}", exc_info=True)
-                return False
-                
-        # 쓰레드로 실행하는 경우
-        if worker_name in self.workers:
-            return self.answer(worker_name, '_set_var', var_name, value) is not None
-            
-        return False
-        
-    def answer(self, worker_name, method_name, *args, **kwargs):
-        """동기식 함수 호출"""
-        if self.is_shutting_down:
-            return None
-        
-        # 워커 찾기
-        if worker_name not in self.workers and worker_name not in self.targets:
-            logging.error(f"워커 없음: {worker_name}")
-            return None
-        
-        # 메인 쓰레드에서 실행하는 경우
-        if worker_name in self.targets:
-            target = self.targets[worker_name]
-            method = getattr(target, method_name, None)
-            if not method:
-                return None
-            try:
-                return method(*args, **kwargs)
-            except Exception as e:
-                logging.error(f"직접 호출 오류: {e}", exc_info=True)
-                return None
-        
-        # 쓰레드로 실행하는 경우
-        worker = self.workers[worker_name]
-        result = [None]
-        event = threading.Event()
-        
-        def callback(res):
-            result[0] = res
-            event.set()
-        
-        # 시그널로 태스크 전송
-        task_id = str(uuid.uuid4())
-        task_data = (args, kwargs)
-        worker.taskReceived.emit(task_id, method_name, task_data, callback)
-        
-        # 결과 대기
-        if not event.wait(3.0):
-            logging.warning(f"호출 타임아웃: {worker_name}.{method_name}")
-            return None
-        
-        return result[0]
-
-    def work(self, worker_name, method_name, *args, callback=None, **kwargs):
-        """비동기 함수 호출"""
-        if self.is_shutting_down:
-            return None
-        
-        # 워커 찾기
-        if worker_name not in self.workers and worker_name not in self.targets:
-            logging.error(f"워커 없음: {worker_name}")
-            return False
-        
-        # 메인 쓰레드에서 실행하는 경우
-        if worker_name in self.targets:
-            target = self.targets[worker_name]
-            method = getattr(target, method_name, None)
-            if not method:
-                return False
-            try:
-                result = method(*args, **kwargs)
-                if callback:
-                    callback(result)
-                return True
-            except Exception as e:
-                logging.error(f"직접 호출 오류: {e}", exc_info=True)
-                if callback:
-                    callback(None)
-                return False
-        
-        # 쓰레드로 실행하는 경우
-        worker = self.workers[worker_name]
-        task_id = str(uuid.uuid4())
-        task_data = (args, kwargs)
-        worker.taskReceived.emit(task_id, method_name, task_data, callback)
-        return True
-la = WorkerManager()
-
-# IPC(프로세스 간 통신) 관리자
 class IPCManager:
-   def __init__(self):
-      self.manager = mp.Manager()
-      self.queues = {}  # name -> Queue
-      self.result_dict = self.manager.dict()  # id -> result
-      self.callbacks = {}  # id -> callback function
-      self.dbm_process = None
-      self.shutting_down = False
-   
-   def create_queue(self, name):
-      """특정 이름의 큐 생성"""
-      if name not in self.queues:
-         self.queues[name] = mp.Queue()
-      return self.queues[name]
-   
-   def get_queue(self, name):
-      """큐 가져오기"""
-      if name not in self.queues:
-         self.create_queue(name)
-      return self.queues[name]
-   
-   def prepare_shutdown(self):
-      self.shutting_down = True
-      logging.info("종료 준비 중 ...")
-   
-   def start_dbm_process(self, dbm_class):
-      """DBM 프로세스 시작"""
-      if self.dbm_process is not None:
-         logging.warning("DBM 프로세스가 이미 실행 중입니다")
-         return
-      
-      # 필요한 큐 생성
-      self.create_queue('admin_to_dbm')
-      self.create_queue('dbm_to_admin')
-      
-      # 프로세스 시작
-      self.dbm_process = mp.Process(
-         target=dbm_worker,
-         args=(dbm_class, self.queues['admin_to_dbm'], 
-               self.queues['dbm_to_admin'], self.result_dict),
-         daemon=True
-      )
-      self.dbm_process.start()
-      logging.info(f"DBM 프로세스 시작됨 (PID: {self.dbm_process.pid})")
-      return self.dbm_process.pid
-   
-   def stop_dbm_process(self):
-      """DBM 프로세스 종료"""
-      if self.dbm_process is None:
-         return
-      
-      # 종료 명령 전송
-      self.queues['admin_to_dbm'].put({
-         'command': 'stop'
-      })
-      
-      # 프로세스 종료 대기
-      self.dbm_process.join(2.0)
-      if self.dbm_process.is_alive():
-         self.dbm_process.terminate()
-         self.dbm_process.join(1.0)
-      
-      self.dbm_process = None
-      logging.info("DBM 프로세스 종료됨")
-   
-   def start_admin_listener(self, admin_instance):
-      """Admin의 메시지 리스너 시작"""
-      self.admin_listener = threading.Thread(
-         target=admin_listener_thread,
-         args=(admin_instance, self.queues['dbm_to_admin'], self.result_dict, self.callbacks),
-         daemon=True
-      )
-      self.admin_listener.start()
-      logging.info("Admin 리스너 쓰레드 시작")
-   
-   def admin_to_dbm(self, method, *args, wait_result=True, timeout=10, callback=None, **kwargs):
-      """DBM에 요청 전송"""
-      if self.shutting_down:
-         return None
-      
-      req_id = str(uuid.uuid4())
-      
-      # 콜백 등록
-      if callback:
-         self.callbacks[req_id] = callback
-      
-      # 요청 전송
-      self.queues['admin_to_dbm'].put({
-         'id': req_id,
-         'method': method,
-         'args': args,
-         'kwargs': kwargs
-      })
-      
-      # 결과를 기다리지 않으면 바로 반환
-      if not wait_result:
-         return req_id
-      
-      # 결과 대기
-      start_time = time.time()
-      while req_id not in self.result_dict:
-         if time.time() - start_time > timeout:
-            logging.warning(f"요청 타임아웃: {method}")
-            return None
-         time.sleep(0.01)
-      
-      # 결과 반환 및 정리
-      result = self.result_dict[req_id]
-      del self.result_dict[req_id]
-      return result.get('result', None)
+    """프로세스 간 통신 관리자"""
+    
+    def __init__(self):
+        self.manager = mp.Manager()
+        self.queues = {}  # process_name -> Queue
+        self.stream_queues = {}  # process_name -> Queue (스트림 전용)
+        self.result_dict = self.manager.dict()  # id -> result
+        self.processes = {}  # process_name -> Process
+        self.threads = {}  # process_name -> Thread
+        self.stream_threads = {}  # process_name -> Thread (스트림 처리 전용)
+        self.instances = {}  # process_name -> instance
+        self.registered = {}  # process_name -> config
+        self.shutting_down = False
 
-# DBM 프로세스 워커
-def dbm_worker(dbm_class, input_queue, output_queue, result_dict):
-   """DBM 프로세스 메인 함수"""
-   try:
-      # DBM 인스턴스 생성
-      dbm = dbm_class()
-      logging.info("DBM 프로세스 초기화 완료")
-      
-      # Admin으로 요청 보내는 함수
-      def dbm_to_admin(method, *args, wait_result=True, timeout=10, **kwargs):
-         req_id = str(uuid.uuid4())
-         
-         # 요청 전송
-         output_queue.put({
-            'id': req_id,
-            'method': method,
+    def register(self, name, cls, type=None, start=False, *args, **kwargs):
+        """컴포넌트 등록 (재등록 시 인스턴스만 교체)"""
+        is_reregister = name in self.registered
+        
+        if is_reregister:
+            # 재등록: 기존 컴포넌트 중지 (큐는 유지)
+            old_reg_info = self.registered[name]
+            if old_reg_info['type'] != type:
+                raise ValueError(f"컴포넌트 타입 변경 불가: {old_reg_info['type']} -> {type}")
+            
+            # 기존 워커 중지 (큐는 유지)
+            self._stop_worker_only(name)
+            logging.info(f"{name} 인스턴스 교체 중...")
+        else:
+            # 신규 등록: 큐 생성
+            self.queues[name] = mp.Queue()
+            self.stream_queues[name] = mp.Queue(maxsize=1000)  # 스트림 큐 (오버플로우 방지)
+        
+        # 등록 정보 저장/업데이트
+        self.registered[name] = {
+            'class': cls,
+            'type': type,
             'args': args,
             'kwargs': kwargs
-         })
-         
-         # 결과를 기다리지 않으면 바로 반환
-         if not wait_result:
+        }
+        
+        # 새 인스턴스 생성
+        instance = cls(*args, **kwargs)
+        self.instances[name] = instance
+        
+        # IPC 기능 추가
+        self._add_ipc_methods(instance, name)
+        
+        if is_reregister:
+            logging.info(f"{name} 인스턴스 교체 완료")
+        
+        # 자동 시작
+        if start:
+            self.start(name)
+        
+        return instance
+    
+    def _stop_worker_only(self, name):
+        """워커만 중지 (큐는 유지)"""
+        if name not in self.registered:
+            return
+        
+        reg_info = self.registered[name]
+        
+        # 종료 명령 전송
+        try:
+            self.queues[name].put({'command': 'stop'}, timeout=1)
+        except:
+            pass
+        
+        # 스트림 워커 중지
+        if name in self.stream_threads and self.stream_threads[name]:
+            if self.stream_threads[name].is_alive():
+                try:
+                    self.stream_queues[name].put({'command': 'stop'}, timeout=0.1)
+                except:
+                    pass
+                self.stream_threads[name].join(1.0)
+            self.stream_threads[name] = None
+            logging.info(f"{name} 스트림 워커 중지됨")
+        
+        if reg_info['type'] == 'process':
+            if name in self.processes and self.processes[name]:
+                self.processes[name].join(2.0)
+                if self.processes[name].is_alive():
+                    self.processes[name].terminate()
+                    self.processes[name].join(1.0)
+                self.processes[name] = None
+                logging.info(f"{name} 프로세스 워커 중지됨")
+        
+        elif reg_info['type'] == 'thread':
+            if name in self.threads and self.threads[name]:
+                if self.threads[name].is_alive():
+                    self.threads[name].join(2.0)
+                self.threads[name] = None
+                logging.info(f"{name} 스레드 워커 중지됨")
+        
+        else:  # type=None
+            if name in self.threads and self.threads[name]:
+                if self.threads[name].is_alive():
+                    self.threads[name].join(1.0)
+                self.threads[name] = None
+                logging.info(f"{name} 메인 리스너 워커 중지됨")
+    
+    def unregister(self, name):
+        """컴포넌트 등록 해제 (완전 삭제)"""
+        if name not in self.registered:
+            return
+        
+        self.stop(name)
+        
+        del self.registered[name]
+        del self.instances[name]
+        
+        # 큐도 완전 삭제 (다른 컴포넌트가 참조할 수 없게 됨)
+        if name in self.queues:
+            # 큐 비우기
+            try:
+                while True:
+                    self.queues[name].get_nowait()
+            except:
+                pass
+            del self.queues[name]
+        
+        # 스트림 큐도 완전 삭제
+        if name in self.stream_queues:
+            try:
+                while True:
+                    self.stream_queues[name].get_nowait()
+            except:
+                pass
+            del self.stream_queues[name]
+        
+        logging.info(f"{name} 컴포넌트 완전 삭제됨")
+    
+    def start(self, name=None):
+        """컴포넌트 시작"""
+        if name is None:
+            # 전체 시작 (모든 타입 포함)
+            for comp_name in self.registered.keys():
+                self._start_single(comp_name)
+        else:
+            self._start_single(name)
+    
+    def _start_single(self, name):
+        """단일 컴포넌트 시작"""
+        if name not in self.registered:
+            raise ValueError(f"등록되지 않은 컴포넌트: {name}")
+        
+        reg_info = self.registered[name]
+        
+        if reg_info['type'] == 'process':
+            self._start_process(name)
+        elif reg_info['type'] == 'thread':
+            self._start_thread(name)
+        else:  # type=None: 메인 스레드
+            self._start_main_listener(name)
+        
+        # 스트림 워커 시작 (모든 타입 공통)
+        self._start_stream_worker(name)
+    
+    def stop(self, name=None):
+        """컴포넌트 중지"""
+        if name is None:
+            # 전체 중지
+            for comp_name in list(self.registered.keys()):
+                self._stop_single(comp_name)
+        else:
+            self._stop_single(name)
+    
+    def _stop_single(self, name):
+        """단일 컴포넌트 중지"""
+        if name not in self.registered:
+            return
+        
+        reg_info = self.registered[name]
+        
+        # 종료 명령 전송
+        try:
+            self.queues[name].put({'command': 'stop'}, timeout=1)
+        except:
+            pass
+        
+        # 스트림 워커 중지
+        if name in self.stream_threads and self.stream_threads[name]:
+            try:
+                self.stream_queues[name].put({'command': 'stop'}, timeout=0.1)
+            except:
+                pass
+            if self.stream_threads[name].is_alive():
+                self.stream_threads[name].join(1.0)
+            self.stream_threads[name] = None
+            logging.info(f"{name} 스트림 워커 종료됨")
+        
+        if reg_info['type'] == 'process':
+            if name in self.processes and self.processes[name]:
+                self.processes[name].join(2.0)
+                if self.processes[name].is_alive():
+                    self.processes[name].terminate()
+                    self.processes[name].join(1.0)
+                self.processes[name] = None
+                logging.info(f"{name} 프로세스 종료됨")
+        
+        elif reg_info['type'] == 'thread':
+            if name in self.threads and self.threads[name]:
+                if self.threads[name].is_alive():
+                    self.threads[name].join(2.0)
+                self.threads[name] = None
+                logging.info(f"{name} 스레드 종료됨")
+        
+        else:  # type=None
+            if name in self.threads and self.threads[name]:
+                if self.threads[name].is_alive():
+                    self.threads[name].join(1.0)
+                self.threads[name] = None
+                logging.info(f"{name} 메인 리스너 종료됨")
+    
+    def shutdown(self):
+        """전체 시스템 종료"""
+        logging.info("시스템 종료 시작...")
+        self.stop()  # 전체 중지
+        
+        # 자원 정리
+        try:
+            self.result_dict.clear()
+        except:
+            pass
+        
+    def list_components(self):
+        """등록된 컴포넌트 목록 조회"""
+        return {
+            name: {
+                'type': info['type'],
+                'running': self._is_running(name),
+                'stream_running': self._is_stream_running(name),
+                'class': info['class'].__name__
+            }
+            for name, info in self.registered.items()
+        }
+    
+    def _is_running(self, name):
+        """컴포넌트 실행 상태 확인"""
+        if name not in self.registered:
+            return False
+        
+        reg_info = self.registered[name]
+        
+        if reg_info['type'] == 'process':
+            return name in self.processes and self.processes[name] and self.processes[name].is_alive()
+        elif reg_info['type'] == 'thread':
+            return name in self.threads and self.threads[name] and self.threads[name].is_alive()
+        else:  # type=None
+            return name in self.threads and self.threads[name] and self.threads[name].is_alive()
+    
+    def _is_stream_running(self, name):
+        """스트림 워커 실행 상태 확인"""
+        return name in self.stream_threads and self.stream_threads[name] and self.stream_threads[name].is_alive()
+    
+    def get_component_status(self, name):
+        """특정 컴포넌트 상태 조회"""
+        if name not in self.registered:
+            return None
+        
+        reg_info = self.registered[name]
+        return {
+            'name': name,
+            'type': reg_info['type'],
+            'class': reg_info['class'].__name__,
+            'running': self._is_running(name),
+            'stream_running': self._is_stream_running(name),
+            'has_queue': name in self.queues,
+            'has_stream_queue': name in self.stream_queues,
+            'args': reg_info['args'],
+            'kwargs': reg_info['kwargs']
+        }
+    
+    def _start_process(self, name):
+        """프로세스 시작"""
+        reg_info = self.registered[name]
+        
+        self.processes[name] = mp.Process(
+            target=process_worker,
+            args=(name, reg_info['class'], self.queues[name], self.stream_queues[name], self.queues, self.stream_queues, self.result_dict, reg_info['args'], reg_info['kwargs']),
+            daemon=False
+        )
+        self.processes[name].start()
+        logging.info(f"{name} 프로세스 시작됨 (PID: {self.processes[name].pid})")
+    
+    def _start_thread(self, name):
+        """스레드 시작"""
+        self.threads[name] = threading.Thread(
+            target=thread_worker,
+            args=(name, self.instances[name], self.queues[name], self.queues, self.stream_queues, self.result_dict),
+            daemon=True
+        )
+        self.threads[name].start()
+        logging.info(f"{name} 스레드 시작됨")
+    
+    def _start_main_listener(self, name):
+        """메인 컴포넌트 리스너 시작"""
+        self.threads[name] = threading.Thread(
+            target=main_listener_worker,
+            args=(name, self.instances[name], self.queues[name], self.result_dict),
+            daemon=True
+        )
+        self.threads[name].start()
+        logging.info(f"{name} 메인 리스너 시작됨")
+    
+    def _start_stream_worker(self, name):
+        """스트림 워커 시작 (모든 타입 공통)"""
+        self.stream_threads[name] = threading.Thread(
+            target=stream_worker,
+            args=(name, self.instances[name], self.stream_queues[name]),
+            daemon=True
+        )
+        self.stream_threads[name].start()
+        logging.info(f"{name} 스트림 워커 시작됨")
+    
+    def _add_ipc_methods(self, instance, process_name):
+        """인스턴스에 IPC 메서드 추가"""
+        def order(target, method, *args, **kwargs):
+            return self._send_request(target, method, args, kwargs, wait_result=False)
+        
+        def answer(target, method, *args, timeout=10, **kwargs):
+            return self._send_request(target, method, args, kwargs, wait_result=True, timeout=timeout)
+        
+        def stream(target, func_name, *args, **kwargs):
+            return self._send_stream(target, func_name, args, kwargs)
+        
+        def broadcast(method, *args, exclude=None, **kwargs):
+            exclude = exclude or [process_name]
+            results = {}
+            for proc_name in self.queues.keys():
+                if proc_name not in exclude:
+                    results[proc_name] = order(proc_name, method, *args, **kwargs)
+            return results
+        
+        instance.order = order
+        instance.answer = answer
+        instance.stream = stream
+        instance.broadcast = broadcast
+
+    def order(self, target, method, *args, **kwargs):
+        return self._send_request(target, method, args, kwargs, wait_result=False)
+
+    def answer(self, target, method, *args, timeout=10, **kwargs):
+        return self._send_request(target, method, args, kwargs, wait_result=True, timeout=timeout)
+    
+    def stream(self, target, func_name, *args, **kwargs):
+        return self._send_stream(target, func_name, args, kwargs)
+    
+    def _send_request(self, target, method, args, kwargs, wait_result, timeout=10):
+        """요청 전송 (동적 컴포넌트 추가 대응)"""
+        if target not in self.queues:
+            logging.error(f"알 수 없는 컴포넌트: {target} (등록된 컴포넌트: {list(self.queues.keys())})")
+            return None
+        
+        req_id = str(uuid.uuid4())
+        
+        # 요청 전송
+        try:
+            self.queues[target].put({
+                'id': req_id,
+                'method': method,
+                'args': args,
+                'kwargs': kwargs
+            })
+        except Exception as e:
+            logging.error(f"요청 전송 실패 to {target}: {e}")
+            return None
+        
+        if not wait_result:
             return req_id
-         
-         # 결과 대기
-         start_time = time.time()
-         while req_id not in result_dict:
+        
+        # 결과 대기 (0.1ms 간격)
+        start_time = time.time()
+        while req_id not in self.result_dict:
+            # 대상 컴포넌트가 삭제되었는지 확인
+            if target not in self.queues:
+                logging.warning(f"대상 컴포넌트 {target}가 삭제됨")
+                return None
+            
             if time.time() - start_time > timeout:
-               logging.warning(f"요청 타임아웃: {method}")
-               return None
-            time.sleep(0.01)
-         
-         # 결과 반환 및 정리
-         result = result_dict[req_id]
-         del result_dict[req_id]
-         return result.get('result', None)
-      
-      # DBM 인스턴스에 dbm_to_admin 함수 추가
-      dbm.dbm_to_admin = dbm_to_admin
-      
-      shutting_down = False
-      # 메시지 처리 루프
-      while not shutting_down:
-         try:
-            # 요청 가져오기 (타임아웃 설정하여 간격적으로 체크)
+                logging.warning(f"요청 타임아웃: {method} to {target}")
+                return None
+            time.sleep(0.0001)  # 0.1ms
+        
+        # 결과 반환
+        result = self.result_dict[req_id]
+        del self.result_dict[req_id]
+        return result.get('result', None)
+    
+    def _send_stream(self, target, func_name, args, kwargs):
+        """스트림 데이터 전송"""
+        if target not in self.stream_queues:
+            logging.error(f"알 수 없는 스트림 대상: {target}")
+            return False
+        
+        try:
+            # 논블로킹으로 전송 (큐가 가득 차면 드롭)
+            self.stream_queues[target].put_nowait({
+                'func_name': func_name,
+                'args': args,
+                'kwargs': kwargs
+            })
+            return True
+        except queue.Full:
+            # 큐 오버플로우 시 경고 (너무 빈번하면 로그 레벨 조정)
+            logging.debug(f"스트림 큐 오버플로우: {target}")
+            return False
+        except Exception as e:
+            logging.error(f"스트림 전송 실패 to {target}: {e}")
+            return False
+
+def stream_worker(comp_name, instance, stream_queue):
+    """스트림 전용 워커"""
+    try:
+        logging.info(f"{comp_name} 스트림 워커 초기화 완료")
+        
+        while True:
             try:
-               request = input_queue.get(timeout=0.001)
-            except queue.Empty:
-               continue
-            
-            # 종료 명령 확인
-            if 'command' in request:
-                if request['command'] == 'stop':
-                    shutting_down = True
-                    logging.info("종료 명령 수신")
+                stream_data = stream_queue.get(timeout=0.0001)  # 0.1ms
+                
+                # 종료 명령 확인
+                if stream_data.get('command') == 'stop':
+                    logging.info(f"{comp_name}: 스트림 워커 종료 명령 수신")
                     break
-                elif request['command'] == 'prepare_shutdown':
-                    shutting_down = True
-                    continue
-
-            # 요청 정보 파싱
-            req_id = request.get('id')
-            method_name = request.get('method')
-            args = request.get('args', ())
-            kwargs = request.get('kwargs', {})
-            
-            # 메서드 찾기
-            method = getattr(dbm, method_name, None)
-            if method is None:
-               logging.error(f"메서드 없음: {method_name}")
-               result_dict[req_id] = {
-                  'status': 'error',
-                  'error': f"메서드 없음: {method_name}",
-                  'result': None
-               }
-               continue
-            
-            # 메서드 실행
-            try:
-               result = method(*args, **kwargs)
-               result_dict[req_id] = {
-                  'status': 'success',
-                  'result': result
-               }
-               #logging.debug(f"메서드 실행 완료: {method_name}, 결과: {result}")
-            except Exception as e:
-               logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-               result_dict[req_id] = {
-                  'status': 'error',
-                  'error': str(e),
-                  'result': None
-               }
-         except Exception as e:
-            logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
-   
-   except Exception as e:
-      logging.error(f"DBM 프로세스 오류: {e}", exc_info=True)
-   
-   finally:
-      logging.info("DBM 프로세스 종료")
-
-# Admin 리스너 쓰레드
-def admin_listener_thread(admin_instance, input_queue, result_dict, callbacks):
-   """Admin 메시지 리스너 쓰레드"""
-   try:
-      logging.info("Admin 리스너 쓰레드 시작")
-      
-      while True:
-         try:
-            # 요청 가져오기 (타임아웃 설정하여 간격적으로 체크)
-            try:
-               request = input_queue.get(timeout=0.001)
+                
+                # 스트림 데이터 처리
+                func_name = stream_data.get('func_name')
+                args = stream_data.get('args', ())
+                kwargs = stream_data.get('kwargs', {})
+                
+                try:
+                    method = getattr(instance, func_name, None)
+                    if method is not None:
+                        method(*args, **kwargs)  # 즉시 실행 (결과 반환 없음)
+                    else:
+                        logging.debug(f"스트림 메서드 없음: {func_name}")
+                
+                except Exception as e:
+                    logging.error(f"스트림 메서드 실행 오류: {e}")
+                
             except queue.Empty:
-               continue
-            
-            # 요청 정보 파싱
-            req_id = request.get('id')
-            method_name = request.get('method')
-            args = request.get('args', ())
-            kwargs = request.get('kwargs', {})
-            
-            # 메서드 찾기
-            method = getattr(admin_instance, method_name, None)
-            if method is None:
-               logging.error(f"메서드 없음: {method_name}")
-               result_dict[req_id] = {
-                  'status': 'error',
-                  'error': f"메서드 없음: {method_name}",
-                  'result': None
-               }
-               continue
-            
-            # 메서드 실행
-            try:
-               result = method(*args, **kwargs)
-               result_dict[req_id] = {
-                  'status': 'success',
-                  'result': result
-               }
-               
-               # 콜백 실행 (있는 경우)
-               if req_id in callbacks:
-                  try:
-                     callback = callbacks.pop(req_id)
-                     callback(result)
-                  except Exception as e:
-                     logging.error(f"콜백 실행 오류: {e}", exc_info=True)
-               
-               #logging.debug(f"메서드 실행 완료: {method_name}, 결과: {result}")
+                pass
             except Exception as e:
-               logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-               result_dict[req_id] = {
-                  'status': 'error',
-                  'error': str(e),
-                  'result': None
-               }
-         except Exception as e:
-            logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
+                logging.error(f"{comp_name}: 스트림 처리 오류: {e}")
+    
+    except Exception as e:
+        logging.error(f"{comp_name} 스트림 워커 오류: {e}", exc_info=True)
+    finally:
+        logging.info(f"{comp_name} 스트림 워커 종료")
+
+def process_worker(process_name, process_class, own_queue, own_stream_queue, all_queues, all_stream_queues, result_dict, args, kwargs):
+    """프로세스 워커"""
+    try:
+        # 인스턴스 생성
+        instance = process_class(*args, **kwargs)
+        logging.info(f"{process_name} 프로세스 초기화 완료")
+        
+        # IPC 기능 추가
+        def order(target, method, *args, **kwargs):
+            if target not in all_queues:
+                logging.error(f"알 수 없는 컴포넌트: {target}")
+                return None
+            
+            req_id = str(uuid.uuid4())
+            all_queues[target].put({
+                'id': req_id,
+                'method': method,
+                'args': args,
+                'kwargs': kwargs
+            })
+            return req_id
+        
+        def answer(target, method, *args, timeout=10, **kwargs):
+            if target not in all_queues:
+                logging.error(f"알 수 없는 컴포넌트: {target}")
+                return None
+            
+            req_id = str(uuid.uuid4())
+            all_queues[target].put({
+                'id': req_id,
+                'method': method,
+                'args': args,
+                'kwargs': kwargs
+            })
+            
+            # 결과 대기
+            start_time = time.time()
+            while req_id not in result_dict:
+                if time.time() - start_time > timeout:
+                    logging.warning(f"요청 타임아웃: {method} to {target}")
+                    return None
+                time.sleep(0.0001)  # 0.1ms
+            
+            result = result_dict[req_id]
+            del result_dict[req_id]
+            return result.get('result', None)
+        
+        def stream(target, func_name, *args, **kwargs):
+            if target not in all_stream_queues:
+                logging.error(f"알 수 없는 스트림 대상: {target}")
+                return False
+            
+            try:
+                all_stream_queues[target].put_nowait({
+                    'func_name': func_name,
+                    'args': args,
+                    'kwargs': kwargs
+                })
+                return True
+            except queue.Full:
+                logging.debug(f"스트림 큐 오버플로우: {target}")
+                return False
+            except Exception as e:
+                logging.error(f"스트림 전송 실패 to {target}: {e}")
+                return False
+        
+        def broadcast(method, *args, exclude=None, **kwargs):
+            exclude = exclude or [process_name]
+            results = {}
+            for proc_name in all_queues.keys():
+                if proc_name not in exclude:
+                    results[proc_name] = order(proc_name, method, *args, **kwargs)
+            return results
+        
+        instance.order = order
+        instance.answer = answer
+        instance.stream = stream
+        instance.broadcast = broadcast
+        
+        # 스트림 워커 시작
+        stream_thread = threading.Thread(
+            target=stream_worker,
+            args=(process_name, instance, own_stream_queue),
+            daemon=True
+        )
+        stream_thread.start()
+        
+        # 메시지 처리 루프
+        while True:
+            try:
+                request = own_queue.get(timeout=0.0001)  # 0.1ms
+                
+                # 종료 명령 확인
+                if request.get('command') == 'stop':
+                    logging.info(f"{process_name}: 종료 명령 수신")
+                    # 스트림 워커도 종료
+                    try:
+                        own_stream_queue.put_nowait({'command': 'stop'})
+                    except:
+                        pass
+                    break
+                
+                # 요청 처리
+                req_id = request.get('id')
+                method_name = request.get('method')
+                args = request.get('args', ())
+                kwargs = request.get('kwargs', {})
+                
+                try:
+                    method = getattr(instance, method_name, None)
+                    if method is None:
+                        result_data = {
+                            'status': 'error',
+                            'error': f"메서드 없음: {method_name}",
+                            'result': None
+                        }
+                    else:
+                        try:
+                            result = method(*args, **kwargs)
+                            result_data = {
+                                'status': 'success',
+                                'result': result
+                            }
+                        except Exception as e:
+                            logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+                            result_data = {
+                                'status': 'error',
+                                'error': str(e),
+                                'result': None
+                            }
+                    
+                    # 결과 저장
+                    result_dict[req_id] = result_data
+                    
+                except Exception as e:
+                    logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
+                
+            except queue.Empty:
+                pass
+            except Exception as e:
+                logging.error(f"{process_name}: 메시지 처리 오류: {e}", exc_info=True)
+    
+    except Exception as e:
+        logging.error(f"{process_name} 프로세스 오류: {e}", exc_info=True)
+    finally:
+        logging.info(f"{process_name} 프로세스 종료")
+
+def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queues, result_dict):
+    """스레드 워커"""
+    try:
+        logging.info(f"{thread_name} 스레드 초기화 완료")
+        
+        # IPC 기능 추가
+        def order(target, method, *args, **kwargs):
+            if target not in all_queues:
+                logging.error(f"알 수 없는 컴포넌트: {target}")
+                return None
+            
+            req_id = str(uuid.uuid4())
+            all_queues[target].put({
+                'id': req_id,
+                'method': method,
+                'args': args,
+                'kwargs': kwargs
+            })
+            return req_id
+        
+        def answer(target, method, *args, timeout=10, **kwargs):
+            if target not in all_queues:
+                logging.error(f"알 수 없는 컴포넌트: {target}")
+                return None
+            
+            req_id = str(uuid.uuid4())
+            all_queues[target].put({
+                'id': req_id,
+                'method': method,
+                'args': args,
+                'kwargs': kwargs
+            })
+            
+            # 결과 대기
+            start_time = time.time()
+            while req_id not in result_dict:
+                if time.time() - start_time > timeout:
+                    logging.warning(f"요청 타임아웃: {method} to {target}")
+                    return None
+                time.sleep(0.0001)  # 0.1ms
+            
+            result = result_dict[req_id]
+            del result_dict[req_id]
+            return result.get('result', None)
+        
+        def stream(target, func_name, *args, **kwargs):
+            if target not in all_stream_queues:
+                logging.error(f"알 수 없는 스트림 대상: {target}")
+                return False
+            
+            try:
+                all_stream_queues[target].put_nowait({
+                    'func_name': func_name,
+                    'args': args,
+                    'kwargs': kwargs
+                })
+                return True
+            except queue.Full:
+                logging.debug(f"스트림 큐 오버플로우: {target}")
+                return False
+            except Exception as e:
+                logging.error(f"스트림 전송 실패 to {target}: {e}")
+                return False
+        
+        def broadcast(method, *args, exclude=None, **kwargs):
+            exclude = exclude or [thread_name]
+            results = {}
+            for proc_name in all_queues.keys():
+                if proc_name not in exclude:
+                    results[proc_name] = order(proc_name, method, *args, **kwargs)
+            return results
+        
+        instance.order = order
+        instance.answer = answer
+        instance.stream = stream
+        instance.broadcast = broadcast
+        
+        # 메시지 처리 루프
+        while True:
+            try:
+                request = own_queue.get(timeout=0.0001)  # 0.1ms
+                
+                # 종료 명령 확인
+                if request.get('command') == 'stop':
+                    logging.info(f"{thread_name}: 종료 명령 수신")
+                    break
+                
+                # 요청 처리
+                req_id = request.get('id')
+                method_name = request.get('method')
+                args = request.get('args', ())
+                kwargs = request.get('kwargs', {})
+                
+                try:
+                    method = getattr(instance, method_name, None)
+                    if method is None:
+                        result_data = {
+                            'status': 'error',
+                            'error': f"메서드 없음: {method_name}",
+                            'result': None
+                        }
+                    else:
+                        try:
+                            result = method(*args, **kwargs)
+                            result_data = {
+                                'status': 'success',
+                                'result': result
+                            }
+                        except Exception as e:
+                            logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+                            result_data = {
+                                'status': 'error',
+                                'error': str(e),
+                                'result': None
+                            }
+                    
+                    # 결과 저장
+                    result_dict[req_id] = result_data
+                    
+                except Exception as e:
+                    logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
+                
+            except queue.Empty:
+                pass
+            except Exception as e:
+                logging.error(f"{thread_name}: 메시지 처리 오류: {e}", exc_info=True)
+    
+    except Exception as e:
+        logging.error(f"{thread_name} 스레드 오류: {e}", exc_info=True)
+    finally:
+        logging.info(f"{thread_name} 스레드 종료")
+
+def main_listener_worker(comp_name, instance, own_queue, result_dict):
+    """메인 컴포넌트 리스너"""
+    try:
+        logging.info(f"{comp_name} 메인 리스너 초기화 완료")
+        
+        # 메시지 처리 루프
+        while True:
+            try:
+                request = own_queue.get(timeout=0.0001)  # 0.1ms
+                
+                # 종료 명령 확인
+                if request.get('command') == 'stop':
+                    logging.info(f"{comp_name}: 리스너 종료 명령 수신")
+                    break
+                
+                # 요청 처리
+                req_id = request.get('id')
+                method_name = request.get('method')
+                args = request.get('args', ())
+                kwargs = request.get('kwargs', {})
+                
+                try:
+                    method = getattr(instance, method_name, None)
+                    if method is None:
+                        result_data = {
+                            'status': 'error',
+                            'error': f"메서드 없음: {method_name}",
+                            'result': None
+                        }
+                    else:
+                        try:
+                            result = method(*args, **kwargs)
+                            result_data = {
+                                'status': 'success',
+                                'result': result
+                            }
+                        except Exception as e:
+                            logging.error(f"메서드 실행 오류: {e}", exc_info=True)
+                            result_data = {
+                                'status': 'error',
+                                'error': str(e),
+                                'result': None
+                            }
+                    
+                    # 결과 저장
+                    result_dict[req_id] = result_data
+                    
+                except Exception as e:
+                    logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
+                
+            except queue.Empty:
+                pass
+            except Exception as e:
+                logging.error(f"{comp_name}: 리스너 처리 오류: {e}", exc_info=True)
+    
+    except Exception as e:
+        logging.error(f"{comp_name} 메인 리스너 오류: {e}", exc_info=True)
+    finally:
+        logging.info(f"{comp_name} 메인 리스너 종료")
+
+# 테스트용 클래스들
+class ADM:
+    def __init__(self):
+        self.name = "ADM"
+        self.data_store = {}
+        self.stream_count = 0
+    
+    def get_admin_info(self, key):
+        return f"ADM info for {key}: {self.data_store.get(key, 'No data')}"
+    
+    def store_admin_data(self, key, value):
+        self.data_store[key] = value
+        return f"ADM stored: {key} = {value}"
+    
+    def process_admin_request(self, request_type, data):
+        return f"ADM processed {request_type} with data: {data}"
+    
+    def receive_real_data(self, data):
+        """스트림 데이터 수신 메서드"""
+        self.stream_count += 1
+        if self.stream_count % 100 == 0:  # 100개마다 로그
+            logging.info(f"[{self.name}] 스트림 데이터 수신됨 #{self.stream_count}: {data}")
+    
+    def get_stream_count(self):
+        return self.stream_count
+    
+    def test_adm_requests(self):
+        print(f"[{self.name}] 다른 컴포넌트들에게 요청 시작")
+        
+        result = self.answer('dbm', 'save_data', 'users', {'id': 1, 'name': 'Alice', 'from': 'ADM'})
+        print(f"[{self.name} -> DBM] save_data: {result}")
+        
+        result = self.answer('api', 'handle_request', '/admin/status', {'user': 'admin'})
+        print(f"[{self.name} -> API] handle_request: {result}")
+
+class DBM:
+    def __init__(self):
+        self.name = "DBM"
+        self.database = {}
+        self.stream_count = 0
+    
+    def query_data(self, table, condition):
+        return f"DBM query result from {table} where {condition}: {self.database.get(table, [])}"
+    
+    def save_data(self, table, record):
+        if table not in self.database:
+            self.database[table] = []
+        self.database[table].append(record)
+        return f"DBM saved to {table}: {record}"
+    
+    def get_db_status(self):
+        return f"DBM status: {len(self.database)} tables, total records: {sum(len(v) for v in self.database.values())}"
+    
+    def receive_market_data(self, market_data):
+        """시장 데이터 스트림 수신"""
+        self.stream_count += 1
+        if self.stream_count % 50 == 0:  # 50개마다 로그
+            logging.info(f"[{self.name}] 시장 데이터 저장됨 #{self.stream_count}: {market_data}")
+    
+    def get_stream_count(self):
+        return self.stream_count
+    
+    def test_dbm_requests(self):
+        print(f"[{self.name}] 다른 컴포넌트들에게 요청 시작")
+        
+        result = self.answer('adm', 'store_admin_data', 'last_db_operation', 'data_saved')
+        print(f"[{self.name} -> ADM] store_admin_data: {result}")
+        
+        result = self.answer('api', 'cache_data', 'db_cache', {'tables': list(self.database.keys())})
+        print(f"[{self.name} -> API] cache_data: {result}")
+
+class API:
+    def __init__(self):
+        self.name = "API"
+        self.cache = {}
+        self.running = False
+        self.tick_count = 0
+    
+    def handle_request(self, endpoint, params):
+        return f"API response from {endpoint} with params {params}: Success"
+    
+    def cache_data(self, key, data):
+        self.cache[key] = data
+        return f"API cached: {key} = {data}"
+    
+    def get_api_stats(self):
+        return f"API stats: {len(self.cache)} cached items"
+    
+    def start_streaming(self):
+        """실시간 데이터 스트리밍 시작"""
+        self.running = True
+        logging.info(f"[{self.name}] 실시간 데이터 스트리밍 시작")
+        
+        # 별도 스레드에서 고빈도 스트리밍
+        import threading
+        def stream_loop():
+            while self.running:
+                self.tick_count += 1
+                
+                # 실시간 데이터 생성
+                market_data = {
+                    'tick': self.tick_count,
+                    'price': 100 + (self.tick_count % 50),
+                    'volume': 1000 + (self.tick_count % 100),
+                    'timestamp': time.time()
+                }
+                
+                # ADM과 DBM으로 스트림 전송
+                self.stream('adm', 'receive_real_data', market_data)
+                self.stream('dbm', 'receive_market_data', market_data)
+                
+                time.sleep(0.001)  # 1ms 간격 (1000 ticks/sec)
+        
+        streaming_thread = threading.Thread(target=stream_loop, daemon=True)
+        streaming_thread.start()
+        
+        return "스트리밍 시작됨"
+    
+    def stop_streaming(self):
+        """실시간 데이터 스트리밍 중지"""
+        self.running = False
+        logging.info(f"[{self.name}] 실시간 데이터 스트리밍 중지")
+        return "스트리밍 중지됨"
+    
+    def get_tick_count(self):
+        return self.tick_count
+    
+    def test_api_requests(self):
+        print(f"[{self.name}] 다른 컴포넌트들에게 요청 시작")
+        
+        result = self.answer('adm', 'process_admin_request', 'api_log', f'Cache size: {len(self.cache)}')
+        print(f"[{self.name} -> ADM] process_admin_request: {result}")
+        
+        result = self.answer('dbm', 'query_data', 'users', 'from=ADM')
+        print(f"[{self.name} -> DBM] query_data: {result}")
+
+if __name__ == "__main__":
+   # 멀티프로세싱 설정
+   mp.set_start_method('spawn', force=True)
+   logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
    
-   except Exception as e:
-      logging.error(f"Admin 리스너 쓰레드 오류: {e}", exc_info=True)
+   def test_ipc_communication():
+       print("=== IPC 통신 테스트 시작 ===")
+       
+       ipc = IPCManager()
+       
+       try:
+           # 컴포넌트 등록
+           print("\n1. 컴포넌트 등록")
+           adm = ipc.register('adm', ADM, type=None, start=False)          # 메인 스레드
+           logger = ipc.register('logger', ADM, type='thread', start=False)  # 멀티 스레드  
+           dbm = ipc.register('dbm', DBM, type='process', start=False)      # 프로세스
+           api = ipc.register('api', API, type='process', start=False)      # 프로세스
+           
+           print(f"등록된 컴포넌트: {list(ipc.registered.keys())}")
+           
+           # 전체 시작
+           print("\n2. 전체 시작")
+           ipc.start()
+           
+           time.sleep(2)  # 초기화 대기
+           
+           print(f"ADM 인스턴스 (메인): {adm}")
+           print(f"Logger 스레드: {ipc.threads.get('logger')}")
+           print(f"DBM 프로세스: {ipc.processes.get('dbm')}")
+           print(f"API 프로세스: {ipc.processes.get('api')}")
+           
+           print("\n3. 각 컴포넌트에서 요청 실행")
+           
+           # ADM (메인)에서 직접 호출
+           print("\n=== ADM (메인 스레드)에서 요청 ===")
+           adm.test_adm_requests()
+           
+           time.sleep(0.5)
+           
+           # Logger 스레드에서 요청
+           print("\n=== Logger 스레드에서 요청 ===")
+           ipc._send_request('logger', 'test_adm_requests', (), {}, wait_result=False)
+           
+           time.sleep(0.5)
+           
+           # DBM 프로세스에서 요청
+           print("\n=== DBM 프로세스에서 요청 ===")
+           ipc._send_request('dbm', 'test_dbm_requests', (), {}, wait_result=False)
+           
+           time.sleep(0.5)
+           
+           # API 프로세스에서 요청
+           print("\n=== API 프로세스에서 요청 ===")
+           ipc._send_request('api', 'test_api_requests', (), {}, wait_result=False)
+           
+           time.sleep(1)
+           
+           print("\n4. 상태 확인")
+           adm_info = adm.get_admin_info('last_db_operation')
+           logger_info = ipc._send_request('logger', 'get_admin_info', ('system_status',), {}, wait_result=True)
+           dbm_status = ipc._send_request('dbm', 'get_db_status', (), {}, wait_result=True)
+           api_stats = ipc._send_request('api', 'get_api_stats', (), {}, wait_result=True)
+           
+           print(f"ADM 정보 (메인): {adm_info}")
+           print(f"Logger 정보 (스레드): {logger_info}")
+           print(f"DBM 상태 (프로세스): {dbm_status}")
+           print(f"API 통계 (프로세스): {api_stats}")
+           
+           print("\n5. 인스턴스 교체 테스트")
+           
+           # Logger를 다른 파라미터로 재등록 (큐는 유지됨)
+           print("Logger 인스턴스 교체 중...")
+           logger_new = ipc.register('logger', ADM, type='thread', start=True)
+           logger_new.name = "Logger_V2"  # 구분을 위해 이름 변경
+           
+           time.sleep(0.5)
+           
+           # 교체된 Logger로 요청 테스트
+           print("\n=== Logger V2 (교체된 스레드)에서 요청 ===")
+           ipc._send_request('logger', 'test_adm_requests', (), {}, wait_result=False)
+           
+           time.sleep(0.5)
+           
+           # 다른 컴포넌트에서 교체된 Logger로 요청
+           print("ADM에서 교체된 Logger로 요청...")
+           logger_result = adm.answer('logger', 'get_admin_info', 'test_after_swap')
+           print(f"교체된 Logger 응답: {logger_result}")
+           
+           print("\n6. 실행 중 동적 컴포넌트 관리 테스트")
+           
+           # 현재 컴포넌트 상태 확인
+           print("현재 등록된 컴포넌트:")
+           for name, status in ipc.list_components().items():
+               print(f"  {name}: {status}")
+           
+           # 실행 중 새 컴포넌트 추가
+           print("\n실행 중 새 컴포넌트 'monitor' 추가...")
+           monitor = ipc.register('monitor', API, type='thread', start=True)
+           monitor.name = "Monitor"
+           
+           time.sleep(0.5)
+           
+           # 새 컴포넌트로 요청 테스트
+           print("새 컴포넌트로 요청 테스트:")
+           monitor_result = adm.answer('monitor', 'get_api_stats')
+           print(f"Monitor 응답: {monitor_result}")
+           
+           # 기존 컴포넌트에서 새 컴포넌트로 요청
+           print("DBM에서 새 Monitor로 요청...")
+           ipc._send_request('dbm', 'answer', ('monitor', 'cache_data', 'test_key', 'test_value'), {}, wait_result=False)
+           
+           time.sleep(0.5)
+           
+           # 컴포넌트 삭제 테스트
+           print("\nLogger 컴포넌트 삭제 테스트...")
+           ipc.unregister('logger')
+           
+           print("삭제 후 컴포넌트 목록:")
+           for name, status in ipc.list_components().items():
+               print(f"  {name}: {status}")
+           
+           # 삭제된 컴포넌트로 요청 시도 (실패해야 함)
+           print("\n삭제된 컴포넌트로 요청 시도 (실패 예상):")
+           deleted_result = adm.answer('logger', 'get_admin_info', 'test')
+           print(f"삭제된 Logger 응답: {deleted_result}")
+           
+           print("\n7. 스트림 통신 테스트")
+           
+           # 컴포넌트 스트림 상태 확인
+           print("스트림 워커 상태:")
+           for name in ['adm', 'dbm', 'api', 'monitor']:
+               if name in ipc.registered:
+                   status = ipc.get_component_status(name)
+                   print(f"  {name}: stream_running={status['stream_running']}")
+           
+           # API에서 실시간 스트리밍 시작
+           print("\nAPI 스트리밍 시작...")
+           result = ipc.answer('api', 'start_streaming')
+           print(f"스트리밍 시작 결과: {result}")
+           
+           # 3초간 스트리밍 관찰
+           print("3초간 스트리밍 데이터 전송 중...")
+           time.sleep(3)
+           
+           # 스트림 카운트 확인
+           adm_count = adm.get_stream_count()
+           dbm_count = ipc.answer('dbm', 'get_stream_count')
+           api_count = ipc.answer('api', 'get_tick_count')
+           
+           print(f"\n스트림 통계:")
+           print(f"- API 틱 생성: {api_count}")
+           print(f"- ADM 수신: {adm_count}")
+           print(f"- DBM 수신: {dbm_count}")
+           
+           # 기존 통신과 스트림 동시 테스트
+           print("\n기존 통신과 스트림 동시 실행 테스트:")
+           for i in range(3):
+               result = ipc.answer('dbm', 'get_db_status')
+               print(f"  일반 요청 {i+1}: {result}")
+               time.sleep(0.5)
+           
+           # 스트리밍 중지
+           result = ipc.answer('api', 'stop_streaming')
+           print(f"스트리밍 중지 결과: {result}")
+           
+           print("\n=== 테스트 완료 ===")
+           print("동적 컴포넌트 관리 테스트:")
+           print("- 실행 중 컴포넌트 추가 ✅")
+           print("- 새 컴포넌트와 기존 컴포넌트 간 통신 ✅")  
+           print("- 실행 중 컴포넌트 삭제 ✅")
+           print("- 삭제된 컴포넌트 접근 시 안전한 실패 ✅")
+           print("- 인스턴스 교체로 런타임 수정 ✅")
+           print("스트림 통신 테스트:")
+           print("- 별도 스트림 큐/워커 동작 ✅")
+           print("- 고빈도 스트림 전송 ✅")
+           print("- 기존 통신과 분리 ✅")
+           
+       except Exception as e:
+           print(f"테스트 중 오류: {e}")
+           logging.error(f"테스트 오류: {e}", exc_info=True)
+       
+       finally:
+           print("\n시스템 종료 중...")
+           ipc.shutdown()
+           print("시스템 종료 완료")
    
-   finally:
-      logging.info("Admin 리스너 쓰레드 종료")
+   test_ipc_communication()

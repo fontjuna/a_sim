@@ -1,6 +1,5 @@
 from public import hoga, dc, gm, init_logger, profile_operation
 from classes import TimeLimiter, Toast
-from worker import ModelProcess, Order, Answer
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread
@@ -388,7 +387,7 @@ class OnReceiveRealConditionSim(QThread):
       self.is_running = True
       self.current_stocks = set()
       self.api = api
-      self.proxy_order = api.proxy_order
+      self.order = api.order
       self._stop_event = threading.Event()
 
    def run(self):
@@ -408,7 +407,7 @@ class OnReceiveRealConditionSim(QThread):
             'cond_name': self.cond_name,
             'cond_index': int(self.cond_index),
          }
-         self.proxy_order('admin', 'on_fx실시간_조건검색', **data)
+         self.order('admin', 'on_fx실시간_조건검색', **data)
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -431,7 +430,7 @@ class OnReceiveRealDataSim1And2(QThread):
       self.is_running = True
       self._stop_event = threading.Event()
       self.api = api
-      self.proxy_order = api.proxy_order
+      self.order = api.order
 
    def run(self):
       while self.is_running:
@@ -466,8 +465,8 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            #self.proxy_order('dbm', 'update_script_chart', job)
-            self.proxy_order('admin', 'on_fx실시간_주식체결', **job)
+            #self.order('dbm', 'update_script_chart', job)
+            self.order('admin', 'on_fx실시간_주식체결', **job)
 
 
             if self._stop_event.wait(timeout=0.2/len(sim.ticker)):
@@ -485,7 +484,7 @@ class OnReceiveRealDataSim3(QThread):
       self.is_running = True
       self._stop_event = threading.Event()
       self.api = api
-      self.proxy_order = api.proxy_order
+      self.order = api.order
 
    def run(self):
       while self.is_running:
@@ -526,8 +525,8 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               #self.proxy_order('dbm', 'update_script_chart', job)
-               self.proxy_order('admin', 'on_fx실시간_주식체결', **job)
+               #self.order('dbm', 'update_script_chart', job)
+               self.order('admin', 'on_fx실시간_주식체결', **job)
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -547,10 +546,10 @@ class OnReceiveRealDataSim3(QThread):
       self.is_running = False
       self._stop_event.set()
 
-class APIServer(ModelProcess):
+class APIServer:
     app = QApplication(sys.argv)
-    def __init__(self, name='api', myq=None, daemon=True):
-        ModelProcess.__init__(self, name=name, myq=myq, daemon=daemon)
+    def __init__(self):
+        self.name = 'api'
         self.sim_no = 0
         self.ocx = None
         self.connected = False
@@ -567,7 +566,7 @@ class APIServer(ModelProcess):
         self.tr_condition_loaded = False    # SendCondition에서 대기 플래그로 사용 OnReceiveTrCondition에서 조건 로드 완료 플래그로 사용
         self.tr_condition_list = None       # OnReceiveTrCondition에서 리스트 담기
 
-        self.proxy_order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
+        self.order_no = int(time.strftime('%Y%m%d', time.localtime())) + random.randint(0, 100000)
 
         self.counter = 0 # 테스트용
 
@@ -833,7 +832,7 @@ class APIServer(ModelProcess):
         logging.debug(f'CommConnect: block={block}')
         if self.sim_no == 1:  
             self.connected = True
-            self.proxy_order('admin', 'set_connected', self.connected) # OnEventConnect를 안 거치므로 여기서 처리
+            self.order('admin', 'set_connected', self.connected) # OnEventConnect를 안 거치므로 여기서 처리
         else:
             self.ocx.dynamicCall("CommConnect()")
             if block:
@@ -861,8 +860,8 @@ class APIServer(ModelProcess):
             logging.debug(f'api 내부 SendOrder 호출후')
             return ret
         else:  # 시뮬레이션 모드
-            self.proxy_order_no += 1
-            orderno = f'{self.proxy_order_no:07d}'
+            self.order_no += 1
+            orderno = f'{self.order_no:07d}'
             order = {
                 'rqname': rqname,
                 'screen': screen,
@@ -945,7 +944,7 @@ class APIServer(ModelProcess):
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        #self.proxy_order('admin', 'set_connected', self.connected)
+        #self.order('admin', 'set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
@@ -970,7 +969,7 @@ class APIServer(ModelProcess):
                 'screen': screen,
                 'rqname': rqname,
                 }
-                self.proxy_order('admin', 'on_fx수신_주문결과TR', **result)
+                self.order('admin', 'on_fx수신_주문결과TR', **result)
 
             except Exception as e:
                 logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -1027,7 +1026,7 @@ class APIServer(ModelProcess):
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    #self.proxy_order('dbm', 'update_script_chart', job)
+                    #self.order('dbm', 'update_script_chart', job)
                     self.myq['real'].put(Order(receiver='admin', order='on_fx실시간_주식체결', kwargs=job))
                 elif rtype == '장시작시간': 
                     self.myq['real'].put(Order(receiver='admin', order='on_fx실시간_장운영감시', kwargs=job))
@@ -1065,7 +1064,7 @@ class APIServer(ModelProcess):
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                self.proxy_order('admin', 'odr_recieve_balance_data', dictFID)
+                self.order('admin', 'odr_recieve_balance_data', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
