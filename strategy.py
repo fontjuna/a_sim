@@ -5,12 +5,12 @@ import threading
 import logging
 
 class Strategy:
-    def __init__(self, name=None, ticker=None, strategy_set=None):
-        self.name = name
+    def __init__(self, cls_name=None, ticker=None, strategy_set=None):
+        self.name = cls_name
         self.dict종목정보 = ticker
         self.전략정의 = strategy_set if strategy_set else dc.const.DEFAULT_STRATEGY_SETS
-        self.전략 = name
-        self.전략번호 = int(name[-2:])
+        self.전략 = cls_name
+        self.전략번호 = int(cls_name[-2:])
         self.buy_cond_index = 0
         self.buy_cond_name = ''
         self.sell_cond_index = 0
@@ -178,7 +178,7 @@ class Strategy:
         """매도 조건 충족 여부를 확인하는 메소드"""
         try:
             if not gm.config.sim_on:
-                status_market = self.answer(Answer(receiver='admin', order='com_market_status', sender=self.전략))
+                status_market = self.answer('admin', 'com_market_status')
                 if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
             code = row.get('종목번호', '')          # 종목번호 ='999999' 일 때 당일청산 매도

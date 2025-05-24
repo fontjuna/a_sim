@@ -80,8 +80,8 @@ class Main:
             gm.main = self
             gm.gui = GUI() if gm.config.gui_on else None
             gm.admin = gm.ipc.register("admin", Admin, type=None, start=False)
-            gm.api =gm.ipc.register('api', APIServer, type='process', start=False)
             gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=False)
+            gm.api =gm.ipc.register('api', APIServer, type='process', start=False)
             gm.ipc.start()
             gm.ipc.order('api', 'api_init', gm.config.sim_no)
             gm.ipc.order('api', 'CommConnect', True)
@@ -104,7 +104,7 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    if not gm.ipc.answer('api', 'GetConnectState', timeout=15): time.sleep(0.001)
+                    if not gm.ipc.answer('api', 'GetConnectState', timeout=15): time.sleep(0.01)
                     else: break
             gm.ipc.order('api', 'set_tickers')
             # gm.ipc.order('admin', 'init')

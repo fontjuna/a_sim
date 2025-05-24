@@ -1010,7 +1010,7 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        self.myq['real'].put(Order(receiver='admin', order='on_fx실시간_조건검색', kwargs=data))
+        self.stream('admin', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
         # sim_no = 0일 때만 사용 (실제 API 서버)
@@ -1027,9 +1027,9 @@ class APIServer:
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
                     #self.order('dbm', 'update_script_chart', job)
-                    self.myq['real'].put(Order(receiver='admin', order='on_fx실시간_주식체결', kwargs=job))
+                    self.stream('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
-                    self.myq['real'].put(Order(receiver='admin', order='on_fx실시간_장운영감시', kwargs=job))
+                    self.stream('admin', 'on_fx실시간_장운영감시', **job)
                 #logging.debug(f"OnReceiveRealData: {job}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
@@ -1048,8 +1048,8 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            if gubun == '0': self.myq['real'].put(Order(receiver='admin', order='odr_recieve_chegyeol_data', kwargs=dictFID))
-            elif gubun == '1': self.myq['real'].put(Order(receiver='admin', order='odr_recieve_balance_data', kwargs=dictFID))
+            if gubun == '0': self.stream('admin', 'odr_recieve_chegyeol_data', **dictFID)
+            elif gubun == '1': self.stream('admin', 'odr_recieve_balance_data', **dictFID)
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1102,7 +1102,7 @@ class APIServer:
 
                     portfolio.process_order(dictFID)
 
-                self.myq['real'].put(Order(receiver='admin', order='odr_recieve_chegyeol_data', kwargs=dictFID))
+                self.stream('admin', 'odr_recieve_chegyeol_data', **dictFID)
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------

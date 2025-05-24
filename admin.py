@@ -714,11 +714,11 @@ class Admin:
             gm.전략쓰레드 = [None] * 6
             # gm.전략쓰레드[0] = Strategy(name='전략00', ticker=gm.dict종목정보, 전략정의=gm.basic_strategy)
             # gm.ipc.register('전략00', gm.전략쓰레드[0], type='thread', start=True)
-            gm.전략쓰레드[0] = gm.ipc.register('전략00', Strategy, type='thread', start=True, name='전략00', ticker=gm.dict종목정보, strategy_set=gm.basic_strategy)
+            gm.전략쓰레드[0] = gm.ipc.register('전략00', Strategy, type='thread', start=True, cls_name='전략00', ticker=gm.dict종목정보, strategy_set=gm.basic_strategy)
             for i in range(1, 6):
                 전략 = f'전략{i:02d}'
                 전략정의 = gm.전략정의.get(key=gm.전략설정[i]['전략명칭'])
-                gm.전략쓰레드[i] = gm.ipc.register(전략, Strategy, type='thread', start=False, name=전략, ticker=gm.dict종목정보, strategy_set=전략정의)
+                gm.전략쓰레드[i] = gm.ipc.register(전략, Strategy, type='thread', start=False, cls_name=전략, ticker=gm.dict종목정보, strategy_set=전략정의)
                 logging.debug(f'{전략} {gm.전략쓰레드[i]}')
         except Exception as e:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
