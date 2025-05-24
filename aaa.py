@@ -39,6 +39,7 @@ class Main:
 
     def show_splash(self):
         if not gm.config.gui_on: return
+        gm.gui = GUI()
         #splash_pix = QPixmap(400, 200)
         #splash_pix.fill(Qt.blue)          
         #self.splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
@@ -78,13 +79,15 @@ class Main:
             gm.ipc = IPCManager()
             gm.toast = Toast()
             gm.main = self
-            gm.gui = GUI() if gm.config.gui_on else None
+            # gm.gui = GUI() if gm.config.gui_on else None
             gm.admin = gm.ipc.register("admin", Admin, type=None, start=False)
             gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=False)
             gm.api =gm.ipc.register('api', APIServer, type='process', start=False)
-            gm.ipc.start()
+            gm.ipc.start('api', stream=True)
             gm.ipc.order('api', 'api_init', gm.config.sim_no)
             gm.ipc.order('api', 'CommConnect', True)
+            gm.ipc.start('admin')
+            gm.ipc.start('dbm')
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -104,7 +107,8 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    if not gm.ipc.answer('api', 'GetConnectState', timeout=15): time.sleep(0.01)
+                    if not gm.ipc.answer('api', 'api_connected', timeout=15): time.sleep(0.01)
+                    # if not gm.ipc.answer('api', 'GetConnectState', timeout=15): time.sleep(0.01)
                     else: break
             gm.ipc.order('api', 'set_tickers')
             # gm.ipc.order('admin', 'init')
@@ -146,9 +150,8 @@ class Main:
         self.init()
         self.show_splash()
         self.set_proc()
-        # self.login()
-        self.prepare()
         self.show()
+        self.prepare()
         self.run()
 
     def cleanup(self):

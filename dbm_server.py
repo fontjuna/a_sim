@@ -26,14 +26,7 @@ class DBMServer:
         #self.init_dbm()
         #self.start_request_chart_data()
 
-    def start(self):
-        """컴포넌트 시작"""
-        print(f"{self.__class__.__name__} 시작 중...")
-        self.running = True
-        self._lock = threading.Lock()
-        self.thread_local = threading.local()  # 스레드 로컬 변수 추가
-        
-    def stop(self):
+    def cleanup(self):
         # 모든 연결 닫기 시도 (각 스레드의 연결)
         try:
             print(f"{self.__class__.__name__} 중지 중...")
@@ -100,6 +93,8 @@ class DBMServer:
     # 디비 초기화 --------------------------------------------------------------------------------------------------
     def init_dbm(self):
         logging.debug('dbm_init_db')
+        self._lock = threading.Lock()
+        self.thread_local = threading.local()  # 스레드 로컬 변수 추가
 
         # 통합 디비
         db_conn = self.get_connection('db')

@@ -641,9 +641,9 @@ class APIServer:
                 self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
                 logging.debug(f"ActiveX 컨트롤 생성 완료: {self.ocx}")
                 
-                logging.debug(f"시그널 슬롯 연결 시작")
+                # logging.debug(f"시그널 슬롯 연결 시작")
                 self._set_signal_slots()
-                logging.debug(f"시그널 슬롯 연결 완료")
+                # logging.debug(f"시그널 슬롯 연결 완료")
                 
                 logging.debug(f'{self.name} api_init success: ocx={self.ocx} (Sim mode {self.sim_no})')
             
@@ -730,7 +730,7 @@ class APIServer:
             return self.connected
 
     def GetConnectState(self):
-        if self.sim_no == 1:
+        if self.sim_no != 1:
             return self.ocx.dynamicCall("GetConnectState()")
         else:
             return 1

@@ -173,10 +173,8 @@ class IPCManager:
             # 전체 중지
             for comp_name in list(self.registered.keys()):
                 self._stop_single(comp_name)
-                self._stop_stream_worker(comp_name)
         else:
             self._stop_single(name)
-            self._stop_stream_worker(name)
 
     def _stop_single(self, name):
         """단일 컴포넌트 중지"""
@@ -326,13 +324,6 @@ class IPCManager:
         self.stream_threads[name].start()
         logging.info(f"{name} 스트림 워커 시작됨")
 
-    def _stop_stream_worker(self, name):
-        """스트림 워커 중지"""
-        if name in self.stream_threads:
-            self.stream_threads[name].stop()
-            time.sleep(0.1)
-            self.stream_threads[name] = None
-    
     def _add_ipc_methods(self, instance, process_name):
         """인스턴스에 IPC 메서드 추가"""
         def order(target, method, *args, **kwargs):
@@ -440,7 +431,7 @@ def stream_worker(comp_name, instance, stream_queue):
                 
                 # 종료 명령 확인
                 if stream_data.get('command') == 'stop':
-                    logging.info(f"{comp_name}: 스트림 워커 종료 명령 수신")
+                    # logging.info(f"{comp_name}: 스트림 워커 종료 명령 수신")
                     break
                 
                 # 스트림 데이터 처리
@@ -562,7 +553,9 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
-                    logging.info(f"{process_name}: 종료 명령 수신")
+                    if hasattr(instance, 'cleanup') and callable(getattr(instance, 'cleanup')):
+                        instance.cleanup()
+                    # logging.info(f"{process_name}: 종료 명령 수신")
                     # 스트림 워커도 종료
                     try:
                         own_stream_queue.put_nowait({'command': 'stop'})
@@ -612,8 +605,8 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
     
     except Exception as e:
         logging.error(f"{process_name} 프로세스 오류: {e}", exc_info=True)
-    finally:
-        logging.info(f"{process_name} 프로세스 종료")
+    # finally:
+    #     logging.info(f"{process_name} 프로세스 종료")
 
 def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queues, result_dict):
     """스레드 워커"""
@@ -699,7 +692,9 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
-                    logging.info(f"{thread_name}: 종료 명령 수신")
+                    if hasattr(instance, 'cleanup') and callable(getattr(instance, 'cleanup')):
+                        instance.cleanup()
+                    #logging.info(f"{thread_name}: 종료 명령 수신")
                     break
                 
                 # 요청 처리
@@ -744,8 +739,8 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
     
     except Exception as e:
         logging.error(f"{thread_name} 스레드 오류: {e}", exc_info=True)
-    finally:
-        logging.info(f"{thread_name} 스레드 종료")
+    # finally:
+    #     logging.info(f"{thread_name} 스레드 종료")
 
 def main_listener_worker(comp_name, instance, own_queue, result_dict):
     """메인 컴포넌트 리스너"""
@@ -759,7 +754,7 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict):
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
-                    logging.info(f"{comp_name}: 리스너 종료 명령 수신")
+                    # logging.info(f"{comp_name}: 리스너 종료 명령 수신")
                     break
                 
                 # 요청 처리
@@ -804,8 +799,8 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict):
     
     except Exception as e:
         logging.error(f"{comp_name} 메인 리스너 오류: {e}", exc_info=True)
-    finally:
-        logging.info(f"{comp_name} 메인 리스너 종료")
+    # finally:
+    #     logging.info(f"{comp_name} 메인 리스너 종료")
 
 # 테스트용 클래스들
 class ADM:
