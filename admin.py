@@ -104,7 +104,7 @@ class Admin:
         logging.info('* get_holdings *')
         gm.dict잔고종목감시 = {}
         gm.ipc.order('api', 'SetRealRemove', dc.scr.화면['실시간감시'], 'ALL')
-        #if gm.config.sim_no != 1: gm.ipc.order('dbm', 'start_request_chart_data')
+        # if gm.config.sim_no != 1: gm.ipc.order('dbm', 'start_request_chart_data')
         self.pri_fx얻기_잔고합산()
         self.pri_fx얻기_잔고목록()
         self.pri_fx등록_종목감시()
@@ -114,8 +114,8 @@ class Admin:
         logging.debug('trade_start')
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
         codes = gm.잔고목록.get(column='종목코드')
-        #for code in codes:
-        #    gm.ipc.order('dbm', 'register_code', code)
+        for code in codes:
+            gm.ipc.order('dbm', 'register_code', code)
         self.cdn_fx실행_전략매매()
 
         gm.config.ready = True
@@ -175,11 +175,11 @@ class Admin:
             gm.잔고목록.set(key=code, data={'주문가능수량': 0})
         dict_data = { '전략번호': idx, '전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
-        logging.debug(f'dbm_order_upsert 호출 전 *****')
+        #logging.debug(f'dbm_order_upsert 호출 전 *****')
         self.dbm_order_upsert(dict_data)
-        logging.debug(f'com_SendOrder에서 SendOrder 호출 전 *****')
-        success = gm.ipc.answer('api', 'SendOrder', cmd)
-        logging.debug(f'com_SendOrder에서 SendOrder 호출 후 *****')
+        #logging.debug(f'com_SendOrder에서 SendOrder 호출 전 *****')
+        success = gm.ipc.answer('api', 'SendOrder', **cmd)
+        #logging.debug(f'com_SendOrder에서 SendOrder 호출 후 *****')
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
 
     def com_market_status(self):
@@ -317,8 +317,8 @@ class Admin:
                     gm.ipc.order(f'전략{data["idx"]:02d}', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
 
-            #job = {'code': code, 'dictFID': dictFID}
-            #gm.ipc.order('dbm', 'update_script_chart', job)
+            job = {'code': code, 'dictFID': dictFID}
+            gm.ipc.order('dbm', 'update_script_chart', job)
 
         try:
             if gm.잔고목록.in_key(code):
@@ -473,7 +473,7 @@ class Admin:
                     if item['전략'] not in data: data[item['전략']] = {}
                     data[item['전략']][item['종목번호']] = item['종목명']
 
-                    #gm.ipc.order('dbm', 'register_code', item['종목번호'])
+                    gm.ipc.order('dbm', 'register_code', item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.ct.set_batch(data)
 
@@ -483,7 +483,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            #gm.ipc.order('dbm', 'register_code', '005930')
+            gm.ipc.order('dbm', 'register_code', '005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -559,7 +559,7 @@ class Admin:
         if row['보유수량'] == 0: return
         if row['현재가'] == 0: return
         if row['상태'] == 0: return
-        if 전략 not in gm.ipc.workers: return
+        if 전략 not in gm.ipc.instances: return
         key = f'{code}_매도'
         data={'키': key, '구분': '매도', '상태': '요청', '전략': 전략, '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
         if gm.주문목록.in_key(key): return
@@ -656,7 +656,7 @@ class Admin:
         try:
             gm.매매목록.delete()
             #dict_list = gm.ipc.answer('dbm', 'execute_query', sql=dc.ddb.ipc_SELECT_DATE, db='db', params=(date_text,))
-            dict_list = gm.ipc.answer('dbm', 'execute_query', sql=dc.ddb.ipc_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.ipc.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
             #logging.debug(f'매매목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
             if dict_list is not None and len(dict_list) > 0:
                 gm.매매목록.set(data=dict_list)

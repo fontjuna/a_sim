@@ -7,6 +7,7 @@ import os
 import threading
 import copy
 import time
+import multiprocessing as mp
 
 class DBMServer:
     def __init__(self):
@@ -23,8 +24,12 @@ class DBMServer:
         self.thread_chart = None    
 
         self.database = {} # 테스트용
-        #self.init_dbm()
-        #self.start_request_chart_data()
+
+    def initialize(self):
+        self._lock = threading.Lock()
+        self.thread_local = threading.local()  # 스레드 로컬 변수 추가
+        self.init_dbm()
+        self.start_request_chart_data()
 
     def cleanup(self):
         # 모든 연결 닫기 시도 (각 스레드의 연결)
@@ -93,8 +98,6 @@ class DBMServer:
     # 디비 초기화 --------------------------------------------------------------------------------------------------
     def init_dbm(self):
         logging.debug('dbm_init_db')
-        self._lock = threading.Lock()
-        self.thread_local = threading.local()  # 스레드 로컬 변수 추가
 
         # 통합 디비
         db_conn = self.get_connection('db')
@@ -340,7 +343,7 @@ class DBMServer:
             next = '0'
             dict_list = []
             while True:
-                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, form='dict_list', timeout=1)
+                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen)
                 if data is None or len(data) == 0: break
                 dict_list.extend(data)
                 times -= 1
@@ -375,7 +378,7 @@ class DBMServer:
                     '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
                 } for item in dict_list]
             if cycle in ['dy', 'mi']:
-                #self.upsert_chart(dict_list, cycle, tick)
+                self.upsert_chart(dict_list, cycle, tick)
                 self.done_todo_code(code, cycle)
                 ctdt.set_chart_data(code, dict_list, cycle, tick)
             return dict_list
@@ -386,9 +389,11 @@ class DBMServer:
 
     def start_request_chart_data(self):
         if self.thread_run: return
+        if not hasattr(self, '_lock'): self._lock = threading.Lock()
         self.thread_run = True
         self.thread_chart = threading.Thread(target=self.request_chart_data, daemon=True)
         self.thread_chart.start()
+        logging.debug('차트 데이터 요청 스레드 시작')
 
     def stop_request_chart_data(self):
         self.thread_run = False
@@ -401,7 +406,7 @@ class DBMServer:
             with self._lock:
                 codes = copy.deepcopy(self.todo_code)
                 if not codes:
-                    time.sleep(0.1)
+                    time.sleep(0.0001)
                     continue
 
             for code in codes:
@@ -409,7 +414,7 @@ class DBMServer:
                 if not codes[code]['mi']: self.dbm_get_chart_data(code, cycle='mi', tick=1)
                 if not codes[code]['dy']: self.dbm_get_chart_data(code, cycle='dy')
 
-            time.sleep(0.2)
+            time.sleep(0.0001)
 
     def done_todo_code(self, code, cycle):                    
         with self._lock:
@@ -435,7 +440,7 @@ class DBMServer:
     def update_script_chart(self, job):
         #self.order('admin', 'on_fx실시간_주식체결', **job)
         code = job['code']
-        #dictFID = job['dictFID']
-        #if code in self.todo_code or code in self.done_code:
-        #    ctdt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+        dictFID = job['dictFID']
+        if code in self.todo_code or code in self.done_code:
+            ctdt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
 

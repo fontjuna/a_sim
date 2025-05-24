@@ -632,20 +632,20 @@ class APIServer:
             toast = Toast()
             import os
             pid = os.getpid()
-            logging.debug(f'{self.name} api_init start (sim_no={sim_no}, pid={pid})')
+            #logging.debug(f'{self.name} api_init start (sim_no={sim_no}, pid={pid})')
             self.sim_no = sim_no
             
             if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용
                 # ActiveX 컨트롤 생성
                 logging.debug(f"ActiveX 컨트롤 생성 시작: KHOPENAPI.KHOpenAPICtrl.1")
                 self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
-                logging.debug(f"ActiveX 컨트롤 생성 완료: {self.ocx}")
+                #logging.debug(f"ActiveX 컨트롤 생성 완료: {self.ocx}")
                 
                 # logging.debug(f"시그널 슬롯 연결 시작")
                 self._set_signal_slots()
                 # logging.debug(f"시그널 슬롯 연결 완료")
                 
-                logging.debug(f'{self.name} api_init success: ocx={self.ocx} (Sim mode {self.sim_no})')
+                logging.debug(f'{self.name} api_init success: pid={pid} (Sim mode {self.sim_no}) ocx={self.ocx}')
             
             # self.set_tickers()
         except Exception as e:
@@ -1048,8 +1048,8 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            if gubun == '0': self.stream('admin', 'odr_recieve_chegyeol_data', **dictFID)
-            elif gubun == '1': self.stream('admin', 'odr_recieve_balance_data', **dictFID)
+            if gubun == '0': self.stream('admin', 'odr_recieve_chegyeol_data', dictFID)
+            elif gubun == '1': self.stream('admin', 'odr_recieve_balance_data', dictFID)
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1102,7 +1102,7 @@ class APIServer:
 
                     portfolio.process_order(dictFID)
 
-                self.stream('admin', 'odr_recieve_chegyeol_data', **dictFID)
+                self.stream('admin', 'odr_recieve_chegyeol_data', dictFID)
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------

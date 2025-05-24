@@ -80,14 +80,12 @@ class Main:
             gm.toast = Toast()
             gm.main = self
             # gm.gui = GUI() if gm.config.gui_on else None
-            gm.admin = gm.ipc.register("admin", Admin, type=None, start=False)
+            gm.admin = gm.ipc.register("admin", Admin, type=None, start=False, stream=True)
             gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=False)
             gm.api =gm.ipc.register('api', APIServer, type='process', start=False)
-            gm.ipc.start('api', stream=True)
+            gm.ipc.start()
             gm.ipc.order('api', 'api_init', gm.config.sim_no)
             gm.ipc.order('api', 'CommConnect', True)
-            gm.ipc.start('admin')
-            gm.ipc.start('dbm')
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)

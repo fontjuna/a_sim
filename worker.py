@@ -20,7 +20,7 @@ class IPCManager:
         self.registered = {}  # process_name -> config
         self.shutting_down = False
 
-    def register(self, name, cls, type=None, start=False, *args, **kwargs):
+    def register(self, name, cls, type=None, start=False, stream=False, *args, **kwargs):
         """컴포넌트 등록 (재등록 시 인스턴스만 교체)"""
         is_reregister = name in self.registered
         
@@ -42,6 +42,7 @@ class IPCManager:
         self.registered[name] = {
             'class': cls,
             'type': type,
+            'stream': stream,
             'args': args,
             'kwargs': kwargs
         }
@@ -58,7 +59,7 @@ class IPCManager:
         
         # 자동 시작
         if start:
-            self.start(name)
+            self.start(name, stream=stream)
         
         return instance
     
@@ -140,14 +141,18 @@ class IPCManager:
         
         logging.info(f"{name} 컴포넌트 완전 삭제됨")
     
-    def start(self, name=None, stream=False):
+    def start(self, name=None, stream=None):
         """컴포넌트 시작"""
         if name is None:
             # 전체 시작 (모든 타입 포함)
             for comp_name in self.registered.keys():
-                self._start_single(comp_name, stream)
+                reg_info = self.registered[comp_name]
+                self._start_single(comp_name, stream=reg_info.get('stream', False))
         else:
-            self._start_single(name, stream)
+            # stream 옵션이 주어지지 않으면 등록된 설정 사용
+            if stream is None:
+                stream = self.registered[name].get('stream', False)
+            self._start_single(name, stream=stream)
     
     def _start_single(self, name, stream=False):
         """단일 컴포넌트 시작"""
@@ -157,15 +162,14 @@ class IPCManager:
         reg_info = self.registered[name]
         
         if reg_info['type'] == 'process':
-            self._start_process(name)
+            self._start_process(name, stream=stream)
         elif reg_info['type'] == 'thread':
-            self._start_thread(name)
+            self._start_thread(name, stream=stream)
         else:  # type=None: 메인 스레드
             self._start_main_listener(name)
-        
-        # 스트림 워커 시작 (모든 타입 공통)
-        if stream:
-            self._start_stream_worker(name)
+            # 메인 프로세스 컴포넌트는 매니저에서 스트림 워커 실행
+            if stream:
+                self._start_stream_worker(name)
     
     def stop(self, name=None):
         """컴포넌트 중지"""
@@ -175,7 +179,7 @@ class IPCManager:
                 self._stop_single(comp_name)
         else:
             self._stop_single(name)
-
+    
     def _stop_single(self, name):
         """단일 컴포넌트 중지"""
         if name not in self.registered:
@@ -282,27 +286,30 @@ class IPCManager:
             'kwargs': reg_info['kwargs']
         }
     
-    def _start_process(self, name):
+    def _start_process(self, name, stream=False):
         """프로세스 시작"""
         reg_info = self.registered[name]
         
         self.processes[name] = mp.Process(
             target=process_worker,
-            args=(name, reg_info['class'], self.queues[name], self.stream_queues[name], self.queues, self.stream_queues, self.result_dict, reg_info['args'], reg_info['kwargs']),
+            args=(name, reg_info['class'], self.queues[name], self.stream_queues[name], self.queues, self.stream_queues, self.result_dict, stream, reg_info['args'], reg_info['kwargs']),
             daemon=False
         )
         self.processes[name].start()
-        logging.info(f"{name} 프로세스 시작됨 (PID: {self.processes[name].pid})")
+        logging.info(f"{name} 프로세스 시작됨 (PID: {self.processes[name].pid}, stream={stream})")
     
-    def _start_thread(self, name):
+    def _start_thread(self, name, stream=False):
         """스레드 시작"""
         self.threads[name] = threading.Thread(
             target=thread_worker,
-            args=(name, self.instances[name], self.queues[name], self.queues, self.stream_queues, self.result_dict),
+            args=(name, self.instances[name], self.queues[name], self.queues, self.stream_queues, self.result_dict, stream),
             daemon=True
         )
         self.threads[name].start()
-        logging.info(f"{name} 스레드 시작됨")
+        # 스레드는 메인 프로세스 내이므로 매니저에서 스트림 워커 실행
+        if stream:
+            self._start_stream_worker(name)
+        logging.info(f"{name} 스레드 시작됨 (stream={stream})")
     
     def _start_main_listener(self, name):
         """메인 컴포넌트 리스너 시작"""
@@ -323,7 +330,7 @@ class IPCManager:
         )
         self.stream_threads[name].start()
         logging.info(f"{name} 스트림 워커 시작됨")
-
+    
     def _add_ipc_methods(self, instance, process_name):
         """인스턴스에 IPC 메서드 추가"""
         def order(target, method, *args, **kwargs):
@@ -431,7 +438,7 @@ def stream_worker(comp_name, instance, stream_queue):
                 
                 # 종료 명령 확인
                 if stream_data.get('command') == 'stop':
-                    # logging.info(f"{comp_name}: 스트림 워커 종료 명령 수신")
+                    logging.info(f"{comp_name}: 스트림 워커 종료 명령 수신")
                     break
                 
                 # 스트림 데이터 처리
@@ -459,11 +466,15 @@ def stream_worker(comp_name, instance, stream_queue):
     finally:
         logging.info(f"{comp_name} 스트림 워커 종료")
 
-def process_worker(process_name, process_class, own_queue, own_stream_queue, all_queues, all_stream_queues, result_dict, args, kwargs):
+def process_worker(process_name, process_class, own_queue, own_stream_queue, all_queues, all_stream_queues, result_dict, enable_stream, args, kwargs):
     """프로세스 워커"""
     try:
         # 인스턴스 생성
         instance = process_class(*args, **kwargs)
+        # 초기화 작업 (있으면 실행)
+        if hasattr(instance, 'initialize') and callable(getattr(instance, 'initialize')):
+            instance.initialize()
+                    
         logging.info(f"{process_name} 프로세스 초기화 완료")
         
         # IPC 기능 추가
@@ -538,13 +549,15 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
         instance.stream = stream
         instance.broadcast = broadcast
         
-        # 스트림 워커 시작
-        stream_thread = threading.Thread(
-            target=stream_worker,
-            args=(process_name, instance, own_stream_queue),
-            daemon=True
-        )
-        stream_thread.start()
+        # 스트림 워커 시작 (enable_stream=True일 때만)
+        if enable_stream:
+            stream_thread = threading.Thread(
+                target=stream_worker,
+                args=(process_name, instance, own_stream_queue),
+                daemon=True
+            )
+            stream_thread.start()
+            logging.info(f"{process_name} 프로세스 내 스트림 워커 시작됨")
         
         # 메시지 처리 루프
         while True:
@@ -553,14 +566,18 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
+                    logging.info(f"{process_name}: 종료 명령 수신")
+                    
+                    # 정리 작업 (있으면 실행)
                     if hasattr(instance, 'cleanup') and callable(getattr(instance, 'cleanup')):
                         instance.cleanup()
-                    # logging.info(f"{process_name}: 종료 명령 수신")
+                    
                     # 스트림 워커도 종료
-                    try:
-                        own_stream_queue.put_nowait({'command': 'stop'})
-                    except:
-                        pass
+                    if enable_stream:
+                        try:
+                            own_stream_queue.put_nowait({'command': 'stop'})
+                        except:
+                            pass
                     break
                 
                 # 요청 처리
@@ -605,12 +622,16 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
     
     except Exception as e:
         logging.error(f"{process_name} 프로세스 오류: {e}", exc_info=True)
-    # finally:
-    #     logging.info(f"{process_name} 프로세스 종료")
+    finally:
+        logging.info(f"{process_name} 프로세스 종료")
 
-def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queues, result_dict):
+def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queues, result_dict, enable_stream):
     """스레드 워커"""
     try:
+        # 초기화 작업 (있으면 실행)
+        if hasattr(instance, 'initialize') and callable(getattr(instance, 'initialize')):
+            instance.initialize()
+            
         logging.info(f"{thread_name} 스레드 초기화 완료")
         
         # IPC 기능 추가
@@ -692,9 +713,12 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
+                    logging.info(f"{thread_name}: 종료 명령 수신")
+                    
+                    # 정리 작업 (있으면 실행)
                     if hasattr(instance, 'cleanup') and callable(getattr(instance, 'cleanup')):
                         instance.cleanup()
-                    #logging.info(f"{thread_name}: 종료 명령 수신")
+                    
                     break
                 
                 # 요청 처리
@@ -739,8 +763,8 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
     
     except Exception as e:
         logging.error(f"{thread_name} 스레드 오류: {e}", exc_info=True)
-    # finally:
-    #     logging.info(f"{thread_name} 스레드 종료")
+    finally:
+        logging.info(f"{thread_name} 스레드 종료")
 
 def main_listener_worker(comp_name, instance, own_queue, result_dict):
     """메인 컴포넌트 리스너"""
@@ -754,7 +778,7 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict):
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
-                    # logging.info(f"{comp_name}: 리스너 종료 명령 수신")
+                    logging.info(f"{comp_name}: 리스너 종료 명령 수신")
                     break
                 
                 # 요청 처리
@@ -799,8 +823,9 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict):
     
     except Exception as e:
         logging.error(f"{comp_name} 메인 리스너 오류: {e}", exc_info=True)
-    # finally:
-    #     logging.info(f"{comp_name} 메인 리스너 종료")
+    finally:
+        logging.info(f"{comp_name} 메인 리스너 종료")
+
 
 # 테스트용 클래스들
 class ADM:
