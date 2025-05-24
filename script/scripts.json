@@ -1,0 +1,44 @@
+{
+    "매도_1": {
+        "script": "#code = '347850'\nmi3 = CM(code, 'mi', 3)\nma5 = mi3.ma(mi3.c, 5)\nma10 = mi3.ma(mi3.c, 10)\ndn = ma10 > mi3.c()\n#result = mi3.c()\nresult = dn or ma5 < ma10",
+        "vars": {},
+        "type": "bool",
+        "desc": ""
+    },
+    "매수_1": {
+        "script": "mi3  = CM(code, 'mi', 3)\n\nma5 = mi3.ma(mi3.c, 5)\nma20 = mi3.ma(mi3.c, 20)\n\nresult = ma5 >ma20 and mi3.c() > ma5",
+        "vars": {},
+        "type": "bool",
+        "desc": ""
+    },
+    "not_매도_1": {
+        "script": "result = not 매도_1()",
+        "vars": {},
+        "type": "bool",
+        "desc": ""
+    },
+    "특수주기_매도": {
+        "script": "mi = CM(code, 'mi', 7)\n\nma5 = mi.ma(mi.c, 5)\n\nresult = ma5",
+        "vars": {},
+        "type": "float",
+        "desc": ""
+    },
+    "indicator": {
+        "script": "dy = CM(code, 'dy')\nmi3 = CM(code, 'mi', 3)\n\nma20 = dy.indicator(dy.ma, dy.c, 20)\ndebug(f'0={ma20()}, 1={ma20(1)}')\n\nsma5 = mi3.indicator(mi3.ma, mi3.c, 5) # SMA 5 계산 클로저 생성 \nsma10 = mi3.indicator(mi3.ma, mi3.c, 10) \n\ncross = mi3.cross_up(sma5, sma10) # 함수처럼 사용 가능\ndebug(f'sma5={sma5()}, sma10={sma10()}, cross={cross}')\n\nresult = ma20(0)",
+        "vars": {},
+        "type": "float",
+        "desc": ""
+    },
+    "t": {
+        "script": "cm = ChartManager(code, 'dy')\n\n# RSI (상대강도지수)\nrsi = cm.rsi()                # 기본 14일 RSI\nrsi_9 = cm.rsi(9)             # 9일 RSI\nrsi_prev = cm.rsi(14, 1)      # 1봉 이전의 14일 RSI\n\n# MACD (이동평균수렴확산지수)\nmacd, signal, hist = cm.macd()  # 기본 MACD (12, 26, 9)\nmacd2, signal2, hist2 = cm.macd(5, 35, 5)  # 커스텀 MACD\n\n# 볼린저 밴드\nupper, middle, lower = cm.bollinger_bands()  # 기본 볼린저 밴드 (20일, 2시그마)\nupper2, middle2, lower2 = cm.bollinger_bands(10, 2.5)  # 커스텀 볼린저 밴드\n\n# 스토캐스틱\nk, d = cm.stochastic()  # 기본 스토캐스틱 (14, 3)\nk2, d2 = cm.stochastic(5, 3)  # 커스텀 스토캐스틱\n\n# ATR (평균진폭)\natr = cm.atr()  # 기본 14일 ATR\natr_5 = cm.atr(5)  # 5일 ATR\n\nresult = True",
+        "vars": {},
+        "type": "bool",
+        "desc": ""
+    },
+    "g": {
+        "script": "dy = CM(code, 'dy')\n\n# iif 함수 사용\nresult = dy.iif(dy.c() > dy.ma(dy.c, 20), \"상승 추세\", \"하락 추세\")\n\n# all_true 함수 사용\nall_conditions_met = dy.all_true([\n    dy.c() > dy.ma(dy.c, 20),\n    dy.v() > dy.ma(dy.v, 20),\n    dy.rsi() < 70\n])\n\n# any_true 함수 사용\nany_condition_met = dy.any_true([\n    dy.c() > dy.h(1),\n    dy.v() > dy.ma(dy.v, 20) * 2,\n    dy.rsi() < 30\n])",
+        "vars": {},
+        "type": "str",
+        "desc": ""
+    }
+}

@@ -10,6 +10,7 @@ import logging.handlers
 import os
 import sys
 import json
+import time
 
 def hoga(current_price, position=0):
     # logging.debug(f'hoga : current_price={current_price}, position={position}')
@@ -98,6 +99,22 @@ def save_json(file_path, data):
         logging.error(f'파일 저장 오류: {os.path.basename(file_path)} {type(e).__name__} - {e}', exc_info=True)
         return False, e
 
+def profile_operation(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        elapsed = time.time() - start_time
+        if elapsed > 0.1:  # 100ms 이상 걸리는 작업 로깅
+            logging.debug(f"[PROFILE] {func.__name__} took {elapsed:.3f} seconds {'*'*5}")
+        return result
+    return wrapper
+
+# 주요 함수에 적용
+@profile_operation
+def some_critical_function():
+    # 기존 코드
+    pass
+
 @dataclass
 class Work:
     order: str              # 수신자가 실행할 함수명 또는 메세지(루프에서 인식할 조건)
@@ -118,7 +135,7 @@ class FieldsAttributes: # 데이터베이스 필드 속성
     check: str = None
 
 @dataclass
-class DataBaseFields:   # 데이터베이스 필드 정의
+class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
     id = FieldsAttributes(name='id', type='INTEGER', primary=True, autoincrement=True)
     거래세 = FieldsAttributes(name='거래세', type='INTEGER', not_null=True, default=0)
     거래세율 = FieldsAttributes(name='거래세율', type='REAL', not_null=True, default=0.0)
@@ -182,12 +199,23 @@ class DataBaseFields:   # 데이터베이스 필드 정의
     현재가 = FieldsAttributes(name='현재가', type='INTEGER', not_null=True, default=0)
     호가구분 = FieldsAttributes(name='호가구분', type='TEXT', not_null=True, default="''")
     화면번호 = FieldsAttributes(name='화면번호', type='TEXT', not_null=True, default="''")
+    일자 = FieldsAttributes(name='일자', type='TEXT', not_null=True, default="''")
+    시가 = FieldsAttributes(name='시가', type='INTEGER', not_null=True, default=0)
+    고가 = FieldsAttributes(name='고가', type='INTEGER', not_null=True, default=0)
+    저가 = FieldsAttributes(name='저가', type='INTEGER', not_null=True, default=0)
+    현재가 = FieldsAttributes(name='현재가', type='INTEGER', not_null=True, default=0)
+    거래량 = FieldsAttributes(name='거래량', type='INTEGER', not_null=True, default=0)
+    거래대금 = FieldsAttributes(name='거래대금', type='INTEGER', not_null=True, default=0)
+    주기 = FieldsAttributes(name='주기', type='TEXT', not_null=True, default="''")
+    틱 = FieldsAttributes(name='틱', type='INTEGER', not_null=True, default=1)
 
-class DataBaseColumns:  # 데이터베이스 컬럼 정의
+class DataBaseColumns:  # 데이터베이스 테이블 정의
     fd = DataBaseFields()
 
     TRD_TABLE_NAME = 'trades'
-    TRD_SELECT_DATE = f"SELECT * FROM {TRD_TABLE_NAME} WHERE DATE(처리일시) = ? ORDER BY 처리일시 ASC"
+    TRD_SELECT_COLUMNS = "substr(처리일시, 12, 8) AS 처리시간, 주문구분, 주문상태, 종목코드, 종목명, 주문수량, 주문가격, 미체결수량,\
+          체결량, 체결가, 체결누계금액, 매매구분, 주문번호, 원주문번호, 전략명칭, 처리일시"
+    TRD_SELECT_DATE = f"SELECT substr(처리일시, 12, 12) AS 처리시간, * FROM {TRD_TABLE_NAME} WHERE DATE(처리일시) = ? ORDER BY 처리일시 ASC"
     TRD_COLUMNS = [fd.id, fd.전략번호, fd.전략명칭, fd.주문구분, fd.주문상태, fd.주문번호, fd.종목코드, fd.종목명, fd.현재가, fd.주문수량, fd.주문가격, \
                     fd.미체결수량, fd.매매구분, fd.체결량, fd.체결가, fd.체결누계금액, fd.체결번호, fd.체결시간, fd.단위체결가, fd.단위체결량, fd.당일매매수수료, \
                         fd.당일매매세금, fd.원주문번호, fd.처리일시]
@@ -207,6 +235,26 @@ class DataBaseColumns:  # 데이터베이스 컬럼 정의
     CONC_INDEXES = {
         'idx_buyorder': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_buyorder ON {CONC_TABLE_NAME}(매수일자, 매수번호)",
         'idx_sellorder': f"CREATE INDEX IF NOT EXISTS idx_sellorder ON {CONC_TABLE_NAME}(매도일자, 매도번호)"
+    }
+    
+    MIN_TABLE_NAME = 'minute_n_tick'
+    MIN_SELECT_SAMPLE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 체결시간 DESC LIMIT 1"
+    MIN_SELECT_DATE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
+    MIN_COLUMNS = [fd.id, fd.종목코드, fd.체결시간, fd.시가, fd.고가, fd.저가, fd.현재가, fd.거래량, fd.거래대금, fd.주기, fd.틱]
+    MIN_COLUMN_NAMES = [col.name for col in MIN_COLUMNS]
+    MIN_INDEXES = {
+        'idx_cycle_tick_code_time': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_tick_code_time ON {MIN_TABLE_NAME}(주기, 틱, 종목코드, 체결시간)",
+        'idx_time_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_time_cycle_tick_code ON {MIN_TABLE_NAME}(체결시간, 주기, 틱, 종목코드)",
+    }
+
+    DAY_TABLE_NAME = 'day_week_month'
+    DAY_SELECT_SAMPLE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 일자 DESC LIMIT 1"
+    DAY_SELECT_DATE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 일자 >= ? AND 주기 = ?"
+    DAY_COLUMNS = [fd.id, fd.종목코드, fd.일자, fd.시가, fd.고가, fd.저가, fd.현재가, fd.거래량, fd.거래대금, fd.주기, fd.틱]
+    DAY_COLUMN_NAMES = [col.name for col in DAY_COLUMNS]
+    DAY_INDEXES = {
+        'idx_cycle_tick_code_date': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_tick_code_date ON {DAY_TABLE_NAME}(주기, 틱, 종목코드, 일자)",
+        'idx_date_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_date_cycle_tick_code ON {DAY_TABLE_NAME}(일자, 주기, 틱, 종목코드)",
     }
 
 @dataclass
@@ -367,12 +415,21 @@ class ScreenNumber:     # 화면번호
         '전략06': '4611', '전략07': '4711', '전략08': '4811', '전략09': '4911', '전략10': '4011',  # 두번째 자리 전략번호
         '신규매수': '5511', '신규매도': '5512', '매수취소': '6611', '매도취소': '6612', '매수정정': '7711', '매도정정': '7712', 
         '수동매수': '8811', '수동매도': '8812', '수취매수': '9911', '수취매도': '9912',
-        '실시간감시': '5100', '조건감시': '5200', '실시간조회': '5900', '장시작시간': '5910'
+        '실시간감시': '5100', '조건감시': '5200', '실시간조회': '5900', '장시작시간': '5910',
+        '틱봉차트': '9110', '분봉차트': '9120', '일봉차트': '9130', '주봉차트': '9140', '월봉차트': '9150', '년봉차트': '9160',
     })
     # 화면번호 xx11 매수, xx12 매도 수정금지 및 사용 금지 - OnReceiveTrData() 처리
     # 화면번호 4xxxx 수정금지 screen.startswith('4') = '신규매수'   - OnReceiveTrData() 처리
     화면번호: dict = field(default_factory=lambda: {
         '8811': '신규매수', '8812': '신규매도', '5511': '매수취소', '5512': '매도취소', '6611': '매수정정', '6612': '매도정정', '7711': '수동매수', '7712': '수동매도'
+    })
+    차트종류: dict = field(default_factory=lambda: {
+        'mo': '월봉', 'wk': '주봉', 'dy': '일봉', 'mi': '분봉', 'tk': '틱봉',
+        '틱봉': 'tk', '분봉': 'mi', '일봉': 'dy', '주봉': 'wk', '월봉': 'mo'
+    })
+    차트TR: dict = field(default_factory=lambda: {
+        'mo': 'OPT10083', 'wk': 'OPT10082', 'dy': 'OPT10081', 'mi': 'OPT10080', 'tk': 'OPT10079',
+        '월봉차트': 'OPT10083', '주봉차트': 'OPT10082', '일봉차트': 'OPT10081', '분봉차트': 'OPT10080', '틱봉차트': 'OPT10079',
     })
 
 @dataclass
@@ -397,6 +454,8 @@ class FilePath:         # 파일 경로
     LOG_MAX_BYTES = 1024 * 1024 * 5
 
     DB_PATH = 'db'
+    SCRIPT_PATH = 'script'
+    CACHE_PATH = 'script/compiled_scripts'
     CONFIG_PATH = 'config'
     RESOURCE_PATH = 'resources'
     API_PATH = "C:/OpenAPI/data"
@@ -409,6 +468,8 @@ class FilePath:         # 파일 경로
     COUNTER_TICKERS_FILE = 'counter_tickers.json'
     COUNTER_STRATEGY_FILE = 'counter_strategy.json'
     CHARTS_FILE = 'charts.json'
+    SCRIPTS_FILE = 'scripts.json'
+    FUNCTIONS_FILE = 'functions.json'
 
     config_file = os.path.join(get_path(CONFIG_PATH), CONFIG_FILE)
     define_sets_file = os.path.join(get_path(CONFIG_PATH), DEFINE_SETS_FILE)
@@ -417,7 +478,10 @@ class FilePath:         # 파일 경로
     counter_tickers_file = os.path.join(get_path(DB_PATH), COUNTER_TICKERS_FILE)
     counter_strategy_file = os.path.join(get_path(DB_PATH), COUNTER_STRATEGY_FILE)
     charts_file = os.path.join(get_path(DB_PATH), CHARTS_FILE)
+    scripts_file = os.path.join(get_path(SCRIPT_PATH), SCRIPTS_FILE)
+    functions_file = os.path.join(get_path(SCRIPT_PATH), FUNCTIONS_FILE)
     image_file = os.path.join(get_path(IMAGE_PATH), "Liberanimo_only.png")
+    cache_path = os.path.join(get_path(CACHE_PATH))
 
 @dataclass
 class Constants:        # 상수 정의
@@ -485,6 +549,16 @@ class Constants:        # 상수 정의
         '손실제한': 'chkLossLimit',
         '손실제한율': 'dsbLossLimit',
 
+        # 스크립트 전략
+        '매수스크립트적용': 'chkScriptBuy',
+        '매수스크립트': 'ledScriptBuy',
+        '매수스크립트AND': 'rbScriptBuyAnd',
+        '매수스크립트OR': 'rbScriptBuyOr',
+        '매도스크립트적용': 'chkScriptSell',
+        '매도스크립트': 'ledScriptSell',
+        '매도스크립트AND': 'rbScriptSellAnd',
+        '매도스크립트OR': 'rbScriptSellOr',
+
         '남은횟수': 'xxremain',
     }
     DEFAULT_STRATEGY_SETS = {
@@ -540,6 +614,15 @@ class Constants:        # 상수 정의
         '손실제한': True,
         '손실제한율': 3.0,
 
+        '매수스크립트적용': False,
+        '매수스크립트': '',
+        '매수스크립트AND': True,
+        '매수스크립트OR': False,
+        '매도스크립트적용': False,
+        '매도스크립트': '',
+        '매도스크립트AND': True,
+        '매도스크립트OR': False,
+
         '남은횟수': 1000,
     }
     DEFAULT_DEFINE_SETS = [
@@ -550,33 +633,43 @@ class Constants:        # 상수 정의
     list전일가대비 = ['현재가', '시가', '고가', '저가', '등락율']
     list양음가대비 = ['평가손익', '수익률(%)', '전일대비', '손익율', '당일매도손익', '손익금액', '수익률']
 
-log_config = {
-    'version': 1,
-    'formatters': {
-        'detailed': {
-            'format': '%(asctime)s.%(msecs)03d-%(levelname)s-[%(filename)s(%(lineno)d) / %(funcName)s] %(message)s',
-            'datefmt': '%Y-%m-%d %H:%M:%S'
-        }
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'detailed'
-        },
-        'file': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': "log_message",
-            'formatter': 'detailed',
-            'maxBytes': 1024 * 1024 * 1,
-            'backupCount': 9,
-            'encoding': 'utf-8'
-        }
-    },
-    'root': {
-        'handlers': ['console', 'file'],
-        'level': 'DEBUG'
+@dataclass
+class SimTicker:
+    ticker = {
+        "000100": { "종목명": "유한양행", "전일가": 131600 },
+        "000660": { "종목명": "SK하이닉스", "전일가": 192400 },
+        "003670": { "종목명": "포스코퓨처엠", "전일가": 142900 },
+        "004020": { "종목명": "현대제철", "전일가": 31900 },
+        "005010": { "종목명": "휴스틸", "전일가": 5670 },
+        "005490": { "종목명": "POSCO홀딩스", "전일가": 319250 },
+        "005930": { "종목명": "삼성전자", "전일가": 54300 },
+        "006880": { "종목명": "신송홀딩스", "전일가": 8200 },
+        "008970": { "종목명": "동양철관", "전일가": 1065 },
+        "009520": { "종목명": "포스코엠텍", "전일가": 14561 },
+        "009540": { "종목명": "HD한국조선해양", "전일가": 251000 },
+        "010140": { "종목명": "삼성중공업", "전일가": 15010 },
+        "012450": { "종목명": "한화에어로스페이스", "전일가": 717000 },
+        "022100": { "종목명": "포스코DX", "전일가": 26441 },
+        "036460": { "종목명": "한국가스공사", "전일가": 40100 },
+        "042660": { "종목명": "한화오션", "전일가": 84600 },
+        "047050": { "종목명": "포스코인터내셔널", "전일가": 61000 },
+        "047810": { "종목명": "한국항공우주", "전일가": 75800 },
+        "051910": { "종목명": "LG화학", "전일가": 254000 },
+        "058430": { "종목명": "포스코스틸리온", "전일가": 47050 },
+        "071090": { "종목명": "하이스틸", "전일가": 4650 },
+        "071280": { "종목명": "로체시스템즈", "전일가": 16060 },
+        "079550": { "종목명": "LIG넥스원", "전일가": 320500 },
+        "092790": { "종목명": "넥스틸", "전일가": 14430 },
+        "097230": { "종목명": "HJ중공업", "전일가": 7793 },
+        "103140": { "종목명": "풍산", "전일가": 66400 },
+        "163280": { "종목명": "에어레인", "전일가": 15160 },
+        "170920": { "종목명": "엘티씨", "전일가": 10790 },
+        "189300": { "종목명": "인텔리안테크", "전일가": 42500 },
+        "267270": { "종목명": "HD현대건설기계", "전일가": 77000 },
+        "272210": { "종목명": "한화시스템", "전일가": 35250 },
+        "310210": { "종목명": "보로노이", "전일가": 127800 },
+        "314930": { "종목명": "바이오다인", "전일가": 15580 },
     }
-}
 
 @dataclass
 class DefineConstants:  # 글로벌 상수 정의
@@ -586,8 +679,42 @@ class DefineConstants:  # 글로벌 상수 정의
     scr = ScreenNumber()
     fp = FilePath()
     ms = MarketStatus()
-    log_config = log_config
     ddb = DataBaseColumns()
+    sim = SimTicker()
+    ticks = {
+        '틱봉': ['30'],
+        '분봉': ['1'],
+        '일봉': [],
+        '주봉': [],
+        '월봉': [],
+    }
+    log_config = {
+        'version': 1,
+        'formatters': {
+            'detailed': {
+                'format': '%(asctime)s.%(msecs)03d-%(levelname)s-[%(filename)s(%(lineno)d) / %(funcName)s] %(message)s',
+                'datefmt': '%Y-%m-%d %H:%M:%S'
+            }
+        },
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+                'formatter': 'detailed'
+            },
+            'file': {
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': "log_message",
+                'formatter': 'detailed',
+                'maxBytes': 1024 * 1024 * 1,
+                'backupCount': 9,
+                'encoding': 'utf-8'
+            }
+        },
+        'root': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG'
+        }
+    }
 dc = DefineConstants()
 
 ## Define Clobal memory *************************************************************************
@@ -639,11 +766,11 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
     })
 
     hd매매목록 = {
-        '키': '처리일시',
+        '키': '처리시간',
         '정수': ['현재가', '주문수량', '주문가격', '미체결수량', '체결량', '체결가', '체결누계금액'],
         '실수': [],
-        '컬럼': [ '주문구분', '주문상태', '종목코드', '종목명', '주문수량', '주문가격', '미체결수량', '체결량', '체결가', '체결누계금액',\
-                '매매구분', '주문번호', '원주문번호', '처리일시', '전략명칭']
+        '컬럼': [ '처리시간', '주문구분', '주문상태', '종목코드', '종목명', '주문수량', '주문가격', '미체결수량', '체결량', '체결가', '체결누계금액',\
+                '매매구분', '주문번호', '원주문번호', '전략명칭']
     }
 
     hd접수목록 = hd조건목록.copy()
@@ -704,9 +831,35 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
             '헤더': ['전략명칭', '투자금액', '매수적용', '매수전략', '매도적용', '매도전략', '이익실현율', '이익보존율', '손실제한율', '감시적용', '감시시작율', '스탑주문율'],
         }
 
+    hd차트자료 = {
+        '키': ['종목코드', '일자', '시간'],
+        '키중복': False,
+        '정수': ['시가', '고가', '저가', '현재가', '거래량', '거래대금'],
+        '실수': [],
+        '컬럼': ['종목코드', '종목명', '일자', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
+        '헤더': [
+            ['종목코드', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
+            ['종목코드', '종목명', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
+        ]
+    }
+
+    hd스크립트 = {
+        '키': '스크립트명',
+        '정수': [],
+        '실수': [],
+        '컬럼': ['스크립트명', '타입', '스크립트', '변수', '설명'],
+    }
+    hd스크립트변수 = {
+        '키': '변수명',
+        '정수': [],
+        '실수': ['값'],
+        '컬럼': ['변수명', '값'],
+    }
+
 @dataclass
 class GlobalConfig:     # 환경변수 정의
     sim_on = True
+    sim_no = 0
     gui_on = False
     ready = False
     log_level = logging.DEBUG
@@ -715,25 +868,26 @@ class GlobalConfig:     # 환경변수 정의
     ready = False
 
 @dataclass
-class GuiConfig:         # GUI 환경변수 정의
+class GlobalMemory:      # 글로벌 메모리 정의
+    connected = False
+
+    main = None
+    admin = None
+    gui = None
+    api = None
+    cdt = None # 차트 데이타
+    scm = None # 스크립트 매니저
+    ipc = None # 프로세스 매니저
+    trd = None # 쓰레드 매니저
+
+    toast = None
+    json_config = dc.log_config
+    config = GlobalConfig()
+
     list계좌콤보 = []
     list전략콤보 = []
     list전략튜플 = []
-
-@dataclass
-class GlobalMemory:      # 글로벌 메모리 정의
-    main = None
-    gui = None
-    api = None
-    dbm = None
-    admin = None
-    aaa = None
-    odr = None
-
-    toast = None
-    json_config = log_config
-    config = GlobalConfig()
-    gui = GuiConfig()
+    list스크립트 = []
 
     qwork = {} #QDict().qdict
     qanswer = {} #QDict().qanswer
@@ -751,6 +905,9 @@ class GlobalMemory:      # 글로벌 메모리 정의
     매매목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd매매목록))
     전략정의 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd전략정의))
     주문목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd주문목록))
+    스크립트 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd스크립트))
+    스크립트변수 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd스크립트변수))
+    차트자료 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd차트자료))
     l2잔고합산_copy = None
     l2손익합산 = 0
     # 서버 호출 제한 체크
@@ -768,8 +925,6 @@ class GlobalMemory:      # 글로벌 메모리 정의
     dict조건종목감시 = {}
     dict종목정보 = None # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
     dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
-    json_counter_tickers = {}
-    json_counter_strategy = {}
     수수료율 = 0.0
     세금율 = 0.0
     holdings = {}

@@ -1,13 +1,20 @@
-from public import *
+from public import dc, gm, get_path, save_json, load_json
 from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
+from typing import Dict, Any, List, Callable, Optional, Tuple, Union
 from PyQt5.QtGui import QColor
+from datetime import datetime
+import multiprocessing as mp
+from multiprocessing import shared_memory
 import threading
+import types
+import queue
 import copy
 import time
 import logging
 import uuid
-
+import os
+    
 class ThreadSafeList:
     def __init__(self):
         self.list = []
@@ -45,59 +52,220 @@ class ThreadSafeList:
 class ThreadSafeDict:
     def __init__(self):
         self.dict = {}
-        self.lock = threading.Lock()
+        # 읽기-쓰기 락 사용 (여러 스레드가 동시에 읽을 수 있음)
+        from PyQt5.QtCore import QReadWriteLock
+        self.lock = QReadWriteLock()
 
     def items(self):
-        with self.lock:
+        self.lock.lockForRead()
+        try:
             return list(self.dict.items())  # 복사본 반환
+        finally:
+            self.lock.unlock()
 
     def keys(self):
-        with self.lock:
+        self.lock.lockForRead()
+        try:
             return list(self.dict.keys())  # 복사본 반환
+        finally:
+            self.lock.unlock()
 
     def values(self):
-        with self.lock:
+        self.lock.lockForRead()
+        try:
             return list(self.dict.values())  # 복사본 반환
+        finally:
+            self.lock.unlock()
 
     def set(self, key, value=None, next=None):
-        with self.lock:
+        self.lock.lockForWrite()
+        try:
             if next is None:
                 self.dict[key] = copy.deepcopy(value) if value is not None else {}
             else:
                 if key not in self.dict:
                     self.dict[key] = {}
                 self.dict[key][next] = copy.deepcopy(value) if value is not None else {}
+        finally:
+            self.lock.unlock()
 
     def get(self, key, next=None):
-        with self.lock:
-            try:
-                if next is None:
-                    value = self.dict.get(key)
-                    return copy.deepcopy(value) if value is not None else None
-                else:
-                    if key not in self.dict:
-                        return None
-                    value = self.dict[key].get(next)
-                    return copy.deepcopy(value) if value is not None else None
-            except Exception as e:
-                logging.error(f"ThreadSafeDict get 오류: {e}")
-                return None
+        self.lock.lockForRead()
+        try:
+            if next is None:
+                value = self.dict.get(key)
+                return copy.deepcopy(value) if value is not None else None
+            else:
+                if key not in self.dict:
+                    return None
+                value = self.dict[key].get(next)
+                return copy.deepcopy(value) if value is not None else None
+        except Exception as e:
+            logging.error(f"ThreadSafeDict get 오류: {e}")
+            return None
+        finally:
+            self.lock.unlock()
 
     def contains(self, item):
-        with self.lock:
+        self.lock.lockForRead()
+        try:
             return item in self.dict
+        finally:
+            self.lock.unlock()
 
     def remove(self, key, next=None):
-        with self.lock:
-            try:
+        self.lock.lockForWrite()
+        try:
+            if next is None:
+                return copy.deepcopy(self.dict.pop(key, None))
+            elif key in self.dict:
+                return copy.deepcopy(self.dict[key].pop(next, None))
+            return None
+        except Exception as e:
+            logging.error(f"ThreadSafeDict remove 오류: {e}")
+            return None
+        finally:
+            self.lock.unlock()
+            
+    # 원자적 작업을 위한 새 메서드
+    def update_if_exists(self, key, next, value):
+        """존재하는 경우에만 업데이트 (contains + set을 원자적으로 수행)"""
+        self.lock.lockForWrite()
+        try:
+            if key in self.dict:
                 if next is None:
-                    return copy.deepcopy(self.dict.pop(key, None))
-                elif key in self.dict:
-                    return copy.deepcopy(self.dict[key].pop(next, None))
-                return None
-            except Exception as e:
-                logging.error(f"ThreadSafeDict remove 오류: {e}")
-                return None
+                    self.dict[key] = copy.deepcopy(value) if value is not None else {}
+                    return True
+                else:
+                    self.dict[key][next] = copy.deepcopy(value) if value is not None else {}
+                    return True
+            return False
+        finally:
+            self.lock.unlock()
+
+class Toast(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+
+        self.label = QLabel(self)
+        self.label.setStyleSheet("""
+            QLabel {
+                color: white;
+                background-color: rgba(0, 0, 0, 180);
+                border-radius: 10px;
+                padding: 10px 20px;
+                font: 12px;
+            }
+        """)
+
+    def toast(self, message, duration=2000):
+        self.label.setText(message)
+        self.label.adjustSize()
+        self.adjustSize()
+
+        # 활성화된 창의 중앙에 위치
+        active_window = QApplication.activeWindow()
+        if active_window:
+            rect = active_window.geometry()
+            x = rect.center().x() - self.width() / 2
+            y = rect.center().y() - self.height() / 2
+            self.move(x, y)
+
+        self.show()
+        QTimer.singleShot(duration, self.hide)
+
+    def mousePressEvent(self, event):
+        self.hide()
+
+class CounterTicker:
+    """
+    쓰레드 안전한, 전략별 종목 매수 횟수 카운터 클래스
+    날짜가 변경되면 자동으로 카운터를 초기화합니다.
+    """
+    DEFAULT_STRATEGY_LIMIT = 1000   # 전략 자체 기본 제한
+    DEFAULT_TICKER_LIMIT = 10       # 종목 기본 제한
+    DEFAULT_DATA = { "date": dc.td.ToDay, "data": {} } # data = { strategy: {code: { name: "", limit: 0, count: 0 }, ... } } 
+   
+    def __init__(self, file_name="counter_data.json"):
+        data_path = get_path('db')
+        self.file_path = os.path.join(data_path, file_name)
+        self.lock = threading.RLock()
+        self.data = {}
+        self.whole_count = self.DEFAULT_STRATEGY_LIMIT
+        self.load_data()
+    
+    def load_data(self):
+        with self.lock:
+            success, loaded_data = load_json(self.file_path, self.DEFAULT_DATA)
+            if success:
+                saved_date = loaded_data.get("date", "")
+                self.data = loaded_data.get("data", {})
+                if saved_date != dc.td.ToDay: self.data = {}
+    
+    def save_data(self):
+        with self.lock:
+            save_obj = { "date": dc.td.ToDay, "data": self.data }
+            success, _ = save_json(self.file_path, save_obj)
+            return success
+    
+    def set_strategy(self, strategy, name, strategy_limit=None, ticker_limit=None):
+        with self.lock:
+            update = False
+            if strategy not in self.data: 
+                self.data[strategy] = {}
+                self.data[strategy]["000000"] = { 
+                    "name": name, 
+                    "all": ticker_limit if ticker_limit is not None else self.DEFAULT_TICKER_LIMIT, 
+                    "limit": strategy_limit if strategy_limit is not None else self.DEFAULT_STRATEGY_LIMIT, 
+                    "count": 0 }
+                update = True
+            else:
+                if self.data[strategy]["000000"]["name"] != name:
+                    self.data[strategy]["000000"]["name"] = name
+                    update = True
+                if strategy_limit is not None:
+                    if self.data[strategy]["000000"]["limit"] != strategy_limit:
+                        self.data[strategy]["000000"].update({ "limit": strategy_limit, "count": 0 })
+                        update = True
+                if ticker_limit is not None:
+                    if self.data[strategy]["000000"]["all"] != ticker_limit:
+                        self.data[strategy]["000000"].update({ "all": ticker_limit, "count": 0 })
+                        update = True
+            if update: self.save_data()
+    
+    def set_batch(self, data):
+        with self.lock:
+            for strategy, codes in data.items(): 
+                for code, name in codes.items():
+                    self.set(strategy, code, name)
+            self.save_data()
+
+    def set(self, strategy, code, name, limit=0):
+        if strategy not in self.data:
+            self.set_strategy(strategy, name)
+        with self.lock:
+            self.data[strategy][code] = { "name": name, "limit": limit, "count": 0 }
+            self.save_data()
+
+    def set_add(self, strategy, code):
+        with self.lock:
+            self.data[strategy][code]["count"] += 1
+            self.data[strategy]["000000"]["count"] += 1
+            self.save_data()
+    
+    def get(self, strategy, code, name=None):
+        with self.lock:
+            if code not in self.data[strategy]:
+                self.set(strategy, code, name if name is not None else "")
+            if self.data[strategy]["000000"]["count"] >= self.data[strategy]["000000"]["limit"]:
+                return False
+            ticker_info = self.data[strategy][code]
+            ticker_limit = ticker_info["limit"] if ticker_info["limit"] > 0 else self.data[strategy]["000000"]["all"]
+            return ticker_info["count"] < ticker_limit
 
 class TimeLimiter:
     def __init__(self, name, second=5, minute=100, hour=1000):
@@ -163,45 +331,6 @@ class TimeLimiter:
             self.condition_times[condition] = time.time() * 1000
         self.update_request_times()
 
-class Toast(QWidget):
-    def __init__(self):
-        super().__init__()
-
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
-
-        self.label = QLabel(self)
-        self.label.setStyleSheet("""
-            QLabel {
-                color: white;
-                background-color: rgba(0, 0, 0, 180);
-                border-radius: 10px;
-                padding: 10px 20px;
-                font: 12px;
-            }
-        """)
-
-    def toast(self, message, duration=2000):
-        self.label.setText(message)
-        self.label.adjustSize()
-        self.adjustSize()
-
-        # 활성화된 창의 중앙에 위치
-        active_window = QApplication.activeWindow()
-        if active_window:
-            rect = active_window.geometry()
-            x = rect.center().x() - self.width() / 2
-            y = rect.center().y() - self.height() / 2
-            self.move(x, y)
-
-        self.show()
-        QTimer.singleShot(duration, self.hide)
-
-    def mousePressEvent(self, event):
-        self.hide()
-
-#QReadWriteLock 사용
 class TableManager:
     def __init__(self, config):
         """
@@ -209,11 +338,13 @@ class TableManager:
         
         Parameters:
         config (dict): 설정 정보 딕셔너리
-            - '키': 고유 키로 사용할 컬럼명
+            - '키': 고유 키로 사용할 컬럼명 또는 컬럼명 리스트 (복합 키)
+                    None이면 키 없는 모드로 동작
+            - '키중복': True면 동일 키 값을 갖는 여러 행 허용 (기본값: False)
             - '정수': 정수형으로 변환할 컬럼 리스트
             - '실수': 실수형으로 변환할 컬럼 리스트
             - '컬럼': 전체 컬럼 리스트
-            - '헤더': 화면용 컬럼 리스트
+            - '헤더': 화면용 컬럼 리스트 또는 리스트의 리스트 (여러 헤더 셋)
         """
         self.data = []
         self.data_dict = {}  # 키 기반 검색을 위한 딕셔너리
@@ -223,17 +354,45 @@ class TableManager:
         self.lock = QReadWriteLock()
         
         # 설정 정보 저장
-        self.key_column = config.get('키', '')
+        self.key_columns = config.get('키', None)
+        
+        # key_columns가 문자열이면 리스트로 변환
+        if isinstance(self.key_columns, str):
+            self.key_columns = [self.key_columns]
+            
+        # 키 중복 허용 여부
+        self.allow_duplicate_keys = config.get('키중복', False)
+        
         self.int_columns = config.get('정수', [])
         self.float_columns = config.get('실수', [])
         self.all_columns = config.get('확장', config.get('컬럼', []))
-        self.display_columns = config.get('헤더', [])
         
-        if not self.key_column: raise ValueError("'키' 컬럼을 지정해야 합니다.")
-        if not self.all_columns: raise ValueError("'컬럼' 리스트를 지정해야 합니다.")
+        # 헤더 설정 - 리스트의 리스트로 처리
+        header_config = config.get('헤더', [])
+        if header_config and not isinstance(header_config[0], list):
+            # 단일 리스트인 경우, 리스트의 리스트로 변환
+            self.display_columns = [header_config]
+        else:
+            self.display_columns = header_config
+            
+        # 헤더가 없는 경우 all_columns 사용
+        if not self.display_columns:
+            self.display_columns = [self.all_columns]
+
+        # 키가 있는 경우 키 컬럼이 all_columns에 있는지 확인
+        if self.key_columns:
+            for key_col in self.key_columns:
+                if key_col not in self.all_columns:
+                    raise ValueError(f"키 컬럼 '{key_col}'이 '컬럼' 리스트에 없습니다.")
+        
+        if not self.all_columns:
+            raise ValueError("'컬럼' 리스트를 지정해야 합니다.")
         
         # 자주 사용하는 상수와 객체 미리 정의
         # 정렬 상수
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QColor
+        
         self.align_right = Qt.AlignRight | Qt.AlignVCenter
         self.align_left = Qt.AlignLeft | Qt.AlignVCenter
         self.align_center = Qt.AlignCenter
@@ -248,6 +407,28 @@ class TableManager:
 
         # 리사이즈
         self._resize = True
+        
+        # 키 없는 모드인지 여부
+        self.no_key_mode = self.key_columns is None
+    
+    def _get_key_for_item(self, item):
+        """
+        항목에서 키 값을 추출
+        
+        Parameters:
+        item (dict): 키 값을 추출할 항목
+        
+        Returns:
+        키 없는 모드면 None, 단일 키면 값, 복합 키면 튜플
+        """
+        if self.no_key_mode:
+            return None
+            
+        if len(self.key_columns) == 1:
+            return item.get(self.key_columns[0])
+        else:
+            # 복합 키는 튜플로 반환
+            return tuple(item.get(key_col) for key_col in self.key_columns)
     
     def _convert_value(self, column, value):
         """
@@ -270,6 +451,9 @@ class TableManager:
         # 문자열 처리
         if isinstance(value, str):
             value = value.strip()
+            if column not in self.int_columns + self.float_columns:
+                return value
+            
             # 쉼표가 포함된 숫자 문자열 처리
             if any(c.isdigit() for c in value):
                 value = value.replace(',', '')
@@ -321,13 +505,14 @@ class TableManager:
                 processed_item[column] = self._convert_value(column, item.get(column, ''))
         
         return processed_item
-    
+
     def get(self, key=None, filter=None, type=None, column=None):
         """
         get() -> [{}]                     # 전체 데이터 사전 리스트 반환
         get(type='df') -> DataFrame       # DataFrame으로 반환
         get(key='key') -> {}              # 'key'로 찾은 행 반환
         get(key=숫자) -> {}               # 인덱스로 행 반환
+        get(key=(값1,값2)) -> [{}]        # 복합 키로 찾은 행(들) 반환
         get(filter={}) -> [{}]            # 조건에 맞는 행들 반환
         get(filter={}, column='col') -> []  # 조건에 맞는 행들의 특정 컬럼 값들 리스트 반환
         get(column='col') -> []           # 특정 컬럼 값들 리스트 반환
@@ -335,10 +520,11 @@ class TableManager:
         get(key='key', column='col') -> 값  # 특정 행의 특정 컬럼 값 반환
         get(key='key', column=['c1','c2']) -> (값1, 값2, ...)  # 특정 행의 여러 컬럼 값 튜플 반환
         """
+        import copy
         # 읽기 락 사용
         self.lock.lockForRead()
         try:
-            # 0. 키가 정수형인 경우
+            # 0. 키가 정수형인 경우 (인덱스로 접근)
             if isinstance(key, int):
                 if 0 <= key < len(self.data):
                     return copy.deepcopy(self.data[key])
@@ -346,9 +532,12 @@ class TableManager:
             
             # 1. 특정 키 + 특정 컬럼 조회
             if key is not None and column is not None:
-                item = self.data_dict.get(key)
-                if item is None:
+                items = self._find_items_by_key(key)
+                if not items:
                     return None
+                
+                # 키 중복 허용이 아닌 경우 첫 번째 항목만 사용
+                item = items[0] if isinstance(items, list) else items
                 
                 # 컬럼이 리스트인 경우 (여러 컬럼 조회)
                 if isinstance(column, (list, tuple)):
@@ -376,11 +565,18 @@ class TableManager:
                 elif isinstance(column, str):
                     # 단일 컬럼이면 값만 추출하여 리스트로 반환
                     return [item.get(column) for item in self.data]
-            
+                
             # 3. 특정 키 조회
             if key is not None:
-                item = self.data_dict.get(key)
-                return copy.deepcopy(item) if item else None
+                items = self._find_items_by_key(key)
+                if not items: return None
+
+                # 키 중복 허용이면 여러 항목 반환 가능
+                if self.allow_duplicate_keys and isinstance(items, list):
+                    return copy.deepcopy(items)
+                else:
+                    # 중복 허용 아니면 첫 번째 항목만 반환
+                    return copy.deepcopy(items)
             
             # 4. 필터링 조회
             if filter is not None:
@@ -402,32 +598,77 @@ class TableManager:
         finally:
             self.lock.unlock()
     
+    def _find_items_by_key(self, key):
+        """
+        키 값으로 항목 찾기
+        
+        Parameters:
+        key: 찾을 키 값
+        
+        Returns:
+        중복 키 허용이면 항목 리스트, 아니면 단일 항목
+        """
+        if self.no_key_mode:
+            return None
+        
+        if key not in self.data_dict:
+            return None
+        
+        return self.data_dict.get(key)
+    
+    def _add_to_dict(self, key_value, item):
+        """
+        딕셔너리에 항목 추가
+        
+        Parameters:
+        key_value: 키 값 (문자열, 숫자 또는 튜플)
+        item (dict): 추가할 항목
+        """
+        if self.allow_duplicate_keys:
+            # 중복 키 허용 모드: 리스트로 항목 저장
+            if key_value in self.data_dict:
+                self.data_dict[key_value].append(item)
+            else:
+                self.data_dict[key_value] = [item]
+        else:
+            # 중복 키 비허용 모드: 단일 항목 저장
+            self.data_dict[key_value] = item
+
     def set(self, key=None, filter=None, data=None):
         """
         set(key='key', data={}) -> bool   # 특정 키 행 추가/업데이트
+        set(key=(값1,값2), data={}) -> bool # 복합 키 행 추가/업데이트
         set(filter={}, data={}) -> bool   # 조건 만족 행들 업데이트
         set(data={}) -> bool              # 모든 행의 지정 컬럼 업데이트
         set(data=[{}, {}]) -> bool        # 전체 데이터 대체
         """
         if data is None:
             return False
-            
+                
         # 리스트 타입 체크 (데이터 대체 모드)
         if isinstance(data, list):
             # 쓰기 락 사용
             self.lock.lockForWrite()
             try:
-                # 키 필드 검증
-                for item in data:
-                    if self.key_column not in item:
-                        raise ValueError(f"모든 항목에 키 컬럼('{self.key_column}')이 필요합니다.")
+                # 키 모드일 때 키 필드 검증
+                if not self.no_key_mode:
+                    for item in data:
+                        for key_col in self.key_columns:
+                            if key_col not in item:
+                                raise ValueError(f"모든 항목에 키 컬럼('{key_col}')이 필요합니다.")
                 
                 # 데이터 대체
                 self.data = []
                 self.data_dict = {}
                 for item in data:
-                    key_value = item[self.key_column]
-                    self._set_item_by_key(key_value, item)
+                    processed_item = self._process_item(item)
+                    self.data.append(processed_item)
+                
+                    # 키 모드일 때 딕셔너리에 추가
+                    if not self.no_key_mode:
+                        key_value = self._get_key_for_item(processed_item)
+                        self._add_to_dict(key_value, processed_item)
+                
                 return True
             finally:
                 self.lock.unlock()
@@ -458,38 +699,73 @@ class TableManager:
         return False
     
     def _set_item_by_key(self, key, data):
-        """키로 항목 추가/업데이트"""
-        # 기존 항목이 있으면 업데이트
-        item = self.data_dict.get(key)
+        """
+        키로 항목 추가/업데이트
         
-        if item is not None:
+        Parameters:
+        key: 키 값 (단일 값 또는 복합 키 튜플)
+        data (dict): 업데이트할 데이터
+        
+        Returns:
+        bool: 성공 여부
+        """
+        if self.no_key_mode:
+            # 키 없는 모드에서는 인덱스로 처리
+            if isinstance(key, int):
+                if 0 <= key < len(self.data):
+                    for column, value in data.items():
+                        if column in self.all_columns:
+                            self.data[key][column] = self._convert_value(column, value)
+                    return True
+            return False
+        
+        # 기존 항목 찾기
+        items = self._find_items_by_key(key)
+        
+        # 중복 허용 모드일 때
+        if self.allow_duplicate_keys:
+            if items:
+                # 첫 번째 항목만 업데이트
+                for column, value in data.items():
+                    if column in self.all_columns and column not in self.key_columns:
+                        items[0][column] = self._convert_value(column, value)
+                return True
+        elif items:
+            # 중복 비허용 모드일 때 항목 업데이트
             for column, value in data.items():
-                if column in self.all_columns and column != self.key_column:
-                    item[column] = self._convert_value(column, value)
+                if column in self.all_columns and column not in self.key_columns:
+                    items[column] = self._convert_value(column, value)
             return True
         
         # 신규 항목 추가
         # 모든 컬럼 기본값으로 초기화
         item = {}
         for column in self.all_columns:
-            if column == self.key_column:
-                item[column] = key  # 키 값 설정
+            # 기본값 설정
+            if column in self.int_columns:
+                item[column] = 0
+            elif column in self.float_columns:
+                item[column] = 0.0
             else:
-                # 기본값 설정
-                if column in self.int_columns:
-                    item[column] = 0
-                elif column in self.float_columns:
-                    item[column] = 0.0
-                else:
-                    item[column] = ""
+                item[column] = ""
+        
+        # 키 컬럼 설정
+        if isinstance(key, tuple) and len(key) == len(self.key_columns):
+            # 복합 키 처리
+            for i, key_col in enumerate(self.key_columns):
+                item[key_col] = key[i]
+        elif len(self.key_columns) == 1:
+            # 단일 키 처리
+            item[self.key_columns[0]] = key
         
         # 데이터 채우기
         for column, value in data.items():
             if column in self.all_columns:
                 item[column] = self._convert_value(column, value)
         
+        # 데이터 추가
         self.data.append(item)
-        self.data_dict[key] = item
+        self._add_to_dict(key, item)
         self._resize = True
         return True
     
@@ -498,8 +774,9 @@ class TableManager:
         updated = False
         for item in self.data:
             if self._match_conditions(item, filter):
+                # 키 컬럼은 업데이트하지 않음
                 for column, value in data.items():
-                    if column in self.all_columns and column != self.key_column:
+                    if column in self.all_columns and (self.no_key_mode or column not in self.key_columns):
                         item[column] = self._convert_value(column, value)
                 updated = True
         return updated
@@ -511,7 +788,7 @@ class TableManager:
         
         for item in self.data:
             for column, value in data.items():
-                if column in self.all_columns and column != self.key_column:
+                if column in self.all_columns and (self.no_key_mode or column not in self.key_columns):
                     item[column] = self._convert_value(column, value)
         return True
     
@@ -519,6 +796,7 @@ class TableManager:
         """
         delete() -> bool                  # 모든 데이터 삭제
         delete(key='key') -> bool         # 특정 키 행 삭제
+        delete(key=(값1,값2)) -> bool     # 복합 키 행 삭제
         delete(filter={}) -> bool         # 조건 만족 행들 삭제
         """
         # 쓰기 락 사용
@@ -526,28 +804,65 @@ class TableManager:
         try:
             # 1. 특정 키 삭제
             if key is not None:
-                item = self.data_dict.pop(key, None)
-                if item is not None and item in self.data:
-                    self.data.remove(item)
-                    self._resize = True
-                    return True
-                return False
+                # 키 없는 모드에서는 인덱스로 처리
+                if self.no_key_mode:
+                    if isinstance(key, int) and 0 <= key < len(self.data):
+                        del self.data[key]
+                        self._resize = True
+                        return True
+                    return False
+                    
+                # 키 모드에서는 키로 처리
+                items = self._find_items_by_key(key)
+                if not items:
+                    return False
+                
+                if self.allow_duplicate_keys:
+                    # 중복 키 허용 모드: 모든 항목 삭제
+                    for item in items[:]:  # 복사본으로 반복
+                        if item in self.data:
+                            self.data.remove(item)
+                    # 딕셔너리에서 키 삭제
+                    self.data_dict.pop(key, None)
+                else:
+                    # 중복 키 비허용 모드: 단일 항목 삭제
+                    if items in self.data:
+                        self.data.remove(items)
+                    self.data_dict.pop(key, None)
+                    
+                self._resize = True
+                return True
             
             # 2. 필터링된 항목 삭제
             if filter is not None:
                 items_to_delete = [item for item in self.data if self._match_conditions(item, filter)]
                 if not items_to_delete:
                     return False
-                    
+                
                 for item in items_to_delete:
-                    key_val = item.get(self.key_column)
-                    self.data_dict.pop(key_val, None)
-                    if item in self.data:
-                        self.data.remove(item)
+                    # 키 모드일 때 딕셔너리에서도 삭제
+                    if not self.no_key_mode:
+                        key_val = self._get_key_for_item(item)
+                        
+                        if self.allow_duplicate_keys:
+                            # 중복 키 허용 모드: 리스트에서 항목 제거
+                            if key_val in self.data_dict:
+                                items_list = self.data_dict[key_val]
+                                if item in items_list:
+                                    items_list.remove(item)
+                                # 리스트가 비었으면 키 삭제
+                                if not items_list:
+                                    self.data_dict.pop(key_val, None)
+                        else:
+                            # 중복 키 비허용 모드: 키 삭제
+                            self.data_dict.pop(key_val, None)
+                
+                if item in self.data:
+                    self.data.remove(item)
                 
                 if items_to_delete:
                     self._resize = True
-                    
+                
                 return bool(items_to_delete)
             
             # 3. 전체 데이터 삭제
@@ -558,6 +873,77 @@ class TableManager:
         finally:
             self.lock.unlock()
     
+    def _filter_data(self, conditions):
+        """
+        # conditions : {컬럼: 값} 컬럼과 값 비교
+        {'col': 값}
+        # conditions : {컬럼: (연산자, 값)}
+        {'col': ('>', 값)}                # col > 값
+        {'col': ('<', 값)}                # col < 값
+        {'col': ('>=', 값)}               # col >= 값
+        {'col': ('<=', 값)}               # col <= 값
+        {'col': ('==', 값)}               # col == 값
+        {'col': ('!=', 값)}               # col != 값
+        {'col': ('>', '@other_col')}      # col > other_col (컬럼 간 비교)
+        """
+        import copy
+        result = []
+        for row in self.data:
+            if self._match_conditions(row, conditions):
+                result.append(copy.deepcopy(row))
+        return result
+    
+    def _match_conditions(self, row, conditions):
+        """항목이 조건에 맞는지 확인"""
+        for column, value in conditions.items():
+            if column not in row:
+                return False
+                
+            item_value = row[column]
+            
+            # 문자열인 경우 포함 여부 확인
+            if isinstance(item_value, str) and isinstance(value, str):
+                if value not in item_value:
+                    return False
+            # 컬럼 간 비교인 경우 ('컬럼' 또는 '@컬럼')
+            elif isinstance(value, (list, tuple)) and len(value) == 2:
+                op, compare_value = value
+                # '@'로 시작하는 문자열은 다른 컬럼을 참조
+                if isinstance(compare_value, str) and compare_value.startswith('@'):
+                    other_column = compare_value[1:]  # '@' 제거
+                    if other_column not in row:
+                        return False
+                    other_value = row[other_column]
+                    if not self._compare_values(item_value, op, other_value):
+                        return False
+                # 일반 비교값
+                else:
+                    if not self._compare_values(item_value, op, compare_value):
+                        return False
+            # 그 외의 경우 정확히 일치하는지 확인
+            elif item_value != value:
+                return False
+                
+        return True
+    
+    def _compare_values(self, item_value, operator, compare_value):
+        """숫자형 값 비교 연산"""
+        ops = {
+            '>': lambda x, y: x > y,
+            '<': lambda x, y: x < y,
+            '>=': lambda x, y: x >= y,
+            '<=': lambda x, y: x <= y,
+            '==': lambda x, y: x == y,
+            '!=': lambda x, y: x != y
+        }
+        
+        if operator in ops:
+            try:
+                return ops[operator](item_value, compare_value)
+            except (TypeError, ValueError):
+                return False
+        return False
+
     def len(self, filter=None):
         """
         len() -> int                      # 전체 행 수 반환
@@ -575,7 +961,12 @@ class TableManager:
     def in_key(self, key):
         """
         in_key('key') -> bool             # 키 존재 여부
+        in_key((값1, 값2)) -> bool        # 복합 키 존재 여부
         """
+        # 키 없는 모드에서는 항상 False
+        if self.no_key_mode:
+            return False
+            
         # 읽기 락 사용
         self.lock.lockForRead()
         try:
@@ -635,98 +1026,19 @@ class TableManager:
         finally:
             self.lock.unlock()
     
-    def _find_item_by_key(self, key):
-        """키 값으로 항목 찾기 - 딕셔너리 사용으로 O(1) 성능"""
-        return self.data_dict.get(key)
-    
-    def _find_index_by_key(self, key):
-        """키 값으로 인덱스 찾기"""
-        item = self.data_dict.get(key)
-        if item is not None:
-            try:
-                return self.data.index(item)
-            except ValueError:
-                pass
-        return None
-    
-    def _filter_data(self, conditions):
-        """
-        # conditions : {컬럼: 값} 컬럼과 값 비교
-        {'col': 값}
-        # conditions : {컬럼: (연산자, 값)}
-        {'col': ('>', 값)}                # col > 값
-        {'col': ('<', 값)}                # col < 값
-        {'col': ('>=', 값)}               # col >= 값
-        {'col': ('<=', 값)}               # col <= 값
-        {'col': ('==', 값)}               # col == 값
-        {'col': ('!=', 값)}               # col != 값
-        {'col': ('>', '@other_col')}      # col > other_col (컬럼 간 비교)
-        """
-        result = []
-        for row in self.data:
-            if self._match_conditions(row, conditions):
-                result.append(copy.deepcopy(row))
-        return result
-    
-    def _match_conditions(self, row, conditions):
-        """항목이 조건에 맞는지 확인"""
-        for column, value in conditions.items():
-            if column not in row:
-                return False
-                
-            item_value = row[column]
-            
-            # 문자열인 경우 포함 여부 확인
-            if isinstance(item_value, str) and isinstance(value, str):
-                if value not in item_value:
-                    return False
-            # 컬럼 간 비교인 경우 ('컬럼' 또는 '@컬럼')
-            elif isinstance(value, (list, tuple)) and len(value) == 2:
-                op, compare_value = value
-                # '@'로 시작하는 문자열은 다른 컬럼을 참조
-                if isinstance(compare_value, str) and compare_value.startswith('@'):
-                    other_column = compare_value[1:]  # '@' 제거
-                    if other_column not in row:
-                        return False
-                    other_value = row[other_column]
-                    if not self._compare_values(item_value, op, other_value):
-                        return False
-                # 일반 비교값
-                else:
-                    if not self._compare_values(item_value, op, compare_value):
-                        return False
-            # 그 외의 경우 정확히 일치하는지 확인
-            elif item_value != value:
-                return False
-                
-        return True
-    
-    def _compare_values(self, item_value, operator, compare_value):
-        """숫자형 값 비교 연산"""
-        ops = {
-            '>': lambda x, y: x > y,
-            '<': lambda x, y: x < y,
-            '>=': lambda x, y: x >= y,
-            '<=': lambda x, y: x <= y,
-            '==': lambda x, y: x == y,
-            '!=': lambda x, y: x != y
-        }
-        
-        if operator in ops:
-            try:
-                return ops[operator](item_value, compare_value)
-            except (TypeError, ValueError):
-                return False
-        return False
-
-    def update_table_widget(self, table_widget, stretch=True):
+    def update_table_widget(self, table_widget, stretch=True, header=0):
         """
         저장된 데이터를 테이블 위젯에 표시
         
         Parameters:
         table_widget (QTableWidget): 데이터를 표시할 테이블 위젯
         stretch (bool): 마지막 열을 테이블 너비에 맞게 늘릴지 여부
+        header (int): 사용할 헤더 세트의 인덱스 (기본값: 0)
         """
+        import copy
+        from PyQt5.QtWidgets import QTableWidgetItem
+        from PyQt5.QtCore import Qt
+        
         # 락 사용 최소화 - 데이터 스냅샷만 빠르게 복사
         self.lock.lockForRead()
         try:
@@ -735,7 +1047,10 @@ class TableManager:
                 return
                 
             data_copy = copy.deepcopy(self.data)
-            columns = self.display_columns or self.all_columns
+            if header < 0 or header >= len(self.display_columns):
+                header = 0
+
+            columns = self.display_columns[header]
             resize_needed = self._resize
             
             if resize_needed:
@@ -771,13 +1086,19 @@ class TableManager:
                 if stretch:
                     table_widget.horizontalHeader().setStretchLastSection(stretch)
         except Exception as e:
+            import logging
             logging.error(f'update_table_widget 오류: {type(e).__name__} - {e}', exc_info=True)
         finally:
             table_widget.setUpdatesEnabled(True)
             table_widget.setSortingEnabled(True)
-
+            
     def _set_table_cell(self, table_widget, row, col, column, value):
         """테이블의 특정 셀에 값 설정"""
+        from PyQt5.QtWidgets import QTableWidgetItem
+        from PyQt5.QtCore import Qt
+        
+        original_value = str(value)
+        
         # 숫자 형식화
         if column in self.int_columns and isinstance(value, int):
             display_value = f"{value:,}"
@@ -785,7 +1106,13 @@ class TableManager:
             display_value = f"{value:,.2f}"
         else:
             display_value = str(value)
-        
+            # "스크립트" 컬럼의 경우 마지막 줄만 표시
+            if column == '스크립트' and '\n' in display_value:
+                lines = display_value.split('\n')
+                # 마지막 줄이 비어있으면 그 전 줄을 사용
+                last_line = lines[-1] if lines[-1].strip() else lines[-2] if len(lines) > 1 else lines[0]
+                display_value = last_line if last_line.strip() else "(빈 줄)"
+                
         # 기존 아이템 재사용
         existing_item = table_widget.item(row, col)
         if existing_item:
@@ -793,9 +1120,11 @@ class TableManager:
             if existing_item.text() == display_value:
                 return
             existing_item.setText(display_value)
+            existing_item.setData(Qt.UserRole, original_value)
             cell_item = existing_item
         else:
             cell_item = QTableWidgetItem(display_value)
+            cell_item.setData(Qt.UserRole, original_value)
             table_widget.setItem(row, col, cell_item)
         
         # 정렬 설정
@@ -814,715 +1143,42 @@ class TableManager:
                 else:
                     cell_item.setForeground(self.color_zero)      # 0은 검정색
 
-# 워커 쓰레드 클래스
-class WorkerThread(QThread):
-    taskReceived = pyqtSignal(str, str, object, object)
-    
-    def __init__(self, name, target):
-        super().__init__()
-        self.name = name
-        self.target = target
-        self.running = True
-        
-        # 이 쓰레드에서 처리할 시그널 연결
-        self.taskReceived.connect(self._processTask)
-    
-    def run(self):
-        logging.debug(f"{self.name} 쓰레드 시작")
-        self.exec_()  # 이벤트 루프 시작
-        logging.debug(f"{self.name} 쓰레드 종료")
+"""
+# 1. 단일 키 사용 (기존 방식)
+config = {
+    '키': '종목코드',
+    '정수': ['수량', '매수금액'],
+    '실수': ['현재가', '평가손익'],
+    '컬럼': ['종목코드', '종목명', '수량', '매수금액', '현재가', '평가손익']
+}
+table = TableManager(config)
 
-    def _get_var(self, var_name):
-        """타겟 객체의 변수 값을 가져오는 내부 메서드"""
-        try:
-            return getattr(self.target, var_name, None)
-        except Exception as e:
-            logging.error(f"변수 접근 오류: {e}", exc_info=True)
-            return None
+# 2. 복합 키 사용
+config = {
+    '키': ['종목코드', '매수일자'],  # 두 컬럼을 합쳐서 키로 사용
+    '정수': ['수량', '매수금액'],
+    '실수': ['현재가', '평가손익'],
+    '컬럼': ['종목코드', '종목명', '매수일자', '수량', '매수금액', '현재가', '평가손익']
+}
+table = TableManager(config)
 
-    def _set_var(self, var_name, value):
-        """타겟 객체의 변수 값을 설정하는 내부 메서드"""
-        try:
-            setattr(self.target, var_name, value)
-            return True
-        except Exception as e:
-            logging.error(f"변수 설정 오류: {e}", exc_info=True)
-            return None
-            
-    @pyqtSlot(str, str, object, object)
-    def _processTask(self, task_id, method_name, task_data, callback):
-        # 메서드 찾기
-        method = getattr(self.target, method_name, None)
-        if not method:
-            if callback:
-                callback(None)
-            return
-        
-        # 메서드 실행
-        args, kwargs = task_data
-        try:
-            result = method(*args, **kwargs)
-            if callback:
-                callback(result)
-        except Exception as e:
-            logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-            if callback:
-                callback(None)
+# 3. 키 없는 모드
+config = {
+    '키': None,  # 키 사용 안 함
+    '정수': ['수량', '매수금액'],
+    '실수': ['현재가', '평가손익'],
+    '컬럼': ['종목코드', '종목명', '수량', '매수금액', '현재가', '평가손익']
+}
+table = TableManager(config)
 
-# 워커 관리자
-class WorkerManager:
-    def __init__(self):
-        self.workers = {}  # name -> worker thread
-        self.targets = {}  # name -> target object
+# 4. 중복 키 허용
+config = {
+    '키': '종목코드',
+    '키중복': True,  # 같은 종목코드가 여러 행에 있을 수 있음
+    '정수': ['수량', '매수금액'],
+    '실수': ['현재가', '평가손익'],
+    '컬럼': ['종목코드', '종목명', '수량', '매수금액', '현재가', '평가손익']
+}
+table = TableManager(config)
+"""
 
-        self.manager = None
-        self.processes = {} # name -> process info
-        self.task_queues = {} # name -> manager.list
-        self.result_dicts = {} # name -> manager.dict
-
-        self.is_shutting_down = False
-
-    def register(self, name, target_class=None, use_thread=True, use_process=False):
-        if use_process:
-            return self._register_process(name, target_class)
-        elif use_thread:
-            target = target_class() if isinstance(target_class, type) else target_class
-            worker = WorkerThread(name, target)
-            worker.start()
-            self.workers[name] = worker
-        else:
-            target = target_class() if isinstance(target_class, type) else target_class
-            self.targets[name] = target
-        return self
-
-    def stop_worker(self, worker_name):
-        """워커 중지"""
-        # 쓰레드 워커 중지
-        if worker_name in self.workers:
-            worker = self.workers[worker_name]
-            worker.running = False
-            worker.quit()  # 이벤트 루프 종료
-            worker.wait(1000)  # 최대 1초간 대기
-            self.workers.pop(worker_name, None)
-            logging.debug(f"워커 종료: {worker_name} (쓰레드)")
-            return True
-            
-        # 프로세스 워커 중지
-        elif worker_name in self.task_queues:
-            logging.info(f"프로세스 {worker_name} 종료 중...")
-            
-            # 종료 명령 전송
-            if worker_name in self.task_queues:
-                self.task_queues[worker_name].append({'command': 'stop'})
-            
-            # 프로세스 종료 대기
-            process = self.processes[worker_name].get('process')
-            if process:
-                process.join(2.0)
-                if process.is_alive():
-                    process.terminate()
-            
-            # 정리
-            if worker_name in self.task_queues:
-                del self.task_queues[worker_name]
-            if worker_name in self.result_dicts:
-                del self.result_dicts[worker_name]
-            del self.processes[worker_name]
-            
-            logging.info(f"프로세스 {worker_name} 종료 완료")
-            return True
-            
-        # 메인 쓰레드 워커 제거
-        elif worker_name in self.targets:
-            self.targets.pop(worker_name, None)
-            logging.debug(f"워커 제거: {worker_name} (메인 쓰레드)")
-            return True
-            
-        return False
-
-    def stop_all(self):
-        """모든 워커 중지"""
-        # 모든 쓰레드 워커 중지
-        self.is_shutting_down = True
-
-        logging.info("모든 워커 중지 중...")
-        for name in list(self.workers.keys()):
-            self.stop_worker(name)
-            
-        # 모든 프로세스 워커 중지
-        for name in list(self.processes.keys()):
-            self.stop_worker(name)
-            
-        # 모든 메인 쓰레드 워커 제거
-        self.targets.clear()
-        
-        # Manager 종료
-        if self.manager is not None:
-            try:
-                self.manager.shutdown()
-            except:
-                pass
-            self.manager = None
-
-        logging.debug("모든 워커 종료")
-        
-    def get_var(self, worker_name, var_name):
-        """워커의 변수 값을 가져오는 함수"""
-        if self.is_shutting_down:
-            return None
-            
-        # 프로세스인 경우
-        if worker_name in self.processes:
-            return self._process_call_sync(worker_name, '_get_var', [var_name], {})
-            
-        # 워커 찾기
-        if worker_name not in self.workers and worker_name not in self.targets:
-            logging.error(f"워커 없음: {worker_name}")
-            return None
-            
-        # 메인 쓰레드에서 실행하는 경우
-        if worker_name in self.targets:
-            target = self.targets[worker_name]
-            try:
-                return getattr(target, var_name, None)
-            except Exception as e:
-                logging.error(f"변수 접근 오류: {e}", exc_info=True)
-                return None
-                
-        # 쓰레드로 실행하는 경우
-        if worker_name in self.workers:
-            worker = self.workers[worker_name]
-            return self.answer(worker_name, '_get_var', var_name)
-            
-        return None
-        
-    def set_var(self, worker_name, var_name, value):
-        """워커의 변수 값을 설정하는 함수"""
-        if self.is_shutting_down:
-            return False
-            
-        # 프로세스인 경우
-        if worker_name in self.processes:
-            return self._process_call_sync(worker_name, '_set_var', [var_name, value], {}) is not None
-            
-        # 워커 찾기
-        if worker_name not in self.workers and worker_name not in self.targets:
-            logging.error(f"워커 없음: {worker_name}")
-            return False
-            
-        # 메인 쓰레드에서 실행하는 경우
-        if worker_name in self.targets:
-            target = self.targets[worker_name]
-            try:
-                setattr(target, var_name, value)
-                return True
-            except Exception as e:
-                logging.error(f"변수 설정 오류: {e}", exc_info=True)
-                return False
-                
-        # 쓰레드로 실행하는 경우
-        if worker_name in self.workers:
-            return self.answer(worker_name, '_set_var', var_name, value) is not None
-            
-        return False
-        
-    def answer(self, worker_name, method_name, *args, **kwargs):
-        """동기식 함수 호출"""
-        if self.is_shutting_down:
-            return None
-        
-        # 프로세스인 경우
-        if worker_name in self.processes:
-            return self._process_call_sync(worker_name, method_name, args, kwargs)
-        
-        # 워커 찾기
-        if worker_name not in self.workers and worker_name not in self.targets:
-            logging.error(f"워커 없음: {worker_name}")
-            return None
-        
-        # 메인 쓰레드에서 실행하는 경우
-        if worker_name in self.targets:
-            target = self.targets[worker_name]
-            method = getattr(target, method_name, None)
-            if not method:
-                return None
-            try:
-                return method(*args, **kwargs)
-            except Exception as e:
-                logging.error(f"직접 호출 오류: {e}", exc_info=True)
-                return None
-        
-        # 쓰레드로 실행하는 경우
-        worker = self.workers[worker_name]
-        result = [None]
-        event = threading.Event()
-        
-        def callback(res):
-            result[0] = res
-            event.set()
-        
-        # 시그널로 태스크 전송
-        task_id = str(uuid.uuid4())
-        task_data = (args, kwargs)
-        worker.taskReceived.emit(task_id, method_name, task_data, callback)
-        
-        # 결과 대기
-        if not event.wait(3.0):
-            logging.warning(f"호출 타임아웃: {worker_name}.{method_name}")
-            return None
-        
-        return result[0]
-
-    def work(self, worker_name, method_name, *args, callback=None, **kwargs):
-        """비동기 함수 호출"""
-        if self.is_shutting_down:
-            return None
-        
-        # 프로세스인 경우
-        if worker_name in self.processes:
-            return self._process_call_async(worker_name, method_name, args, kwargs, callback)
-        
-        # 워커 찾기
-        if worker_name not in self.workers and worker_name not in self.targets:
-            logging.error(f"워커 없음: {worker_name}")
-            return False
-        
-        # 메인 쓰레드에서 실행하는 경우
-        if worker_name in self.targets:
-            target = self.targets[worker_name]
-            method = getattr(target, method_name, None)
-            if not method:
-                return False
-            try:
-                result = method(*args, **kwargs)
-                if callback:
-                    callback(result)
-                return True
-            except Exception as e:
-                logging.error(f"직접 호출 오류: {e}", exc_info=True)
-                if callback:
-                    callback(None)
-                return False
-        
-        # 쓰레드로 실행하는 경우
-        worker = self.workers[worker_name]
-        task_id = str(uuid.uuid4())
-        task_data = (args, kwargs)
-        worker.taskReceived.emit(task_id, method_name, task_data, callback)
-        return True
-
-    def _register_process(self, name, target_class):
-        """프로세스 워커 등록"""
-        # 공유 객체 생성
-        if not self.manager:
-            from multiprocessing import Manager
-            self.manager = Manager()
-
-        self.task_queues[name] = self.manager.list()
-        self.result_dicts[name] = self.manager.dict()
-
-        # 프로세스 정보 저장
-        self.processes[name] = {
-            'callbacks': {},  # task_id -> callback
-            'events': {},     # task_id -> event
-            'status': 'running'  # 프로세스 상태: connecting, running, stopping
-        }
-        logging.info(f"프로세스 {name} 연결 중...")
-
-        target_module = target_class.__module__
-        target_name = target_class.__name__
-
-        # 프로세스 시작
-        from multiprocessing import Process
-        process = Process(
-            target=process_worker_main,
-            args=(name, (target_module, target_name), self.task_queues[name], self.result_dicts[name]),
-            daemon=True
-        )
-        process.start()
-        
-        # 프로세스 정보 저장
-        self.processes[name]['process'] = process
-        self.processes[name]['status'] = 'running'
-
-        logging.debug(f"프로세스 등록: {name} (PID: {process.pid})")
-        return self
-        
-    def _process_call_sync(self, process_name, method_name, args, kwargs):
-        """프로세스 동기식 호출"""
-        if self.is_shutting_down:
-            return None
-        
-        process_info = self.processes.get(process_name)
-        if not process_info:
-            if not self.is_shutting_down:
-                logging.error(f"프로세스 없음: {process_name}")
-            return None
-        
-        # 태스크 ID 생성
-        task_id = str(uuid.uuid4())
-        
-        # 작업 전송
-        self.task_queues[process_name].append({
-            'task_id': task_id,
-            'method': method_name,
-            'args': args,
-            'kwargs': kwargs
-        })
-
-        # 결과 대기
-        start_time = time.time()
-        while task_id not in self.result_dicts[process_name]:
-            if time.time() - start_time > 20.0:
-                logging.warning(f"프로세스 호출 타임아웃: {process_name}.{method_name}")
-                return None
-            time.sleep(0.001)
-            
-        # 결과 처리
-        result = self.result_dicts[process_name][task_id]
-        del self.result_dicts[process_name][task_id] # 결과 정리
-
-        if result['status'] == 'success':
-            return result['result']
-        else:
-            return None
-        
-    def _process_call_async(self, process_name, method_name, args, kwargs, callback):
-        """프로세스 비동기식 호출"""
-        if self.is_shutting_down:
-            return None
-        
-        process_info = self.processes.get(process_name)
-        if not process_info:
-            if not self.is_shutting_down:
-                logging.error(f"프로세스 없음: {process_name}")
-            return False
-        
-        # 큐 크기 확인
-        if process_name in self.task_queues and len(self.task_queues[process_name]) > 1000:
-            logging.warning(f"프로세스 {process_name} 큐가 가득 찼습니다. 작업 건너뜀.")
-            if callback:
-                callback(None)
-            return False
-        
-        # 태스크 ID 생성
-        task_id = str(uuid.uuid4())
-        
-        # 콜백 등록 (있는 경우)
-        if callback:
-            process_info['callbacks'][task_id] = callback
-            
-            # 콜백 타임스탬프 추가
-            if 'callback_times' not in process_info:
-                process_info['callback_times'] = {}
-            process_info['callback_times'][task_id] = time.time()
-            
-            # 결과 대기 스레드
-            def wait_for_result():
-                try:
-                    # 결과 대기
-                    start_time = time.time()
-                    while task_id not in self.result_dicts[process_name]:
-                        if time.time() - start_time > 5.0:  # 5초 타임아웃
-                            if callback:
-                                callback(None)
-                            process_info['callbacks'].pop(task_id, None)
-                            process_info.get('callback_times', {}).pop(task_id, None)
-                            return
-                        time.sleep(0.001)
-                    
-                    # 결과 처리
-                    result = self.result_dicts[process_name][task_id]
-                    del self.result_dicts[process_name][task_id]  # 결과 정리
-                    
-                    # 콜백 호출
-                    cb = process_info['callbacks'].pop(task_id, None)
-                    if cb:
-                        process_info.get('callback_times', {}).pop(task_id, None)
-                        if result['status'] == 'success':
-                            cb(result['result'])
-                        else:
-                            cb(None)
-                except Exception as e:
-                    logging.error(f"결과 처리 오류: {e}")
-                    cb = process_info['callbacks'].pop(task_id, None)
-                    process_info.get('callback_times', {}).pop(task_id, None)
-                    if cb:
-                        cb(None)
-            
-            # 결과 대기 스레드 시작
-            import threading
-            threading.Thread(target=wait_for_result, daemon=True).start()
-        
-        # 작업 전송
-        self.task_queues[process_name].append({
-            'task_id': task_id,
-            'method': method_name,
-            'args': args,
-            'kwargs': kwargs
-        })
-        
-        # 주기적으로 자원 정리 (예: 매 100번째 호출마다)
-        if hasattr(self, '_async_call_count'):
-            self._async_call_count += 1
-            if self._async_call_count % 100 == 0:
-                self.cleanup_resources(process_name)
-        else:
-            self._async_call_count = 1
-        
-        return True
-
-    # WorkerManager 클래스에 큐 정리 메서드 추가
-    def cleanup_resources(self, process_name=None):
-        """더 이상 필요하지 않은 자원 정리"""
-        if process_name:
-            self._cleanup_process_resources(process_name)
-        else:
-            # 모든 프로세스 자원 정리
-            for name in list(self.processes.keys()):
-                self._cleanup_process_resources(name)
-                
-    def _cleanup_process_resources(self, process_name):
-        """특정 프로세스의 자원 정리"""
-        if process_name not in self.processes:
-            return
-            
-        process_info = self.processes[process_name]
-        
-        # 오래된 콜백 정리
-        current_time = time.time()
-        old_callbacks = []
-        
-        for task_id, callback_time in process_info.get('callback_times', {}).items():
-            if current_time - callback_time > 30:  # 30초 이상 된 콜백은 제거
-                old_callbacks.append(task_id)
-                
-        for task_id in old_callbacks:
-            process_info['callbacks'].pop(task_id, None)
-            process_info.get('callback_times', {}).pop(task_id, None)
-            
-        # 결과 딕셔너리 정리 (오래된 결과 제거)
-        if process_name in self.result_dicts:
-            # 복사본 만들어서 순회
-            task_ids = list(self.result_dicts[process_name].keys())
-            old_results = []
-            
-            for task_id in task_ids:
-                # 필요한 경우 결과의 나이를 추적하는 로직 추가
-                if task_id not in process_info['callbacks']:
-                    old_results.append(task_id)
-                    
-            for task_id in old_results:
-                if task_id in self.result_dicts[process_name]:
-                    self.result_dicts[process_name].pop(task_id, None)
-                
-        # 큐 크기 확인 및 로깅
-        if process_name in self.task_queues and len(self.task_queues[process_name]) > 100:
-            logging.warning(f"프로세스 {process_name} 큐 크기: {len(self.task_queues[process_name])}")
-            
-# 클래스 외부에 독립 함수로 정의 (모듈 레벨)
-def process_worker_main(name, target_info, task_queue, result_dict):
-    """프로세스 워커 메인 함수"""
-    try:
-        # 커스텀 로거 초기화
-        import logging
-        init_logger()
-        
-        # 타겟 클래스 동적 임포트
-        target_module, target_name = target_info
-        import importlib
-        module = importlib.import_module(target_module)
-        target_class = getattr(module, target_name)
-        
-        # 인스턴스 생성
-        target = target_class()
-        logging.info(f"프로세스 {name} 시작됨")
-
-        # 변수 접근/설정 메서드 추가
-        def _get_var(var_name):
-            """타겟 객체의 변수 값을 가져오는 내부 메서드"""
-            try:
-                return getattr(target, var_name, None)
-            except Exception as e:
-                logging.error(f"변수 접근 오류: {e}", exc_info=True)
-                return None
-                
-        def _set_var(var_name, value):
-            """타겟 객체의 변수 값을 설정하는 내부 메서드"""
-            try:
-                setattr(target, var_name, value)
-                return True
-            except Exception as e:
-                logging.error(f"변수 설정 오류: {e}", exc_info=True)
-                return None
-                
-        # 특수 메서드 등록
-        target._get_var = _get_var
-        target._set_var = _set_var
-                
-        # 작업 처리 루프
-        import time
-        last_cleanup_time = time.time()
-        processed_count = 0
-        processed_count_1000 = 0
-
-        while True:
-            # 주기적으로 큐 상태 확인 및 로깅
-            current_time = time.time()
-            if current_time - last_cleanup_time > 300:  # 5분마다 확인
-                queue_size = len(task_queue)
-                if queue_size > 200:
-                    logging.warning(f"프로세스 {name} 큐 크기: {queue_size}")
-                last_cleanup_time = current_time
-
-            # 작업이 있는지 확인
-            if len(task_queue) == 0:
-                time.sleep(0.001)  # 0.01초에서 0.001초로 변경하여 응답성 개선
-                continue
-
-            # 큐가 너무 크면 오래된 작업 건너뛰기 (선택적)
-            if len(task_queue) > 100:
-                # 처리할 수 있는 작업 수 제한
-                max_to_process = 50
-                old_tasks = len(task_queue) - max_to_process
-                if old_tasks > 0:
-                    logging.warning(f"프로세스 {name} 큐가 너무 큽니다. {old_tasks}개 작업 건너뜀.")
-                    # 가장 오래된 작업들 제거
-                    for _ in range(old_tasks):
-                        if len(task_queue) > 0:
-                            old_task = task_queue.pop(0)
-                            # 결과 처리를 위해 오류 상태로 응답
-                            task_id = old_task.get('task_id')
-                            if task_id:
-                                result_dict[task_id] = {'status': 'error', 'error': "큐 과부하로 작업 취소됨"}
-                        
-            # 작업 가져오기
-            task = task_queue.pop(0)
-            
-            # 종료 명령 확인
-            if task.get('command') == 'stop':
-                break
-                
-            # 작업 처리
-            task_id = task.get('task_id')
-            method_name = task.get('method')
-            args = task.get('args', ())
-            kwargs = task.get('kwargs', {})
-            
-            # 메서드 찾기
-            method = getattr(target, method_name, None)
-            if not method:
-                result_dict[task_id] = {'status': 'error', 'error': f"메서드 없음: {method_name}"}
-                continue
-                
-            # 메서드 실행
-            try:
-                result = method(*args, **kwargs)
-                result_dict[task_id] = {'status': 'success', 'result': result}
-
-            except Exception as e:
-                logging.error(f"메서드 실행 오류: {e}", exc_info=True)
-                result_dict[task_id] = {'status': 'error', 'error': str(e)}
-
-            processed_count += 1
-            if processed_count % 5000 == 0:
-                import gc
-                gc.collect()
-                if processed_count % 50000 == 0:
-                    logging.info(f"프로세스 {name} 처리 횟수: {processed_count}")
-                    processed_count = 0
-
-    except Exception as e:
-        logging.error(f"프로세스 {name} 오류: {e}", exc_info=True)
-    finally:
-        logging.info(f"프로세스 {name} 종료")
-
-# 전역 관리자 인스턴스
-la = WorkerManager()
-
-class CounterTicker:
-    """
-    쓰레드 안전한, 전략별 종목 매수 횟수 카운터 클래스
-    날짜가 변경되면 자동으로 카운터를 초기화합니다.
-    """
-    STRATEGY_CODE = "000000"        # 전략 자체 카운터 코드
-    WHOLE_TICKER_CODE = "999999"    # 전체 종목 카운터 코드
-    DEFAULT_STRATEGY_LIMIT = 1000   # 전략 자체 기본 제한
-    DEFAULT_TICKER_LIMIT = 10       # 종목 기본 제한
-    DEFAULT_DATA = { "date": dc.td.ToDay, "data": {} } # data = { strategy: {code: { name: "", limit: 0, count: 0 }, ... } } 
-   
-    def __init__(self, file_name="counter_data.json"):
-        data_path = get_path('db')
-        self.file_path = os.path.join(data_path, file_name)
-        self.lock = threading.RLock()
-        self.data = {}
-        self.whole_count = self.DEFAULT_STRATEGY_LIMIT
-        self.load_data()
-    
-    def load_data(self):
-        with self.lock:
-            success, loaded_data = load_json(self.file_path, self.DEFAULT_DATA)
-            if success:
-                saved_date = loaded_data.get("date", "")
-                self.data = loaded_data.get("data", {})
-                if saved_date != dc.td.ToDay: self.data = {}
-    
-    def save_data(self):
-        with self.lock:
-            save_obj = { "date": dc.td.ToDay, "data": self.data }
-            success, _ = save_json(self.file_path, save_obj)
-            return success
-    
-    def set_strategy(self, strategy, name, strategy_limit=None, ticker_limit=None):
-        with self.lock:
-            update = False
-            if strategy not in self.data: 
-                self.data[strategy] = {}
-                self.data[strategy][self.STRATEGY_CODE] = { "name": name, "limit": strategy_limit if strategy_limit is not None else self.DEFAULT_STRATEGY_LIMIT, "count": 0 }
-                self.data[strategy][self.WHOLE_TICKER_CODE] = { "name": name, "limit": ticker_limit if ticker_limit is not None else self.DEFAULT_TICKER_LIMIT, "count": 0 }
-                update = True
-            else:
-                if self.data[strategy][self.STRATEGY_CODE]["name"] != name:
-                    self.data[strategy][self.STRATEGY_CODE]["name"] = name
-                    update = True
-                if strategy_limit is not None:
-                    if self.data[strategy][self.STRATEGY_CODE]["limit"] != strategy_limit:
-                        self.data[strategy][self.STRATEGY_CODE] = { "limit": strategy_limit, "count": 0 }
-                        update = True
-                if ticker_limit is not None:
-                    if self.data[strategy][self.WHOLE_TICKER_CODE]["limit"] != ticker_limit:
-                        self.data[strategy][self.WHOLE_TICKER_CODE] = { "limit": ticker_limit, "count": 0 }
-                        update = True
-            if update: self.save_data()
-    
-    def set_batch(self, strategy, data):
-        with self.lock:
-            for code, name in data.items():
-                self.set(strategy, code, name)
-            self.save_data()
-
-    def set(self, strategy, code, name, limit=0):
-        if strategy not in self.data:
-            self.set_strategy(strategy, name)
-        with self.lock:
-            self.data[strategy][code] = { "name": name, "limit": limit, "count": 0 }
-            self.save_data()
-
-    def set_add(self, strategy, code):
-        with self.lock:
-            self.data[strategy][code]["count"] += 1
-            self.data[strategy][self.STRATEGY_CODE]["count"] += 1
-            self.save_data()
-    
-    def get(self, strategy, code, name=None):
-        with self.lock:
-            if code not in self.data[strategy]:
-                self.set(strategy, code, name if name is not None else "")
-            if self.data[strategy][self.STRATEGY_CODE]["count"] >= self.data[strategy][self.STRATEGY_CODE]["limit"]:
-                return False
-            ticker_info = self.data[strategy][code]
-            ticker_limit = ticker_info["limit"] if ticker_info["limit"] > 0 else self.data[strategy][self.WHOLE_TICKER_CODE]["limit"]
-            if ticker_info["count"] >= ticker_limit:
-                return False
-            return True
-    
