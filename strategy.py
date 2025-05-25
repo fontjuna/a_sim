@@ -97,10 +97,10 @@ class Strategy:
             status_market = self.answer('admin', 'com_market_status')
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
-        if not gm.ct.get(self.전략, "000000", self.매수전략): 
+        if not gm.counter.get(self.전략, "000000", self.매수전략): 
             return False, {}, f"전략별 매수 횟수 제한 {code} {name} 매수횟수={self.체결횟수} 회 초과"
 
-        if not gm.ct.get(self.전략, code, name): 
+        if not gm.counter.get(self.전략, code, name): 
             return False, {}, f"종목별 매수 횟수 제한 {code} {name} 종목제한{self.종목제한} 회 초과"
 
         if self.중복매수금지 and gm.잔고목록.in_key(code): return False, {}, f"보유 종목 재매수 금지 ({code} {name})"
@@ -363,7 +363,7 @@ class Strategy:
             if msg: return msg
             self.cdn_fx실행_전략매매시작()
 
-            gm.ct.set_strategy(self.전략, self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
+            gm.counter.set_strategy(self.전략, self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
             if gm.config.gui_on: 
                 gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any(gm.매수문자열들) or any(gm.매도문자열들)}))

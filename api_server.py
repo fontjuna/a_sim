@@ -18,12 +18,14 @@ toast = None #Toast()
 ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
 req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
 def com_request_time_check(kind='order', cond_text = None):
+    start_time = time.time()
+    #logging.debug(f'com_request_time_check: Start')
     if kind == 'order':
         wait_time = ord.check_interval()
     elif kind == 'request':
         wait_time = max(req.check_interval(), req.check_condition_interval(cond_text) if cond_text else 0)
 
-    logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
+    #logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
     if wait_time > 1666: # 1.666초 이내 주문 제한
         msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
             if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
@@ -34,7 +36,7 @@ def com_request_time_check(kind='order', cond_text = None):
     elif wait_time > 1000:
         msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
         toast.toast(msg, duration=wait_time)
-        time.sleep((wait_time-200)/1000) 
+        time.sleep((wait_time-10)/1000) 
         wait_time = 0
         logging.info(msg)
 
@@ -43,7 +45,7 @@ def com_request_time_check(kind='order', cond_text = None):
         toast.toast(msg, duration=wait_time)
         logging.info(msg)
 
-    time.sleep((wait_time + 200)/1000) 
+    time.sleep((wait_time+10)/1000) 
 
     if kind == 'order':
         ord.update_request_times()
@@ -51,6 +53,7 @@ def com_request_time_check(kind='order', cond_text = None):
         if cond_text: req.update_condition_time(cond_text)
         else: req.update_request_times()
 
+    logging.debug(f'com_request_time_check:Start ~ End: {time.time() - start_time} ms')
     return True
 
 real_thread = {}

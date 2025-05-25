@@ -1,5 +1,5 @@
 from public import dc, get_path, profile_operation
-from chart import ctdt
+from chart import cht_dt
 from datetime import datetime, timedelta
 import logging
 import sqlite3
@@ -195,23 +195,23 @@ class DBMServer:
     def execute_query(self, sql, db='chart', params=None):
         try:
             cursor = self.get_cursor(db)
-            query_command = cursor.executemany if isinstance(params, list) else cursor.execute
-            if params: 
-                query_command(sql, params)
-            else: 
-                query_command(sql)
-
+            conn = self.get_connection(db)
+            
+            # 리스트인 경우 batch 실행
+            if isinstance(params, list) and params and isinstance(params[0], tuple):
+                cursor.executemany(sql, params)
+            else:
+                cursor.execute(sql, params if params else ())
+            
             if sql.strip().upper().startswith('SELECT'):
                 result = cursor.fetchall()
                 return result
             else:
-                conn = self.get_connection(db)
                 conn.commit()
                 return cursor.rowcount
 
         except Exception as e:
             logging.error(f"Database error: {e}", exc_info=True)
-            conn = self.get_connection(db)
             conn.rollback()
             self.send_result(None, e)
 
@@ -221,8 +221,9 @@ class DBMServer:
             temp = dict_data[0] if is_list else dict_data
             columns = ','.join(temp.keys())
             column_str = ', '.join(['?'] * len(temp))
-            params = tuple(dict_data.values()) if not is_list else [tuple(item.values()) for item in dict_data]
+            params = [tuple(item.values()) for item in dict_data] if is_list else [tuple(dict_data.values())]
             sql = f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ({column_str})"
+            
             self.execute_query(sql, db=db, params=params)
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)
@@ -319,7 +320,7 @@ class DBMServer:
             logging.error(f"upsert_conclusion error: {e}", exc_info=True)
             return False
         
-    def dbm_get_chart_data(self, code, cycle, tick=None, times=1):
+    def dbm_get_chart_data(self, code, cycle, tick=1, times=1):
         try:
             if not code: return []
             rqname = f'{dc.scr.차트종류[cycle]}차트'
@@ -380,7 +381,7 @@ class DBMServer:
             if cycle in ['dy', 'mi']:
                 self.upsert_chart(dict_list, cycle, tick)
                 self.done_todo_code(code, cycle)
-                ctdt.set_chart_data(code, dict_list, cycle, tick)
+                cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
             return dict_list
         
         except Exception as e:
@@ -442,5 +443,5 @@ class DBMServer:
         code = job['code']
         dictFID = job['dictFID']
         if code in self.todo_code or code in self.done_code:
-            ctdt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+            cht_dt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
 

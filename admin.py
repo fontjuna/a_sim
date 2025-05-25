@@ -30,13 +30,9 @@ class Admin:
         gm.connected = connected
 
     def set_globals(self):
-        # gm.req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
-        # gm.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
-        gm.ct = CounterTicker()
+        gm.counter = CounterTicker()
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
-        # gm.cdt = ChartData()
-        # la.register('cdt', gm.cdt, use_thread=True)
         gm.scm = ScriptManager()
         try:
             result = enhance_script_manager(gm.scm)
@@ -72,6 +68,8 @@ class Admin:
         gm.스크립트 = TableManager(gm.tbl.hd스크립트)
         gm.스크립트변수 = TableManager(gm.tbl.hd스크립트변수)
         gm.차트자료 = TableManager(gm.tbl.hd차트자료)
+        gm.당일종목 = TableManager(gm.tbl.hd당일종목)
+        gm.수동종목 = TableManager(gm.tbl.hd수동종목)
         scripts = gm.scm.scripts.copy()
         dict_data = []
         for k, v in scripts.items():
@@ -104,7 +102,6 @@ class Admin:
         logging.info('* get_holdings *')
         gm.dict잔고종목감시 = {}
         gm.ipc.order('api', 'SetRealRemove', dc.scr.화면['실시간감시'], 'ALL')
-        # if gm.config.sim_no != 1: gm.ipc.order('dbm', 'start_request_chart_data')
         self.pri_fx얻기_잔고합산()
         self.pri_fx얻기_잔고목록()
         self.pri_fx등록_종목감시()
@@ -121,24 +118,6 @@ class Admin:
         gm.config.ready = True
 
     # 공용 함수 -------------------------------------------------------------------------------------------
-    # def com_SendRequest(self, rqname, trcode, input, output, next='0', screen=None, form='dict_list', timeout=5):
-    #     # if not self.com_request_time_check(kind='request'): return [], False
-    #     try:
-    #         #logging.debug(f'com_SendRequest: rqname={rqname} trcode={trcode} input={input} next={next} screen={screen} form={form} timeout={timeout}')
-    #         args = {
-    #             'rqname': rqname,
-    #             'trcode': trcode,
-    #             'input': input,
-    #             'output': output,
-    #             'next': next if next else '0',
-    #             'screen': screen if screen else dc.scr.화면[rqname],
-    #             'form': form if form else 'dict_list',
-    #             'timeout': timeout if timeout else 5
-    #         }
-    #         return gm.ipc.answer('api', 'api_request', **args)
-    #     except Exception as e:
-    #         logging.error(f'com_SendRequest 오류: {e}')
-    #         return [], False
 
     def com_SendCondition(self, screen, cond_name, cond_index, search=1): # search=0: 조건검색만, 1: 조건검색 + 실시간 조건검색
         cond_text = f'{cond_index:03d} : {cond_name.strip()}'
@@ -475,7 +454,7 @@ class Admin:
 
                     gm.ipc.order('dbm', 'register_code', item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
-                gm.ct.set_batch(data)
+                gm.counter.set_batch(data)
 
             #logging.debug(f'dict_list ={dict_list}')
             if dict_list:
@@ -928,7 +907,7 @@ class Admin:
                     save_json(dc.fp.holdings_file, gm.holdings)
 
                     # 매수 제한 기록
-                    gm.ct.set_add(전략, code)
+                    gm.counter.set_add(전략, code)
 
                     logging.info(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
 

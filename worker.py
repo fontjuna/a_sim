@@ -13,12 +13,16 @@ class IPCManager:
         self.queues = {}  # process_name -> Queue
         self.stream_queues = {}  # process_name -> Queue (스트림 전용)
         self.result_dict = self.manager.dict()  # id -> result
+        self.req_timestamps = self.manager.dict()  # req_id -> timestamp (추가)
         self.processes = {}  # process_name -> Process
         self.threads = {}  # process_name -> Thread
         self.stream_threads = {}  # process_name -> Thread (스트림 처리 전용)
         self.instances = {}  # process_name -> instance
         self.registered = {}  # process_name -> config
         self.shutting_down = False
+        self.cleanup_thread = None  # 정리 스레드
+        self.cleanup_interval = 60  # 1분마다 정리
+        self.result_timeout = 600   # 10분 후 삭제
 
     def register(self, name, cls, type=None, start=False, stream=False, *args, **kwargs):
         """컴포넌트 등록 (재등록 시 인스턴스만 교체)"""
@@ -143,6 +147,15 @@ class IPCManager:
     
     def start(self, name=None, stream=None):
         """컴포넌트 시작"""
+        # 첫 start 시에만 cleanup 스레드 시작
+        if self.cleanup_thread is None and not self.shutting_down:
+            self.cleanup_thread = threading.Thread(
+                target=self._cleanup_old_results,
+                daemon=True
+            )
+            self.cleanup_thread.start()
+            logging.info("결과 정리 스레드 시작됨")
+        
         if name is None:
             # 전체 시작 (모든 타입 포함)
             for comp_name in self.registered.keys():
@@ -230,11 +243,19 @@ class IPCManager:
     def shutdown(self):
         """전체 시스템 종료"""
         logging.info("시스템 종료 시작...")
+        self.shutting_down = True
+        
+        # 정리 스레드 종료 대기
+        if self.cleanup_thread and self.cleanup_thread.is_alive():
+            self.cleanup_thread.join(2.0)
+            logging.info("결과 정리 스레드 종료됨")
+        
         self.stop()  # 전체 중지
         
         # 자원 정리
         try:
             self.result_dict.clear()
+            self.req_timestamps.clear()
         except:
             pass
         
@@ -331,6 +352,77 @@ class IPCManager:
         self.stream_threads[name].start()
         logging.info(f"{name} 스트림 워커 시작됨")
     
+    def _cleanup_old_results(self):
+        """오래된 결과 정리 스레드"""
+        logging.info("결과 정리 스레드 초기화 완료")
+        
+        while not self.shutting_down:
+            try:
+                current_time = time.time()
+                cleaned_count = 0
+                
+                # 오래된 결과 삭제
+                for req_id in list(self.result_dict.keys()):
+                    req_time = self.req_timestamps.get(req_id, 0)
+                    if current_time - req_time > self.result_timeout:
+                        try:
+                            del self.result_dict[req_id]
+                            if req_id in self.req_timestamps:
+                                del self.req_timestamps[req_id]
+                            cleaned_count += 1
+                        except KeyError:
+                            pass  # 이미 삭제됨
+                
+                if cleaned_count > 0:
+                    logging.info(f"오래된 결과 {cleaned_count}개 정리됨")
+                
+                # 현재 상태 로깅 (5분마다)
+                if int(current_time) % 300 == 0:  # 5분마다
+                    logging.info(f"결과 딕셔너리 크기: {len(self.result_dict)}")
+                
+                time.sleep(self.cleanup_interval)
+                
+            except Exception as e:
+                logging.error(f"결과 정리 중 오류: {e}")
+                time.sleep(self.cleanup_interval)
+        
+        logging.info("결과 정리 스레드 종료")
+    def _cleanup_old_results(self):
+        """오래된 결과 정리 스레드"""
+        logging.info("결과 정리 스레드 초기화 완료")
+        
+        while not self.shutting_down:
+            try:
+                current_time = time.time()
+                cleaned_count = 0
+                
+                # 오래된 결과 삭제
+                for req_id in list(self.result_dict.keys()):
+                    req_time = self.req_timestamps.get(req_id, 0)
+                    if current_time - req_time > self.result_timeout:
+                        try:
+                            del self.result_dict[req_id]
+                            if req_id in self.req_timestamps:
+                                del self.req_timestamps[req_id]
+                            cleaned_count += 1
+                        except KeyError:
+                            pass  # 이미 삭제됨
+                
+                if cleaned_count > 0:
+                    logging.info(f"오래된 결과 {cleaned_count}개 정리됨")
+                
+                # 현재 상태 로깅 (5분마다)
+                if int(current_time) % 300 == 0:  # 5분마다
+                    logging.info(f"결과 딕셔너리 크기: {len(self.result_dict)}")
+                
+                time.sleep(self.cleanup_interval)
+                
+            except Exception as e:
+                logging.error(f"결과 정리 중 오류: {e}")
+                time.sleep(self.cleanup_interval)
+        
+        logging.info("결과 정리 스레드 종료")
+    
     def _add_ipc_methods(self, instance, process_name):
         """인스턴스에 IPC 메서드 추가"""
         def order(target, method, *args, **kwargs):
@@ -372,6 +464,9 @@ class IPCManager:
         
         req_id = str(uuid.uuid4())
         
+        # 요청 시간 기록
+        self.req_timestamps[req_id] = time.time()
+        
         # 요청 전송
         try:
             self.queues[target].put({
@@ -382,6 +477,9 @@ class IPCManager:
             })
         except Exception as e:
             logging.error(f"요청 전송 실패 to {target}: {e}")
+            # 실패시 타임스탬프도 정리
+            if req_id in self.req_timestamps:
+                del self.req_timestamps[req_id]
             return None
         
         if not wait_result:
@@ -393,17 +491,26 @@ class IPCManager:
             # 대상 컴포넌트가 삭제되었는지 확인
             if target not in self.queues:
                 logging.warning(f"대상 컴포넌트 {target}가 삭제됨")
+                if req_id in self.req_timestamps:
+                    del self.req_timestamps[req_id]
                 return None
             
             if time.time() - start_time > timeout:
                 logging.warning(f"요청 타임아웃: {method} to {target}")
+                # 타임아웃시 타임스탬프 유지 (cleanup 스레드가 나중에 정리)
                 return None
             time.sleep(0.0001)  # 0.1ms
         
-        # 결과 반환
-        result = self.result_dict[req_id]
-        del self.result_dict[req_id]
-        return result.get('result', None)
+        # 결과 반환 및 정리
+        try:
+            result = self.result_dict[req_id]
+            del self.result_dict[req_id]
+            if req_id in self.req_timestamps:
+                del self.req_timestamps[req_id]
+            return result.get('result', None)
+        except KeyError:
+            # 이미 삭제된 경우
+            return None
     
     def _send_stream(self, target, func_name, args, kwargs):
         """스트림 데이터 전송"""
@@ -471,10 +578,6 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
     try:
         # 인스턴스 생성
         instance = process_class(*args, **kwargs)
-        # 초기화 작업 (있으면 실행)
-        if hasattr(instance, 'initialize') and callable(getattr(instance, 'initialize')):
-            instance.initialize()
-                    
         logging.info(f"{process_name} 프로세스 초기화 완료")
         
         # IPC 기능 추가
@@ -826,7 +929,6 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict):
     finally:
         logging.info(f"{comp_name} 메인 리스너 종료")
 
-
 # 테스트용 클래스들
 class ADM:
     def __init__(self):
@@ -964,189 +1066,189 @@ class API:
         print(f"[{self.name} -> DBM] query_data: {result}")
 
 if __name__ == "__main__":
-   # 멀티프로세싱 설정
-   mp.set_start_method('spawn', force=True)
-   logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-   
-   def test_ipc_communication():
-       print("=== IPC 통신 테스트 시작 ===")
-       
-       ipc = IPCManager()
-       
-       try:
-           # 컴포넌트 등록
-           print("\n1. 컴포넌트 등록")
-           adm = ipc.register('adm', ADM, type=None, start=False)          # 메인 스레드
-           logger = ipc.register('logger', ADM, type='thread', start=False)  # 멀티 스레드  
-           dbm = ipc.register('dbm', DBM, type='process', start=False)      # 프로세스
-           api = ipc.register('api', API, type='process', start=False)      # 프로세스
-           
-           print(f"등록된 컴포넌트: {list(ipc.registered.keys())}")
-           
-           # 전체 시작
-           print("\n2. 전체 시작")
-           ipc.start()
-           
-           time.sleep(2)  # 초기화 대기
-           
-           print(f"ADM 인스턴스 (메인): {adm}")
-           print(f"Logger 스레드: {ipc.threads.get('logger')}")
-           print(f"DBM 프로세스: {ipc.processes.get('dbm')}")
-           print(f"API 프로세스: {ipc.processes.get('api')}")
-           
-           print("\n3. 각 컴포넌트에서 요청 실행")
-           
-           # ADM (메인)에서 직접 호출
-           print("\n=== ADM (메인 스레드)에서 요청 ===")
-           adm.test_adm_requests()
-           
-           time.sleep(0.5)
-           
-           # Logger 스레드에서 요청
-           print("\n=== Logger 스레드에서 요청 ===")
-           ipc._send_request('logger', 'test_adm_requests', (), {}, wait_result=False)
-           
-           time.sleep(0.5)
-           
-           # DBM 프로세스에서 요청
-           print("\n=== DBM 프로세스에서 요청 ===")
-           ipc._send_request('dbm', 'test_dbm_requests', (), {}, wait_result=False)
-           
-           time.sleep(0.5)
-           
-           # API 프로세스에서 요청
-           print("\n=== API 프로세스에서 요청 ===")
-           ipc._send_request('api', 'test_api_requests', (), {}, wait_result=False)
-           
-           time.sleep(1)
-           
-           print("\n4. 상태 확인")
-           adm_info = adm.get_admin_info('last_db_operation')
-           logger_info = ipc._send_request('logger', 'get_admin_info', ('system_status',), {}, wait_result=True)
-           dbm_status = ipc._send_request('dbm', 'get_db_status', (), {}, wait_result=True)
-           api_stats = ipc._send_request('api', 'get_api_stats', (), {}, wait_result=True)
-           
-           print(f"ADM 정보 (메인): {adm_info}")
-           print(f"Logger 정보 (스레드): {logger_info}")
-           print(f"DBM 상태 (프로세스): {dbm_status}")
-           print(f"API 통계 (프로세스): {api_stats}")
-           
-           print("\n5. 인스턴스 교체 테스트")
-           
-           # Logger를 다른 파라미터로 재등록 (큐는 유지됨)
-           print("Logger 인스턴스 교체 중...")
-           logger_new = ipc.register('logger', ADM, type='thread', start=True)
-           logger_new.name = "Logger_V2"  # 구분을 위해 이름 변경
-           
-           time.sleep(0.5)
-           
-           # 교체된 Logger로 요청 테스트
-           print("\n=== Logger V2 (교체된 스레드)에서 요청 ===")
-           ipc._send_request('logger', 'test_adm_requests', (), {}, wait_result=False)
-           
-           time.sleep(0.5)
-           
-           # 다른 컴포넌트에서 교체된 Logger로 요청
-           print("ADM에서 교체된 Logger로 요청...")
-           logger_result = adm.answer('logger', 'get_admin_info', 'test_after_swap')
-           print(f"교체된 Logger 응답: {logger_result}")
-           
-           print("\n6. 실행 중 동적 컴포넌트 관리 테스트")
-           
-           # 현재 컴포넌트 상태 확인
-           print("현재 등록된 컴포넌트:")
-           for name, status in ipc.list_components().items():
-               print(f"  {name}: {status}")
-           
-           # 실행 중 새 컴포넌트 추가
-           print("\n실행 중 새 컴포넌트 'monitor' 추가...")
-           monitor = ipc.register('monitor', API, type='thread', start=True)
-           monitor.name = "Monitor"
-           
-           time.sleep(0.5)
-           
-           # 새 컴포넌트로 요청 테스트
-           print("새 컴포넌트로 요청 테스트:")
-           monitor_result = adm.answer('monitor', 'get_api_stats')
-           print(f"Monitor 응답: {monitor_result}")
-           
-           # 기존 컴포넌트에서 새 컴포넌트로 요청
-           print("DBM에서 새 Monitor로 요청...")
-           ipc._send_request('dbm', 'answer', ('monitor', 'cache_data', 'test_key', 'test_value'), {}, wait_result=False)
-           
-           time.sleep(0.5)
-           
-           # 컴포넌트 삭제 테스트
-           print("\nLogger 컴포넌트 삭제 테스트...")
-           ipc.unregister('logger')
-           
-           print("삭제 후 컴포넌트 목록:")
-           for name, status in ipc.list_components().items():
-               print(f"  {name}: {status}")
-           
-           # 삭제된 컴포넌트로 요청 시도 (실패해야 함)
-           print("\n삭제된 컴포넌트로 요청 시도 (실패 예상):")
-           deleted_result = adm.answer('logger', 'get_admin_info', 'test')
-           print(f"삭제된 Logger 응답: {deleted_result}")
-           
-           print("\n7. 스트림 통신 테스트")
-           
-           # 컴포넌트 스트림 상태 확인
-           print("스트림 워커 상태:")
-           for name in ['adm', 'dbm', 'api', 'monitor']:
-               if name in ipc.registered:
-                   status = ipc.get_component_status(name)
-                   print(f"  {name}: stream_running={status['stream_running']}")
-           
-           # API에서 실시간 스트리밍 시작
-           print("\nAPI 스트리밍 시작...")
-           result = ipc.answer('api', 'start_streaming')
-           print(f"스트리밍 시작 결과: {result}")
-           
-           # 3초간 스트리밍 관찰
-           print("3초간 스트리밍 데이터 전송 중...")
-           time.sleep(3)
-           
-           # 스트림 카운트 확인
-           adm_count = adm.get_stream_count()
-           dbm_count = ipc.answer('dbm', 'get_stream_count')
-           api_count = ipc.answer('api', 'get_tick_count')
-           
-           print(f"\n스트림 통계:")
-           print(f"- API 틱 생성: {api_count}")
-           print(f"- ADM 수신: {adm_count}")
-           print(f"- DBM 수신: {dbm_count}")
-           
-           # 기존 통신과 스트림 동시 테스트
-           print("\n기존 통신과 스트림 동시 실행 테스트:")
-           for i in range(3):
-               result = ipc.answer('dbm', 'get_db_status')
-               print(f"  일반 요청 {i+1}: {result}")
-               time.sleep(0.5)
-           
-           # 스트리밍 중지
-           result = ipc.answer('api', 'stop_streaming')
-           print(f"스트리밍 중지 결과: {result}")
-           
-           print("\n=== 테스트 완료 ===")
-           print("동적 컴포넌트 관리 테스트:")
-           print("- 실행 중 컴포넌트 추가 ✅")
-           print("- 새 컴포넌트와 기존 컴포넌트 간 통신 ✅")  
-           print("- 실행 중 컴포넌트 삭제 ✅")
-           print("- 삭제된 컴포넌트 접근 시 안전한 실패 ✅")
-           print("- 인스턴스 교체로 런타임 수정 ✅")
-           print("스트림 통신 테스트:")
-           print("- 별도 스트림 큐/워커 동작 ✅")
-           print("- 고빈도 스트림 전송 ✅")
-           print("- 기존 통신과 분리 ✅")
-           
-       except Exception as e:
-           print(f"테스트 중 오류: {e}")
-           logging.error(f"테스트 오류: {e}", exc_info=True)
-       
-       finally:
-           print("\n시스템 종료 중...")
-           ipc.shutdown()
-           print("시스템 종료 완료")
-   
-   test_ipc_communication()
+    # 멀티프로세싱 설정
+    mp.set_start_method('spawn', force=True)
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    def test_ipc_communication():
+        print("=== IPC 통신 테스트 시작 ===")
+        
+        ipc = IPCManager()
+        
+        try:
+            # 컴포넌트 등록
+            print("\n1. 컴포넌트 등록")
+            adm = ipc.register('adm', ADM, type=None, start=False, stream=True)          # 메인 스레드, 스트림 받음
+            logger = ipc.register('logger', ADM, type='thread', start=False, stream=False)  # 멀티 스레드, 스트림 안받음  
+            dbm = ipc.register('dbm', DBM, type='process', start=False, stream=True)      # 프로세스, 스트림 받음
+            api = ipc.register('api', API, type='process', start=False, stream=False)      # 프로세스, 스트림 안받음
+            
+            print(f"등록된 컴포넌트: {list(ipc.registered.keys())}")
+            
+            # 전체 시작
+            print("\n2. 전체 시작")
+            ipc.start()
+            
+            time.sleep(2)  # 초기화 대기
+            
+            print(f"ADM 인스턴스 (메인): {adm}")
+            print(f"Logger 스레드: {ipc.threads.get('logger')}")
+            print(f"DBM 프로세스: {ipc.processes.get('dbm')}")
+            print(f"API 프로세스: {ipc.processes.get('api')}")
+            
+            print("\n3. 각 컴포넌트에서 요청 실행")
+            
+            # ADM (메인)에서 직접 호출
+            print("\n=== ADM (메인 스레드)에서 요청 ===")
+            adm.test_adm_requests()
+            
+            time.sleep(0.5)
+            
+            # Logger 스레드에서 요청
+            print("\n=== Logger 스레드에서 요청 ===")
+            ipc._send_request('logger', 'test_adm_requests', (), {}, wait_result=False)
+            
+            time.sleep(0.5)
+            
+            # DBM 프로세스에서 요청
+            print("\n=== DBM 프로세스에서 요청 ===")
+            ipc._send_request('dbm', 'test_dbm_requests', (), {}, wait_result=False)
+            
+            time.sleep(0.5)
+            
+            # API 프로세스에서 요청
+            print("\n=== API 프로세스에서 요청 ===")
+            ipc._send_request('api', 'test_api_requests', (), {}, wait_result=False)
+            
+            time.sleep(1)
+            
+            print("\n4. 상태 확인")
+            adm_info = adm.get_admin_info('last_db_operation')
+            logger_info = ipc._send_request('logger', 'get_admin_info', ('system_status',), {}, wait_result=True)
+            dbm_status = ipc._send_request('dbm', 'get_db_status', (), {}, wait_result=True)
+            api_stats = ipc._send_request('api', 'get_api_stats', (), {}, wait_result=True)
+            
+            print(f"ADM 정보 (메인): {adm_info}")
+            print(f"Logger 정보 (스레드): {logger_info}")
+            print(f"DBM 상태 (프로세스): {dbm_status}")
+            print(f"API 통계 (프로세스): {api_stats}")
+            
+            print("\n5. 인스턴스 교체 테스트")
+            
+            # Logger를 다른 파라미터로 재등록 (큐는 유지됨)
+            print("Logger 인스턴스 교체 중...")
+            logger_new = ipc.register('logger', ADM, type='thread', start=True, stream=False)
+            logger_new.name = "Logger_V2"  # 구분을 위해 이름 변경
+            
+            time.sleep(0.5)
+            
+            # 교체된 Logger로 요청 테스트
+            print("\n=== Logger V2 (교체된 스레드)에서 요청 ===")
+            ipc._send_request('logger', 'test_adm_requests', (), {}, wait_result=False)
+            
+            time.sleep(0.5)
+            
+            # 다른 컴포넌트에서 교체된 Logger로 요청
+            print("ADM에서 교체된 Logger로 요청...")
+            logger_result = adm.answer('logger', 'get_admin_info', 'test_after_swap')
+            print(f"교체된 Logger 응답: {logger_result}")
+            
+            print("\n6. 실행 중 동적 컴포넌트 관리 테스트")
+            
+            # 현재 컴포넌트 상태 확인
+            print("현재 등록된 컴포넌트:")
+            for name, status in ipc.list_components().items():
+                print(f"  {name}: {status}")
+            
+            # 실행 중 새 컴포넌트 추가
+            print("\n실행 중 새 컴포넌트 'monitor' 추가...")
+            monitor = ipc.register('monitor', API, type='thread', start=True, stream=False)
+            monitor.name = "Monitor"
+            
+            time.sleep(0.5)
+            
+            # 새 컴포넌트로 요청 테스트
+            print("새 컴포넌트로 요청 테스트:")
+            monitor_result = adm.answer('monitor', 'get_api_stats')
+            print(f"Monitor 응답: {monitor_result}")
+            
+            # 기존 컴포넌트에서 새 컴포넌트로 요청
+            print("DBM에서 새 Monitor로 요청...")
+            ipc._send_request('dbm', 'answer', ('monitor', 'cache_data', 'test_key', 'test_value'), {}, wait_result=False)
+            
+            time.sleep(0.5)
+            
+            # 컴포넌트 삭제 테스트
+            print("\nLogger 컴포넌트 삭제 테스트...")
+            ipc.unregister('logger')
+            
+            print("삭제 후 컴포넌트 목록:")
+            for name, status in ipc.list_components().items():
+                print(f"  {name}: {status}")
+            
+            # 삭제된 컴포넌트로 요청 시도 (실패해야 함)
+            print("\n삭제된 컴포넌트로 요청 시도 (실패 예상):")
+            deleted_result = adm.answer('logger', 'get_admin_info', 'test')
+            print(f"삭제된 Logger 응답: {deleted_result}")
+            
+            print("\n7. 스트림 통신 테스트")
+            
+            # 컴포넌트 스트림 상태 확인
+            print("스트림 워커 상태:")
+            for name in ['adm', 'dbm', 'api', 'monitor']:
+                if name in ipc.registered:
+                    status = ipc.get_component_status(name)
+                    print(f"  {name}: stream_running={status['stream_running']}")
+            
+            # API에서 실시간 스트리밍 시작
+            print("\nAPI 스트리밍 시작...")
+            result = ipc.answer('api', 'start_streaming')
+            print(f"스트리밍 시작 결과: {result}")
+            
+            # 3초간 스트리밍 관찰
+            print("3초간 스트리밍 데이터 전송 중...")
+            time.sleep(3)
+            
+            # 스트림 카운트 확인
+            adm_count = adm.get_stream_count()
+            dbm_count = ipc.answer('dbm', 'get_stream_count')
+            api_count = ipc.answer('api', 'get_tick_count')
+            
+            print(f"\n스트림 통계:")
+            print(f"- API 틱 생성: {api_count}")
+            print(f"- ADM 수신: {adm_count}")
+            print(f"- DBM 수신: {dbm_count}")
+            
+            # 기존 통신과 스트림 동시 테스트
+            print("\n기존 통신과 스트림 동시 실행 테스트:")
+            for i in range(3):
+                result = ipc.answer('dbm', 'get_db_status')
+                print(f"  일반 요청 {i+1}: {result}")
+                time.sleep(0.5)
+            
+            # 스트리밍 중지
+            result = ipc.answer('api', 'stop_streaming')
+            print(f"스트리밍 중지 결과: {result}")
+            
+            print("\n=== 테스트 완료 ===")
+            print("동적 컴포넌트 관리 테스트:")
+            print("- 실행 중 컴포넌트 추가 ✅")
+            print("- 새 컴포넌트와 기존 컴포넌트 간 통신 ✅")  
+            print("- 실행 중 컴포넌트 삭제 ✅")
+            print("- 삭제된 컴포넌트 접근 시 안전한 실패 ✅")
+            print("- 인스턴스 교체로 런타임 수정 ✅")
+            print("스트림 통신 테스트:")
+            print("- 별도 스트림 큐/워커 동작 ✅")
+            print("- 고빈도 스트림 전송 ✅")
+            print("- 기존 통신과 분리 ✅")
+            
+        except Exception as e:
+            print(f"테스트 중 오류: {e}")
+            logging.error(f"테스트 오류: {e}", exc_info=True)
+        
+        finally:
+            print("\n시스템 종료 중...")
+            ipc.shutdown()
+            print("시스템 종료 완료")
+    
+    test_ipc_communication()
