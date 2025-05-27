@@ -945,7 +945,7 @@ class APIServer:
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        #self.order('admin', 'set_connected', self.connected)
+        self.order('admin', 'set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
