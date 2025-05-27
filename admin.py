@@ -691,8 +691,6 @@ class Admin:
             self.json_load_strategy_sets()
             _, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
             gm.전략쓰레드 = [None] * 6
-            # gm.전략쓰레드[0] = Strategy(name='전략00', ticker=gm.dict종목정보, 전략정의=gm.basic_strategy)
-            # gm.ipc.register('전략00', gm.전략쓰레드[0], type='thread', start=True)
             gm.전략쓰레드[0] = gm.ipc.register('전략00', Strategy, type='thread', start=True, cls_name='전략00', ticker=gm.dict종목정보, strategy_set=gm.basic_strategy)
             for i in range(1, 6):
                 전략 = f'전략{i:02d}'
@@ -850,17 +848,21 @@ class Admin:
                     logging.debug(f'외부주문 접수: order_no={order_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
 
             row = gm.주문목록.get(key=key)
-            if row['구분'] in ['매수', '매도']:
-                전략번호 = dictFID.get('전략번호', 0)
-                strategy = gm.전략쓰레드[전략번호]
-                sec = 0
-                if row['구분'] == '매수':
-                    if strategy.매수취소: sec = strategy.매수지연초
-                elif row['구분'] == '매도':
-                    if strategy.매도취소: sec = strategy.매도지연초
+            try:
+                if row['구분'] in ['매수', '매도']:
+                    전략번호 = dictFID.get('전략번호', 0)
+                    strategy = gm.전략쓰레드[전략번호]
+                    sec = 0
+                    if row['구분'] == '매수':
+                        if strategy.매수취소: sec = strategy.매수지연초
+                    elif row['구분'] == '매도':
+                        if strategy.매도취소: sec = strategy.매도지연초
 
-                if sec > 0:
-                    QTimer.singleShot(sec * 1000, lambda idx=전략번호, kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(idx, kind, origin_row, dictFID))
+                    if sec > 0:
+                        QTimer.singleShot(sec * 1000, lambda idx=전략번호, kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(idx, kind, origin_row, dictFID))
+            except Exception as e:
+                logging.debug(f'전략 처리 오류: {row}')
+                logging.error(f"전략 처리 오류: {type(e).__name__} - {e}", exc_info=True)
 
         except Exception as e:
             logging.error(f"접수 오류: {type(e).__name__} - {e}", exc_info=True)

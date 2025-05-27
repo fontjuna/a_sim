@@ -422,7 +422,7 @@ class Strategy:
         try:
             def stop_trade(cond_index, cond_name, trade_type):
                 if cond_name:
-                    screen = f'2{1 if trade_type == "매수" else 2}{self.전략[-2:]}'
+                    screen = f'2{"1" if trade_type == "매수" else "2"}{self.전략[-2:]}'
                     self.order('api', 'SendConditionStop', screen, cond_name, cond_index)
                 else:
                     raise Exception(f'{trade_type} 조건이 없습니다.')
@@ -434,7 +434,7 @@ class Strategy:
             logging.error(f'전략 중지 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 
     def cdn_fx등록_조건검색(self, trade_type, cond_name, cond_index):
-        screen = f'2{1 if trade_type == "매수" else 2}{self.전략[-2:]}'
+        screen = f'2{"1" if trade_type == "매수" else "2"}{self.전략[-2:]}'
         logging.debug(f'조건 검색 요청: 전략={self.전략} 화면={screen} 인덱스={cond_index:03d} 수식명={cond_name} 구분={trade_type}')
         condition_list = []
         try:
@@ -530,7 +530,7 @@ class Strategy:
 
             # 실시간 감시 해지하지 않는다.
             if len(gm.dict조건종목감시) > 90 and code in gm.dict조건종목감시:
-                screen = f'{3 if kind == "매수" else 2}0{self.전략[-2:]}'
+                screen = dc.scr.화면[self.전략]#f'{"3" if kind == "매수" else "2"}0{self.전략[-2:]}'
                 self.order('api', 'SetRealRemove', screen, code)
                 del gm.dict조건종목감시[code]
                 logging.debug(f'실시간 감시 해지: {gm.dict조건종목감시.keys()}')

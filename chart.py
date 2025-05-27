@@ -140,38 +140,11 @@ class ChartData:
                 
             # 메모리 크기 확인 및 필요시 확장
             if total_size > self._default_size:
-                old_shm = shm
-                new_size = max(self._default_size * 2, total_size + 1024)
-                
-                # 새 공유 메모리 생성
-                new_shm_name = f"{self._shm_prefix}{code}_new"
-                try:
-                    new_shm = shared_memory.SharedMemory(
-                        name=new_shm_name, 
-                        create=True, 
-                        size=new_size
-                    )
-                
-                    # 공유 메모리 교체 (락 보호 필요)
-                    with self._lock:
-                        # 이전 데이터 복사
-                        new_shm.buf[:8] = old_shm.buf[:8]
-                        
-                        # 맵 업데이트
-                        self._shm_map[code] = new_shm
-                        
-                        # 이전 메모리 해제
-                        old_shm.close()
-                        old_shm.unlink()
-                    
-                        # 업데이트된 정보
-                        shm = new_shm
-                        self._default_size = new_size
-                        logging.debug(f"[{datetime.now()}] Expanded memory for code {code} to {new_size} bytes")
-                except Exception as e:
-                    logging.debug(f"[{datetime.now()}] Error expanding memory for {code}: {str(e)}", exc_info=True)
-                    traceback.print_exc()
+                # 데드락 방지: 메모리 확장은 별도 메서드로 분리하여 락 순서 조정
+                new_shm = self._expand_shared_memory(code, total_size)
+                if new_shm is None:
                     return False
+                shm = new_shm
                 
             # 타임스탬프를 32비트 범위 내로 제한
             t_stamp = int(time.time()) & 0xFFFFFFFF
@@ -194,7 +167,46 @@ class ChartData:
             logging.debug(f"[{datetime.now()}] Error saving data for {code}: {str(e)}", exc_info=True)
             traceback.print_exc()
             return False
-   
+    
+    def _expand_shared_memory(self, code, required_size):
+        """공유 메모리 확장 (데드락 방지를 위해 분리)"""
+        old_shm = self._shm_map.get(code)
+        if not old_shm:
+            return None
+            
+        new_size = max(self._default_size * 2, required_size + 1024)
+        
+        # 새 공유 메모리 생성
+        new_shm_name = f"{self._shm_prefix}{code}_new"
+        try:
+            new_shm = shared_memory.SharedMemory(
+                name=new_shm_name, 
+                create=True, 
+                size=new_size
+            )
+        
+            # 공유 메모리 교체 (글로벌 락 보호 필요)
+            with self._lock:
+                # 이전 데이터 복사
+                new_shm.buf[:8] = old_shm.buf[:8]
+                
+                # 맵 업데이트
+                self._shm_map[code] = new_shm
+                
+                # 이전 메모리 해제
+                old_shm.close()
+                old_shm.unlink()
+            
+                # 업데이트된 정보
+                self._default_size = new_size
+                logging.debug(f"[{datetime.now()}] Expanded memory for code {code} to {new_size} bytes")
+                
+            return new_shm
+        except Exception as e:
+            logging.debug(f"[{datetime.now()}] Error expanding memory for {code}: {str(e)}", exc_info=True)
+            traceback.print_exc()
+            return None
+    
     def _load_code_data(self, code):
         """코드별 데이터 로드"""
         # 캐시 확인 (100ms 이내 캐시 사용)
@@ -307,13 +319,10 @@ class ChartData:
         lock = self._get_code_lock(code)
         
         with lock:
-            # 공유 메모리 가져오기
-            shm = self._get_shared_memory(code)
-            if not shm:
-                return
-            
-            # 헤더 정보 읽기
-            data_size, timestamp, last_candle_offset, last_candle_size = struct.unpack_from('!IIII', shm.buf, 0)
+            # 데드락 방지: 공유 메모리는 이미 존재하는 경우만 사용
+            shm = None
+            if code in self._shm_map:
+                shm = self._shm_map[code]
             
             # 기준 시간 계산 (분 단위로)
             base_time = datetime_str[:12] + '00'  # 분 단위로 맞춤
@@ -525,7 +534,12 @@ class ChartData:
 
     def _update_latest_candle_from_memory(self, chart_data, code):
         """공유 메모리에서 최신 캔들 정보 업데이트"""
-        shm = self._get_shared_memory(code)
+        # 데드락 방지: 코드별 락을 보유한 상태에서 글로벌 락 접근을 피함
+        # 이미 _shm_map에 있는 경우만 처리 (새로 생성하지 않음)
+        if code not in self._shm_map:
+            return
+            
+        shm = self._shm_map[code]  # 글로벌 락 없이 직접 접근
         if not shm:
             return
         

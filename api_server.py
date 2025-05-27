@@ -452,10 +452,10 @@ class OnReceiveRealDataSim1And2(QThread):
             dictFID = {
                '종목코드': code,
                '종목명': sim.ticker.get(code, {}).get('종목명', ''),
-               '현재가': current_price,
-               '등락율': round((current_price - sim.ticker[code]['전일가']) / sim.ticker[code]['전일가'] * 100, 2),
-               '누적거래량': 500000,
-               '누적거래대금': 78452100,
+               '현재가': f'{current_price:15d}',
+               '등락율': f'{round((current_price - sim.ticker[code]["전일가"]) / sim.ticker[code]["전일가"] * 100, 2):12.2f}',
+               '누적거래량': f'{500000:15d}',
+               '누적거래대금': f'{78452100:15d}',
                '체결시간': time.strftime('%Y%m%d%H%M%S', time.localtime()),
             }
 
@@ -468,7 +468,6 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            #self.order('dbm', 'update_script_chart', job)
             self.order('admin', 'on_fx실시간_주식체결', **job)
 
 
@@ -512,10 +511,10 @@ class OnReceiveRealDataSim3(QThread):
                dictFID = {
                   '종목코드': code,
                   '종목명': tick_data.get('종목명', ''),
-                  '현재가': current_price,
-                  '등락율': float(tick_data.get('등락율', 0)),
-                  '누적거래량': int(tick_data.get('누적거래량', 0)),
-                  '누적거래대금': int(tick_data.get('누적거래대금', 0)),
+                  '현재가': f'{current_price:15d}',
+                  '등락율': f'{float(tick_data.get("등락율", 0)):15.2f}',
+                  '누적거래량': f'{int(tick_data.get("누적거래량", 0)):15d}',
+                  '누적거래대금': f'{int(tick_data.get("누적거래대금", 0)):15d}',
                   '체결시간': tick_data.get('체결시간', ''),
                }
                
@@ -528,7 +527,6 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               #self.order('dbm', 'update_script_chart', job)
                self.order('admin', 'on_fx실시간_주식체결', **job)
          
          # 다음 데이터까지 대기
@@ -1029,7 +1027,6 @@ class APIServer:
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    #self.order('dbm', 'update_script_chart', job)
                     self.stream('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.stream('admin', 'on_fx실시간_장운영감시', **job)

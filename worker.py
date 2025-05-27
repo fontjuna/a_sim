@@ -21,8 +21,8 @@ class IPCManager:
         self.registered = {}  # process_name -> config
         self.shutting_down = False
         self.cleanup_thread = None  # 정리 스레드
-        self.cleanup_interval = 60  # 1분마다 정리
-        self.result_timeout = 600   # 10분 후 삭제
+        self.cleanup_interval = 20  # 1분마다 정리
+        self.result_timeout = 60   # 10분 후 삭제
 
     def register(self, name, cls, type=None, start=False, stream=False, *args, **kwargs):
         """컴포넌트 등록 (재등록 시 인스턴스만 교체)"""
@@ -375,41 +375,7 @@ class IPCManager:
                 
                 if cleaned_count > 0:
                     logging.info(f"오래된 결과 {cleaned_count}개 정리됨")
-                
-                # 현재 상태 로깅 (5분마다)
-                if int(current_time) % 300 == 0:  # 5분마다
-                    logging.info(f"결과 딕셔너리 크기: {len(self.result_dict)}")
-                
-                time.sleep(self.cleanup_interval)
-                
-            except Exception as e:
-                logging.error(f"결과 정리 중 오류: {e}")
-                time.sleep(self.cleanup_interval)
-        
-        logging.info("결과 정리 스레드 종료")
-    def _cleanup_old_results(self):
-        """오래된 결과 정리 스레드"""
-        logging.info("결과 정리 스레드 초기화 완료")
-        
-        while not self.shutting_down:
-            try:
-                current_time = time.time()
-                cleaned_count = 0
-                
-                # 오래된 결과 삭제
-                for req_id in list(self.result_dict.keys()):
-                    req_time = self.req_timestamps.get(req_id, 0)
-                    if current_time - req_time > self.result_timeout:
-                        try:
-                            del self.result_dict[req_id]
-                            if req_id in self.req_timestamps:
-                                del self.req_timestamps[req_id]
-                            cleaned_count += 1
-                        except KeyError:
-                            pass  # 이미 삭제됨
-                
-                if cleaned_count > 0:
-                    logging.info(f"오래된 결과 {cleaned_count}개 정리됨")
+                    cleaned_count = 0
                 
                 # 현재 상태 로깅 (5분마다)
                 if int(current_time) % 300 == 0:  # 5분마다
@@ -448,7 +414,23 @@ class IPCManager:
         instance.broadcast = broadcast
 
     def order(self, target, method, *args, **kwargs):
-        return self._send_request(target, method, args, kwargs, wait_result=False)
+        """결과 불필요한 단방향 명령"""
+        if target not in self.queues:
+            logging.error(f"알 수 없는 컴포넌트: {target}")
+            return None
+            
+        req_id = str(uuid.uuid4())
+        try:
+            self.queues[target].put({
+                'id': req_id,
+                'method': method,
+                'args': args,
+                'kwargs': kwargs
+            })
+            return req_id
+        except Exception as e:
+            logging.error(f"order 전송 실패 to {target}: {e}")
+            return None
 
     def answer(self, target, method, *args, timeout=10, **kwargs):
         return self._send_request(target, method, args, kwargs, wait_result=True, timeout=timeout)
@@ -578,6 +560,10 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
     try:
         # 인스턴스 생성
         instance = process_class(*args, **kwargs)
+        
+        # 초기화 작업 (있으면 실행)
+        if hasattr(instance, 'initialize') and callable(getattr(instance, 'initialize')):
+            instance.initialize()
         logging.info(f"{process_name} 프로세스 초기화 완료")
         
         # IPC 기능 추가

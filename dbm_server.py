@@ -406,9 +406,9 @@ class DBMServer:
         while self.thread_run:
             with self._lock:
                 codes = copy.deepcopy(self.todo_code)
-                if not codes:
-                    time.sleep(0.0001)
-                    continue
+            if not codes:
+                time.sleep(0.0001)
+                continue
 
             for code in codes:
                 #if not codes[code]['tk']: self.dbm_get_chart_data(code, cycle='tk', tick=30, times=99)
@@ -443,5 +443,8 @@ class DBMServer:
         code = job['code']
         dictFID = job['dictFID']
         if code in self.todo_code or code in self.done_code:
-            cht_dt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
+            cht_dt.update_chart(code, abs(int(dictFID['현재가'])) if dictFID['현재가'] else 0, \
+                                        abs(int(dictFID['누적거래량'])) if dictFID['누적거래량'] else 0, \
+                                        abs(int(dictFID['누적거래대금'])) if dictFID['누적거래대금'] else 0, \
+                                        dictFID['체결시간'])
 
