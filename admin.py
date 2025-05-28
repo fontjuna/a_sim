@@ -5,6 +5,7 @@ from chart import ChartData, ScriptManager, enhance_script_manager
 from tabulate import tabulate
 from datetime import datetime
 from PyQt5.QtCore import QTimer
+import threading
 import logging
 import pandas as pd
 import time
@@ -125,7 +126,7 @@ class Admin:
         #     logging.warning(f'조건 검색 시간 초과: {cond_text}')
         #     return [], False
 
-        logging.debug(f'조건 검색 요청 전: {cond_text}')
+        #logging.debug(f'조건 검색 요청 전: {cond_text}')
         condition_list = gm.ipc.answer('api', 'SendCondition', screen, cond_name, cond_index, search)
         if not isinstance(condition_list, list):
             logging.warning(f'조건 검색 실패: {cond_text} result={condition_list}')
@@ -258,6 +259,7 @@ class Admin:
 
     def on_fx실시간_조건검색(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
         if not gm.config.ready: return
+        #logging.debug(f'실시간 조건검색 처리: API로 부터 받음')
         if not gm.config.sim_on and time.time() < 90000: return
         try:
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
@@ -281,6 +283,7 @@ class Admin:
 
     def on_fx실시간_주식체결(self, code, rtype, dictFID): # 실시간 시세 감시, 시장 체결데이타 분석 재료, 종목의 누적 거래향
         if not gm.config.ready: return
+        #logging.debug(f'실시간 주식체결 처리: API로 부터 받음')
 
         현재가 = abs(int(dictFID['현재가']))
         updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
@@ -858,8 +861,11 @@ class Admin:
                     elif row['구분'] == '매도':
                         if strategy.매도취소: sec = strategy.매도지연초
 
+                    # if sec > 0:
+                    #     QTimer.singleShot(sec * 1000, lambda idx=전략번호, kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(idx, kind, origin_row, dictFID))
                     if sec > 0:
-                        QTimer.singleShot(sec * 1000, lambda idx=전략번호, kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(idx, kind, origin_row, dictFID))
+                        timer = threading.Timer(sec, lambda idx=전략번호, kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(idx, kind, origin_row, dictFID))
+                        timer.start()
             except Exception as e:
                 logging.debug(f'전략 처리 오류: {row}')
                 logging.error(f"전략 처리 오류: {type(e).__name__} - {e}", exc_info=True)

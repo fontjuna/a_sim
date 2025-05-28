@@ -6,7 +6,7 @@
         "desc": ""
     },
     "매수_1": {
-        "script": "mi3  = CM(code, 'mi', 3)\n\nma5 = mi3.indicator(mi3.ma, mi3.c, 5)\nma20 = mi3.indicator(mi3.ma, mi3.c, 20)\n\nc1 = ma5() >ma20() and mi3.c > ma5()\nc2 = ma5(1) < ma5() and ma20(1) < ma20()\n\nresult = c1 and c2",
+        "script": "mi3  = CM(code, 'mi', 3)\n\nma5 = mi3.indicator(mi3.ma, mi3.c, 5)\nma20 = mi3.indicator(mi3.ma, mi3.c, 20)\n\nc1 = ma5() > ma20() and mi3.c() > ma5()\nc2 = ma5(1) < ma5() and ma20(1) < ma20()\n\nresult = c1 and c2",
         "vars": {},
         "type": "bool",
         "desc": ""

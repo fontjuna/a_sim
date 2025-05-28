@@ -37,6 +37,7 @@ class GUI(QMainWindow, form_class):
         if reply == QMessageBox.Yes:
             logging.debug(f'{self.name} stopping...')
             event.accept()
+            gm.config.ready = False
             self.refresh_data_timer.stop()
             gm.main.cleanup()
         else:

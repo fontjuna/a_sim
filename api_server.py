@@ -53,7 +53,7 @@ def com_request_time_check(kind='order', cond_text = None):
         if cond_text: req.update_condition_time(cond_text)
         else: req.update_request_times()
 
-    logging.debug(f'com_request_time_check:Start ~ End: {time.time() - start_time} ms')
+    #logging.debug(f'com_request_time_check:Start ~ End: {time.time() - start_time} ms')
     return True
 
 real_thread = {}
@@ -736,6 +736,7 @@ class APIServer:
         else:
             return 1
 
+    @profile_operation        
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         try:
             if not com_request_time_check(kind='request'): return [], False
@@ -811,7 +812,7 @@ class APIServer:
                
     def SendConditionStop(self, screen, cond_name, cond_index):
         global cond_thread
-        logging.debug(f'전략 중지: screen={screen}, cond_name={cond_name}, cond_index={cond_index} {"*"*50}')
+        #logging.debug(f'전략 중지: screen={screen}, cond_name={cond_name}, cond_index={cond_index} {"*"*50}')
         if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
             self.ocx.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, cond_index)
         
@@ -855,10 +856,10 @@ class APIServer:
     def SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno):
         if not com_request_time_check(kind='order'): return -308 # 5회 제한 초과
         if self.sim_no == 0:  # 실제 API 서버
-            logging.debug(f'api 내부 SendOrder 호출전')
+            #logging.debug(f'api 내부 SendOrder 호출전')
             ret = self.ocx.dynamicCall("SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)",
                                     [rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno])
-            logging.debug(f'api 내부 SendOrder 호출후')
+            #logging.debug(f'api 내부 SendOrder 호출후')
             return ret
         else:  # 시뮬레이션 모드
             self.order_no += 1
@@ -1011,6 +1012,7 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
+        #logging.debug(f"OnReceiveRealCondition: API 서버에서 보냄")
         self.stream('admin', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
@@ -1030,7 +1032,7 @@ class APIServer:
                     self.stream('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.stream('admin', 'on_fx실시간_장운영감시', **job)
-                #logging.debug(f"OnReceiveRealData: {job}")
+                #logging.debug(f"OnReceiveRealData: API 서버에서 보냄")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             

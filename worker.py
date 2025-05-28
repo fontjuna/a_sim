@@ -13,16 +13,14 @@ class IPCManager:
         self.queues = {}  # process_name -> Queue
         self.stream_queues = {}  # process_name -> Queue (스트림 전용)
         self.result_dict = self.manager.dict()  # id -> result
-        self.req_timestamps = self.manager.dict()  # req_id -> timestamp (추가)
+        self._result_lock = threading.Lock()  # result_dict 스레드 안전성
         self.processes = {}  # process_name -> Process
         self.threads = {}  # process_name -> Thread
         self.stream_threads = {}  # process_name -> Thread (스트림 처리 전용)
         self.instances = {}  # process_name -> instance
         self.registered = {}  # process_name -> config
         self.shutting_down = False
-        self.cleanup_thread = None  # 정리 스레드
-        self.cleanup_interval = 20  # 1분마다 정리
-        self.result_timeout = 60   # 10분 후 삭제
+        self.request_count = 0  # 배치 정리용 카운터
 
     def register(self, name, cls, type=None, start=False, stream=False, *args, **kwargs):
         """컴포넌트 등록 (재등록 시 인스턴스만 교체)"""
@@ -143,19 +141,10 @@ class IPCManager:
                 pass
             del self.stream_queues[name]
         
-        logging.info(f"{name} 컴포넌트 완전 삭제됨")
+        #logging.info(f"{name} 컴포넌트 완전 삭제됨")
     
     def start(self, name=None, stream=None):
         """컴포넌트 시작"""
-        # 첫 start 시에만 cleanup 스레드 시작
-        if self.cleanup_thread is None and not self.shutting_down:
-            self.cleanup_thread = threading.Thread(
-                target=self._cleanup_old_results,
-                daemon=True
-            )
-            self.cleanup_thread.start()
-            logging.info("결과 정리 스레드 시작됨")
-        
         if name is None:
             # 전체 시작 (모든 타입 포함)
             for comp_name in self.registered.keys():
@@ -244,18 +233,23 @@ class IPCManager:
         """전체 시스템 종료"""
         logging.info("시스템 종료 시작...")
         self.shutting_down = True
+
+        # 1단계: 모든 스레드에 종료 신호 전송
+        for name in list(self.registered.keys()):
+            try:
+                self.queues[name].put({'command': 'stop'}, timeout=0.5)
+            except:
+                pass
         
-        # 정리 스레드 종료 대기
-        if self.cleanup_thread and self.cleanup_thread.is_alive():
-            self.cleanup_thread.join(2.0)
-            logging.info("결과 정리 스레드 종료됨")
-        
+        # 2단계: 스레드들이 정리될 시간 제공
+        time.sleep(0.5)
+
         self.stop()  # 전체 중지
         
         # 자원 정리
         try:
-            self.result_dict.clear()
-            self.req_timestamps.clear()
+            with self.result_lock:
+                self.result_dict.clear()
         except:
             pass
         
@@ -352,43 +346,6 @@ class IPCManager:
         self.stream_threads[name].start()
         logging.info(f"{name} 스트림 워커 시작됨")
     
-    def _cleanup_old_results(self):
-        """오래된 결과 정리 스레드"""
-        logging.info("결과 정리 스레드 초기화 완료")
-        
-        while not self.shutting_down:
-            try:
-                current_time = time.time()
-                cleaned_count = 0
-                
-                # 오래된 결과 삭제
-                for req_id in list(self.result_dict.keys()):
-                    req_time = self.req_timestamps.get(req_id, 0)
-                    if current_time - req_time > self.result_timeout:
-                        try:
-                            del self.result_dict[req_id]
-                            if req_id in self.req_timestamps:
-                                del self.req_timestamps[req_id]
-                            cleaned_count += 1
-                        except KeyError:
-                            pass  # 이미 삭제됨
-                
-                if cleaned_count > 0:
-                    logging.info(f"오래된 결과 {cleaned_count}개 정리됨")
-                    cleaned_count = 0
-                
-                # 현재 상태 로깅 (5분마다)
-                if int(current_time) % 300 == 0:  # 5분마다
-                    logging.info(f"결과 딕셔너리 크기: {len(self.result_dict)}")
-                
-                time.sleep(self.cleanup_interval)
-                
-            except Exception as e:
-                logging.error(f"결과 정리 중 오류: {e}")
-                time.sleep(self.cleanup_interval)
-        
-        logging.info("결과 정리 스레드 종료")
-    
     def _add_ipc_methods(self, instance, process_name):
         """인스턴스에 IPC 메서드 추가"""
         def order(target, method, *args, **kwargs):
@@ -415,6 +372,9 @@ class IPCManager:
 
     def order(self, target, method, *args, **kwargs):
         """결과 불필요한 단방향 명령"""
+        if self.shutting_down:
+            return None
+        
         if target not in self.queues:
             logging.error(f"알 수 없는 컴포넌트: {target}")
             return None
@@ -433,21 +393,25 @@ class IPCManager:
             return None
 
     def answer(self, target, method, *args, timeout=10, **kwargs):
+        if self.shutting_down:
+            return None
         return self._send_request(target, method, args, kwargs, wait_result=True, timeout=timeout)
     
     def stream(self, target, func_name, *args, **kwargs):
+        if self.shutting_down:
+            return None
         return self._send_stream(target, func_name, args, kwargs)
     
     def _send_request(self, target, method, args, kwargs, wait_result, timeout=10):
         """요청 전송 (동적 컴포넌트 추가 대응)"""
+        if self.shutting_down:
+            return None
+        
         if target not in self.queues:
             logging.error(f"알 수 없는 컴포넌트: {target} (등록된 컴포넌트: {list(self.queues.keys())})")
             return None
         
         req_id = str(uuid.uuid4())
-        
-        # 요청 시간 기록
-        self.req_timestamps[req_id] = time.time()
         
         # 요청 전송
         try:
@@ -459,40 +423,46 @@ class IPCManager:
             })
         except Exception as e:
             logging.error(f"요청 전송 실패 to {target}: {e}")
-            # 실패시 타임스탬프도 정리
-            if req_id in self.req_timestamps:
-                del self.req_timestamps[req_id]
             return None
         
         if not wait_result:
             return req_id
         
+        # 배치 정리 (1000번째 요청마다)
+        self.request_count += 1
+        if self.request_count % 1000 == 0:
+            self._batch_cleanup_results()
+        
         # 결과 대기 (0.1ms 간격)
         start_time = time.time()
-        while req_id not in self.result_dict:
+        while True:
+            if self.shutting_down:
+                return None
+            
             # 대상 컴포넌트가 삭제되었는지 확인
             if target not in self.queues:
                 logging.warning(f"대상 컴포넌트 {target}가 삭제됨")
-                if req_id in self.req_timestamps:
-                    del self.req_timestamps[req_id]
                 return None
             
+            # 타임아웃 체크
             if time.time() - start_time > timeout:
                 logging.warning(f"요청 타임아웃: {method} to {target}")
-                # 타임아웃시 타임스탬프 유지 (cleanup 스레드가 나중에 정리)
                 return None
+            
+            # 결과 확인 (스레드 안전)
+            try:
+                with self._result_lock:
+                    if req_id in self.result_dict:
+                        result = self.result_dict.pop(req_id)
+                        return result.get('result', None)
+            except KeyError:
+                # 동시 삭제로 인한 KeyError 무시
+                return None
+            except Exception as e:
+                logging.error(f"결과 확인 중 오류: {e}")
+                return None
+            
             time.sleep(0.0001)  # 0.1ms
-        
-        # 결과 반환 및 정리
-        try:
-            result = self.result_dict[req_id]
-            del self.result_dict[req_id]
-            if req_id in self.req_timestamps:
-                del self.req_timestamps[req_id]
-            return result.get('result', None)
-        except KeyError:
-            # 이미 삭제된 경우
-            return None
     
     def _send_stream(self, target, func_name, args, kwargs):
         """스트림 데이터 전송"""
@@ -516,6 +486,50 @@ class IPCManager:
             logging.error(f"스트림 전송 실패 to {target}: {e}")
             return False
 
+    def _batch_cleanup_results(self):
+        """배치로 오래된 결과 정리"""
+        try:
+            current_time = time.time()
+            cleaned_count = 0
+            
+            # 논블로킹으로 락 획득 시도
+            if self._result_lock.acquire(blocking=False):
+                try:
+                    # 키 목록 복사 (락 보유 시간 최소화)
+                    keys_to_check = list(self.result_dict.keys())
+                finally:
+                    self._result_lock.release()
+                
+                # 락 해제 후 개별 처리
+                for req_id in keys_to_check:
+                    try:
+                        if self._result_lock.acquire(blocking=False):
+                            try:
+                                # 10분 이상 된 항목 삭제 (대략적 기준)
+                                if req_id in self.result_dict:
+                                    # 간단한 휴리스틱: req_id 생성 시간 기반
+                                    # uuid4는 시간 기반이 아니므로 단순히 오래된 항목들 삭제
+                                    if len(self.result_dict) > 1000:  # 1000개 넘으면 강제 정리
+                                        del self.result_dict[req_id]
+                                        cleaned_count += 1
+                                        if cleaned_count >= 100:  # 한번에 100개까지만
+                                            break
+                            finally:
+                                self._result_lock.release()
+                        else:
+                            # 락 획득 실패시 건너뛰기
+                            continue
+                    except Exception:
+                        continue
+                
+                if cleaned_count > 0:
+                    logging.info(f"배치 정리: {cleaned_count}개 항목 삭제됨")
+            else:
+                logging.debug("배치 정리 건너뜀 (락 사용 중)")
+                
+        except Exception as e:
+            logging.error(f"배치 정리 중 오류: {e}")
+            
 def stream_worker(comp_name, instance, stream_queue):
     """스트림 전용 워커"""
     try:
@@ -527,7 +541,7 @@ def stream_worker(comp_name, instance, stream_queue):
                 
                 # 종료 명령 확인
                 if stream_data.get('command') == 'stop':
-                    logging.info(f"{comp_name}: 스트림 워커 종료 명령 수신")
+                    #logging.info(f"{comp_name}: 스트림 워커 종료 명령 수신")
                     break
                 
                 # 스트림 데이터 처리
@@ -552,8 +566,8 @@ def stream_worker(comp_name, instance, stream_queue):
     
     except Exception as e:
         logging.error(f"{comp_name} 스트림 워커 오류: {e}", exc_info=True)
-    finally:
-        logging.info(f"{comp_name} 스트림 워커 종료")
+    #finally:
+    #    logging.info(f"{comp_name} 스트림 워커 종료")
 
 def process_worker(process_name, process_class, own_queue, own_stream_queue, all_queues, all_stream_queues, result_dict, enable_stream, args, kwargs):
     """프로세스 워커"""
@@ -655,7 +669,7 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
-                    logging.info(f"{process_name}: 종료 명령 수신")
+                    #logging.info(f"{process_name}: 종료 명령 수신")
                     
                     # 정리 작업 (있으면 실행)
                     if hasattr(instance, 'cleanup') and callable(getattr(instance, 'cleanup')):
@@ -711,8 +725,8 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
     
     except Exception as e:
         logging.error(f"{process_name} 프로세스 오류: {e}", exc_info=True)
-    finally:
-        logging.info(f"{process_name} 프로세스 종료")
+    #finally:
+    #    logging.info(f"{process_name} 프로세스 종료")
 
 def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queues, result_dict, enable_stream):
     """스레드 워커"""
@@ -762,7 +776,7 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
             result = result_dict[req_id]
             del result_dict[req_id]
             return result.get('result', None)
-        
+
         def stream(target, func_name, *args, **kwargs):
             if target not in all_stream_queues:
                 logging.error(f"알 수 없는 스트림 대상: {target}")
@@ -802,7 +816,7 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
-                    logging.info(f"{thread_name}: 종료 명령 수신")
+                    #logging.info(f"{thread_name}: 종료 명령 수신")
                     
                     # 정리 작업 (있으면 실행)
                     if hasattr(instance, 'cleanup') and callable(getattr(instance, 'cleanup')):
@@ -852,8 +866,8 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
     
     except Exception as e:
         logging.error(f"{thread_name} 스레드 오류: {e}", exc_info=True)
-    finally:
-        logging.info(f"{thread_name} 스레드 종료")
+    #finally:
+    #    logging.info(f"{thread_name} 스레드 종료")
 
 def main_listener_worker(comp_name, instance, own_queue, result_dict):
     """메인 컴포넌트 리스너"""
@@ -867,7 +881,7 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict):
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
-                    logging.info(f"{comp_name}: 리스너 종료 명령 수신")
+                    #logging.info(f"{comp_name}: 리스너 종료 명령 수신")
                     break
                 
                 # 요청 처리
@@ -912,8 +926,8 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict):
     
     except Exception as e:
         logging.error(f"{comp_name} 메인 리스너 오류: {e}", exc_info=True)
-    finally:
-        logging.info(f"{comp_name} 메인 리스너 종료")
+    #finally:
+    #    logging.info(f"{comp_name} 메인 리스너 종료")
 
 # 테스트용 클래스들
 class ADM:

@@ -89,10 +89,13 @@ class Strategy:
 
         if self.매수스크립트적용:
             if self.answer('dbm', 'is_done', code):
-                result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
-                if self.매수스크립트AND and not result.get('result', False): return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
-                logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
-
+                try:
+                    result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
+                    if self.매수스크립트AND and not result.get('result', False): return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
+                    logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
+                except Exception as e:
+                    logging.error(f'매수스크립트 검사 오류: {self.전략} {code} {name} - {type(e).__name__} - {e}', exc_info=True)
+        
         if not gm.config.sim_on:
             status_market = self.answer('admin', 'com_market_status')
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
@@ -210,7 +213,7 @@ class Strategy:
             if self.매도지정가:
                 send_data['price'] = hoga(현재가, self.매도호가)
                 send_data['msg'] = '매도지정'
-
+            
             if self.매도스크립트적용:
                 if self.answer('dbm', 'is_done', code):
                     result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
@@ -218,7 +221,7 @@ class Strategy:
                         logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
                         send_data['msg'] = '전략매도'
                         return True, send_data, f"전략매도: {code} {종목명}"
-
+            
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
                 if self.매도스크립트적용 and not result.get('result', False): return False, {}, f"매도스크립트 조건 불충족: {code} {종목명}"
                 send_data['msg'] = '검색매도'
@@ -439,7 +442,7 @@ class Strategy:
         condition_list = []
         try:
             job = {'screen': screen, 'cond_name': cond_name, 'cond_index': cond_index, 'search': 1}
-            condition_list, bool_ok = gm.admin.com_SendCondition(**job)
+            condition_list, bool_ok = self.answer('admin', 'com_SendCondition', **job)
             return condition_list, bool_ok
         except Exception as e:
             logging.error(f'조건 검색 요청 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
@@ -530,8 +533,7 @@ class Strategy:
 
             # 실시간 감시 해지하지 않는다.
             if len(gm.dict조건종목감시) > 90 and code in gm.dict조건종목감시:
-                screen = dc.scr.화면[self.전략]#f'{"3" if kind == "매수" else "2"}0{self.전략[-2:]}'
-                self.order('api', 'SetRealRemove', screen, code)
+                self.order('api', 'SetRealRemove', dc.scr.화면[self.전략], code)
                 del gm.dict조건종목감시[code]
                 logging.debug(f'실시간 감시 해지: {gm.dict조건종목감시.keys()}')
 
@@ -616,5 +618,4 @@ class Strategy:
 
         except Exception as e:
             logging.error(f'전략매매 체크 오류: {type(e).__name__} - {e}', exc_info=True)
-
 

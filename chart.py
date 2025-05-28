@@ -266,6 +266,7 @@ class ChartData:
             logging.error(f"[{datetime.now()}] Error loading data for {code}: {str(e)}")
             return {'mi1': [], 'mi3': [], 'dy': [], 'wk': [], 'mo': [], 'index_maps': {}}
         
+    @profile_operation        
     def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
         """외부에서 차트 데이터 설정 - 데드락 안전 버전"""
         if not data:
@@ -2795,70 +2796,14 @@ def enhance_script_manager(script_manager, cache_dir=dc.fp.cache_path):
     
 # 예제 실행
 if __name__ == '__main__':
-    # 예제 1: 기본 가격 비교 스크립트
-    price_check_script = """
-    # 일봉 차트의 종가가 지정된 가격보다 높은지 확인
-    dy = ChartManager('dy')  # 코드는 kwargs에서 자동으로 가져옴
-    result = dy.c() > price  # 종가 > 사용자 지정 가격
+    mi3 = ChartManager('005930', 'mi', 3)
 
-    if result:
-        debug(f"{name}(종가:{dy.c()})가 목표가({price})보다 높습니다")
-    else:
-        debug(f"{name}(종가:{dy.c()})가 목표가({price})보다 낮습니다")
-    """
+    ma5 = mi3.indicator(mi3.ma, mi3.c, 5)
+    ma20 = mi3.indicator(mi3.ma, mi3.c, 20)
 
-    # 예제 2: 스크립트 호출 예제
-    call_script = """
-    # 다른 스크립트 호출 (code를 직접 지정하지 않음)
-    samsung_result = price_check()  # 현재 컨텍스트의 코드 사용
-    hyundai_result = price_check(code='005380', price=70000)  # 다른 종목, 다른 가격
+    c1 = ma5() > ma20() and mi3.c > ma5()
+    c2 = ma5(1) < ma5() and ma20(1) < ma20()
 
-    result = f"삼성: {samsung_result}, 현대: {hyundai_result}"
-    """
+    result = ma5(1)
 
-    # 예제 3: 여러 종목 비교 스크립트
-    multi_stock_script = """
-    # 여러 종목의 상대 강도 비교
-    samsung = ChartManager('dy', code='005930')  # 삼성전자
-    hyundai = ChartManager('dy', code='005380')  # 현대차
-    sk = ChartManager('dy', code='017670')       # SK텔레콤
-
-    # 상대 강도 계산 (20일 이동평균 대비 현재가 비율)
-    samsung_strength = samsung.c() / samsung.ma(samsung.c, 20)
-    hyundai_strength = hyundai.c() / hyundai.ma(hyundai.c, 20)
-    sk_strength = sk.c() / sk.ma(sk.c, 20)
-
-    # 결과 정리
-    stocks = [
-        {"name": "삼성전자", "strength": samsung_strength},
-        {"name": "현대차", "strength": hyundai_strength},
-        {"name": "SK텔레콤", "strength": sk_strength}
-    ]
-
-    # 강도 순으로 정렬
-    sorted_stocks = sorted(stocks, key=lambda x: x["strength"], reverse=True)
-
-    # 결과 출력
-    result = "상대 강도 순위:\\n"
-    for i, stock in enumerate(sorted_stocks, 1):
-        result += f"{i}. {stock['name']}: {stock['strength']:.2f}\\n"
-    """
-
-    sm = ScriptManager()
-    enhance_script_manager(sm)
-    
-    # 스크립트 저장
-    sm.set_script_compiled('price_check', price_check_script, vars={'price': 55800})
-    sm.set_script_compiled('call_script', call_script)
-    sm.set_script_compiled('multi_stock', multi_stock_script)
-    
-    # 실행 (종목코드는 kwargs로 전달)
-    result1 = sm.run_script('price_check', kwargs={'code': '005930'})
-    logging.debug("가격 체크 결과:", result1)
-    
-    result2 = sm.run_script('call_script', kwargs={'code': '005930'})
-    logging.debug("호출 스크립트 결과:", result2)
-    
-    result3 = sm.run_script('multi_stock')  # 스크립트 내에서 코드 지정
-    logging.debug("여러 종목 비교 결과:", result3)
-
+    print(result)

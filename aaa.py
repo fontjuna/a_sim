@@ -154,7 +154,16 @@ class Main:
 
     def cleanup(self):
         try:
-            gm.ipc.shutdown()
+            if hasattr(gm, 'ipc') and gm.ipc:
+                gm.ipc.shutting_down = True
+
+            if hasattr(gm, 'admin') and gm.admin:
+                gm.admin.cdn_fx중지_전략매매()
+
+            time.sleep(1)
+            if hasattr(gm, 'ipc') and gm.ipc:
+                gm.ipc.shutdown()
+
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:

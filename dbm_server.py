@@ -228,6 +228,7 @@ class DBMServer:
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)
 
+    @profile_operation        
     def upsert_chart(self, dict_data, cycle, tick=1):
         """차트 데이터를 데이터베이스에 저장"""
         table = dc.ddb.MIN_TABLE_NAME if cycle in ['mi', 'tk'] else dc.ddb.DAY_TABLE_NAME
@@ -319,7 +320,7 @@ class DBMServer:
         except Exception as e:
             logging.error(f"upsert_conclusion error: {e}", exc_info=True)
             return False
-        
+
     def dbm_get_chart_data(self, code, cycle, tick=1, times=1):
         try:
             if not code: return []
@@ -378,6 +379,7 @@ class DBMServer:
                     '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
                     '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
                 } for item in dict_list]
+        
             if cycle in ['dy', 'mi']:
                 self.upsert_chart(dict_list, cycle, tick)
                 self.done_todo_code(code, cycle)
