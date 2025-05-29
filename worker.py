@@ -5,6 +5,10 @@ import uuid
 import logging
 import queue
 
+LOCK_TIMEOUT = 2
+POLLING_INTERVAL = 0.001
+ANSWER_TIMEOUT = 15  # 답변 대기 시간  
+
 class IPCManager:
     """프로세스 간 통신 관리자"""
     
@@ -13,7 +17,12 @@ class IPCManager:
         self.queues = {}  # process_name -> Queue
         self.stream_queues = {}  # process_name -> Queue (스트림 전용)
         self.result_dict = self.manager.dict()  # id -> result
-        self._result_lock = threading.Lock()  # result_dict 스레드 안전성
+        
+        # 스레드 안전성을 위한 락들
+        self._result_lock = self.manager.Lock()  # result_dict 멀티프로세스 안전성
+        self._queue_lock = threading.Lock()      # queues 딕셔너리 접근용
+        self._component_lock = threading.Lock()  # 컴포넌트 등록/해제용
+        
         self.processes = {}  # process_name -> Process
         self.threads = {}  # process_name -> Thread
         self.stream_threads = {}  # process_name -> Thread (스트림 처리 전용)
@@ -21,6 +30,52 @@ class IPCManager:
         self.registered = {}  # process_name -> config
         self.shutting_down = False
         self.request_count = 0  # 배치 정리용 카운터
+
+    def _safe_result_get(self, req_id, timeout=LOCK_TIMEOUT):
+        """result_dict에서 안전하게 값 가져오기"""
+        try:
+            if self._result_lock.acquire(timeout=timeout):
+                try:
+                    return self.result_dict.get(req_id, None)
+                finally:
+                    self._result_lock.release()
+            else:
+                logging.warning(f"result_dict 읽기 락 타임아웃: {req_id}")
+                return None
+        except Exception as e:
+            logging.error(f"result_dict 읽기 오류: {e}")
+            return None
+
+    def _safe_result_pop(self, req_id, timeout=LOCK_TIMEOUT):
+        """result_dict에서 안전하게 값 제거하고 반환"""
+        try:
+            if self._result_lock.acquire(timeout=timeout):
+                try:
+                    return self.result_dict.pop(req_id, None)
+                finally:
+                    self._result_lock.release()
+            else:
+                logging.warning(f"result_dict 제거 락 타임아웃: {req_id}")
+                return None
+        except Exception as e:
+            logging.error(f"result_dict 제거 오류: {e}")
+            return None
+
+    def _safe_result_set(self, req_id, result_data, timeout=LOCK_TIMEOUT):
+        """result_dict에 안전하게 값 설정"""
+        try:
+            if self._result_lock.acquire(timeout=timeout):
+                try:
+                    self.result_dict[req_id] = result_data
+                    return True
+                finally:
+                    self._result_lock.release()
+            else:
+                logging.warning(f"result_dict 쓰기 락 타임아웃: {req_id}")
+                return False
+        except Exception as e:
+            logging.error(f"result_dict 쓰기 오류: {e}")
+            return False
 
     def register(self, name, cls, type=None, start=False, stream=False, *args, **kwargs):
         """컴포넌트 등록 (재등록 시 인스턴스만 교체)"""
@@ -140,8 +195,6 @@ class IPCManager:
             except:
                 pass
             del self.stream_queues[name]
-        
-        #logging.info(f"{name} 컴포넌트 완전 삭제됨")
     
     def start(self, name=None, stream=None):
         """컴포넌트 시작"""
@@ -234,22 +287,34 @@ class IPCManager:
         logging.info("시스템 종료 시작...")
         self.shutting_down = True
 
-        # 1단계: 모든 스레드에 종료 신호 전송
+        # 1단계: 모든 컴포넌트에 종료 신호 전송 (논블로킹)
         for name in list(self.registered.keys()):
             try:
-                self.queues[name].put({'command': 'stop'}, timeout=0.5)
+                self.queues[name].put({'command': 'stop'}, timeout=0.1)
             except:
                 pass
         
-        # 2단계: 스레드들이 정리될 시간 제공
-        time.sleep(0.5)
+        # 2단계: 짧은 대기 후 강제 종료
+        time.sleep(0.2)
 
-        self.stop()  # 전체 중지
+        # 3단계: 프로세스들 강제 종료
+        for name, process in list(self.processes.items()):
+            if process and process.is_alive():
+                try:
+                    process.terminate()
+                    process.join(0.5)  # 0.5초만 대기
+                    if process.is_alive():
+                        logging.warning(f"{name} 프로세스 강제 종료")
+                except:
+                    pass
         
-        # 자원 정리
+        # 4단계: 자원 정리 (논블로킹)
         try:
-            with self.result_lock:
-                self.result_dict.clear()
+            if self._result_lock.acquire(blocking=False):
+                try:
+                    self.result_dict.clear()
+                finally:
+                    self._result_lock.release()
         except:
             pass
         
@@ -307,7 +372,7 @@ class IPCManager:
         
         self.processes[name] = mp.Process(
             target=process_worker,
-            args=(name, reg_info['class'], self.queues[name], self.stream_queues[name], self.queues, self.stream_queues, self.result_dict, stream, reg_info['args'], reg_info['kwargs']),
+            args=(name, reg_info['class'], self.queues[name], self.stream_queues[name], self.queues, self.stream_queues, self.result_dict, self._result_lock, stream, reg_info['args'], reg_info['kwargs']),
             daemon=False
         )
         self.processes[name].start()
@@ -317,7 +382,7 @@ class IPCManager:
         """스레드 시작"""
         self.threads[name] = threading.Thread(
             target=thread_worker,
-            args=(name, self.instances[name], self.queues[name], self.queues, self.stream_queues, self.result_dict, stream),
+            args=(name, self.instances[name], self.queues[name], self.queues, self.stream_queues, self.result_dict, self._result_lock, stream),
             daemon=True
         )
         self.threads[name].start()
@@ -330,7 +395,7 @@ class IPCManager:
         """메인 컴포넌트 리스너 시작"""
         self.threads[name] = threading.Thread(
             target=main_listener_worker,
-            args=(name, self.instances[name], self.queues[name], self.result_dict),
+            args=(name, self.instances[name], self.queues[name], self.result_dict, self._result_lock),
             daemon=True
         )
         self.threads[name].start()
@@ -351,7 +416,7 @@ class IPCManager:
         def order(target, method, *args, **kwargs):
             return self._send_request(target, method, args, kwargs, wait_result=False)
         
-        def answer(target, method, *args, timeout=10, **kwargs):
+        def answer(target, method, *args, timeout=ANSWER_TIMEOUT, **kwargs):
             return self._send_request(target, method, args, kwargs, wait_result=True, timeout=timeout)
         
         def stream(target, func_name, *args, **kwargs):
@@ -392,7 +457,8 @@ class IPCManager:
             logging.error(f"order 전송 실패 to {target}: {e}")
             return None
 
-    def answer(self, target, method, *args, timeout=10, **kwargs):
+    def answer(self, target, method, *args, timeout=ANSWER_TIMEOUT, **kwargs):
+        """결과 필요한 양방향 요청 (기본 타임아웃 2초)"""
         if self.shutting_down:
             return None
         return self._send_request(target, method, args, kwargs, wait_result=True, timeout=timeout)
@@ -402,8 +468,8 @@ class IPCManager:
             return None
         return self._send_stream(target, func_name, args, kwargs)
     
-    def _send_request(self, target, method, args, kwargs, wait_result, timeout=10):
-        """요청 전송 (동적 컴포넌트 추가 대응)"""
+    def _send_request(self, target, method, args, kwargs, wait_result, timeout=ANSWER_TIMEOUT):
+        """요청 전송 (데드락 방지 및 스레드 안전)"""
         if self.shutting_down:
             return None
         
@@ -433,7 +499,7 @@ class IPCManager:
         if self.request_count % 1000 == 0:
             self._batch_cleanup_results()
         
-        # 결과 대기 (0.1ms 간격)
+        # 결과 대기 (데드락 방지를 위한 타임아웃 적용)
         start_time = time.time()
         while True:
             if self.shutting_down:
@@ -444,25 +510,20 @@ class IPCManager:
                 logging.warning(f"대상 컴포넌트 {target}가 삭제됨")
                 return None
             
-            # 타임아웃 체크
-            if time.time() - start_time > timeout:
-                logging.warning(f"요청 타임아웃: {method} to {target}")
+            # 타임아웃 체크 (데드락 방지)
+            elapsed = time.time() - start_time
+            if elapsed > timeout:
+                logging.warning(f"요청 타임아웃 ({timeout}초): {method} to {target}")
+                # 타임아웃된 결과 정리
+                self._safe_result_pop(req_id)
                 return None
             
             # 결과 확인 (스레드 안전)
-            try:
-                with self._result_lock:
-                    if req_id in self.result_dict:
-                        result = self.result_dict.pop(req_id)
-                        return result.get('result', None)
-            except KeyError:
-                # 동시 삭제로 인한 KeyError 무시
-                return None
-            except Exception as e:
-                logging.error(f"결과 확인 중 오류: {e}")
-                return None
+            result = self._safe_result_pop(req_id)
+            if result is not None:
+                return result.get('result', None)
             
-            time.sleep(0.0001)  # 0.1ms
+            time.sleep(0.001)  # 1ms 대기
     
     def _send_stream(self, target, func_name, args, kwargs):
         """스트림 데이터 전송"""
@@ -487,40 +548,27 @@ class IPCManager:
             return False
 
     def _batch_cleanup_results(self):
-        """배치로 오래된 결과 정리"""
+        """배치로 오래된 결과 정리 (스레드 안전)"""
         try:
             current_time = time.time()
             cleaned_count = 0
             
-            # 논블로킹으로 락 획득 시도
-            if self._result_lock.acquire(blocking=False):
+            # 안전한 락 획득으로 키 목록 가져오기
+            if self._result_lock.acquire(timeout=LOCK_TIMEOUT):
                 try:
                     # 키 목록 복사 (락 보유 시간 최소화)
                     keys_to_check = list(self.result_dict.keys())
                 finally:
                     self._result_lock.release()
                 
-                # 락 해제 후 개별 처리
-                for req_id in keys_to_check:
-                    try:
-                        if self._result_lock.acquire(blocking=False):
-                            try:
-                                # 10분 이상 된 항목 삭제 (대략적 기준)
-                                if req_id in self.result_dict:
-                                    # 간단한 휴리스틱: req_id 생성 시간 기반
-                                    # uuid4는 시간 기반이 아니므로 단순히 오래된 항목들 삭제
-                                    if len(self.result_dict) > 1000:  # 1000개 넘으면 강제 정리
-                                        del self.result_dict[req_id]
-                                        cleaned_count += 1
-                                        if cleaned_count >= 100:  # 한번에 100개까지만
-                                            break
-                            finally:
-                                self._result_lock.release()
-                        else:
-                            # 락 획득 실패시 건너뛰기
-                            continue
-                    except Exception:
-                        continue
+                # 개별 처리 (너무 많으면 100개까지만)
+                for req_id in keys_to_check[:100]:
+                    if self._safe_result_pop(req_id) is not None:
+                        cleaned_count += 1
+                    
+                    # 시스템 부하 방지
+                    if cleaned_count >= 50:
+                        break
                 
                 if cleaned_count > 0:
                     logging.info(f"배치 정리: {cleaned_count}개 항목 삭제됨")
@@ -529,7 +577,7 @@ class IPCManager:
                 
         except Exception as e:
             logging.error(f"배치 정리 중 오류: {e}")
-            
+
 def stream_worker(comp_name, instance, stream_queue):
     """스트림 전용 워커"""
     try:
@@ -537,11 +585,10 @@ def stream_worker(comp_name, instance, stream_queue):
         
         while True:
             try:
-                stream_data = stream_queue.get(timeout=0.0001)  # 0.1ms
+                stream_data = stream_queue.get(timeout=POLLING_INTERVAL)  # 1ms 대기
                 
                 # 종료 명령 확인
                 if stream_data.get('command') == 'stop':
-                    #logging.info(f"{comp_name}: 스트림 워커 종료 명령 수신")
                     break
                 
                 # 스트림 데이터 처리
@@ -561,16 +608,63 @@ def stream_worker(comp_name, instance, stream_queue):
                 
             except queue.Empty:
                 pass
+            except (BrokenPipeError, EOFError, OSError):
+                break
             except Exception as e:
                 logging.error(f"{comp_name}: 스트림 처리 오류: {e}")
     
     except Exception as e:
         logging.error(f"{comp_name} 스트림 워커 오류: {e}", exc_info=True)
-    #finally:
-    #    logging.info(f"{comp_name} 스트림 워커 종료")
 
-def process_worker(process_name, process_class, own_queue, own_stream_queue, all_queues, all_stream_queues, result_dict, enable_stream, args, kwargs):
-    """프로세스 워커"""
+def process_worker(process_name, process_class, own_queue, own_stream_queue, all_queues, all_stream_queues, result_dict, result_lock, enable_stream, args, kwargs):
+    """프로세스 워커 (스레드 안전 result_dict 접근)"""
+    
+    def _safe_result_set(req_id, result_data, timeout=LOCK_TIMEOUT):
+        """프로세스에서 안전하게 result_dict 설정"""
+        try:
+            if result_lock.acquire(timeout=timeout):
+                try:
+                    result_dict[req_id] = result_data
+                    return True
+                finally:
+                    result_lock.release()
+            else:
+                logging.warning(f"프로세스 result_dict 쓰기 락 타임아웃: {req_id}")
+                return False
+        except Exception as e:
+            logging.error(f"프로세스 result_dict 쓰기 오류: {e}")
+            return False
+    
+    def _safe_result_get(req_id, timeout=LOCK_TIMEOUT):
+        """프로세스에서 안전하게 result_dict 읽기"""
+        try:
+            if result_lock.acquire(timeout=timeout):
+                try:
+                    return result_dict.get(req_id, None)
+                finally:
+                    result_lock.release()
+            else:
+                logging.warning(f"프로세스 result_dict 읽기 락 타임아웃: {req_id}")
+                return None
+        except Exception as e:
+            logging.error(f"프로세스 result_dict 읽기 오류: {e}")
+            return None
+    
+    def _safe_result_pop(req_id, timeout=LOCK_TIMEOUT):
+        """프로세스에서 안전하게 result_dict 제거"""
+        try:
+            if result_lock.acquire(timeout=timeout):
+                try:
+                    return result_dict.pop(req_id, None)
+                finally:
+                    result_lock.release()
+            else:
+                logging.warning(f"프로세스 result_dict 제거 락 타임아웃: {req_id}")
+                return None
+        except Exception as e:
+            logging.error(f"프로세스 result_dict 제거 오류: {e}")
+            return None
+    
     try:
         # 인스턴스 생성
         instance = process_class(*args, **kwargs)
@@ -587,38 +681,50 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
                 return None
             
             req_id = str(uuid.uuid4())
-            all_queues[target].put({
-                'id': req_id,
-                'method': method,
-                'args': args,
-                'kwargs': kwargs
-            })
-            return req_id
+            try:
+                all_queues[target].put({
+                    'id': req_id,
+                    'method': method,
+                    'args': args,
+                    'kwargs': kwargs
+                })
+                return req_id
+            except Exception as e:
+                logging.error(f"프로세스 order 전송 실패 to {target}: {e}")
+                return None
         
-        def answer(target, method, *args, timeout=10, **kwargs):
+        def answer(target, method, *args, timeout=ANSWER_TIMEOUT, **kwargs):
             if target not in all_queues:
                 logging.error(f"알 수 없는 컴포넌트: {target}")
                 return None
             
             req_id = str(uuid.uuid4())
-            all_queues[target].put({
-                'id': req_id,
-                'method': method,
-                'args': args,
-                'kwargs': kwargs
-            })
+            try:
+                all_queues[target].put({
+                    'id': req_id,
+                    'method': method,
+                    'args': args,
+                    'kwargs': kwargs
+                })
+            except Exception as e:
+                logging.error(f"프로세스 answer 전송 실패 to {target}: {e}")
+                return None
             
-            # 결과 대기
+            # 결과 대기 (데드락 방지)
             start_time = time.time()
-            while req_id not in result_dict:
+            while True:
+                # 타임아웃 체크
                 if time.time() - start_time > timeout:
-                    logging.warning(f"요청 타임아웃: {method} to {target}")
+                    logging.warning(f"프로세스 요청 타임아웃 ({timeout}초): {method} to {target}")
+                    _safe_result_pop(req_id)  # 타임아웃된 결과 정리
                     return None
-                time.sleep(0.0001)  # 0.1ms
-            
-            result = result_dict[req_id]
-            del result_dict[req_id]
-            return result.get('result', None)
+                
+                # 결과 확인 (스레드 안전)
+                result = _safe_result_pop(req_id)
+                if result is not None:
+                    return result.get('result', None)
+                
+                time.sleep(0.001)  # 1ms 대기
         
         def stream(target, func_name, *args, **kwargs):
             if target not in all_stream_queues:
@@ -665,12 +771,10 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
         # 메시지 처리 루프
         while True:
             try:
-                request = own_queue.get(timeout=0.0001)  # 0.1ms
+                request = own_queue.get(timeout=POLLING_INTERVAL)  # 1ms 대기
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
-                    #logging.info(f"{process_name}: 종료 명령 수신")
-                    
                     # 정리 작업 (있으면 실행)
                     if hasattr(instance, 'cleanup') and callable(getattr(instance, 'cleanup')):
                         instance.cleanup()
@@ -712,24 +816,71 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
                                 'result': None
                             }
                     
-                    # 결과 저장
-                    result_dict[req_id] = result_data
+                    # 결과 저장 (스레드 안전)
+                    _safe_result_set(req_id, result_data)
                     
                 except Exception as e:
                     logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
                 
             except queue.Empty:
                 pass
+            except (BrokenPipeError, EOFError, OSError):
+                break
             except Exception as e:
                 logging.error(f"{process_name}: 메시지 처리 오류: {e}", exc_info=True)
     
     except Exception as e:
         logging.error(f"{process_name} 프로세스 오류: {e}", exc_info=True)
-    #finally:
-    #    logging.info(f"{process_name} 프로세스 종료")
 
-def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queues, result_dict, enable_stream):
-    """스레드 워커"""
+def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queues, result_dict, result_lock, enable_stream):
+    """스레드 워커 (스레드 안전 result_dict 접근)"""
+    
+    def _safe_result_set(req_id, result_data, timeout=LOCK_TIMEOUT):
+        """스레드에서 안전하게 result_dict 설정"""
+        try:
+            if result_lock.acquire(timeout=timeout):
+                try:
+                    result_dict[req_id] = result_data
+                    return True
+                finally:
+                    result_lock.release()
+            else:
+                logging.warning(f"스레드 result_dict 쓰기 락 타임아웃: {req_id}")
+                return False
+        except Exception as e:
+            logging.error(f"스레드 result_dict 쓰기 오류: {e}")
+            return False
+    
+    def _safe_result_get(req_id, timeout=LOCK_TIMEOUT):
+        """스레드에서 안전하게 result_dict 읽기"""
+        try:
+            if result_lock.acquire(timeout=timeout):
+                try:
+                    return result_dict.get(req_id, None)
+                finally:
+                    result_lock.release()
+            else:
+                logging.warning(f"스레드 result_dict 읽기 락 타임아웃: {req_id}")
+                return None
+        except Exception as e:
+            logging.error(f"스레드 result_dict 읽기 오류: {e}")
+            return None
+    
+    def _safe_result_pop(req_id, timeout=LOCK_TIMEOUT):
+        """스레드에서 안전하게 result_dict 제거"""
+        try:
+            if result_lock.acquire(timeout=timeout):
+                try:
+                    return result_dict.pop(req_id, None)
+                finally:
+                    result_lock.release()
+            else:
+                logging.warning(f"스레드 result_dict 제거 락 타임아웃: {req_id}")
+                return None
+        except Exception as e:
+            logging.error(f"스레드 result_dict 제거 오류: {e}")
+            return None
+    
     try:
         # 초기화 작업 (있으면 실행)
         if hasattr(instance, 'initialize') and callable(getattr(instance, 'initialize')):
@@ -744,38 +895,50 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
                 return None
             
             req_id = str(uuid.uuid4())
-            all_queues[target].put({
-                'id': req_id,
-                'method': method,
-                'args': args,
-                'kwargs': kwargs
-            })
-            return req_id
+            try:
+                all_queues[target].put({
+                    'id': req_id,
+                    'method': method,
+                    'args': args,
+                    'kwargs': kwargs
+                })
+                return req_id
+            except Exception as e:
+                logging.error(f"스레드 order 전송 실패 to {target}: {e}")
+                return None
         
-        def answer(target, method, *args, timeout=10, **kwargs):
+        def answer(target, method, *args, timeout=ANSWER_TIMEOUT, **kwargs):
             if target not in all_queues:
                 logging.error(f"알 수 없는 컴포넌트: {target}")
                 return None
             
             req_id = str(uuid.uuid4())
-            all_queues[target].put({
-                'id': req_id,
-                'method': method,
-                'args': args,
-                'kwargs': kwargs
-            })
+            try:
+                all_queues[target].put({
+                    'id': req_id,
+                    'method': method,
+                    'args': args,
+                    'kwargs': kwargs
+                })
+            except Exception as e:
+                logging.error(f"스레드 answer 전송 실패 to {target}: {e}")
+                return None
             
-            # 결과 대기
+            # 결과 대기 (데드락 방지)
             start_time = time.time()
-            while req_id not in result_dict:
+            while True:
+                # 타임아웃 체크
                 if time.time() - start_time > timeout:
-                    logging.warning(f"요청 타임아웃: {method} to {target}")
+                    logging.warning(f"스레드 요청 타임아웃 ({timeout}초): {method} to {target}")
+                    _safe_result_pop(req_id)  # 타임아웃된 결과 정리
                     return None
-                time.sleep(0.0001)  # 0.1ms
-            
-            result = result_dict[req_id]
-            del result_dict[req_id]
-            return result.get('result', None)
+                
+                # 결과 확인 (스레드 안전)
+                result = _safe_result_pop(req_id)
+                if result is not None:
+                    return result.get('result', None)
+                
+                time.sleep(0.001)  # 1ms 대기
 
         def stream(target, func_name, *args, **kwargs):
             if target not in all_stream_queues:
@@ -812,12 +975,10 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
         # 메시지 처리 루프
         while True:
             try:
-                request = own_queue.get(timeout=0.0001)  # 0.1ms
+                request = own_queue.get(timeout=POLLING_INTERVAL)  # 1ms 대기
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
-                    #logging.info(f"{thread_name}: 종료 명령 수신")
-                    
                     # 정리 작업 (있으면 실행)
                     if hasattr(instance, 'cleanup') and callable(getattr(instance, 'cleanup')):
                         instance.cleanup()
@@ -853,35 +1014,51 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
                                 'result': None
                             }
                     
-                    # 결과 저장
-                    result_dict[req_id] = result_data
+                    # 결과 저장 (스레드 안전)
+                    _safe_result_set(req_id, result_data)
                     
                 except Exception as e:
                     logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
                 
             except queue.Empty:
                 pass
+            except (BrokenPipeError, EOFError, OSError):
+                break
             except Exception as e:
                 logging.error(f"{thread_name}: 메시지 처리 오류: {e}", exc_info=True)
     
     except Exception as e:
         logging.error(f"{thread_name} 스레드 오류: {e}", exc_info=True)
-    #finally:
-    #    logging.info(f"{thread_name} 스레드 종료")
 
-def main_listener_worker(comp_name, instance, own_queue, result_dict):
-    """메인 컴포넌트 리스너"""
+def main_listener_worker(comp_name, instance, own_queue, result_dict, result_lock):
+    """메인 컴포넌트 리스너 (스레드 안전 result_dict 접근)"""
+    
+    def _safe_result_set(req_id, result_data, timeout=LOCK_TIMEOUT):
+        """메인 리스너에서 안전하게 result_dict 설정"""
+        try:
+            if result_lock.acquire(timeout=timeout):
+                try:
+                    result_dict[req_id] = result_data
+                    return True
+                finally:
+                    result_lock.release()
+            else:
+                logging.warning(f"메인 리스너 result_dict 쓰기 락 타임아웃: {req_id}")
+                return False
+        except Exception as e:
+            logging.error(f"메인 리스너 result_dict 쓰기 오류: {e}")
+            return False
+    
     try:
         logging.info(f"{comp_name} 메인 리스너 초기화 완료")
         
         # 메시지 처리 루프
         while True:
             try:
-                request = own_queue.get(timeout=0.0001)  # 0.1ms
+                request = own_queue.get(timeout=POLLING_INTERVAL)  # 1ms 대기
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
-                    #logging.info(f"{comp_name}: 리스너 종료 명령 수신")
                     break
                 
                 # 요청 처리
@@ -913,21 +1090,21 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict):
                                 'result': None
                             }
                     
-                    # 결과 저장
-                    result_dict[req_id] = result_data
+                    # 결과 저장 (스레드 안전)
+                    _safe_result_set(req_id, result_data)
                     
                 except Exception as e:
                     logging.error(f"요청 처리 중 오류: {e}", exc_info=True)
                 
             except queue.Empty:
                 pass
+            except (BrokenPipeError, EOFError, OSError):
+                break
             except Exception as e:
                 logging.error(f"{comp_name}: 리스너 처리 오류: {e}", exc_info=True)
     
     except Exception as e:
         logging.error(f"{comp_name} 메인 리스너 오류: {e}", exc_info=True)
-    #finally:
-    #    logging.info(f"{comp_name} 메인 리스너 종료")
 
 # 테스트용 클래스들
 class ADM:

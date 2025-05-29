@@ -259,7 +259,7 @@ class Admin:
 
     def on_fx실시간_조건검색(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
         if not gm.config.ready: return
-        #logging.debug(f'실시간 조건검색 처리: API로 부터 받음')
+        if not gm.config.sim_on: logging.debug(f'실시간 조건검색 처리: API로 부터 받음')
         if not gm.config.sim_on and time.time() < 90000: return
         try:
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
@@ -283,7 +283,7 @@ class Admin:
 
     def on_fx실시간_주식체결(self, code, rtype, dictFID): # 실시간 시세 감시, 시장 체결데이타 분석 재료, 종목의 누적 거래향
         if not gm.config.ready: return
-        #logging.debug(f'실시간 주식체결 처리: API로 부터 받음')
+        #if not gm.config.sim_on: logging.debug(f'실시간 주식체결 처리: API로 부터 받음')
 
         현재가 = abs(int(dictFID['현재가']))
         updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
@@ -553,17 +553,18 @@ class Admin:
     def pri_fx등록_종목감시(self):
         try:
             codes = gm.잔고목록.get(column='종목번호')
-            #if not codes: return
-            code = '005930'
-            codes.extend([code])
-            codes = ";".join(codes)
-            종목명 = gm.ipc.answer('api', 'GetMasterCodeName', code)
-            전일가 = gm.ipc.answer('api', 'GetMasterLastPrice', code)
-            value = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
-            # 락 획득시간 최소화
-            gm.dict종목정보.set(code, value=value)
+            if not codes: codes = []
+            codes.extend(['005930'])
+            for code in codes:
+                종목명 = gm.ipc.answer('api', 'GetMasterCodeName', code)
+                전일가 = gm.ipc.answer('api', 'GetMasterLastPrice', code)
+                value = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
+                # 락 획득시간 최소화
+                gm.dict종목정보.set(code, value=value)
+                gm.dict잔고종목감시[code] = "10"
 
             logging.debug(f'실시간 시세 요청: codes={codes}')
+            codes = ";".join(codes)
             gm.ipc.order('api', 'SetRealReg', dc.scr.화면['실시간감시'], codes, "10", 0)
         except Exception as e:
             logging.error(f'실시간 시세 요청 오류: {type(e).__name__} - {e}', exc_info=True)

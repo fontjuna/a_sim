@@ -551,7 +551,7 @@ class Strategy:
             fids = "10"  # 현재가
             self.order('api', 'SetRealReg', dc.scr.화면[self.전략], codes, fids, search_flag)
             gm.dict조건종목감시.update({code: fids for code in condition_list})
-            #logging.debug(f'실시간 감시 요청: {gm.dict조건종목감시.keys()}')
+            logging.debug(f'실시간 감시 요청: {gm.dict조건종목감시.keys()}')
         except Exception as e:
             logging.error(f'종목 검색 요청 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
 

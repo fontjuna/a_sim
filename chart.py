@@ -658,7 +658,6 @@ class ChartData:
         
         logging.debug(f"[{datetime.now()}] All resources cleaned up in PID: {os.getpid()}")
     
-    # 기존 메소드들 (변경사항 없음)
     def _create_candle(self, code, time_str, close, open, high, low, volume, amount, is_missing=False):
         """캔들 객체 생성 헬퍼 함수"""
         candle = {
@@ -830,58 +829,6 @@ class ChartData:
         result.sort(key=lambda x: x['일자'], reverse=True)
         return result
     
-    # 속성 접근 메서드 (기존 코드와의 호환성 유지)
-    @property
-    def _data(self):
-        """_data 속성 접근 - 모든 코드의 데이터 사전 형태로 반환"""
-        all_data = {}
-        
-        try:
-            if not self._global_lock.acquire(timeout=self._lock_timeout):
-                return {}
-            
-            try:
-                code_list = list(self._shm_map.keys())
-            finally:
-                self._global_lock.release()
-        except:
-            return {}
-        
-        for code in code_list:
-            try:
-                code_data = self._load_code_data_safe(code)
-                data_by_cycle = {k: v for k, v in code_data.items() if k != 'index_maps'}
-                all_data[code] = data_by_cycle
-            except:
-                pass
-        
-        return all_data
-   
-    @property
-    def _index_maps(self):
-        """_index_maps 속성 접근 - 모든 코드의 인덱스 맵 사전 형태로 반환"""
-        all_index_maps = {}
-        
-        try:
-            if not self._global_lock.acquire(timeout=self._lock_timeout):
-                return {}
-            
-            try:
-                code_list = list(self._shm_map.keys())
-            finally:
-                self._global_lock.release()
-        except:
-            return {}
-        
-        for code in code_list:
-            try:
-                code_data = self._load_code_data_safe(code)
-                all_index_maps[code] = code_data.get('index_maps', {})
-            except:
-                all_index_maps[code] = {}
-        
-        return all_index_maps
-
     # 속성 접근 메서드 (기존 코드와의 호환성 유지)
     # @property
     # def _data(self):

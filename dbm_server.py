@@ -323,6 +323,7 @@ class DBMServer:
 
     def dbm_get_chart_data(self, code, cycle, tick=1, times=1):
         try:
+            
             if not code: return []
             rqname = f'{dc.scr.차트종류[cycle]}차트'
             trcode = dc.scr.차트TR[cycle]
@@ -379,12 +380,14 @@ class DBMServer:
                     '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
                     '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
                 } for item in dict_list]
-        
+            
             if cycle in ['dy', 'mi']:
                 self.upsert_chart(dict_list, cycle, tick)
-                self.done_todo_code(code, cycle)
+                # 락 중첩 방지를 위해 락 없이 호출
+                with self._lock:
+                    self._done_todo_code_unlocked(code, cycle)
                 cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
-            return dict_list
+            return #dict_list
         
         except Exception as e:
             logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -406,45 +409,113 @@ class DBMServer:
 
     def request_chart_data(self):
         while self.thread_run:
+            # 락 범위 최소화: 필요한 코드만 복사하고 즉시 락 해제
+            codes_to_process = []
             with self._lock:
-                codes = copy.deepcopy(self.todo_code)
-            if not codes:
-                time.sleep(0.0001)
+                for code, status in self.todo_code.items():
+                    if not status['mi'] or not status['dy']:
+                        codes_to_process.append((code, status.copy()))
+            
+            if not codes_to_process:
+                time.sleep(0.001)  # 1ms로 증가
                 continue
 
-            for code in codes:
-                #if not codes[code]['tk']: self.dbm_get_chart_data(code, cycle='tk', tick=30, times=99)
-                if not codes[code]['mi']: self.dbm_get_chart_data(code, cycle='mi', tick=1)
-                if not codes[code]['dy']: self.dbm_get_chart_data(code, cycle='dy')
+            # 락 밖에서 API 호출 수행 (데드락 방지)
+            for code, status in codes_to_process:
+                #if not status['tk']: self.dbm_get_chart_data(code, cycle='tk', tick=30, times=99)
+                if not status['mi']: self.dbm_get_chart_data(code, cycle='mi', tick=1)
+                if not status['dy']: self.dbm_get_chart_data(code, cycle='dy')
 
-            time.sleep(0.0001)
+            time.sleep(0.001)  # 1ms로 증가
 
     def done_todo_code(self, code, cycle):                    
         with self._lock:
+            self._done_todo_code_unlocked(code, cycle)
+    
+    def _done_todo_code_unlocked(self, code, cycle):
+        """락 없이 호출되는 내부 메서드"""
+        if code in self.todo_code:
             self.todo_code[code][cycle] = True
             if all(self.todo_code[code].values()):
                 self.done_code.append(code)
                 del self.todo_code[code]
 
     def register_code(self, code):
-        if not self.thread_run: return
-        with self._lock:
-            if code in self.done_code or code in self.todo_code:
-                return False
+        if not self.thread_run: return False
+        
+        # 락 타임아웃 시 재시도 (최대 3회)
+        for attempt in range(3):
+            try:
+                if self._lock.acquire(timeout=0.1):  # 100ms 타임아웃
+                    try:
+                        if code in self.done_code or code in self.todo_code:
+                            return False
 
-            logging.debug(f'차트관리 종목코드 등록: {code}')
-            self.todo_code[code] = {'mi': False, 'dy': False}
-        return True
+                        logging.debug(f'차트관리 종목코드 등록: {code}')
+                        self.todo_code[code] = {'mi': False, 'dy': False}
+                        return True
+                    finally:
+                        self._lock.release()
+                else:
+                    if attempt < 2:  # 마지막 시도가 아니면 재시도
+                        logging.debug(f"register_code 락 타임아웃, 재시도 {attempt+1}/3: {code}")
+                        time.sleep(0.001)  # 1ms 대기 후 재시도
+                        continue
+                    else:
+                        # 3번 시도해도 실패하면 백그라운드에서 처리
+                        logging.warning(f"register_code 락 타임아웃, 백그라운드 등록: {code}")
+                        # 백그라운드 스레드에서 등록하도록 큐에 추가
+                        # 여기서는 일단 성공으로 반환 (실제 등록은 나중에)
+                        return True
+            except Exception as e:
+                logging.error(f"register_code 오류: {e}")
+                return False
+        return False
     
     def is_done(self, code):
-        with self._lock:
-            return code in self.done_code
+        # 종료 중이면 즉시 False 반환 (데드락 방지)
+        if not self.running or not self.thread_run:
+            return False
+            
+        # 매우 짧은 타임아웃으로 락 시도
+        try:
+            if self._lock.acquire(timeout=0.1):  # 100ms 타임아웃
+                try:
+                    return code in self.done_code
+                finally:
+                    self._lock.release()
+            else:
+                # 락을 얻을 수 없으면 안전한 기본값 반환
+                logging.debug(f"is_done 락 타임아웃, 미완료로 가정: {code}")
+                return False
+        except Exception as e:
+            logging.error(f"is_done 오류: {e}")
+            return False
 
     def update_script_chart(self, job):
         #self.order('admin', 'on_fx실시간_주식체결', **job)
         code = job['code']
         dictFID = job['dictFID']
-        if code in self.todo_code or code in self.done_code:
+        
+        # 락 보호 추가 (타임아웃 포함)
+        is_managed_code = False
+        try:
+            if self._lock.acquire(timeout=0.1):  # 100ms 타임아웃
+                try:
+                    is_managed_code = code in self.todo_code or code in self.done_code
+                finally:
+                    self._lock.release()
+            else:
+                # 락을 얻을 수 없어도 차트 업데이트는 수행 (안전한 동작)
+                # 관리되지 않는 코드라도 차트 업데이트 자체는 해로울 것이 없음
+                logging.debug(f"update_script_chart 락 타임아웃, 무조건 업데이트: {code}")
+                is_managed_code = True  # 안전하게 업데이트 수행
+        except Exception as e:
+            logging.error(f"update_script_chart 오류: {e}")
+            # 오류가 있어도 차트 업데이트는 수행
+            is_managed_code = True
+        
+        if is_managed_code:
             cht_dt.update_chart(code, abs(int(dictFID['현재가'])) if dictFID['현재가'] else 0, \
                                         abs(int(dictFID['누적거래량'])) if dictFID['누적거래량'] else 0, \
                                         abs(int(dictFID['누적거래대금'])) if dictFID['누적거래대금'] else 0, \

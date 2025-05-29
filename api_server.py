@@ -1012,7 +1012,7 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        #logging.debug(f"OnReceiveRealCondition: API 서버에서 보냄")
+        logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
         self.stream('admin', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
@@ -1030,9 +1030,10 @@ class APIServer:
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
                     self.stream('admin', 'on_fx실시간_주식체결', **job)
+                    #self.order('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.stream('admin', 'on_fx실시간_장운영감시', **job)
-                #logging.debug(f"OnReceiveRealData: API 서버에서 보냄")
+                #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             

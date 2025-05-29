@@ -160,7 +160,9 @@ class Main:
             if hasattr(gm, 'admin') and gm.admin:
                 gm.admin.cdn_fx중지_전략매매()
 
-            time.sleep(1)
+            # 짧은 대기 후 강제 종료
+            time.sleep(0.5)
+            
             if hasattr(gm, 'ipc') and gm.ipc:
                 gm.ipc.shutdown()
 
