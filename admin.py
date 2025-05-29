@@ -112,8 +112,8 @@ class Admin:
         logging.debug('trade_start')
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
         codes = gm.잔고목록.get(column='종목코드')
-        for code in codes:
-            gm.ipc.order('dbm', 'register_code', code)
+        #for code in codes:
+        #    gm.ipc.order('dbm', 'register_code', code)
         self.cdn_fx실행_전략매매()
 
         gm.config.ready = True
@@ -300,7 +300,7 @@ class Admin:
                 gm.dict주문대기종목.remove(code)
 
             job = {'code': code, 'dictFID': dictFID}
-            gm.ipc.order('dbm', 'update_script_chart', job)
+            #gm.ipc.order('dbm', 'update_script_chart', job)
 
         try:
             if gm.잔고목록.in_key(code):
@@ -455,7 +455,7 @@ class Admin:
                     if item['전략'] not in data: data[item['전략']] = {}
                     data[item['전략']][item['종목번호']] = item['종목명']
 
-                    gm.ipc.order('dbm', 'register_code', item['종목번호'])
+                    #gm.ipc.order('dbm', 'register_code', item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.counter.set_batch(data)
 
@@ -465,7 +465,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            gm.ipc.order('dbm', 'register_code', '005930')
+            #gm.ipc.order('dbm', 'register_code', '005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 

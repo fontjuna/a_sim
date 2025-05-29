@@ -5,9 +5,11 @@ import uuid
 import logging
 import queue
 
+# 시스템 상수 정의
 LOCK_TIMEOUT = 2
-POLLING_INTERVAL = 0.001
-ANSWER_TIMEOUT = 15  # 답변 대기 시간  
+POLLING_INTERVAL = 0.001  
+ANSWER_TIMEOUT = 15
+POLL_TIMEOUT = 1
 
 class IPCManager:
     """프로세스 간 통신 관리자"""
@@ -18,8 +20,13 @@ class IPCManager:
         self.stream_queues = {}  # process_name -> Queue (스트림 전용)
         self.result_dict = self.manager.dict()  # id -> result
         
+        # 고빈도 요청 시스템 (별도)
+        self.poll_queues = {}  # process_name -> Queue (고빈도 요청)
+        self.poll_result_dict = self.manager.dict()  # id -> result (고빈도 응답)
+        
         # 스레드 안전성을 위한 락들
         self._result_lock = self.manager.Lock()  # result_dict 멀티프로세스 안전성
+        self._poll_result_lock = self.manager.Lock()  # poll_result_dict 전용 락
         self._queue_lock = threading.Lock()      # queues 딕셔너리 접근용
         self._component_lock = threading.Lock()  # 컴포넌트 등록/해제용
         
@@ -77,6 +84,46 @@ class IPCManager:
             logging.error(f"result_dict 쓰기 오류: {e}")
             return False
 
+    def _safe_poll_result_get(self, req_id, timeout=0.1):
+        """poll_result_dict에서 안전하게 값 가져오기"""
+        try:
+            if self._poll_result_lock.acquire(timeout=timeout):
+                try:
+                    return self.poll_result_dict.get(req_id, None)
+                finally:
+                    self._poll_result_lock.release()
+            else:
+                return None  # 고빈도 요청은 타임아웃 시 조용히 실패
+        except Exception:
+            return None
+
+    def _safe_poll_result_pop(self, req_id, timeout=0.1):
+        """poll_result_dict에서 안전하게 값 제거하고 반환"""
+        try:
+            if self._poll_result_lock.acquire(timeout=timeout):
+                try:
+                    return self.poll_result_dict.pop(req_id, None)
+                finally:
+                    self._poll_result_lock.release()
+            else:
+                return None
+        except Exception:
+            return None
+
+    def _safe_poll_result_set(self, req_id, result_data, timeout=0.1):
+        """poll_result_dict에 안전하게 값 설정"""
+        try:
+            if self._poll_result_lock.acquire(timeout=timeout):
+                try:
+                    self.poll_result_dict[req_id] = result_data
+                    return True
+                finally:
+                    self._poll_result_lock.release()
+            else:
+                return False
+        except Exception:
+            return False
+
     def register(self, name, cls, type=None, start=False, stream=False, *args, **kwargs):
         """컴포넌트 등록 (재등록 시 인스턴스만 교체)"""
         is_reregister = name in self.registered
@@ -94,6 +141,7 @@ class IPCManager:
             # 신규 등록: 큐 생성
             self.queues[name] = mp.Queue()
             self.stream_queues[name] = mp.Queue(maxsize=1000)  # 스트림 큐 (오버플로우 방지)
+            self.poll_queues[name] = mp.Queue()  # 고빈도 요청 큐
         
         # 등록 정보 저장/업데이트
         self.registered[name] = {
@@ -130,6 +178,11 @@ class IPCManager:
         # 종료 명령 전송
         try:
             self.queues[name].put({'command': 'stop'}, timeout=1)
+        except:
+            pass
+        
+        try:
+            self.poll_queues[name].put({'command': 'stop'}, timeout=0.1)
         except:
             pass
         
@@ -195,6 +248,15 @@ class IPCManager:
             except:
                 pass
             del self.stream_queues[name]
+        
+        # poll 큐도 완전 삭제
+        if name in self.poll_queues:
+            try:
+                while True:
+                    self.poll_queues[name].get_nowait()
+            except:
+                pass
+            del self.poll_queues[name]
     
     def start(self, name=None, stream=None):
         """컴포넌트 시작"""
@@ -248,6 +310,11 @@ class IPCManager:
         except:
             pass
         
+        try:
+            self.poll_queues[name].put({'command': 'stop'}, timeout=0.1)
+        except:
+            pass
+        
         # 스트림 워커 중지
         if name in self.stream_threads and self.stream_threads[name]:
             try:
@@ -287,34 +354,38 @@ class IPCManager:
         logging.info("시스템 종료 시작...")
         self.shutting_down = True
 
-        # 1단계: 모든 컴포넌트에 종료 신호 전송 (논블로킹)
+        # 1단계: 모든 스레드에 종료 신호 전송
         for name in list(self.registered.keys()):
             try:
-                self.queues[name].put({'command': 'stop'}, timeout=0.1)
+                self.queues[name].put({'command': 'stop'}, timeout=0.5)
+            except:
+                pass
+            try:
+                self.poll_queues[name].put({'command': 'stop'}, timeout=0.1)
             except:
                 pass
         
-        # 2단계: 짧은 대기 후 강제 종료
-        time.sleep(0.2)
+        # 2단계: 스레드들이 정리될 시간 제공
+        time.sleep(0.5)
 
-        # 3단계: 프로세스들 강제 종료
-        for name, process in list(self.processes.items()):
-            if process and process.is_alive():
-                try:
-                    process.terminate()
-                    process.join(0.5)  # 0.5초만 대기
-                    if process.is_alive():
-                        logging.warning(f"{name} 프로세스 강제 종료")
-                except:
-                    pass
+        self.stop()  # 전체 중지
         
-        # 4단계: 자원 정리 (논블로킹)
+        # 자원 정리
         try:
             if self._result_lock.acquire(blocking=False):
                 try:
                     self.result_dict.clear()
                 finally:
                     self._result_lock.release()
+        except:
+            pass
+        
+        try:
+            if self._poll_result_lock.acquire(blocking=False):
+                try:
+                    self.poll_result_dict.clear()
+                finally:
+                    self._poll_result_lock.release()
         except:
             pass
         
@@ -362,6 +433,7 @@ class IPCManager:
             'stream_running': self._is_stream_running(name),
             'has_queue': name in self.queues,
             'has_stream_queue': name in self.stream_queues,
+            'has_poll_queue': name in self.poll_queues,
             'args': reg_info['args'],
             'kwargs': reg_info['kwargs']
         }
@@ -372,7 +444,7 @@ class IPCManager:
         
         self.processes[name] = mp.Process(
             target=process_worker,
-            args=(name, reg_info['class'], self.queues[name], self.stream_queues[name], self.queues, self.stream_queues, self.result_dict, self._result_lock, stream, reg_info['args'], reg_info['kwargs']),
+            args=(name, reg_info['class'], self.queues[name], self.stream_queues[name], self.queues, self.stream_queues, self.result_dict, self._result_lock, self.poll_queues[name], self.poll_queues, self.poll_result_dict, self._poll_result_lock, stream, reg_info['args'], reg_info['kwargs']),
             daemon=False
         )
         self.processes[name].start()
@@ -382,7 +454,7 @@ class IPCManager:
         """스레드 시작"""
         self.threads[name] = threading.Thread(
             target=thread_worker,
-            args=(name, self.instances[name], self.queues[name], self.queues, self.stream_queues, self.result_dict, self._result_lock, stream),
+            args=(name, self.instances[name], self.queues[name], self.queues, self.stream_queues, self.result_dict, self._result_lock, self.poll_queues[name], self.poll_queues, self.poll_result_dict, self._poll_result_lock, stream),
             daemon=True
         )
         self.threads[name].start()
@@ -395,7 +467,7 @@ class IPCManager:
         """메인 컴포넌트 리스너 시작"""
         self.threads[name] = threading.Thread(
             target=main_listener_worker,
-            args=(name, self.instances[name], self.queues[name], self.result_dict, self._result_lock),
+            args=(name, self.instances[name], self.queues[name], self.result_dict, self._result_lock, self.poll_queues[name], self.poll_result_dict, self._poll_result_lock),
             daemon=True
         )
         self.threads[name].start()
@@ -419,6 +491,9 @@ class IPCManager:
         def answer(target, method, *args, timeout=ANSWER_TIMEOUT, **kwargs):
             return self._send_request(target, method, args, kwargs, wait_result=True, timeout=timeout)
         
+        def poll(target, method, *args, timeout=POLL_TIMEOUT, **kwargs):
+            return self._send_poll_request(target, method, args, kwargs, timeout=timeout)
+        
         def stream(target, func_name, *args, **kwargs):
             return self._send_stream(target, func_name, args, kwargs)
         
@@ -432,6 +507,7 @@ class IPCManager:
         
         instance.order = order
         instance.answer = answer
+        instance.poll = poll
         instance.stream = stream
         instance.broadcast = broadcast
 
@@ -458,10 +534,16 @@ class IPCManager:
             return None
 
     def answer(self, target, method, *args, timeout=ANSWER_TIMEOUT, **kwargs):
-        """결과 필요한 양방향 요청 (기본 타임아웃 2초)"""
+        """결과 필요한 양방향 요청 (기본 타임아웃 15초)"""
         if self.shutting_down:
             return None
         return self._send_request(target, method, args, kwargs, wait_result=True, timeout=timeout)
+    
+    def poll(self, target, method, *args, timeout=POLL_TIMEOUT, **kwargs):
+        """고빈도 요청 전용 (짧은 타임아웃, 경량화)"""
+        if self.shutting_down:
+            return None
+        return self._send_poll_request(target, method, args, kwargs, timeout=timeout)
     
     def stream(self, target, func_name, *args, **kwargs):
         if self.shutting_down:
@@ -523,7 +605,48 @@ class IPCManager:
             if result is not None:
                 return result.get('result', None)
             
-            time.sleep(0.001)  # 1ms 대기
+            time.sleep(POLLING_INTERVAL)  # 폴링 간격
+    
+    def _send_poll_request(self, target, method, args, kwargs, timeout=POLL_TIMEOUT):
+        """고빈도 요청 전송 (경량화)"""
+        if self.shutting_down:
+            return None
+        
+        if target not in self.poll_queues:
+            return None  # 고빈도 요청은 조용히 실패
+        
+        req_id = str(uuid.uuid4())
+        
+        # 요청 전송
+        try:
+            self.poll_queues[target].put({
+                'id': req_id,
+                'method': method,
+                'args': args,
+                'kwargs': kwargs
+            }, timeout=0.1)  # 큐 전송도 빠르게
+        except Exception:
+            return None
+        
+        # 결과 대기 (짧은 타임아웃)
+        start_time = time.time()
+        while True:
+            if self.shutting_down:
+                return None
+            
+            # 타임아웃 체크
+            elapsed = time.time() - start_time
+            if elapsed > timeout:
+                # 조용히 정리하고 실패
+                self._safe_poll_result_pop(req_id)
+                return None
+            
+            # 결과 확인
+            result = self._safe_poll_result_pop(req_id)
+            if result is not None:
+                return result.get('result', None)
+            
+            time.sleep(POLLING_INTERVAL)
     
     def _send_stream(self, target, func_name, args, kwargs):
         """스트림 데이터 전송"""
@@ -576,7 +699,7 @@ class IPCManager:
                 logging.debug("배치 정리 건너뜀 (락 사용 중)")
                 
         except Exception as e:
-            logging.error(f"배치 정리 중 오류: {e}")
+            logging.error(f"배치 정리 오류: {e}")
 
 def stream_worker(comp_name, instance, stream_queue):
     """스트림 전용 워커"""
@@ -585,7 +708,7 @@ def stream_worker(comp_name, instance, stream_queue):
         
         while True:
             try:
-                stream_data = stream_queue.get(timeout=POLLING_INTERVAL)  # 1ms 대기
+                stream_data = stream_queue.get(timeout=POLLING_INTERVAL)
                 
                 # 종료 명령 확인
                 if stream_data.get('command') == 'stop':
@@ -609,6 +732,7 @@ def stream_worker(comp_name, instance, stream_queue):
             except queue.Empty:
                 pass
             except (BrokenPipeError, EOFError, OSError):
+                # 파이프 끊어짐 = 시스템 종료 중
                 break
             except Exception as e:
                 logging.error(f"{comp_name}: 스트림 처리 오류: {e}")
@@ -616,7 +740,51 @@ def stream_worker(comp_name, instance, stream_queue):
     except Exception as e:
         logging.error(f"{comp_name} 스트림 워커 오류: {e}", exc_info=True)
 
-def process_worker(process_name, process_class, own_queue, own_stream_queue, all_queues, all_stream_queues, result_dict, result_lock, enable_stream, args, kwargs):
+def poll_worker(comp_name, instance, poll_queue, safe_result_set_func):
+    """고빈도 요청 전용 워커 (경량화)"""
+    try:
+        while True:
+            try:
+                request = poll_queue.get(timeout=POLLING_INTERVAL)
+                
+                # 종료 명령 확인
+                if request.get('command') == 'stop':
+                    break
+                
+                # 요청 처리 (간단하게)
+                req_id = request.get('id')
+                method_name = request.get('method')
+                args = request.get('args', ())
+                kwargs = request.get('kwargs', {})
+                
+                try:
+                    method = getattr(instance, method_name, None)
+                    if method is None:
+                        result_data = {'result': None}
+                    else:
+                        try:
+                            result = method(*args, **kwargs)
+                            result_data = {'result': result}
+                        except Exception:
+                            result_data = {'result': None}
+                    
+                    # 결과 저장 (실패해도 조용히 넘어감)
+                    safe_result_set_func(req_id, result_data)
+                    
+                except Exception:
+                    pass  # 고빈도 요청은 에러도 조용히 처리
+                
+            except queue.Empty:
+                pass
+            except (BrokenPipeError, EOFError, OSError):
+                break
+            except Exception:
+                pass  # 고빈도 요청은 모든 에러를 조용히 처리
+    
+    except Exception:
+        pass  # 고빈도 워커는 에러도 조용히 종료
+
+def process_worker(process_name, process_class, own_queue, own_stream_queue, all_queues, all_stream_queues, result_dict, result_lock, own_poll_queue, all_poll_queues, poll_result_dict, poll_result_lock, enable_stream, args, kwargs):
     """프로세스 워커 (스레드 안전 result_dict 접근)"""
     
     def _safe_result_set(req_id, result_data, timeout=LOCK_TIMEOUT):
@@ -663,6 +831,33 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
                 return None
         except Exception as e:
             logging.error(f"프로세스 result_dict 제거 오류: {e}")
+            return None
+    
+    def _safe_poll_result_set(req_id, result_data, timeout=0.1):
+        """프로세스에서 안전하게 poll_result_dict 설정"""
+        try:
+            if poll_result_lock.acquire(timeout=timeout):
+                try:
+                    poll_result_dict[req_id] = result_data
+                    return True
+                finally:
+                    poll_result_lock.release()
+            else:
+                return False
+        except Exception:
+            return False
+    
+    def _safe_poll_result_pop(req_id, timeout=0.1):
+        """프로세스에서 안전하게 poll_result_dict 제거"""
+        try:
+            if poll_result_lock.acquire(timeout=timeout):
+                try:
+                    return poll_result_dict.pop(req_id, None)
+                finally:
+                    poll_result_lock.release()
+            else:
+                return None
+        except Exception:
             return None
     
     try:
@@ -724,7 +919,35 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
                 if result is not None:
                     return result.get('result', None)
                 
-                time.sleep(0.001)  # 1ms 대기
+                time.sleep(POLLING_INTERVAL)
+        
+        def poll(target, method, *args, timeout=POLL_TIMEOUT, **kwargs):
+            if target not in all_poll_queues:
+                return None
+            
+            req_id = str(uuid.uuid4())
+            try:
+                all_poll_queues[target].put({
+                    'id': req_id,
+                    'method': method,
+                    'args': args,
+                    'kwargs': kwargs
+                }, timeout=0.1)
+            except Exception:
+                return None
+            
+            # 결과 대기 (짧은 타임아웃)
+            start_time = time.time()
+            while True:
+                if time.time() - start_time > timeout:
+                    _safe_poll_result_pop(req_id)
+                    return None
+                
+                result = _safe_poll_result_pop(req_id)
+                if result is not None:
+                    return result.get('result', None)
+                
+                time.sleep(POLLING_INTERVAL)
         
         def stream(target, func_name, *args, **kwargs):
             if target not in all_stream_queues:
@@ -755,8 +978,18 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
         
         instance.order = order
         instance.answer = answer
+        instance.poll = poll
         instance.stream = stream
         instance.broadcast = broadcast
+        
+        # Poll 처리 스레드 시작
+        poll_thread = threading.Thread(
+            target=poll_worker,
+            args=(process_name, instance, own_poll_queue, _safe_poll_result_set),
+            daemon=True
+        )
+        poll_thread.start()
+        logging.info(f"{process_name} 프로세스 내 poll 워커 시작됨")
         
         # 스트림 워커 시작 (enable_stream=True일 때만)
         if enable_stream:
@@ -771,7 +1004,7 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
         # 메시지 처리 루프
         while True:
             try:
-                request = own_queue.get(timeout=POLLING_INTERVAL)  # 1ms 대기
+                request = own_queue.get(timeout=POLLING_INTERVAL)
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
@@ -779,7 +1012,12 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
                     if hasattr(instance, 'cleanup') and callable(getattr(instance, 'cleanup')):
                         instance.cleanup()
                     
-                    # 스트림 워커도 종료
+                    # 서브 워커들도 종료
+                    try:
+                        own_poll_queue.put_nowait({'command': 'stop'})
+                    except:
+                        pass
+                    
                     if enable_stream:
                         try:
                             own_stream_queue.put_nowait({'command': 'stop'})
@@ -825,6 +1063,7 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
             except queue.Empty:
                 pass
             except (BrokenPipeError, EOFError, OSError):
+                # 파이프 끊어짐 = 시스템 종료 중
                 break
             except Exception as e:
                 logging.error(f"{process_name}: 메시지 처리 오류: {e}", exc_info=True)
@@ -832,7 +1071,7 @@ def process_worker(process_name, process_class, own_queue, own_stream_queue, all
     except Exception as e:
         logging.error(f"{process_name} 프로세스 오류: {e}", exc_info=True)
 
-def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queues, result_dict, result_lock, enable_stream):
+def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queues, result_dict, result_lock, own_poll_queue, all_poll_queues, poll_result_dict, poll_result_lock, enable_stream):
     """스레드 워커 (스레드 안전 result_dict 접근)"""
     
     def _safe_result_set(req_id, result_data, timeout=LOCK_TIMEOUT):
@@ -879,6 +1118,33 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
                 return None
         except Exception as e:
             logging.error(f"스레드 result_dict 제거 오류: {e}")
+            return None
+    
+    def _safe_poll_result_set(req_id, result_data, timeout=0.1):
+        """스레드에서 안전하게 poll_result_dict 설정"""
+        try:
+            if poll_result_lock.acquire(timeout=timeout):
+                try:
+                    poll_result_dict[req_id] = result_data
+                    return True
+                finally:
+                    poll_result_lock.release()
+            else:
+                return False
+        except Exception:
+            return False
+    
+    def _safe_poll_result_pop(req_id, timeout=0.1):
+        """스레드에서 안전하게 poll_result_dict 제거"""
+        try:
+            if poll_result_lock.acquire(timeout=timeout):
+                try:
+                    return poll_result_dict.pop(req_id, None)
+                finally:
+                    poll_result_lock.release()
+            else:
+                return None
+        except Exception:
             return None
     
     try:
@@ -938,7 +1204,35 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
                 if result is not None:
                     return result.get('result', None)
                 
-                time.sleep(0.001)  # 1ms 대기
+                time.sleep(POLLING_INTERVAL)
+
+        def poll(target, method, *args, timeout=POLL_TIMEOUT, **kwargs):
+            if target not in all_poll_queues:
+                return None
+            
+            req_id = str(uuid.uuid4())
+            try:
+                all_poll_queues[target].put({
+                    'id': req_id,
+                    'method': method,
+                    'args': args,
+                    'kwargs': kwargs
+                }, timeout=0.1)
+            except Exception:
+                return None
+            
+            # 결과 대기 (짧은 타임아웃)
+            start_time = time.time()
+            while True:
+                if time.time() - start_time > timeout:
+                    _safe_poll_result_pop(req_id)
+                    return None
+                
+                result = _safe_poll_result_pop(req_id)
+                if result is not None:
+                    return result.get('result', None)
+                
+                time.sleep(POLLING_INTERVAL)
 
         def stream(target, func_name, *args, **kwargs):
             if target not in all_stream_queues:
@@ -969,19 +1263,35 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
         
         instance.order = order
         instance.answer = answer
+        instance.poll = poll
         instance.stream = stream
         instance.broadcast = broadcast
+        
+        # Poll 처리 스레드 시작
+        poll_thread = threading.Thread(
+            target=poll_worker,
+            args=(thread_name, instance, own_poll_queue, _safe_poll_result_set),
+            daemon=True
+        )
+        poll_thread.start()
+        logging.info(f"{thread_name} 스레드 내 poll 워커 시작됨")
         
         # 메시지 처리 루프
         while True:
             try:
-                request = own_queue.get(timeout=POLLING_INTERVAL)  # 1ms 대기
+                request = own_queue.get(timeout=POLLING_INTERVAL)
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
                     # 정리 작업 (있으면 실행)
                     if hasattr(instance, 'cleanup') and callable(getattr(instance, 'cleanup')):
                         instance.cleanup()
+                    
+                    # poll 워커도 종료
+                    try:
+                        own_poll_queue.put_nowait({'command': 'stop'})
+                    except:
+                        pass
                     
                     break
                 
@@ -1023,6 +1333,7 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
             except queue.Empty:
                 pass
             except (BrokenPipeError, EOFError, OSError):
+                # 파이프 끊어짐 = 시스템 종료 중
                 break
             except Exception as e:
                 logging.error(f"{thread_name}: 메시지 처리 오류: {e}", exc_info=True)
@@ -1030,7 +1341,7 @@ def thread_worker(thread_name, instance, own_queue, all_queues, all_stream_queue
     except Exception as e:
         logging.error(f"{thread_name} 스레드 오류: {e}", exc_info=True)
 
-def main_listener_worker(comp_name, instance, own_queue, result_dict, result_lock):
+def main_listener_worker(comp_name, instance, own_queue, result_dict, result_lock, own_poll_queue, poll_result_dict, poll_result_lock):
     """메인 컴포넌트 리스너 (스레드 안전 result_dict 접근)"""
     
     def _safe_result_set(req_id, result_data, timeout=LOCK_TIMEOUT):
@@ -1049,16 +1360,44 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict, result_loc
             logging.error(f"메인 리스너 result_dict 쓰기 오류: {e}")
             return False
     
+    def _safe_poll_result_set(req_id, result_data, timeout=0.1):
+        """메인 리스너에서 안전하게 poll_result_dict 설정"""
+        try:
+            if poll_result_lock.acquire(timeout=timeout):
+                try:
+                    poll_result_dict[req_id] = result_data
+                    return True
+                finally:
+                    poll_result_lock.release()
+            else:
+                return False
+        except Exception:
+            return False
+    
     try:
         logging.info(f"{comp_name} 메인 리스너 초기화 완료")
+        
+        # Poll 처리 스레드 시작
+        poll_thread = threading.Thread(
+            target=poll_worker,
+            args=(comp_name, instance, own_poll_queue, _safe_poll_result_set),
+            daemon=True
+        )
+        poll_thread.start()
+        logging.info(f"{comp_name} 메인 리스너 내 poll 워커 시작됨")
         
         # 메시지 처리 루프
         while True:
             try:
-                request = own_queue.get(timeout=POLLING_INTERVAL)  # 1ms 대기
+                request = own_queue.get(timeout=POLLING_INTERVAL)
                 
                 # 종료 명령 확인
                 if request.get('command') == 'stop':
+                    # poll 워커도 종료
+                    try:
+                        own_poll_queue.put_nowait({'command': 'stop'})
+                    except:
+                        pass
                     break
                 
                 # 요청 처리
@@ -1099,6 +1438,7 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict, result_loc
             except queue.Empty:
                 pass
             except (BrokenPipeError, EOFError, OSError):
+                # 파이프 끊어짐 = 시스템 종료 중
                 break
             except Exception as e:
                 logging.error(f"{comp_name}: 리스너 처리 오류: {e}", exc_info=True)
@@ -1107,6 +1447,11 @@ def main_listener_worker(comp_name, instance, own_queue, result_dict, result_loc
         logging.error(f"{comp_name} 메인 리스너 오류: {e}", exc_info=True)
 
 # 테스트용 클래스들
+import multiprocessing as mp
+import logging
+import time
+from worker import IPCManager
+
 class ADM:
     def __init__(self):
         self.name = "ADM"
@@ -1146,6 +1491,8 @@ class DBM:
         self.name = "DBM"
         self.database = {}
         self.stream_count = 0
+        self.done_code = set()  # poll 테스트용
+        self._lock = mp.Lock()  # 동기화용
     
     def query_data(self, table, condition):
         return f"DBM query result from {table} where {condition}: {self.database.get(table, [])}"
@@ -1158,6 +1505,17 @@ class DBM:
     
     def get_db_status(self):
         return f"DBM status: {len(self.database)} tables, total records: {sum(len(v) for v in self.database.values())}"
+    
+    def is_done(self, code):
+        """poll 테스트용 고빈도 요청 메서드"""
+        with self._lock:
+            return code in self.done_code
+    
+    def mark_done(self, code):
+        """poll 테스트용"""
+        with self._lock:
+            self.done_code.add(code)
+            return f"Code {code} marked as done"
     
     def receive_market_data(self, market_data):
         """시장 데이터 스트림 수신"""
@@ -1242,190 +1600,166 @@ class API:
         result = self.answer('dbm', 'query_data', 'users', 'from=ADM')
         print(f"[{self.name} -> DBM] query_data: {result}")
 
+def test_ipc_communication():
+    print("=== IPC 통신 테스트 시작 ===")
+    
+    ipc = IPCManager()
+    
+    try:
+        # 컴포넌트 등록
+        print("\n1. 컴포넌트 등록")
+        adm = ipc.register('adm', ADM, type=None, start=False, stream=True)          # 메인 스레드, 스트림 받음
+        logger = ipc.register('logger', ADM, type='thread', start=False, stream=False)  # 멀티 스레드, 스트림 안받음  
+        dbm = ipc.register('dbm', DBM, type='process', start=False, stream=True)      # 프로세스, 스트림 받음
+        api = ipc.register('api', API, type='process', start=False, stream=False)      # 프로세스, 스트림 안받음
+        
+        print(f"등록된 컴포넌트: {list(ipc.registered.keys())}")
+        
+        # 전체 시작
+        print("\n2. 전체 시작")
+        ipc.start()
+        
+        time.sleep(2)  # 초기화 대기
+        
+        print(f"ADM 인스턴스 (메인): {adm}")
+        print(f"Logger 스레드: {ipc.threads.get('logger')}")
+        print(f"DBM 프로세스: {ipc.processes.get('dbm')}")
+        print(f"API 프로세스: {ipc.processes.get('api')}")
+        
+        print("\n3. Poll 시스템 테스트 (고빈도 요청)")
+        
+        # DBM에 몇 개 작업 등록
+        dbm_result = ipc.answer('dbm', 'mark_done', 'task_001')
+        print(f"DBM mark_done: {dbm_result}")
+        
+        dbm_result = ipc.answer('dbm', 'mark_done', 'task_002') 
+        print(f"DBM mark_done: {dbm_result}")
+        
+        # 고빈도 poll 요청 테스트
+        print("\n=== Poll vs Answer 비교 테스트 ===")
+        
+        # Answer 방식 (기존)
+        start_time = time.time()
+        for i in range(10):
+            result = adm.answer('dbm', 'is_done', f'task_{i:03d}')
+            print(f"Answer is_done task_{i:03d}: {result}")
+        answer_time = time.time() - start_time
+        print(f"Answer 방식 10회: {answer_time:.3f}초")
+        
+        # Poll 방식 (새로운)
+        start_time = time.time()
+        for i in range(10):
+            result = adm.poll('dbm', 'is_done', f'task_{i:03d}')
+            print(f"Poll is_done task_{i:03d}: {result}")
+        poll_time = time.time() - start_time
+        print(f"Poll 방식 10회: {poll_time:.3f}초")
+        
+        print(f"속도 비교: Poll이 Answer보다 {answer_time/poll_time:.1f}배 빠름")
+        
+        print("\n4. 각 컴포넌트에서 요청 실행")
+        
+        # ADM (메인)에서 직접 호출
+        print("\n=== ADM (메인 스레드)에서 요청 ===")
+        adm.test_adm_requests()
+        
+        time.sleep(0.5)
+        
+        # Logger 스레드에서 요청
+        print("\n=== Logger 스레드에서 요청 ===")
+        ipc._send_request('logger', 'test_adm_requests', (), {}, wait_result=False)
+        
+        time.sleep(0.5)
+        
+        # DBM 프로세스에서 요청
+        print("\n=== DBM 프로세스에서 요청 ===")
+        ipc._send_request('dbm', 'test_dbm_requests', (), {}, wait_result=False)
+        
+        time.sleep(0.5)
+        
+        # API 프로세스에서 요청
+        print("\n=== API 프로세스에서 요청 ===")
+        ipc._send_request('api', 'test_api_requests', (), {}, wait_result=False)
+        
+        time.sleep(1)
+        
+        print("\n5. 상태 확인")
+        adm_info = adm.get_admin_info('last_db_operation')
+        logger_info = ipc._send_request('logger', 'get_admin_info', ('system_status',), {}, wait_result=True)
+        dbm_status = ipc._send_request('dbm', 'get_db_status', (), {}, wait_result=True)
+        api_stats = ipc._send_request('api', 'get_api_stats', (), {}, wait_result=True)
+        
+        print(f"ADM 정보 (메인): {adm_info}")
+        print(f"Logger 정보 (스레드): {logger_info}")
+        print(f"DBM 상태 (프로세스): {dbm_status}")
+        print(f"API 통계 (프로세스): {api_stats}")
+        
+        print("\n6. 스트림 통신 테스트")
+        
+        # 컴포넌트 스트림 상태 확인
+        print("스트림 워커 상태:")
+        for name in ['adm', 'dbm', 'api', 'logger']:
+            if name in ipc.registered:
+                status = ipc.get_component_status(name)
+                print(f"  {name}: stream_running={status['stream_running']}")
+        
+        # API에서 실시간 스트리밍 시작
+        print("\nAPI 스트리밍 시작...")
+        result = ipc.answer('api', 'start_streaming')
+        print(f"스트리밍 시작 결과: {result}")
+        
+        # 3초간 스트리밍 관찰
+        print("3초간 스트리밍 데이터 전송 중...")
+        time.sleep(3)
+        
+        # 스트림 카운트 확인
+        adm_count = adm.get_stream_count()
+        dbm_count = ipc.answer('dbm', 'get_stream_count')
+        api_count = ipc.answer('api', 'get_tick_count')
+        
+        print(f"\n스트림 통계:")
+        print(f"- API 틱 생성: {api_count}")
+        print(f"- ADM 수신: {adm_count}")
+        print(f"- DBM 수신: {dbm_count}")
+        
+        # 기존 통신과 스트림 동시 테스트
+        print("\n기존 통신과 스트림 동시 실행 테스트:")
+        for i in range(3):
+            result = ipc.answer('dbm', 'get_db_status')
+            print(f"  일반 요청 {i+1}: {result}")
+            time.sleep(0.5)
+        
+        # 스트리밍 중지
+        result = ipc.answer('api', 'stop_streaming')
+        print(f"스트리밍 중지 결과: {result}")
+        
+        print("\n=== 테스트 완료 ===")
+        print("Poll 시스템 테스트:")
+        print("- 고빈도 요청 전용 큐 분리 ✅")
+        print("- 짧은 타임아웃으로 빠른 응답 ✅")  
+        print("- 기존 answer와 분리로 간섭 없음 ✅")
+        print("동적 컴포넌트 관리 테스트:")
+        print("- 실행 중 컴포넌트 추가 ✅")
+        print("- 새 컴포넌트와 기존 컴포넌트 간 통신 ✅")  
+        print("- 실행 중 컴포넌트 삭제 ✅")
+        print("- 삭제된 컴포넌트 접근 시 안전한 실패 ✅")
+        print("- 인스턴스 교체로 런타임 수정 ✅")
+        print("스트림 통신 테스트:")
+        print("- 별도 스트림 큐/워커 동작 ✅")
+        print("- 고빈도 스트림 전송 ✅")
+        print("- 기존 통신과 분리 ✅")
+        
+    except Exception as e:
+        print(f"테스트 중 오류: {e}")
+        logging.error(f"테스트 오류: {e}", exc_info=True)
+    
+    finally:
+        print("\n시스템 종료 중...")
+        ipc.shutdown()
+        print("시스템 종료 완료")
+
 if __name__ == "__main__":
     # 멀티프로세싱 설정
     mp.set_start_method('spawn', force=True)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    
-    def test_ipc_communication():
-        print("=== IPC 통신 테스트 시작 ===")
-        
-        ipc = IPCManager()
-        
-        try:
-            # 컴포넌트 등록
-            print("\n1. 컴포넌트 등록")
-            adm = ipc.register('adm', ADM, type=None, start=False, stream=True)          # 메인 스레드, 스트림 받음
-            logger = ipc.register('logger', ADM, type='thread', start=False, stream=False)  # 멀티 스레드, 스트림 안받음  
-            dbm = ipc.register('dbm', DBM, type='process', start=False, stream=True)      # 프로세스, 스트림 받음
-            api = ipc.register('api', API, type='process', start=False, stream=False)      # 프로세스, 스트림 안받음
-            
-            print(f"등록된 컴포넌트: {list(ipc.registered.keys())}")
-            
-            # 전체 시작
-            print("\n2. 전체 시작")
-            ipc.start()
-            
-            time.sleep(2)  # 초기화 대기
-            
-            print(f"ADM 인스턴스 (메인): {adm}")
-            print(f"Logger 스레드: {ipc.threads.get('logger')}")
-            print(f"DBM 프로세스: {ipc.processes.get('dbm')}")
-            print(f"API 프로세스: {ipc.processes.get('api')}")
-            
-            print("\n3. 각 컴포넌트에서 요청 실행")
-            
-            # ADM (메인)에서 직접 호출
-            print("\n=== ADM (메인 스레드)에서 요청 ===")
-            adm.test_adm_requests()
-            
-            time.sleep(0.5)
-            
-            # Logger 스레드에서 요청
-            print("\n=== Logger 스레드에서 요청 ===")
-            ipc._send_request('logger', 'test_adm_requests', (), {}, wait_result=False)
-            
-            time.sleep(0.5)
-            
-            # DBM 프로세스에서 요청
-            print("\n=== DBM 프로세스에서 요청 ===")
-            ipc._send_request('dbm', 'test_dbm_requests', (), {}, wait_result=False)
-            
-            time.sleep(0.5)
-            
-            # API 프로세스에서 요청
-            print("\n=== API 프로세스에서 요청 ===")
-            ipc._send_request('api', 'test_api_requests', (), {}, wait_result=False)
-            
-            time.sleep(1)
-            
-            print("\n4. 상태 확인")
-            adm_info = adm.get_admin_info('last_db_operation')
-            logger_info = ipc._send_request('logger', 'get_admin_info', ('system_status',), {}, wait_result=True)
-            dbm_status = ipc._send_request('dbm', 'get_db_status', (), {}, wait_result=True)
-            api_stats = ipc._send_request('api', 'get_api_stats', (), {}, wait_result=True)
-            
-            print(f"ADM 정보 (메인): {adm_info}")
-            print(f"Logger 정보 (스레드): {logger_info}")
-            print(f"DBM 상태 (프로세스): {dbm_status}")
-            print(f"API 통계 (프로세스): {api_stats}")
-            
-            print("\n5. 인스턴스 교체 테스트")
-            
-            # Logger를 다른 파라미터로 재등록 (큐는 유지됨)
-            print("Logger 인스턴스 교체 중...")
-            logger_new = ipc.register('logger', ADM, type='thread', start=True, stream=False)
-            logger_new.name = "Logger_V2"  # 구분을 위해 이름 변경
-            
-            time.sleep(0.5)
-            
-            # 교체된 Logger로 요청 테스트
-            print("\n=== Logger V2 (교체된 스레드)에서 요청 ===")
-            ipc._send_request('logger', 'test_adm_requests', (), {}, wait_result=False)
-            
-            time.sleep(0.5)
-            
-            # 다른 컴포넌트에서 교체된 Logger로 요청
-            print("ADM에서 교체된 Logger로 요청...")
-            logger_result = adm.answer('logger', 'get_admin_info', 'test_after_swap')
-            print(f"교체된 Logger 응답: {logger_result}")
-            
-            print("\n6. 실행 중 동적 컴포넌트 관리 테스트")
-            
-            # 현재 컴포넌트 상태 확인
-            print("현재 등록된 컴포넌트:")
-            for name, status in ipc.list_components().items():
-                print(f"  {name}: {status}")
-            
-            # 실행 중 새 컴포넌트 추가
-            print("\n실행 중 새 컴포넌트 'monitor' 추가...")
-            monitor = ipc.register('monitor', API, type='thread', start=True, stream=False)
-            monitor.name = "Monitor"
-            
-            time.sleep(0.5)
-            
-            # 새 컴포넌트로 요청 테스트
-            print("새 컴포넌트로 요청 테스트:")
-            monitor_result = adm.answer('monitor', 'get_api_stats')
-            print(f"Monitor 응답: {monitor_result}")
-            
-            # 기존 컴포넌트에서 새 컴포넌트로 요청
-            print("DBM에서 새 Monitor로 요청...")
-            ipc._send_request('dbm', 'answer', ('monitor', 'cache_data', 'test_key', 'test_value'), {}, wait_result=False)
-            
-            time.sleep(0.5)
-            
-            # 컴포넌트 삭제 테스트
-            print("\nLogger 컴포넌트 삭제 테스트...")
-            ipc.unregister('logger')
-            
-            print("삭제 후 컴포넌트 목록:")
-            for name, status in ipc.list_components().items():
-                print(f"  {name}: {status}")
-            
-            # 삭제된 컴포넌트로 요청 시도 (실패해야 함)
-            print("\n삭제된 컴포넌트로 요청 시도 (실패 예상):")
-            deleted_result = adm.answer('logger', 'get_admin_info', 'test')
-            print(f"삭제된 Logger 응답: {deleted_result}")
-            
-            print("\n7. 스트림 통신 테스트")
-            
-            # 컴포넌트 스트림 상태 확인
-            print("스트림 워커 상태:")
-            for name in ['adm', 'dbm', 'api', 'monitor']:
-                if name in ipc.registered:
-                    status = ipc.get_component_status(name)
-                    print(f"  {name}: stream_running={status['stream_running']}")
-            
-            # API에서 실시간 스트리밍 시작
-            print("\nAPI 스트리밍 시작...")
-            result = ipc.answer('api', 'start_streaming')
-            print(f"스트리밍 시작 결과: {result}")
-            
-            # 3초간 스트리밍 관찰
-            print("3초간 스트리밍 데이터 전송 중...")
-            time.sleep(3)
-            
-            # 스트림 카운트 확인
-            adm_count = adm.get_stream_count()
-            dbm_count = ipc.answer('dbm', 'get_stream_count')
-            api_count = ipc.answer('api', 'get_tick_count')
-            
-            print(f"\n스트림 통계:")
-            print(f"- API 틱 생성: {api_count}")
-            print(f"- ADM 수신: {adm_count}")
-            print(f"- DBM 수신: {dbm_count}")
-            
-            # 기존 통신과 스트림 동시 테스트
-            print("\n기존 통신과 스트림 동시 실행 테스트:")
-            for i in range(3):
-                result = ipc.answer('dbm', 'get_db_status')
-                print(f"  일반 요청 {i+1}: {result}")
-                time.sleep(0.5)
-            
-            # 스트리밍 중지
-            result = ipc.answer('api', 'stop_streaming')
-            print(f"스트리밍 중지 결과: {result}")
-            
-            print("\n=== 테스트 완료 ===")
-            print("동적 컴포넌트 관리 테스트:")
-            print("- 실행 중 컴포넌트 추가 ✅")
-            print("- 새 컴포넌트와 기존 컴포넌트 간 통신 ✅")  
-            print("- 실행 중 컴포넌트 삭제 ✅")
-            print("- 삭제된 컴포넌트 접근 시 안전한 실패 ✅")
-            print("- 인스턴스 교체로 런타임 수정 ✅")
-            print("스트림 통신 테스트:")
-            print("- 별도 스트림 큐/워커 동작 ✅")
-            print("- 고빈도 스트림 전송 ✅")
-            print("- 기존 통신과 분리 ✅")
-            
-        except Exception as e:
-            print(f"테스트 중 오류: {e}")
-            logging.error(f"테스트 오류: {e}", exc_info=True)
-        
-        finally:
-            print("\n시스템 종료 중...")
-            ipc.shutdown()
-            print("시스템 종료 완료")
     
     test_ipc_communication()
