@@ -45,7 +45,7 @@ class Main:
         #self.splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
         #self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.white)
         #self.splash.show()
-        if datetime.now() < datetime(2025, 5, 30):
+        if datetime.now() < datetime(2025, 6, 30):
             splash_pix = QPixmap(dc.fp.image_file)
             screen_width = 800
             screen_height = 400
