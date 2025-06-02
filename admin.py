@@ -19,7 +19,7 @@ class Admin:
         logging.debug(f'{self.name} init')
         self.get_login_info()
         self.set_globals()
-        self.set_tables()
+        self.set_script()
         self.get_conditions()
         self.get_strategy_info()
         self.set_real_remove_all()
@@ -53,32 +53,6 @@ class Admin:
         gm.세금율 = dc.const.tax_rate # 코스피 거래세 0.03 + 농어촌 특별세 0.12%, 코스닥 거래세 0.15 매도시적용
         logging.debug(f"서버:{gm.config.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.config.account}")
 
-    def set_tables(self):
-        gm.잔고합산 = TableManager(gm.tbl.hd잔고합산)
-        gm.잔고목록 = TableManager(gm.tbl.hd잔고목록)
-        gm.매수조건목록 = TableManager(gm.tbl.hd조건목록)
-        gm.매도조건목록 = TableManager(gm.tbl.hd조건목록)
-        gm.손익목록 = TableManager(gm.tbl.hd손익목록)
-        gm.매매목록 = TableManager(gm.tbl.hd매매목록)
-        gm.예수금 = TableManager(gm.tbl.hd예수금)
-        gm.일지합산 = TableManager(gm.tbl.hd일지합산)
-        gm.일지목록 = TableManager(gm.tbl.hd일지목록)
-        gm.체결목록 = TableManager(gm.tbl.hd체결목록)
-        gm.전략정의 = TableManager(gm.tbl.hd전략정의)
-        gm.주문목록 = TableManager(gm.tbl.hd주문목록)
-        gm.스크립트 = TableManager(gm.tbl.hd스크립트)
-        gm.스크립트변수 = TableManager(gm.tbl.hd스크립트변수)
-        gm.차트자료 = TableManager(gm.tbl.hd차트자료)
-        gm.당일종목 = TableManager(gm.tbl.hd당일종목)
-        gm.수동종목 = TableManager(gm.tbl.hd수동종목)
-        scripts = gm.scm.scripts.copy()
-        dict_data = []
-        for k, v in scripts.items():
-            dict_data.append({'스크립트명': k, '스크립트': v.get('script', ''), '변수': json.dumps(v.get('vars', {})), '타입': v.get('type', ''), '설명': v.get('desc', '')})
-        gm.스크립트.set(data=dict_data)
-        gm.list스크립트 = gm.스크립트.get(column='스크립트명')
-        # gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
-
     def get_conditions(self):
         try:
             loaded = gm.ipc.answer('api', 'GetConditionLoad')
@@ -94,6 +68,15 @@ class Admin:
 
     def get_strategy_info(self):
         self.json_load_strategy_sets()
+
+    def set_script(self):
+        scripts = gm.scm.scripts.copy()
+        dict_data = []
+        for k, v in scripts.items():
+            dict_data.append({'스크립트명': k, '스크립트': v.get('script', ''), '변수': json.dumps(v.get('vars', {})), '타입': v.get('type', ''), '설명': v.get('desc', '')})
+        gm.스크립트.set(data=dict_data)
+        gm.list스크립트 = gm.스크립트.get(column='스크립트명')
+        # gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
 
     def set_real_remove_all(self):
         logging.debug('set_real_remove_all')

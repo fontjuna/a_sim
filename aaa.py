@@ -2,7 +2,7 @@ from gui import GUI
 from admin import Admin
 from worker import IPCManager
 from public import init_logger, dc, gm
-from classes import Toast
+from classes import Toast, set_tables
 from dbm_server import DBMServer
 from api_server import APIServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
@@ -40,19 +40,12 @@ class Main:
     def show_splash(self):
         if not gm.config.gui_on: return
         gm.gui = GUI()
-        #splash_pix = QPixmap(400, 200)
-        #splash_pix.fill(Qt.blue)          
-        #self.splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
-        #self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.white)
-        #self.splash.show()
         if datetime.now() < datetime(2025, 6, 30):
             splash_pix = QPixmap(dc.fp.image_file)
             screen_width = 800
             screen_height = 400
             resized_pixmap = splash_pix.scaled(screen_width, screen_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.splash = QSplashScreen(resized_pixmap, Qt.WindowStaysOnTopHint)
-            #self.splash.showMessage("로딩 중... 잠시만 기다려 주세요...", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
-            #self.splash.setStyleSheet("color: rgba(255, 0, 0, 0); font-size: 20px; font-weight: bold;")
             self.splash.show()
         else:
             # 모니터 해상도 가져오기
@@ -68,18 +61,22 @@ class Main:
             # 스플래시 화면 설정
             self.splash = QSplashScreen(resized_pixmap, Qt.WindowStaysOnTopHint)
             self.splash.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint)
-            #self.splash.showMessage("로딩 중... 잠시만 기다려 주세요", Qt.AlignCenter | Qt.AlignBottom, Qt.red)
-            #self.splash.setStyleSheet("color: rgba(255, 0, 0, 0); font-size: 30px; font-weight: bold;")
             self.splash.show() # showFullScreen()  # 화면 전체로 표시
             self.time_over = True
+
+    def show(self):
+        set_tables()
+        if not gm.config.gui_on: return
+        gm.gui.gui_show()
+        gm.gui.gui_table_update()
+        time.sleep(0.1)
 
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
-            gm.ipc = IPCManager()
             gm.toast = Toast()
+            gm.ipc = IPCManager()
             gm.main = self
-            # gm.gui = GUI() if gm.config.gui_on else None
             gm.admin = gm.ipc.register("admin", Admin, type=None, start=False, stream=True)
             gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=False)
             gm.api =gm.ipc.register('api', APIServer, type='process', start=False)
@@ -90,22 +87,13 @@ class Main:
             logging.error(str(e), exc_info=e)
             exit(1)
 
-    def login(self):
-        # 모든 설정이 완료된 후 CommConnect 호출
-        gm.ipc.order('api', 'CommConnect', False)
-
-    def show(self):
-        if not gm.config.gui_on: return
-        gm.gui.gui_show()
-        #time.sleep(1)
-
     def prepare(self):
         try:
             if gm.config.sim_no != 1:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    if not gm.ipc.answer('api', 'api_connected', timeout=15): time.sleep(0.01)
+                    if not gm.ipc.poll('api', 'api_connected', timeout=15): time.sleep(0.01)
                     # if not gm.ipc.answer('api', 'GetConnectState', timeout=15): time.sleep(0.01)
                     else: break
             gm.ipc.order('api', 'set_tickers')
@@ -147,8 +135,8 @@ class Main:
     def main(self):
         self.init()
         self.show_splash()
-        self.set_proc()
         self.show()
+        self.set_proc()
         self.prepare()
         self.run()
 

@@ -331,6 +331,45 @@ class TimeLimiter:
         self.update_request_times()
 
 class TableManager:
+    """
+    # 1. 단일 키 사용 (기존 방식)
+    config = {
+        '키': '종목코드',
+        '정수': ['수량', '매수금액'],
+        '실수': ['현재가', '평가손익'],
+        '컬럼': ['종목코드', '종목명', '수량', '매수금액', '현재가', '평가손익']
+    }
+    table = TableManager(config)
+
+    # 2. 복합 키 사용
+    config = {
+        '키': ['종목코드', '매수일자'],  # 두 컬럼을 합쳐서 키로 사용
+        '정수': ['수량', '매수금액'],
+        '실수': ['현재가', '평가손익'],
+        '컬럼': ['종목코드', '종목명', '매수일자', '수량', '매수금액', '현재가', '평가손익']
+    }
+    table = TableManager(config)
+
+    # 3. 키 없는 모드
+    config = {
+        '키': None,  # 키 사용 안 함
+        '정수': ['수량', '매수금액'],
+        '실수': ['현재가', '평가손익'],
+        '컬럼': ['종목코드', '종목명', '수량', '매수금액', '현재가', '평가손익']
+    }
+    table = TableManager(config)
+
+    # 4. 중복 키 허용
+    config = {
+        '키': '종목코드',
+        '키중복': True,  # 같은 종목코드가 여러 행에 있을 수 있음
+        '정수': ['수량', '매수금액'],
+        '실수': ['현재가', '평가손익'],
+        '컬럼': ['종목코드', '종목명', '수량', '매수금액', '현재가', '평가손익']
+    }
+    table = TableManager(config)
+    """
+
     def __init__(self, config):
         """
         쓰레드 안전한 데이터 관리 클래스 초기화
@@ -1142,42 +1181,26 @@ class TableManager:
                 else:
                     cell_item.setForeground(self.color_zero)      # 0은 검정색
 
-"""
-# 1. 단일 키 사용 (기존 방식)
-config = {
-    '키': '종목코드',
-    '정수': ['수량', '매수금액'],
-    '실수': ['현재가', '평가손익'],
-    '컬럼': ['종목코드', '종목명', '수량', '매수금액', '현재가', '평가손익']
-}
-table = TableManager(config)
+def set_tables():
+    gm.잔고합산 = TableManager(gm.tbl.hd잔고합산)
+    gm.잔고목록 = TableManager(gm.tbl.hd잔고목록)
+    gm.매수조건목록 = TableManager(gm.tbl.hd조건목록)
+    gm.매도조건목록 = TableManager(gm.tbl.hd조건목록)
+    gm.손익목록 = TableManager(gm.tbl.hd손익목록)
+    gm.매매목록 = TableManager(gm.tbl.hd매매목록)
+    gm.예수금 = TableManager(gm.tbl.hd예수금)
+    gm.일지합산 = TableManager(gm.tbl.hd일지합산)
+    gm.일지목록 = TableManager(gm.tbl.hd일지목록)
+    gm.체결목록 = TableManager(gm.tbl.hd체결목록)
+    gm.전략정의 = TableManager(gm.tbl.hd전략정의)
+    gm.주문목록 = TableManager(gm.tbl.hd주문목록)
+    gm.스크립트 = TableManager(gm.tbl.hd스크립트)
+    gm.스크립트변수 = TableManager(gm.tbl.hd스크립트변수)
+    gm.차트자료 = TableManager(gm.tbl.hd차트자료)
+    gm.당일종목 = TableManager(gm.tbl.hd당일종목)
+    gm.수동종목 = TableManager(gm.tbl.hd수동종목)
 
-# 2. 복합 키 사용
-config = {
-    '키': ['종목코드', '매수일자'],  # 두 컬럼을 합쳐서 키로 사용
-    '정수': ['수량', '매수금액'],
-    '실수': ['현재가', '평가손익'],
-    '컬럼': ['종목코드', '종목명', '매수일자', '수량', '매수금액', '현재가', '평가손익']
-}
-table = TableManager(config)
+    
 
-# 3. 키 없는 모드
-config = {
-    '키': None,  # 키 사용 안 함
-    '정수': ['수량', '매수금액'],
-    '실수': ['현재가', '평가손익'],
-    '컬럼': ['종목코드', '종목명', '수량', '매수금액', '현재가', '평가손익']
-}
-table = TableManager(config)
 
-# 4. 중복 키 허용
-config = {
-    '키': '종목코드',
-    '키중복': True,  # 같은 종목코드가 여러 행에 있을 수 있음
-    '정수': ['수량', '매수금액'],
-    '실수': ['현재가', '평가손익'],
-    '컬럼': ['종목코드', '종목명', '수량', '매수금액', '현재가', '평가손익']
-}
-table = TableManager(config)
-"""
 

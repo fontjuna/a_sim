@@ -1030,10 +1030,9 @@ class APIServer:
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
                     self.stream('admin', 'on_fx실시간_주식체결', **job)
-                    #self.order('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.stream('admin', 'on_fx실시간_장운영감시', **job)
-                #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
+                logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
@@ -1053,6 +1052,7 @@ class APIServer:
 
             if gubun == '0': self.stream('admin', 'odr_recieve_chegyeol_data', dictFID)
             elif gubun == '1': self.stream('admin', 'odr_recieve_balance_data', dictFID)
+            logging.debug(f"ChejanData: API 서버에서 보냄 {gubun} {dictFID['종목코드']} {dictFID['종목명']}")
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
