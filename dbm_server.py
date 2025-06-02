@@ -39,13 +39,13 @@ class DBMServer:
         self.thread_local = threading.local()
         self.running = True
         self.init_dbm()
-        self.start_request_chart_data()
+        # self.start_request_chart_data()
 
     def cleanup(self):
         try:
             print(f"{self.__class__.__name__} 중지 중...")
             self.running = False
-            self.stop_request_chart_data()
+            # self.stop_request_chart_data()
             
             # 스레드 종료 대기
             if self.thread_chart:

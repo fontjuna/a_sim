@@ -19,7 +19,7 @@ class Admin:
         logging.debug(f'{self.name} init')
         self.get_login_info()
         self.set_globals()
-        self.set_script()
+        # self.set_script()
         self.get_conditions()
         self.get_strategy_info()
         self.set_real_remove_all()

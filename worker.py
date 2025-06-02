@@ -271,10 +271,40 @@ class IPCManager:
                 stream = self.registered[name].get('stream', False)
             self._start_single(name, stream=stream)
     
+    # def _start_single(self, name, stream=False):
+    #     """단일 컴포넌트 시작"""
+    #     if name not in self.registered:
+    #         raise ValueError(f"등록되지 않은 컴포넌트: {name}")
+        
+    #     reg_info = self.registered[name]
+        
+    #     if reg_info['type'] == 'process':
+    #         self._start_process(name, stream=stream)
+    #     elif reg_info['type'] == 'thread':
+    #         self._start_thread(name, stream=stream)
+    #     else:  # type=None: 메인 스레드
+    #         self._start_main_listener(name)
+    #         # 메인 프로세스 컴포넌트는 매니저에서 스트림 워커 실행
+    #         if stream:
+    #             self._start_stream_worker(name)
+
     def _start_single(self, name, stream=False):
-        """단일 컴포넌트 시작"""
+        """단일 컴포넌트 시작 (안전한 재시작 지원)"""
         if name not in self.registered:
             raise ValueError(f"등록되지 않은 컴포넌트: {name}")
+        
+        # 이미 실행 중이면 먼저 정리
+        if self._is_running(name):
+            logging.info(f"{name} 이미 실행 중 - 재시작을 위해 기존 워커 정리")
+            self._stop_worker_only(name)
+            time.sleep(0.1)  # 정리 완료 대기
+        
+        # 스트림 워커 상태 확인 및 정리
+        current_stream_running = self._is_stream_running(name)
+        if stream != current_stream_running:
+            if current_stream_running:
+                logging.info(f"{name} 스트림 설정 변경 - 기존 스트림 워커 정리")
+                self._stop_stream_worker_only(name)
         
         reg_info = self.registered[name]
         
@@ -287,7 +317,35 @@ class IPCManager:
             # 메인 프로세스 컴포넌트는 매니저에서 스트림 워커 실행
             if stream:
                 self._start_stream_worker(name)
-    
+
+    def _stop_stream_worker_only(self, name):
+        """스트림 워커만 중지"""
+        if name in self.stream_threads and self.stream_threads[name]:
+            try:
+                self.stream_queues[name].put({'command': 'stop'}, timeout=0.1)
+            except:
+                pass
+            if self.stream_threads[name].is_alive():
+                self.stream_threads[name].join(1.0)
+            self.stream_threads[name] = None
+            logging.info(f"{name} 스트림 워커만 중지됨")
+
+    def _wait_for_worker_cleanup(self, name, worker_type, timeout=2.0):
+        """워커 정리 완료 대기"""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if worker_type == 'process':
+                if name not in self.processes or not self.processes[name] or not self.processes[name].is_alive():
+                    return True
+            elif worker_type == 'thread':
+                if name not in self.threads or not self.threads[name] or not self.threads[name].is_alive():
+                    return True
+            elif worker_type == 'stream':
+                if name not in self.stream_threads or not self.stream_threads[name] or not self.stream_threads[name].is_alive():
+                    return True
+            time.sleep(0.01)
+        return False
+
     def stop(self, name=None):
         """컴포넌트 중지"""
         if name is None:

@@ -77,10 +77,8 @@ class Main:
             gm.toast = Toast()
             gm.ipc = IPCManager()
             gm.main = self
-            gm.admin = gm.ipc.register("admin", Admin, type=None, start=False, stream=True)
-            gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=False)
-            gm.api =gm.ipc.register('api', APIServer, type='process', start=False)
-            gm.ipc.start()
+            gm.admin = gm.ipc.register("admin", Admin, type=None, start=True, stream=True)
+            gm.api =gm.ipc.register('api', APIServer, type='process', start=True)
             gm.ipc.order('api', 'api_init', gm.config.sim_no)
             gm.ipc.order('api', 'CommConnect', True)
         except Exception as e:
@@ -93,11 +91,11 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    if not gm.ipc.poll('api', 'api_connected', timeout=15): time.sleep(0.01)
-                    # if not gm.ipc.answer('api', 'GetConnectState', timeout=15): time.sleep(0.01)
-                    else: break
+                    #if gm.ipc.answer('api', 'api_connected', timeout=15): break
+                    if gm.ipc.answer('api', 'GetConnectState', timeout=15): break
+                    time.sleep(0.01)
             gm.ipc.order('api', 'set_tickers')
-            # gm.ipc.order('admin', 'init')
+            gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=True)
             gm.admin.init()
             logging.debug('prepare : admin 초기화 완료')
 
@@ -114,7 +112,6 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            # gm.ipc.order('admin', 'trade_start')
             gm.ipc.order('dbm', 'init_dbm')
             gm.admin.trade_start()
             return self.app.exec_() if gm.config.gui_on else self.console_run()
@@ -135,8 +132,8 @@ class Main:
     def main(self):
         self.init()
         self.show_splash()
-        self.show()
         self.set_proc()
+        self.show()
         self.prepare()
         self.run()
 
