@@ -80,7 +80,8 @@ class Main:
             gm.admin = gm.ipc.register("admin", Admin, type=None, start=True, stream=True)
             gm.api =gm.ipc.register('api', APIServer, type='process', start=True)
             gm.ipc.order('api', 'api_init', gm.config.sim_no)
-            gm.ipc.order('api', 'CommConnect', True)
+            gm.ipc.order('api', 'CommConnect', False)
+            gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=True)
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -91,11 +92,10 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    #if gm.ipc.answer('api', 'api_connected', timeout=15): break
-                    if gm.ipc.answer('api', 'GetConnectState', timeout=15): break
-                    time.sleep(0.01)
+                    if gm.ipc.answer('api', 'api_connected', timeout=10): break
+                    #if gm.ipc.answer('api', 'GetConnectState', timeout=15): break
+                    time.sleep(0.1)
             gm.ipc.order('api', 'set_tickers')
-            gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=True)
             gm.admin.init()
             logging.debug('prepare : admin 초기화 완료')
 
@@ -112,7 +112,7 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            gm.ipc.order('dbm', 'init_dbm')
+            # gm.ipc.order('dbm', 'init_dbm')
             gm.admin.trade_start()
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 

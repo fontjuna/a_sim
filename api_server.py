@@ -390,7 +390,7 @@ class OnReceiveRealConditionSim(QThread):
       self.is_running = True
       self.current_stocks = set()
       self.api = api
-      self.order = api.order
+      self.stream = api.stream
       self._stop_event = threading.Event()
 
    def run(self):
@@ -410,7 +410,7 @@ class OnReceiveRealConditionSim(QThread):
             'cond_name': self.cond_name,
             'cond_index': int(self.cond_index),
          }
-         self.order('admin', 'on_fx실시간_조건검색', **data)
+         self.stream('admin', 'on_fx실시간_조건검색', **data)
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -433,7 +433,7 @@ class OnReceiveRealDataSim1And2(QThread):
       self.is_running = True
       self._stop_event = threading.Event()
       self.api = api
-      self.order = api.order
+      self.stream = api.stream
 
    def run(self):
       while self.is_running:
@@ -468,7 +468,7 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            self.order('admin', 'on_fx실시간_주식체결', **job)
+            self.stream('admin', 'on_fx실시간_주식체결', **job)
 
 
             if self._stop_event.wait(timeout=0.2/len(sim.ticker)):
@@ -486,7 +486,7 @@ class OnReceiveRealDataSim3(QThread):
       self.is_running = True
       self._stop_event = threading.Event()
       self.api = api
-      self.order = api.order
+      self.stream = api.stream
 
    def run(self):
       while self.is_running:
@@ -527,7 +527,7 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               self.order('admin', 'on_fx실시간_주식체결', **job)
+               self.stream('admin', 'on_fx실시간_주식체결', **job)
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -1067,7 +1067,7 @@ class APIServer:
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                self.order('admin', 'odr_recieve_balance_data', dictFID)
+                self.stream('admin', 'odr_recieve_balance_data', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
