@@ -249,7 +249,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
 
     DAY_TABLE_NAME = 'day_week_month'
     DAY_SELECT_SAMPLE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 일자 DESC LIMIT 1"
-    DAY_SELECT_DATE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 일자 >= ? AND 주기 = ?"
+    DAY_SELECT_DATE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 일자 = ? AND 주기 = ?"
     DAY_COLUMNS = [fd.id, fd.종목코드, fd.일자, fd.시가, fd.고가, fd.저가, fd.현재가, fd.거래량, fd.거래대금, fd.주기, fd.틱]
     DAY_COLUMN_NAMES = [col.name for col in DAY_COLUMNS]
     DAY_INDEXES = {
@@ -856,6 +856,15 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
         '컬럼': ['변수명', '값'],
     }
 
+    hd당일종목 = {
+        '키': '종목코드',
+        '정수': [],
+        '실수': [],
+        '컬럼': ['종목코드', '종목명', '확인', '비고'],
+    }
+
+    hd수동종목 = hd당일종목.copy()
+
 @dataclass
 class GlobalConfig:     # 환경변수 정의
     sim_on = True
@@ -875,7 +884,6 @@ class GlobalMemory:      # 글로벌 메모리 정의
     admin = None
     gui = None
     api = None
-    cdt = None # 차트 데이타
     scm = None # 스크립트 매니저
     ipc = None # 프로세스 매니저
     trd = None # 쓰레드 매니저
@@ -908,12 +916,14 @@ class GlobalMemory:      # 글로벌 메모리 정의
     스크립트 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd스크립트))
     스크립트변수 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd스크립트변수))
     차트자료 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd차트자료))
+    당일종목 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd당일종목))
+    수동종목 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd수동종목))
     l2잔고합산_copy = None
     l2손익합산 = 0
     # 서버 호출 제한 체크
     req = None # 요청 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (CommRqData + CommKwRqData + SendCondition 포함) - 1 초마다 리셋 됨
     ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨
-    ct = None # 카운터 전략별, 종목별 매수 횟수 제한
+    counter = None # 카운터 전략별, 종목별 매수 횟수 제한
     
     strategy_row = None
     basic_strategy = None

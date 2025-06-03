@@ -25,61 +25,7 @@ class GUI(QMainWindow, form_class):
         gm.qwork['gui'] = Queue()
         gm.qwork['msg'] = Queue()
 
-    def gui_show(self):
-        self.show()
-
-    def gui_close(self):
-        close_event = QEvent(QEvent.Close)
-        QCoreApplication.sendEvent(self, close_event)
-
-    def closeEvent(self, event):
-        reply = QMessageBox.question(self, '종료 확인', '종료하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            logging.debug(f'{self.name} stopping...')
-            event.accept()
-            self.refresh_data_timer.stop()
-            gm.main.cleanup()
-        else:
-            event.ignore()
-
-    def init(self):
-        logging.debug(f'{self.name} init')
-        self.set_widgets()
-        self.gui_fx채움_계좌콤보()
-        self.gui_fx채움_조건콤보()
-        self.gui_fx채움_스크립트콤보()
-        self.gui_fx채움_전략정의()
-        self.gui_fx전시_전략정의()
-        self.set_widget_events()
-        if gm.config.log_level == logging.DEBUG:
-            self.rbDebug.setChecked(True)
-            self.rbInfo.setChecked(False)
-        else:
-            self.rbInfo.setChecked(True)
-            self.rbDebug.setChecked(False)
-        self.refresh_data_timer.start(200)
-        success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
-        logging.getLogger().setLevel(gm.json_config['root']['level'])
-        self.rbDebug.setChecked(gm.json_config['root']['level'] == logging.DEBUG)
-
-    # 화면 갱신 ---------------------------------------------------------------------------------------------
-    def gui_refresh_data(self):
-        try:
-            if not gm.qwork['gui'].empty():
-                data = gm.qwork['gui'].get()
-                getattr(self, data.order)(**data.job)
-
-            self.gui_update_status()
-            self.gui_fx갱신_목록테이블()
-
-        except Exception as e:
-            logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
-
     # 화면 설정 ---------------------------------------------------------------------------------------------
-    def set_strategy_toggle(self, run=True):
-        self.btnStartAll.setEnabled(not run)
-        self.btnStopAll.setEnabled(run)
-
     def set_widgets(self):
         logging.debug('')
         try:
@@ -195,6 +141,495 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
 
+    # 메인화면 시작 및 종료 ---------------------------------------------------------------------------------------------
+    def gui_show(self):
+        self.show()
+
+    def gui_close(self):
+        close_event = QEvent(QEvent.Close)
+        QCoreApplication.sendEvent(self, close_event)
+
+    def closeEvent(self, event):
+        reply = QMessageBox.question(self, '종료 확인', '종료하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            logging.debug(f'{self.name} stopping...')
+            event.accept()
+            gm.config.ready = False
+            self.refresh_data_timer.stop()
+            gm.main.cleanup()
+        else:
+            event.ignore()
+
+    def init(self):
+        logging.debug(f'{self.name} init')
+        self.set_widgets()
+        self.gui_fx채움_계좌콤보()
+        self.gui_fx채움_조건콤보()
+        self.gui_fx채움_스크립트콤보()
+        self.gui_fx채움_전략정의()
+        self.gui_fx전시_전략정의()
+        self.set_widget_events()
+        if gm.config.log_level == logging.DEBUG:
+            self.rbDebug.setChecked(True)
+            self.rbInfo.setChecked(False)
+        else:
+            self.rbInfo.setChecked(True)
+            self.rbDebug.setChecked(False)
+        self.refresh_data_timer.start(200)
+        success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
+        logging.getLogger().setLevel(gm.json_config['root']['level'])
+        self.rbDebug.setChecked(gm.json_config['root']['level'] == logging.DEBUG)
+
+    # 화면 갱신 ---------------------------------------------------------------------------------------------
+    def gui_refresh_data(self):
+        try:
+            if not gm.qwork['gui'].empty():
+                data = gm.qwork['gui'].get()
+                getattr(self, data.order)(**data.job)
+
+            self.gui_update_status()
+            self.gui_fx갱신_목록테이블()
+
+        except Exception as e:
+            logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
+
+    def set_strategy_toggle(self, run=True):
+        self.btnStartAll.setEnabled(not run)
+        self.btnStopAll.setEnabled(run)
+
+    def gui_table_update(self):
+        gm.잔고목록.update_table_widget(self.tblBalanceHeld)
+        gm.매수조건목록.update_table_widget(self.tblConditionBuy)
+        gm.매도조건목록.update_table_widget(self.tblConditionSell)
+        gm.주문목록.update_table_widget(self.tblReceiptList)
+
+    # QWidget 이벤트 -------------------------------------------------------------------------------------
+    def gui_account_reload(self):
+        gm.admin.get_holdings()
+        gm.toast.toast(f'계좌를 다시 읽어 왔습니다.', duration=1000)
+        logging.debug('메세지 발행: Work(pri_first_job, {})')
+
+    def gui_account_changed(self):
+        logging.debug('')
+        if self.cbAccounts.currentText():
+            gm.account = self.cbAccounts.currentText()
+            gm.admin.get_holdings()
+            logging.debug('메세지 발행: Work(pri_first_job, {})')
+        else:
+            logging.warning('계좌를 선택하세요')
+
+    def gui_monitor_load(self):
+        self.btnLoadMonitor.setEnabled(False)
+        gm.admin.pri_fx얻기_매매목록(self.dtMonitor.date().toString("yyyy-MM-dd"))
+        self.gui_fx갱신_매매정보()
+        self.btnLoadMonitor.setEnabled(True)
+
+    def gui_daily_load(self):
+        self.btnLoadDaily.setEnabled(False)
+        gm.admin.pri_fx얻기_매매일지(self.dtDaily.date().toString("yyyyMMdd"))
+        self.gui_fx갱신_일지정보()
+        self.btnLoadDaily.setEnabled(True)
+
+    def gui_deposit_load(self):
+        self.btnDeposit.setEnabled(False)
+        gm.admin.pri_fx얻기_예수금()
+        self.gui_fx갱신_예수금정보()
+        self.btnDeposit.setEnabled(True)
+
+    def gui_conclusion_load(self):
+        self.btnLoadConclusion.setEnabled(False)
+        gm.admin.pri_fx얻기_체결목록(self.dtConclusion.date().toString("yyyyMMdd"))
+        self.gui_fx갱신_체결정보()
+        self.btnLoadConclusion.setEnabled(True)
+
+    def gui_chart_combo_add(self, item):
+        self.cbChartCode.addItem(item)
+
+    def gui_chart_load(self):
+        self.btnChartLoad.setEnabled(False)
+        date_text = self.dtChartDate.date().toString("yyyyMMdd")
+        item = self.cbChartCycle.currentText()
+        cycle = dc.scr.차트종류[item]
+        tick = int(self.cbChartTick.currentText()) if item in ('분봉', '틱봉') else 1
+        code = self.cbChartCode.currentText().split()[0]
+        name = self.cbChartCode.currentText().split()[1]
+        gm.admin.pri_fx얻기_차트자료(date_text, code, cycle, tick)
+        gm.차트자료.update_table_widget(self.tblChart, header=0 if cycle in ('mi', 'tk') else 1)
+        gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
+        self.btnChartLoad.setEnabled(True)
+
+    def gui_strategy_restart(self):
+        self.gui_strategy_stop(question=False)
+        self.gui_strategy_reload()
+        self.gui_strategy_start(question=False)
+
+    def gui_strategy_start(self, question=True):
+        if question:
+            response = QMessageBox.question(None, '전략매매 실행', '전략매매를 실행하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+        else:
+            response = True
+        if response:
+            gm.admin.cdn_fx실행_전략매매()
+            if not any(gm.매수문자열들) and not any(gm.매도문자열들):
+                gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
+                return
+            gm.toast.toast('전략매매를 실행했습니다.', duration=3000)
+            self.set_strategy_toggle(run=True)
+        else:
+            logging.debug('전략매매 시작 취소')
+
+    def gui_strategy_stop(self, question=True):
+        response = True
+        if question:
+            response = QMessageBox.question(None, '전략매매 중지', '전략매매를 중지하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+        if response:
+            gm.admin.cdn_fx중지_전략매매()
+            self.set_strategy_toggle(run=False)
+            gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
+        else:
+            logging.debug('전략매매 중지 취소')
+
+    def gui_strategy_changed(self):
+        logging.debug('')
+        pass
+
+    def gui_strategy_reload(self):
+        logging.debug('메세지 발행: Work(cdn_fx요청_서버전략, {})')
+        gm.admin.get_conditions()
+        self.gui_fx채움_조건콤보()
+        gm.toast.toast('전략매매를 다시 읽어 왔습니다.', duration=3000)
+
+    def gui_chart_cycle_changed(self, item):
+        self.cbChartTick.clear()
+        if item in ['틱봉', '분봉']: 
+            self.cbChartTick.addItems(dc.ticks.get(item,[]))
+
+    def gui_log_level_set(self, key, value):
+        if key == 'DEBUG' and value == True:
+            level = logging.DEBUG
+        else:
+            level = logging.INFO
+        gm.json_config['root']['level'] = level
+        logging.getLogger().setLevel(level)
+        save_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), gm.json_config)
+
+        logging.info(f'로깅 설정 변경: {key} = {value}')
+
+    def gui_balance_held_select(self, row_index, col_index):
+        code = self.tblBalanceHeld.item(row_index, 1).text()
+        logging.debug(f'cell = [{row_index:02d}:{col_index:02d}] code = {code}')
+        row = gm.잔고목록.get(key=code)
+        if row:
+            self.leTrCode.setText(row['종목번호'])
+            self.leTrName.setText(row['종목명'])
+            self.spbTrPrice.setValue(row['현재가'])
+            self.spbTrQty.setValue(row['보유수량'])
+            self.rbTrSell.setChecked(True)
+            self.leTrStrategy.setText(row['전략'])
+        #self.tblBalanceHeld.clearSelection()  
+
+    def gui_receipt_list_select(self, row_index, col_index):
+        code = self.tblReceiptList.item(row_index, 3).text()
+        kind = self.tblReceiptList.item(row_index, 1).text()
+        key = f'{code}_{kind}'
+        logging.debug(f'cell = [{row_index:02d}:{col_index:02d}] code = {code} kind = {kind} key = {key}')
+        row = gm.주문목록.get(key=key)
+        if row:
+            self.leTrCode.setText(row['종목코드'])
+            self.leTrName.setText(row['종목명'])
+            self.spbTrPrice.setValue(row['주문가격'])
+            self.spbTrQty.setValue(row['주문수량'])
+            self.rbTrSell.setChecked(True if row['구분'] == '매도' else False)
+            self.leTrStrategy.setText(row['전략'])
+            self.leTrCancelKey.setText(row['키'])
+
+    def gui_tr_code_changed(self):
+        code = self.leTrCode.text()
+        if code:
+            self.leTrName.setText(gm.ipc.answer('api', 'GetMasterCodeName', code))
+
+    def gui_tr_order(self):
+        kind = '매수' if self.rbTrBuy.isChecked() else '매도'
+        if kind == '매수':
+            전략 = '전략00'
+        else:
+            전략 = self.leTrStrategy.text()
+            if 전략: 
+                if 전략 not in gm.ipc.workers:
+                    logging.warning(f'전략이 실행중이지 않습니다. {전략}')
+                    return
+            
+        전략번호 = int(전략[-2:])
+        code = self.leTrCode.text()
+        price = self.spbTrPrice.value()
+        qty = self.spbTrQty.value()
+        row = gm.잔고목록.get(key=code)
+
+        price = int(price) if price != '' else 0
+        qty = int(qty) if qty != '' else 0
+
+        if not code:
+            QMessageBox.warning(self, '알림', '종목코드를 입력하세요.')
+            return
+
+        if self.rbTrLimit.isChecked() and price == 0:
+            QMessageBox.warning(self, '알림', '지정가 매수시 주문가격을 입력하세요.')
+            return
+        else:
+            price = hoga(price, int(self.spbTrHoga.value()))
+
+        if qty == 0:
+            QMessageBox.warning(self, '알림', '수량을 입력하세요.')
+            return
+
+        if self.rbTrBuy.isChecked():
+            if row:
+                QMessageBox.warning(self, '알림', '이미 보유 중인 종목입니다.')
+                response = QMessageBox.question(None, '알림', '이미 보유 중인 종목입니다. 매수 하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+                if not response:
+                    return
+        else:
+            if not row:
+                QMessageBox.warning(self, '알림', '보유 중인 종목이 없습니다.')
+                return
+            
+        rqname = f'수동{kind}'
+        send_data = {
+            'rqname': rqname,
+            'screen': dc.scr.화면[rqname],
+            'accno': gm.config.account,
+            'ordtype': 1 if self.rbTrBuy.isChecked() else 2,
+            'code': code,
+            'quantity': qty,
+            'price': price if self.rbTrLimit.isChecked() else 0,
+            'hoga': '00' if self.rbTrLimit.isChecked() else '03',
+            'ordno': ''
+        }
+        if kind == '매수':
+            gm.ipc.order('api', 'SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
+        else:
+            if row['주문가능수량'] == 0:
+                QMessageBox.warning(self, '알림', '주문가능수량이 없습니다.')
+                return
+            row['주문가능수량'] -= qty if row['주문가능수량'] >= qty else row['주문가능수량']
+            gm.잔고목록.set(key=code, data=row)
+
+        key = f'{code}_{kind}'
+        data={'키': key, '구분': kind, '상태': '요청', '전략': 전략, '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
+        gm.주문목록.set(key=key, data=data) 
+        # 주문 전송
+        gm.admin.com_SendOrder(전략번호, **send_data)
+
+    def gui_tr_cancel(self):
+        key = self.leTrCancelKey.text()
+        row = gm.주문목록.get(key=key)
+        if not row:
+            QMessageBox.warning(self, '알림', '주문접수목록에서 취소할 항목을 선택하세요.')
+            return
+        if row['상태'] != '접수':
+            gm.주문목록.delete(key=key)
+            return
+        
+        전략 = row['전략']
+        전략번호 = int(전략[-2:])
+        odrerno = row['주문번호']
+        code = row['종목코드']
+
+        kind = '매수' if self.rbTrBuy.isChecked() else '매도'
+        rqname = f'수취{kind}'
+        send_data = {
+            'rqname': rqname,
+            'screen': dc.scr.화면[rqname],
+            'accno': gm.config.account,
+            'ordtype': 3 if kind == '매수' else 4,
+            'code': code,
+            'quantity': 0,
+            'price': 0,
+            'hoga': '03',
+            'ordno': odrerno
+        }
+
+        # 주문 전송
+        gm.admin.com_SendOrder(전략번호, **send_data)
+
+    # 스크립트 표시 ---------------------------------------------------------------------------------------------
+    def gui_script_show(self):
+        try:
+            gm.스크립트.update_table_widget(self.tblScript)
+        except Exception as e:
+            logging.error(f'스크립트 표시 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_script_select(self, row_index):
+        try:
+            self.btnScriptSave.setEnabled(False)
+            name = self.tblScript.item(row_index, 0).text()
+
+            script = gm.스크립트.get(key=name, column='스크립트')
+            vars = self.tblScript.item(row_index, 3)
+            desc = self.tblScript.item(row_index, 4).text()
+
+            self.ledScriptName.setText(name)
+            self.txtScript.setText(script)
+            self.txtScriptDesc.setText(desc)
+            try:
+                vars_dict = json.loads(vars.text())
+            except Exception as e:
+                vars_dict = {}
+                logging.error(f'스크립트 변수 파싱 오류: {type(e).__name__} - {e}', exc_info=True)
+            self.tblScriptVar.setRowCount(len(vars_dict))
+            dict_list = []
+            for i, (key, value) in enumerate(vars_dict.items()) :
+              dict_list.append({'변수명': key, '값': value})
+            self.tblScriptVar.setRowCount(len(dict_list))
+            gm.스크립트변수.set(data=dict_list)
+            gm.스크립트변수.update_table_widget(self.tblScriptVar)
+            self.script_edited = False
+            self.ledVarName.setText('')
+            self.ledVarValue.setText('')
+
+        except Exception as e:
+            logging.error(f'스크립트 선택 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_script_new(self):
+        self.btnScriptSave.setEnabled(False)
+        self.ledScriptName.setText('')
+        self.txtScript.setText('')
+        self.txtScriptDesc.setText('')
+        self.tblScriptVar.setRowCount(0)
+        self.txtScriptMsg.clear()
+
+    def gui_script_delete(self):
+        try:
+            name = self.ledScriptName.text()
+            if not name:
+                QMessageBox.warning(self, '알림', '삭제할 스크립트명을 확인 하세요.')
+                return
+            
+            if not gm.스크립트.in_key(name):
+                QMessageBox.warning(self, '알림', '스크립트가 존재하지 않습니다.')
+                return
+
+            reply = QMessageBox.question(self, '삭제 확인',
+                                        f'{name} 스크립트를 삭제하시겠습니까?',
+                                        QMessageBox.Yes | QMessageBox.No,
+                                        QMessageBox.No)
+
+            if reply == QMessageBox.Yes:
+                # 설정 삭제
+                result = gm.스크립트.delete(key=name)
+                if result:
+                    gm.스크립트.update_table_widget(self.tblScript)
+                    self.ledScriptName.setText('')
+                    self.txtScript.setText('')
+                    self.txtScriptDesc.setText('')
+                    self.tblScriptVar.clearContents()
+                    gm.스크립트변수.delete()
+                    gm.스크립트변수.update_table_widget(self.tblScriptVar)
+                    self.ledVarName.setText('')
+                    self.ledVarValue.setText('')
+                    gm.scm.delete_script_compiled(name)
+                    self.txtScriptMsg.clear()
+                    gm.list스크립트 = gm.스크립트.get(column='스크립트명')
+                    self.gui_fx채움_스크립트콤보()
+
+        except Exception as e:
+            logging.error(f'스크립트 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_script_check(self):
+        try:
+            script_name = self.ledScriptName.text()
+            script = self.txtScript.toPlainText()
+            if len(script_name) == 0 or len(script) == 0:
+                QMessageBox.information(self, '알림', '스크립트명과 스크립트를 입력하세요.')
+                return
+            vars_dict = {}
+            for row in range(self.tblScriptVar.rowCount()):
+                key = self.tblScriptVar.item(row, 0).text()
+                value = self.tblScriptVar.item(row, 1).text()
+                vars_dict[key] = float(value) if value else 0.0
+            result = gm.scm.run_script(script_name, check_only=True, script_data={'script': script, 'vars': vars_dict}, kwargs={'code': '005930'})
+            if result['success']:
+                QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n\n반환값={result["result"]}')
+                self.btnScriptSave.setEnabled(True)
+                self.txtScriptMsg.clear()
+            else:
+                QMessageBox.critical(self, '에러', result['error'])
+                self.txtScriptMsg.append(result['error'])
+                self.txtScriptMsg.moveCursor(QTextCursor.End)
+                self.btnScriptSave.setEnabled(False)
+        except Exception as e:
+            logging.error(f'스크립트 확인 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_script_save(self):
+        try:
+            script_name = self.ledScriptName.text() #
+            script = self.txtScript.toPlainText() #
+            desc = self.txtScriptDesc.toPlainText() #
+            vars = {}
+            kwargs = {'code': '005930', 'name': '', 'price': 0, 'qty': 0}
+            for row in range(self.tblScriptVar.rowCount()):
+                key = self.tblScriptVar.item(row, 0).text()
+                value = self.tblScriptVar.item(row, 1).text()
+                vars[key] = float(value) if value else 0.0
+            script_type = gm.scm.set_script_compiled(script_name, script, vars, desc, kwargs) # 실패시 False, 성공시 스크립트 타입 반환
+            if script_type:
+                gm.스크립트.set(key=script_name, data={'스크립트': script, '변수': json.dumps(vars), '타입': script_type, '설명': desc})
+                gm.스크립트.update_table_widget(self.tblScript)
+                gm.list스크립트 = gm.스크립트.get(column='스크립트명')
+                self.gui_fx채움_스크립트콤보()
+                self.txtScriptMsg.clear()
+                self.script_edited = False
+            else:
+                logging.error(f'스크립트 저장 오류: script_type={script_type}')
+        except Exception as e:
+            logging.error(f'스크립트 저장 오류: {type(e).__name__} - {e}', exc_info=True)
+        finally:
+            self.btnScriptSave.setEnabled(False)
+    
+    def gui_var_select(self, row_index):
+        try:
+            name = self.tblScriptVar.item(row_index, 0).text()
+            value = self.tblScriptVar.item(row_index, 1).text()
+            self.ledVarName.setText(name)
+            self.ledVarValue.setText(value)
+        except Exception as e:
+            logging.error(f'변수 선택 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_var_delete(self):
+        try:
+            name = self.ledVarName.text()
+            if not name:
+                QMessageBox.warning(self, '알림', '삭제할 변수명을 확인 하세요.')
+                return
+
+            reply = QMessageBox.question(self, '삭제 확인',
+                                        f'{name} 변수를 삭제하시겠습니까?',
+                                        QMessageBox.Yes | QMessageBox.No,
+                                        QMessageBox.No)
+
+            if reply == QMessageBox.Yes:
+                # 설정 삭제
+                result = gm.스크립트변수.delete(key=name)
+                if result:
+                    gm.스크립트변수.update_table_widget(self.tblScriptVar)
+                    self.ledVarName.setText('')
+                    self.ledVarValue.setText('')
+                
+        except Exception as e:
+            logging.error(f'변수 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_var_save(self):
+        try:
+            name = self.ledVarName.text()
+            value = self.ledVarValue.text()
+            gm.스크립트변수.set(key=name, data={'변수명': name, '값': value})
+            gm.스크립트변수.update_table_widget(self.tblScriptVar)
+            self.ledVarName.setText('')
+            self.ledVarValue.setText('')
+        
+        except Exception as e:
+            logging.error(f'변수 저장 오류: {type(e).__name__} - {e}', exc_info=True)
+    
     # 전략설정 탭 ----------------------------------------------------------------------------------------
     def gui_tabs_init(self):
         """10개의 전략탭 초기화"""
@@ -477,432 +912,6 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'스크립트 선택 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    # QWidget 이벤트 -------------------------------------------------------------------------------------
-    def gui_account_reload(self):
-        gm.admin.get_holdings()
-        gm.toast.toast(f'계좌를 다시 읽어 왔습니다.', duration=1000)
-        logging.debug('메세지 발행: Work(pri_first_job, {})')
-
-    def gui_account_changed(self):
-        logging.debug('')
-        if self.cbAccounts.currentText():
-            gm.account = self.cbAccounts.currentText()
-            gm.admin.get_holdings()
-            logging.debug('메세지 발행: Work(pri_first_job, {})')
-        else:
-            logging.warning('계좌를 선택하세요')
-
-    def gui_monitor_load(self):
-        self.btnLoadMonitor.setEnabled(False)
-        gm.admin.pri_fx얻기_매매목록(self.dtMonitor.date().toString("yyyy-MM-dd"))
-        self.gui_fx갱신_매매정보()
-        self.btnLoadMonitor.setEnabled(True)
-
-    def gui_daily_load(self):
-        self.btnLoadDaily.setEnabled(False)
-        gm.admin.pri_fx얻기_매매일지(self.dtDaily.date().toString("yyyyMMdd"))
-        self.gui_fx갱신_일지정보()
-        self.btnLoadDaily.setEnabled(True)
-
-    def gui_deposit_load(self):
-        self.btnDeposit.setEnabled(False)
-        gm.admin.pri_fx얻기_예수금()
-        self.gui_fx갱신_예수금정보()
-        self.btnDeposit.setEnabled(True)
-
-    def gui_conclusion_load(self):
-        self.btnLoadConclusion.setEnabled(False)
-        gm.admin.pri_fx얻기_체결목록(self.dtConclusion.date().toString("yyyyMMdd"))
-        self.gui_fx갱신_체결정보()
-        self.btnLoadConclusion.setEnabled(True)
-
-    def gui_chart_combo_add(self, item):
-        self.cbChartCode.addItem(item)
-
-    def gui_chart_load(self):
-        self.btnChartLoad.setEnabled(False)
-        date_text = self.dtChartDate.date().toString("yyyyMMdd")
-        item = self.cbChartCycle.currentText()
-        cycle = dc.scr.차트종류[item]
-        tick = int(self.cbChartTick.currentText()) if item in ('분봉', '틱봉') else 1
-        code = self.cbChartCode.currentText().split()[0]
-        name = self.cbChartCode.currentText().split()[1]
-        gm.admin.pri_fx얻기_차트자료(date_text, code, cycle, tick)
-        gm.차트자료.update_table_widget(self.tblChart, header=0 if cycle in ('mi', 'tk') else 1)
-        gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
-        self.btnChartLoad.setEnabled(True)
-
-    def gui_strategy_restart(self):
-        self.gui_strategy_stop(question=False)
-        self.gui_strategy_reload()
-        self.gui_strategy_start(question=False)
-
-    def gui_strategy_start(self, question=True):
-        if question:
-            response = QMessageBox.question(None, '전략매매 실행', '전략매매를 실행하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
-        else:
-            response = True
-        if response:
-            gm.admin.cdn_fx실행_전략매매()
-            if not any(gm.매수문자열들) and not any(gm.매도문자열들):
-                gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
-                return
-            gm.toast.toast('전략매매를 실행했습니다.', duration=3000)
-            self.set_strategy_toggle(run=True)
-        else:
-            logging.debug('전략매매 시작 취소')
-
-    def gui_strategy_stop(self, question=True):
-        response = True
-        if question:
-            response = QMessageBox.question(None, '전략매매 중지', '전략매매를 중지하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
-        if response:
-            gm.admin.cdn_fx중지_전략매매()
-            self.set_strategy_toggle(run=False)
-            gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
-        else:
-            logging.debug('전략매매 중지 취소')
-
-    def gui_strategy_changed(self):
-        logging.debug('')
-        pass
-
-    def gui_strategy_reload(self):
-        logging.debug('메세지 발행: Work(cdn_fx요청_서버전략, {})')
-        gm.admin.get_conditions()
-        self.gui_fx채움_조건콤보()
-        gm.toast.toast('전략매매를 다시 읽어 왔습니다.', duration=3000)
-
-    def gui_chart_cycle_changed(self, item):
-        self.cbChartTick.clear()
-        if item in ['틱봉', '분봉']: 
-            self.cbChartTick.addItems(dc.ticks.get(item,[]))
-
-    def gui_log_level_set(self, key, value):
-        if key == 'DEBUG' and value == True:
-            level = logging.DEBUG
-        else:
-            level = logging.INFO
-        gm.json_config['root']['level'] = level
-        logging.getLogger().setLevel(level)
-        save_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), gm.json_config)
-
-        logging.info(f'로깅 설정 변경: {key} = {value}')
-
-    def gui_balance_held_select(self, row_index, col_index):
-        code = self.tblBalanceHeld.item(row_index, 1).text()
-        logging.debug(f'cell = [{row_index:02d}:{col_index:02d}] code = {code}')
-        row = gm.잔고목록.get(key=code)
-        if row:
-            self.leTrCode.setText(row['종목번호'])
-            self.leTrName.setText(row['종목명'])
-            self.spbTrPrice.setValue(row['현재가'])
-            self.spbTrQty.setValue(row['보유수량'])
-            self.rbTrSell.setChecked(True)
-            self.leTrStrategy.setText(row['전략'])
-        #self.tblBalanceHeld.clearSelection()  
-
-    def gui_receipt_list_select(self, row_index, col_index):
-        code = self.tblReceiptList.item(row_index, 3).text()
-        kind = self.tblReceiptList.item(row_index, 1).text()
-        key = f'{code}_{kind}'
-        logging.debug(f'cell = [{row_index:02d}:{col_index:02d}] code = {code} kind = {kind} key = {key}')
-        row = gm.주문목록.get(key=key)
-        if row:
-            self.leTrCode.setText(row['종목코드'])
-            self.leTrName.setText(row['종목명'])
-            self.spbTrPrice.setValue(row['주문가격'])
-            self.spbTrQty.setValue(row['주문수량'])
-            self.rbTrSell.setChecked(True if row['구분'] == '매도' else False)
-            self.leTrStrategy.setText(row['전략'])
-            self.leTrCancelKey.setText(row['키'])
-
-    def gui_tr_code_changed(self):
-        code = self.leTrCode.text()
-        if code:
-            self.leTrName.setText(gm.ipc.answer('api', 'GetMasterCodeName', code))
-
-    def gui_tr_order(self):
-        kind = '매수' if self.rbTrBuy.isChecked() else '매도'
-        if kind == '매수':
-            전략 = '전략00'
-        else:
-            전략 = self.leTrStrategy.text()
-            if 전략: 
-                if 전략 not in gm.ipc.instances:
-                    logging.warning(f'전략이 실행중이지 않습니다. {전략}')
-                    return
-            
-        전략번호 = int(전략[-2:])
-        code = self.leTrCode.text()
-        price = self.spbTrPrice.value()
-        qty = self.spbTrQty.value()
-        row = gm.잔고목록.get(key=code)
-
-        price = int(price) if price != '' else 0
-        qty = int(qty) if qty != '' else 0
-
-        if not code:
-            QMessageBox.warning(self, '알림', '종목코드를 입력하세요.')
-            return
-
-        if self.rbTrLimit.isChecked() and price == 0:
-            QMessageBox.warning(self, '알림', '지정가 매수시 주문가격을 입력하세요.')
-            return
-        else:
-            price = hoga(price, int(self.spbTrHoga.value()))
-
-        if qty == 0:
-            QMessageBox.warning(self, '알림', '수량을 입력하세요.')
-            return
-
-        if self.rbTrBuy.isChecked():
-            if row:
-                QMessageBox.warning(self, '알림', '이미 보유 중인 종목입니다.')
-                response = QMessageBox.question(None, '알림', '이미 보유 중인 종목입니다. 매수 하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
-                if not response:
-                    return
-        else:
-            if not row:
-                QMessageBox.warning(self, '알림', '보유 중인 종목이 없습니다.')
-                return
-            
-        rqname = f'수동{kind}'
-        send_data = {
-            'rqname': rqname,
-            'screen': dc.scr.화면[rqname],
-            'accno': gm.config.account,
-            'ordtype': 1 if self.rbTrBuy.isChecked() else 2,
-            'code': code,
-            'quantity': qty,
-            'price': price if self.rbTrLimit.isChecked() else 0,
-            'hoga': '00' if self.rbTrLimit.isChecked() else '03',
-            'ordno': ''
-        }
-        if kind == '매수':
-            gm.ipc.order('api', 'SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
-        else:
-            if row['주문가능수량'] == 0:
-                QMessageBox.warning(self, '알림', '주문가능수량이 없습니다.')
-                return
-            row['주문가능수량'] -= qty if row['주문가능수량'] >= qty else row['주문가능수량']
-            gm.잔고목록.set(key=code, data=row)
-
-        key = f'{code}_{kind}'
-        data={'키': key, '구분': kind, '상태': '요청', '전략': 전략, '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
-        gm.주문목록.set(key=key, data=data) 
-        # 주문 전송
-        gm.admin.com_SendOrder(전략번호, **send_data)
-
-    def gui_tr_cancel(self):
-        key = self.leTrCancelKey.text()
-        row = gm.주문목록.get(key=key)
-        if not row:
-            QMessageBox.warning(self, '알림', '주문접수목록에서 취소할 항목을 선택하세요.')
-            return
-        if row['상태'] != '접수':
-            gm.주문목록.delete(key=key)
-            return
-        
-        전략 = row['전략']
-        전략번호 = int(전략[-2:])
-        odrerno = row['주문번호']
-        code = row['종목코드']
-
-        kind = '매수' if self.rbTrBuy.isChecked() else '매도'
-        rqname = f'수취{kind}'
-        send_data = {
-            'rqname': rqname,
-            'screen': dc.scr.화면[rqname],
-            'accno': gm.config.account,
-            'ordtype': 3 if kind == '매수' else 4,
-            'code': code,
-            'quantity': 0,
-            'price': 0,
-            'hoga': '03',
-            'ordno': odrerno
-        }
-
-        # 주문 전송
-        gm.admin.com_SendOrder(전략번호, **send_data)
-
-    def gui_script_show(self):
-        try:
-            gm.스크립트.update_table_widget(self.tblScript)
-        except Exception as e:
-            logging.error(f'스크립트 표시 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def gui_script_select(self, row_index):
-        try:
-            self.btnScriptSave.setEnabled(False)
-            name = self.tblScript.item(row_index, 0).text()
-
-            script = gm.스크립트.get(key=name, column='스크립트')
-            vars = self.tblScript.item(row_index, 3)
-            desc = self.tblScript.item(row_index, 4).text()
-
-            self.ledScriptName.setText(name)
-            self.txtScript.setText(script)
-            self.txtScriptDesc.setText(desc)
-            try:
-                vars_dict = json.loads(vars.text())
-            except Exception as e:
-                vars_dict = {}
-                logging.error(f'스크립트 변수 파싱 오류: {type(e).__name__} - {e}', exc_info=True)
-            self.tblScriptVar.setRowCount(len(vars_dict))
-            dict_list = []
-            for i, (key, value) in enumerate(vars_dict.items()) :
-              dict_list.append({'변수명': key, '값': value})
-            self.tblScriptVar.setRowCount(len(dict_list))
-            gm.스크립트변수.set(data=dict_list)
-            gm.스크립트변수.update_table_widget(self.tblScriptVar)
-            self.script_edited = False
-            self.ledVarName.setText('')
-            self.ledVarValue.setText('')
-
-        except Exception as e:
-            logging.error(f'스크립트 선택 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def gui_script_new(self):
-        self.btnScriptSave.setEnabled(False)
-        self.ledScriptName.setText('')
-        self.txtScript.setText('')
-        self.txtScriptDesc.setText('')
-        self.tblScriptVar.setRowCount(0)
-        self.txtScriptMsg.clear()
-
-    def gui_script_delete(self):
-        try:
-            name = self.ledScriptName.text()
-            if not name:
-                QMessageBox.warning(self, '알림', '삭제할 스크립트명을 확인 하세요.')
-                return
-            
-            if not gm.스크립트.in_key(name):
-                QMessageBox.warning(self, '알림', '스크립트가 존재하지 않습니다.')
-                return
-
-            reply = QMessageBox.question(self, '삭제 확인',
-                                        f'{name} 스크립트를 삭제하시겠습니까?',
-                                        QMessageBox.Yes | QMessageBox.No,
-                                        QMessageBox.No)
-
-            if reply == QMessageBox.Yes:
-                # 설정 삭제
-                result = gm.스크립트.delete(key=name)
-                if result:
-                    gm.스크립트.update_table_widget(self.tblScript)
-                    self.ledScriptName.setText('')
-                    self.txtScript.setText('')
-                    self.txtScriptDesc.setText('')
-                    self.tblScriptVar.clearContents()
-                    gm.스크립트변수.delete()
-                    gm.스크립트변수.update_table_widget(self.tblScriptVar)
-                    self.ledVarName.setText('')
-                    self.ledVarValue.setText('')
-                    gm.scm.delete_script_compiled(name)
-                    self.txtScriptMsg.clear()
-                    gm.list스크립트 = gm.스크립트.get(column='스크립트명')
-                    self.gui_fx채움_스크립트콤보()
-
-        except Exception as e:
-            logging.error(f'스크립트 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def gui_script_check(self):
-        try:
-            script_name = self.ledScriptName.text()
-            script = self.txtScript.toPlainText()
-            if len(script_name) == 0 or len(script) == 0:
-                QMessageBox.information(self, '알림', '스크립트명과 스크립트를 입력하세요.')
-                return
-            vars_dict = {}
-            for row in range(self.tblScriptVar.rowCount()):
-                key = self.tblScriptVar.item(row, 0).text()
-                value = self.tblScriptVar.item(row, 1).text()
-                vars_dict[key] = float(value) if value else 0.0
-            result = gm.scm.run_script(script_name, check_only=True, script_data={'script': script, 'vars': vars_dict}, kwargs={'code': '005930'})
-            if result['success']:
-                QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n\n반환값={result["result"]}')
-                self.btnScriptSave.setEnabled(True)
-                self.txtScriptMsg.clear()
-            else:
-                QMessageBox.critical(self, '에러', result['error'])
-                self.txtScriptMsg.append(result['error'])
-                self.txtScriptMsg.moveCursor(QTextCursor.End)
-                self.btnScriptSave.setEnabled(False)
-        except Exception as e:
-            logging.error(f'스크립트 확인 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def gui_script_save(self):
-        try:
-            script_name = self.ledScriptName.text() #
-            script = self.txtScript.toPlainText() #
-            desc = self.txtScriptDesc.toPlainText() #
-            vars = {}
-            kwargs = {'code': '005930', 'name': '', 'price': 0, 'qty': 0}
-            for row in range(self.tblScriptVar.rowCount()):
-                key = self.tblScriptVar.item(row, 0).text()
-                value = self.tblScriptVar.item(row, 1).text()
-                vars[key] = float(value) if value else 0.0
-            script_type = gm.scm.set_script_compiled(script_name, script, vars, desc, kwargs) # 실패시 False, 성공시 스크립트 타입 반환
-            if script_type:
-                gm.스크립트.set(key=script_name, data={'스크립트': script, '변수': json.dumps(vars), '타입': script_type, '설명': desc})
-                gm.스크립트.update_table_widget(self.tblScript)
-                gm.list스크립트 = gm.스크립트.get(column='스크립트명')
-                self.gui_fx채움_스크립트콤보()
-                self.txtScriptMsg.clear()
-                self.script_edited = False
-            else:
-                logging.error(f'스크립트 저장 오류: script_type={script_type}')
-        except Exception as e:
-            logging.error(f'스크립트 저장 오류: {type(e).__name__} - {e}', exc_info=True)
-        finally:
-            self.btnScriptSave.setEnabled(False)
-    
-    def gui_var_select(self, row_index):
-        try:
-            name = self.tblScriptVar.item(row_index, 0).text()
-            value = self.tblScriptVar.item(row_index, 1).text()
-            self.ledVarName.setText(name)
-            self.ledVarValue.setText(value)
-        except Exception as e:
-            logging.error(f'변수 선택 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def gui_var_delete(self):
-        try:
-            name = self.ledVarName.text()
-            if not name:
-                QMessageBox.warning(self, '알림', '삭제할 변수명을 확인 하세요.')
-                return
-
-            reply = QMessageBox.question(self, '삭제 확인',
-                                        f'{name} 변수를 삭제하시겠습니까?',
-                                        QMessageBox.Yes | QMessageBox.No,
-                                        QMessageBox.No)
-
-            if reply == QMessageBox.Yes:
-                # 설정 삭제
-                result = gm.스크립트변수.delete(key=name)
-                if result:
-                    gm.스크립트변수.update_table_widget(self.tblScriptVar)
-                    self.ledVarName.setText('')
-                    self.ledVarValue.setText('')
-                
-        except Exception as e:
-            logging.error(f'변수 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def gui_var_save(self):
-        try:
-            name = self.ledVarName.text()
-            value = self.ledVarValue.text()
-            gm.스크립트변수.set(key=name, data={'변수명': name, '값': value})
-            gm.스크립트변수.update_table_widget(self.tblScriptVar)
-            self.ledVarName.setText('')
-            self.ledVarValue.setText('')
-        
-        except Exception as e:
-            logging.error(f'변수 저장 오류: {type(e).__name__} - {e}', exc_info=True)
-    
     # 화면 갱신 -----------------------------------------------------------------------------------------------------------------
     def gui_fx채움_계좌콤보(self):
         try:

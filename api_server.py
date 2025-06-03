@@ -18,12 +18,14 @@ toast = None #Toast()
 ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
 req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
 def com_request_time_check(kind='order', cond_text = None):
+    start_time = time.time()
+    #logging.debug(f'com_request_time_check: Start')
     if kind == 'order':
         wait_time = ord.check_interval()
     elif kind == 'request':
         wait_time = max(req.check_interval(), req.check_condition_interval(cond_text) if cond_text else 0)
 
-    logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
+    #logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
     if wait_time > 1666: # 1.666초 이내 주문 제한
         msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
             if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
@@ -34,7 +36,7 @@ def com_request_time_check(kind='order', cond_text = None):
     elif wait_time > 1000:
         msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
         toast.toast(msg, duration=wait_time)
-        time.sleep((wait_time-200)/1000) 
+        time.sleep((wait_time-10)/1000) 
         wait_time = 0
         logging.info(msg)
 
@@ -43,7 +45,7 @@ def com_request_time_check(kind='order', cond_text = None):
         toast.toast(msg, duration=wait_time)
         logging.info(msg)
 
-    time.sleep((wait_time + 200)/1000) 
+    time.sleep((wait_time+10)/1000) 
 
     if kind == 'order':
         ord.update_request_times()
@@ -51,6 +53,7 @@ def com_request_time_check(kind='order', cond_text = None):
         if cond_text: req.update_condition_time(cond_text)
         else: req.update_request_times()
 
+    #logging.debug(f'com_request_time_check:Start ~ End: {time.time() - start_time} ms')
     return True
 
 real_thread = {}
@@ -387,7 +390,7 @@ class OnReceiveRealConditionSim(QThread):
       self.is_running = True
       self.current_stocks = set()
       self.api = api
-      self.order = api.order
+      self.stream = api.stream
       self._stop_event = threading.Event()
 
    def run(self):
@@ -407,7 +410,7 @@ class OnReceiveRealConditionSim(QThread):
             'cond_name': self.cond_name,
             'cond_index': int(self.cond_index),
          }
-         self.order('admin', 'on_fx실시간_조건검색', **data)
+         self.stream('admin', 'on_fx실시간_조건검색', **data)
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -430,7 +433,7 @@ class OnReceiveRealDataSim1And2(QThread):
       self.is_running = True
       self._stop_event = threading.Event()
       self.api = api
-      self.order = api.order
+      self.stream = api.stream
 
    def run(self):
       while self.is_running:
@@ -449,10 +452,10 @@ class OnReceiveRealDataSim1And2(QThread):
             dictFID = {
                '종목코드': code,
                '종목명': sim.ticker.get(code, {}).get('종목명', ''),
-               '현재가': current_price,
-               '등락율': round((current_price - sim.ticker[code]['전일가']) / sim.ticker[code]['전일가'] * 100, 2),
-               '누적거래량': 500000,
-               '누적거래대금': 78452100,
+               '현재가': f'{current_price:15d}',
+               '등락율': f'{round((current_price - sim.ticker[code]["전일가"]) / sim.ticker[code]["전일가"] * 100, 2):12.2f}',
+               '누적거래량': f'{500000:15d}',
+               '누적거래대금': f'{78452100:15d}',
                '체결시간': time.strftime('%Y%m%d%H%M%S', time.localtime()),
             }
 
@@ -465,8 +468,7 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            #self.order('dbm', 'update_script_chart', job)
-            self.order('admin', 'on_fx실시간_주식체결', **job)
+            self.stream('admin', 'on_fx실시간_주식체결', **job)
 
 
             if self._stop_event.wait(timeout=0.2/len(sim.ticker)):
@@ -484,7 +486,7 @@ class OnReceiveRealDataSim3(QThread):
       self.is_running = True
       self._stop_event = threading.Event()
       self.api = api
-      self.order = api.order
+      self.stream = api.stream
 
    def run(self):
       while self.is_running:
@@ -509,10 +511,10 @@ class OnReceiveRealDataSim3(QThread):
                dictFID = {
                   '종목코드': code,
                   '종목명': tick_data.get('종목명', ''),
-                  '현재가': current_price,
-                  '등락율': float(tick_data.get('등락율', 0)),
-                  '누적거래량': int(tick_data.get('누적거래량', 0)),
-                  '누적거래대금': int(tick_data.get('누적거래대금', 0)),
+                  '현재가': f'{current_price:15d}',
+                  '등락율': f'{float(tick_data.get("등락율", 0)):15.2f}',
+                  '누적거래량': f'{int(tick_data.get("누적거래량", 0)):15d}',
+                  '누적거래대금': f'{int(tick_data.get("누적거래대금", 0)):15d}',
                   '체결시간': tick_data.get('체결시간', ''),
                }
                
@@ -525,8 +527,7 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               #self.order('dbm', 'update_script_chart', job)
-               self.order('admin', 'on_fx실시간_주식체결', **job)
+               self.stream('admin', 'on_fx실시간_주식체결', **job)
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -735,6 +736,7 @@ class APIServer:
         else:
             return 1
 
+    @profile_operation        
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         try:
             if not com_request_time_check(kind='request'): return [], False
@@ -810,7 +812,7 @@ class APIServer:
                
     def SendConditionStop(self, screen, cond_name, cond_index):
         global cond_thread
-        logging.debug(f'전략 중지: screen={screen}, cond_name={cond_name}, cond_index={cond_index} {"*"*50}')
+        #logging.debug(f'전략 중지: screen={screen}, cond_name={cond_name}, cond_index={cond_index} {"*"*50}')
         if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
             self.ocx.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, cond_index)
         
@@ -854,10 +856,10 @@ class APIServer:
     def SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno):
         if not com_request_time_check(kind='order'): return -308 # 5회 제한 초과
         if self.sim_no == 0:  # 실제 API 서버
-            logging.debug(f'api 내부 SendOrder 호출전')
+            #logging.debug(f'api 내부 SendOrder 호출전')
             ret = self.ocx.dynamicCall("SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)",
                                     [rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno])
-            logging.debug(f'api 내부 SendOrder 호출후')
+            #logging.debug(f'api 내부 SendOrder 호출후')
             return ret
         else:  # 시뮬레이션 모드
             self.order_no += 1
@@ -944,7 +946,7 @@ class APIServer:
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        #self.order('admin', 'set_connected', self.connected)
+        self.order('admin', 'set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
@@ -1010,6 +1012,7 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
+        logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
         self.stream('admin', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
@@ -1026,11 +1029,10 @@ class APIServer:
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    #self.order('dbm', 'update_script_chart', job)
                     self.stream('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.stream('admin', 'on_fx실시간_장운영감시', **job)
-                #logging.debug(f"OnReceiveRealData: {job}")
+                logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
@@ -1050,6 +1052,7 @@ class APIServer:
 
             if gubun == '0': self.stream('admin', 'odr_recieve_chegyeol_data', dictFID)
             elif gubun == '1': self.stream('admin', 'odr_recieve_balance_data', dictFID)
+            logging.debug(f"ChejanData: API 서버에서 보냄 {gubun} {dictFID['종목코드']} {dictFID['종목명']}")
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1064,7 +1067,7 @@ class APIServer:
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                self.order('admin', 'odr_recieve_balance_data', dictFID)
+                self.stream('admin', 'odr_recieve_balance_data', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']

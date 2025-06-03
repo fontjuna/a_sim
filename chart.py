@@ -18,18 +18,20 @@ import pickle
 import importlib.util
 import msgpack
 import struct
+import multiprocessing as mp
+from datetime import timedelta
 
 class ChartData:
     """
     차트 데이터를 관리하는 최적화된 공유 메모리 기반 싱글톤 클래스
-    이는 멀티프로세스 환경에서 사용되며, 각 프로세스는 공유 메모리를 통해 데이터를 공유합니다.
+    데드락 방지를 위한 락 계층구조 적용
     """
     _instance = None
-    _lock = threading.RLock()
+    _creation_lock = threading.Lock()  # 인스턴스 생성용 락 (가장 상위)
 
     def __new__(cls):
         if cls._instance is None:
-            with cls._lock:
+            with cls._creation_lock:
                 if cls._instance is None:
                     cls._instance = super(ChartData, cls).__new__(cls)
         return cls._instance
@@ -38,515 +40,624 @@ class ChartData:
         if hasattr(self, "_initialized"):
             return
         
-        with self._lock:
+        with self._creation_lock:
             if not hasattr(self, "_initialized"):
-                # 코드별 공유 메모리 맵
-                self._shm_map = {}  # 코드 -> shared_memory 맵핑
-                self._code_locks = {}  # 코드별 락
-                self._index_map = {}   # 코드별 인덱스 맵 캐시
-                self._data_cache = {}  # 코드별 데이터 캐시
+                # 락 계층구조 설정
+                # Level 1: 전역 락 (공유 메모리 생성/삭제만)
+                self._global_lock = threading.RLock()
+                # Level 2: 코드별 락 관리용
+                self._code_locks_lock = threading.RLock()
+                
+                # 코드별 데이터 저장
+                self._shm_map = {}          # 코드 -> shared_memory 맵핑
+                self._code_locks = {}       # 코드별 락
+                self._data_cache = {}       # 코드별 데이터 캐시
+                self._cache_timestamps = {} # 캐시 타임스탬프 별도 관리
                 
                 # 기본 설정
                 self._shm_prefix = "chart_data_"
-                self._default_size = 1024 * 1024  # 1MB (코드별 기본 크기)
+                self._default_size = 1024 * 1024  # 1MB
+                self._lock_timeout = 1.0  # 1초 타임아웃
                 
                 self._initialized = True
                 logging.debug(f"[{datetime.now()}] ChartData initialized in PID: {os.getpid()}")
     
     def _get_code_lock(self, code):
-        """코드별 락 가져오기"""
-        if code not in self._code_locks:
-            with self._lock:
-                if code not in self._code_locks:
-                    self._code_locks[code] = threading.RLock()
-        return self._code_locks[code]
-    
-    def _get_shared_memory(self, code):
-        """코드별 공유 메모리 가져오기 (없으면 생성)"""
-        if code in self._shm_map:
-            return self._shm_map[code]
-            
-        with self._lock:
-            # 이중 체크
-            if code in self._shm_map:
-                return self._shm_map[code]
-                
-            # 공유 메모리 이름 생성
-            shm_name = f"{self._shm_prefix}{code}"
+        """코드별 락 가져오기 (타임아웃 적용)"""
+        # 코드별 락 생성은 별도 락으로 보호
+        try:
+            if not self._code_locks_lock.acquire(timeout=self._lock_timeout):
+                logging.warning(f"[{datetime.now()}] Lock timeout for code locks creation: {code}")
+                return None
             
             try:
-                # 기존 공유 메모리 연결 시도
-                shm = shared_memory.SharedMemory(name=shm_name)
-                self._shm_map[code] = shm
-                return shm
-            except FileNotFoundError:
-                # 없으면 새로 생성
-                try:
-                    shm = shared_memory.SharedMemory(
-                        name=shm_name,
-                        create=True,
-                        size=self._default_size
-                    )
-                    self._shm_map[code] = shm
-                    
-                    # 확장된 헤더 초기화: 
-                    # 0-3: 데이터 크기
-                    # 4-7: 타임스탬프
-                    # 8-11: 최신 캔들 오프셋
-                    # 12-15: 최신 캔들 크기
-
-                    # 버퍼 초기화 (모든 바이트를 0으로 초기화)
-                    for i in range(8): shm.buf[i] = 0
-
-                    # 타임스탬프는 32비트 값으로 제한하여 저장
-                    t_stamp = int(time.time()) & 0xFFFFFFFF
-                    struct.pack_into('!IIII', shm.buf, 0, 0, t_stamp, 0, 0)
-                    
-                    return shm
-                except Exception as e:
-                    logging.debug(f"[{datetime.now()}] Error creating shared memory for {code}: {str(e)}", exc_info=True)
-                    traceback.print_exc()
-                    return None
+                if code not in self._code_locks:
+                    self._code_locks[code] = threading.RLock()
+                return self._code_locks[code]
+            finally:
+                self._code_locks_lock.release()
+        except Exception as e:
+            logging.error(f"[{datetime.now()}] Error getting code lock for {code}: {str(e)}")
+            return None
+        
+    def _get_shared_memory_safe(self, code):
+        """코드별 공유 메모리 가져오기 (데드락 안전)"""
+        # 먼저 기존 메모리 확인 (락 없이)
+        if code in self._shm_map:
+            return self._shm_map[code]
+        
+        # 메모리 생성이 필요한 경우만 전역 락 사용
+        try:
+            if not self._global_lock.acquire(timeout=self._lock_timeout):
+                logging.warning(f"[{datetime.now()}] Global lock timeout for memory creation: {code}")
+                return None
+            
+            try:
+                # 이중 체크
+                if code in self._shm_map:
+                    return self._shm_map[code]
+                
+                # 공유 메모리 생성
+                return self._create_shared_memory(code)
+            finally:
+                self._global_lock.release()
+        except Exception as e:
+            logging.error(f"[{datetime.now()}] Error in shared memory access for {code}: {str(e)}")
+            return None
     
-    def _save_code_data(self, code, data):
-        """코드별 데이터 저장 (최적화  사용)"""
-        shm = self._get_shared_memory(code)
+    def _create_shared_memory(self, code):
+        """공유 메모리 생성 (전역 락 내에서만 호출)"""
+        shm_name = f"{self._shm_prefix}{code}"
+        
+        try:
+            # 기존 공유 메모리 연결 시도
+            shm = shared_memory.SharedMemory(name=shm_name)
+            self._shm_map[code] = shm
+            return shm
+        except FileNotFoundError:
+            # 없으면 새로 생성
+            try:
+                shm = shared_memory.SharedMemory(
+                    name=shm_name,
+                    create=True,
+                    size=self._default_size
+                )
+                self._shm_map[code] = shm
+                
+                # 헤더 초기화
+                t_stamp = int(time.time()) & 0xFFFFFFFF
+                struct.pack_into('!IIII', shm.buf, 0, 0, t_stamp, 0, 0)
+                
+                return shm
+            except Exception as e:
+                logging.error(f"[{datetime.now()}] Error creating shared memory for {code}: {str(e)}")
+                return None
+    
+    def _expand_shared_memory_safe(self, code, required_size):
+        """공유 메모리 확장 (데드락 안전)"""
+        old_shm = self._shm_map.get(code)
+        if not old_shm:
+            return None
+        
+        new_size = max(self._default_size * 2, required_size + 1024)
+        new_shm_name = f"{self._shm_prefix}{code}_new"
+        
+        try:
+            # 새 메모리 생성
+            new_shm = shared_memory.SharedMemory(
+                name=new_shm_name, 
+                create=True, 
+                size=new_size
+            )
+            
+            # 기존 데이터 복사
+            copy_size = min(len(old_shm.buf), len(new_shm.buf))
+            new_shm.buf[:copy_size] = old_shm.buf[:copy_size]
+            
+            # 원자적 교체
+            self._shm_map[code] = new_shm
+            
+            # 이전 메모리 정리
+            try:
+                old_shm.close()
+                old_shm.unlink()
+            except:
+                pass  # 정리 실패는 무시
+            
+            self._default_size = new_size
+            logging.debug(f"[{datetime.now()}] Expanded memory for {code} to {new_size} bytes")
+            return new_shm
+            
+        except Exception as e:
+            logging.error(f"[{datetime.now()}] Error expanding memory for {code}: {str(e)}")
+            return old_shm
+        
+    def _save_code_data_safe(self, code, data):
+        """코드별 데이터 저장 (데드락 안전)"""
+        shm = self._get_shared_memory_safe(code)
         if not shm:
             return False
-            
+        
         try:
-            # 전체 데이터 직렬화 (pickle보다 빠름)
+            # 데이터 직렬화
             packed_data = msgpack.packb(data, use_bin_type=True)
             data_size = len(packed_data)
-
-            # 최신 캔들 정보 (있는 경우)
+            
+            # 최신 캔들 정보
             last_candle_offset = 0
             last_candle_size = 0
             
             if 'mi1' in data and data['mi1']:
-                # 메인 데이터 바로 뒤에 최신 캔들 저장
                 last_candle_offset = 16 + data_size
-                
-                # 최신 캔들 직렬화
                 candle_data = msgpack.packb(data['mi1'][0], use_bin_type=True)
                 last_candle_size = len(candle_data)
-                
-                # 필요한 총 메모리 크기 계산
                 total_size = last_candle_offset + last_candle_size
             else:
                 total_size = 16 + data_size
-                
-            # 메모리 크기 확인 및 필요시 확장
-            if total_size > self._default_size:
-                old_shm = shm
-                new_size = max(self._default_size * 2, total_size + 1024)
-                
-                # 새 공유 메모리 생성
-                new_shm_name = f"{self._shm_prefix}{code}_new"
+            
+            # 메모리 크기 확인 및 확장
+            if total_size > len(shm.buf):
+                # 전역 락으로 메모리 확장
                 try:
-                    new_shm = shared_memory.SharedMemory(
-                        name=new_shm_name, 
-                        create=True, 
-                        size=new_size
-                    )
-                
-                    # 공유 메모리 교체 (락 보호 필요)
-                    with self._lock:
-                        # 이전 데이터 복사
-                        new_shm.buf[:8] = old_shm.buf[:8]
-                        
-                        # 맵 업데이트
-                        self._shm_map[code] = new_shm
-                        
-                        # 이전 메모리 해제
-                        old_shm.close()
-                        old_shm.unlink()
+                    if not self._global_lock.acquire(timeout=self._lock_timeout):
+                        logging.warning(f"[{datetime.now()}] Memory expansion timeout for {code}")
+                        return False
                     
-                        # 업데이트된 정보
-                        shm = new_shm
-                        self._default_size = new_size
-                        logging.debug(f"[{datetime.now()}] Expanded memory for code {code} to {new_size} bytes")
+                    try:
+                        shm = self._expand_shared_memory_safe(code, total_size)
+                        if not shm:
+                            return False
+                    finally:
+                        self._global_lock.release()
                 except Exception as e:
-                    logging.debug(f"[{datetime.now()}] Error expanding memory for {code}: {str(e)}", exc_info=True)
-                    traceback.print_exc()
+                    logging.error(f"[{datetime.now()}] Memory expansion error for {code}: {str(e)}")
                     return False
-                
-            # 타임스탬프를 32비트 범위 내로 제한
+            
+            # 데이터 저장
             t_stamp = int(time.time()) & 0xFFFFFFFF
-            
-            # 헤더 정보 저장: 데이터 크기, 타임스탬프, 최신 캔들 오프셋, 최신 캔들 크기
             struct.pack_into('!IIII', shm.buf, 0, data_size, t_stamp, last_candle_offset, last_candle_size)
-            
-            # 전체 데이터 저장
             shm.buf[16:16+data_size] = packed_data
             
-            # 최신 캔들 저장 (있는 경우)
+            # 최신 캔들 저장
             if last_candle_offset > 0 and last_candle_size > 0:
                 shm.buf[last_candle_offset:last_candle_offset+last_candle_size] = candle_data
             
-            # 캐시 업데이트
-            self._data_cache[code] = (data, time.time())
+            # 캐시 원자적 업데이트
+            cache_time = time.time()
+            self._data_cache[code] = data
+            self._cache_timestamps[code] = cache_time
             
             return True
+            
         except Exception as e:
-            logging.debug(f"[{datetime.now()}] Error saving data for {code}: {str(e)}", exc_info=True)
-            traceback.print_exc()
+            logging.error(f"[{datetime.now()}] Error saving data for {code}: {str(e)}")
             return False
-   
-    # _load_code_data 함수에서 오류 처리 부분 수정
-    def _load_code_data(self, code):
-        """코드별 데이터 로드"""
-        # 캐시 확인 (100ms 이내 캐시 사용)
-        if code in self._data_cache:
-            cached_data, cache_time = self._data_cache[code]
-            if time.time() - cache_time < 0.1:  # 100ms 캐시 타임아웃
-                return cached_data
+    
+    def _load_code_data_safe(self, code):
+        """코드별 데이터 로드 (데드락 안전)"""
+        # 캐시 확인 (락 없이)
+        if code in self._data_cache and code in self._cache_timestamps:
+            if time.time() - self._cache_timestamps[code] < 0.1:  # 100ms 캐시
+                return self._data_cache[code].copy()
         
-        shm = self._get_shared_memory(code)
+        shm = self._get_shared_memory_safe(code)
         if not shm:
-            empty_data = {'mi1': [], 'mi3': [], 'dy': [], 'index_maps': {}}
-            self._data_cache[code] = (empty_data, time.time())
-            return empty_data
+            return {'mi1': [], 'mi3': [], 'dy': [], 'wk': [], 'mo': [], 'index_maps': {}}
         
         try:
-            # 헤더 읽기 (크기와 타임스탬프)
+            # 헤더 읽기
             data_size = struct.unpack_from('!I', shm.buf, 0)[0]
             
-            # 데이터가 없으면 빈 구조체 반환
-            if data_size == 0:
-                empty_data = {'mi1': [], 'mi3': [], 'dy': [], 'index_maps': {}}
-                self._data_cache[code] = (empty_data, time.time())
-                return empty_data
+            if data_size == 0 or data_size > len(shm.buf) - 16:
+                return {'mi1': [], 'mi3': [], 'dy': [], 'wk': [], 'mo': [], 'index_maps': {}}
             
-            # 데이터 크기가 유효한지 확인
-            if data_size > self._default_size - 8 or data_size <= 0:
-                empty_data = {'mi1': [], 'mi3': [], 'dy': [], 'index_maps': {}}
-                self._data_cache[code] = (empty_data, time.time())
-                return empty_data
+            # 데이터 역직렬화
+            packed_data = bytes(shm.buf[16:16+data_size])
+            data = msgpack.unpackb(packed_data, raw=False)
             
-            # msgpack으로 역직렬화
-            try:
-                packed_data = bytes(shm.buf[8:8+data_size])
-                data = msgpack.unpackb(packed_data, raw=False)
-                self._data_cache[code] = (data, time.time())
-                return data
-            except msgpack.exceptions.ExtraData:
-                # 첫 번째 객체만 추출 시도
-                try:
-                    data = msgpack.unpackb(packed_data, raw=False, strict_map_key=False)
-                    self._data_cache[code] = (data, time.time())
-                    return data
-                except:
-                    # 복구 실패 시 빈 데이터 반환
-                    empty_data = {'mi1': [], 'mi3': [], 'dy': [], 'index_maps': {}}
-                    self._data_cache[code] = (empty_data, time.time())
-                    return empty_data
+            # 캐시 원자적 업데이트
+            cache_time = time.time()
+            self._data_cache[code] = data
+            self._cache_timestamps[code] = cache_time
+            
+            return data.copy()
+            
         except Exception as e:
-            logging.debug(f"[{datetime.now()}] Error loading data for {code}: {str(e)}", exc_info=True)
-            traceback.print_exc()
-            empty_data = {'mi1': [], 'mi3': [], 'dy': [], 'index_maps': {}}
-            self._data_cache[code] = (empty_data, time.time())
-            return empty_data
-   
-    def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
-        """외부에서 차트 데이터 설정"""
-        start_time = time.time()
+            logging.error(f"[{datetime.now()}] Error loading data for {code}: {str(e)}")
+            return {'mi1': [], 'mi3': [], 'dy': [], 'wk': [], 'mo': [], 'index_maps': {}}
         
+    @profile_operation        
+    def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
+        """외부에서 차트 데이터 설정 - 데드락 안전 버전"""
         if not data:
             return
         
-        # 코드별 락 획득
-        lock = self._get_code_lock(code)
-        
-        with lock:
-            # 코드별 데이터 로드
-            chart_data = self._load_code_data(code)
-            
-            cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
-            
-            # 데이터 설정
-            chart_data[cycle_key] = data
-            
-            # 인덱스 맵 생성
-            self._create_index_map(chart_data, code, cycle_key)
-            
-            # 3분봉 데이터 초기화 (1분봉으로부터 생성)
-            if cycle == 'mi' and tick == 1 and 'mi3' not in chart_data:
-                chart_data['mi3'] = self._aggregate_minute_data(data, 3)
-                self._create_index_map(chart_data, code, 'mi3')
-            
-            # 데이터 저장
-            self._save_code_data(code, chart_data)
-        
-        elapsed = time.time() - start_time
-        if elapsed > 0.01:  # 10ms 이상 걸리는 경우 로깅
-            logging.debug(f"[{datetime.now()}] set_chart_data for {code} took {elapsed:.6f} seconds")
-    
-    def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """실시간 가격 정보로 차트 데이터 업데이트 (최적화 버전)"""
-        start_time = time.time()
+        # 1분봉과 일봉만 허용
+        if cycle == 'mi' and tick != 1:
+            logging.warning(f"[{datetime.now()}] Only 1-minute data allowed. Rejected: {cycle}, tick={tick}")
+            return
+        elif cycle not in ['mi', 'dy']:
+            logging.warning(f"[{datetime.now()}] Only 'mi'(tick=1) and 'dy' cycles allowed. Rejected: {cycle}")
+            return
         
         # 코드별 락 획득
-        lock = self._get_code_lock(code)
+        code_lock = self._get_code_lock(code)
+        if not code_lock:
+            return
         
-        with lock:
-            # 공유 메모리 가져오기
-            shm = self._get_shared_memory(code)
-            if not shm:
+        try:
+            if not code_lock.acquire(timeout=self._lock_timeout):
+                logging.warning(f"[{datetime.now()}] Code lock timeout for set_chart_data: {code}")
                 return
             
-            # 헤더 정보 읽기
-            data_size, timestamp, last_candle_offset, last_candle_size = struct.unpack_from('!IIII', shm.buf, 0)
-            
-            # 기준 시간 계산 (분 단위로)
-            base_time = datetime_str[:12] + '00'  # 분 단위로 맞춤
-            
-            # 캐시에서 데이터 확인 (100ms 이내 캐시 사용)
-            chart_data = None
-            if code in self._data_cache:
-                cached_data, cache_time = self._data_cache[code]
-                if time.time() - cache_time < 0.1:  # 100ms 캐시 타임아웃
-                    chart_data = cached_data
-            
-            # 캐시에 없으면 데이터 로드
-            if chart_data is None:
-                chart_data = self._load_code_data(code)
-            
-            # 등록되지 않은 코드는 무시
-            if 'mi1' not in chart_data:
-                chart_data['mi1'] = []
-            
-            minute_data = chart_data['mi1']
-            
-            # 데이터가 없는 경우 - 전체 저장 필요
-            if not minute_data:
-                new_candle = self._create_candle(code, base_time, price, price, price, price, volume, amount)
-                minute_data.insert(0, new_candle)
+            try:
+                # 데이터 로드
+                chart_data = self._load_code_data_safe(code)
                 
-                if 'index_maps' not in chart_data:
-                    chart_data['index_maps'] = {}
-                if 'mi1' not in chart_data['index_maps']:
-                    chart_data['index_maps']['mi1'] = {}
-                chart_data['index_maps']['mi1'][base_time] = 0
+                if cycle == 'mi' and tick == 1:
+                    # 1분봉 설정
+                    chart_data['mi1'] = data
+                    self._create_index_map_safe(chart_data, code, 'mi1')
+                    
+                    # 3분봉 자동 생성
+                    chart_data['mi3'] = self._aggregate_minute_data(data, 3)
+                    self._create_index_map_safe(chart_data, code, 'mi3')
+                    
+                elif cycle == 'dy':
+                    # 일봉 설정
+                    chart_data['dy'] = data
+                    self._create_index_map_safe(chart_data, code, 'dy')
+                    
+                    # 주봉, 월봉 자동 생성
+                    chart_data['wk'] = self._aggregate_day_data(data, 'week')
+                    self._create_index_map_safe(chart_data, code, 'wk')
+                    
+                    chart_data['mo'] = self._aggregate_day_data(data, 'month')
+                    self._create_index_map_safe(chart_data, code, 'mo')
                 
-                # 전체 데이터 저장
-                self._save_code_data(code, chart_data)
+                # 데이터 저장
+                self._save_code_data_safe(code, chart_data)
                 
-                elapsed = time.time() - start_time
-                if elapsed > 0.01:
-                    logging.debug(f"[{datetime.now()}] update_chart for {code} took {elapsed:.6f} seconds (empty data)")
-                return
-            
-            # 최신 봉 시간 확인
-            latest_time = minute_data[0]['체결시간']
-            
-            # ----- 성능 최적화 핵심 부분 -----
-            # 같은 봉 내의 업데이트인 경우 (가장 흔한 케이스) - 부분 업데이트만 수행
-            if latest_time == base_time:
-                # 기존 봉 업데이트
-                self._update_candle(minute_data[0], price, price, volume, amount)
-                
-                # 캐시 업데이트
-                self._data_cache[code] = (chart_data, time.time())
-                
-                # 최신 캔들만 직렬화하여 저장
-                if last_candle_offset > 0 and last_candle_size > 0:
-                    try:
-                        # 마지막 캔들만 직렬화
-                        candle_data = msgpack.packb(minute_data[0], use_bin_type=True)
-                        candle_size = len(candle_data)
-                        
-                        # 크기가 맞으면 오프셋 위치에 직접 쓰기
-                        if candle_size <= last_candle_size:
-                            # 타임스탬프 업데이트
-                            t_stamp = int(time.time()) & 0xFFFFFFFF
-                            struct.pack_into('!I', shm.buf, 4, t_stamp)
-                            
-                            # 캔들 데이터 쓰기
-                            shm.buf[last_candle_offset:last_candle_offset+candle_size] = candle_data
-                            
-                            elapsed = time.time() - start_time
-                            if elapsed > 0.01:
-                                logging.debug(f"[{datetime.now()}] update_chart (partial) for {code} took {elapsed:.6f} seconds")
-                            return
-                    except Exception as e:
-                        logging.debug(f"[{datetime.now()}] Error in partial update for {code}: {str(e)}", exc_info=True)
-                        # 실패 시 전체 저장으로 폴백
-                
-                # 부분 업데이트 실패 또는 정보 없음 - 전체 저장
-                self._save_code_data(code, chart_data)
-                elapsed = time.time() - start_time
-                if elapsed > 0.01:
-                    logging.debug(f"[{datetime.now()}] update_chart (full) for {code} took {elapsed:.6f} seconds")
-                return
-            
-            # 새로운 봉 또는 누락된 봉 처리 - 전체 데이터 업데이트 필요
-            # 시간대 차이 확인
-            time_diff = self._calculate_time_diff(latest_time, base_time)
-            
-            # 누락된 봉이 있는 경우
-            if time_diff > 1:
-                # 직전 봉의 종가
-                last_price = minute_data[0]['현재가']
-                
-                # 누락된 시간대 목록 생성
-                missing_times = self._generate_missing_times(latest_time, base_time)
-                
-                # 누락된 봉 생성
-                for missing_time in missing_times:
-                    # 누락 봉은 직전 봉의 종가로 OHLC 모두 동일하게 설정
-                    missing_candle = self._create_candle(
-                        code, missing_time, last_price, last_price, last_price, last_price, 0, 0, True)
-                    minute_data.insert(0, missing_candle)
-                    self._update_index_map(chart_data, 'mi1', missing_time)
-            
-            # 현재 시간대의 새 봉 추가
-            new_candle = self._create_candle(code, base_time, price, price, price, price, volume, amount)
-            minute_data.insert(0, new_candle)
-            self._update_index_map(chart_data, 'mi1', base_time)
-            
-            # 3분봉 업데이트
-            self._update_cyclic_chart(chart_data, code, price, volume, amount, datetime_str, 3)
-            
-            # 일봉 업데이트 (있는 경우에만)
-            if 'dy' in chart_data and chart_data['dy']:
-                self._update_day_chart(chart_data, code, price, volume, amount, datetime_str)
-            
-            # 전체 데이터 저장 (새 봉이 생성되었으므로)
-            self._save_code_data(code, chart_data)
-        
-        elapsed = time.time() - start_time
-        if elapsed > 0.01:
-            logging.debug(f"[{datetime.now()}] update_chart (new candle) for {code} took {elapsed:.6f} seconds")
+            finally:
+                code_lock.release()
+        except Exception as e:
+            logging.error(f"[{datetime.now()}] Error in set_chart_data for {code}: {str(e)}")
     
     def get_chart_data(self, code: str, cycle: str, tick: int = None) -> list:
-        """특정 종목, 주기의 차트 데이터 반환"""
-        start_time = time.time()
-        
-        # 코드별 락 획득 (읽기 전용)
-        lock = self._get_code_lock(code)
-        
-        with lock:
-            # 먼저 캐시된 데이터 확인
-            chart_data = None
-            if code in self._data_cache:
-                cached_data, cache_time = self._data_cache[code]
-                if time.time() - cache_time < 0.1:  # 100ms 캐시 타임아웃
-                    chart_data = cached_data.copy()
-            
-            # 캐시에 없으면 전체 데이터 로드
-            if chart_data is None:
-                chart_data = self._load_code_data(code)
-                if chart_data is None:  # 로드 실패 시
-                    return []
-            
-            # 최신 캔들 확인 (1분봉만 해당)
-            if cycle == 'mi' and tick == 1 and 'mi1' in chart_data and chart_data['mi1']:
-                # 공유 메모리 가져오기
-                shm = self._get_shared_memory(code)
-                if shm:
-                    try:
-                        # 헤더 정보 읽기
-                        data_size, timestamp, last_candle_offset, last_candle_size = struct.unpack_from('!IIII', shm.buf, 0)
-                        
-                        # 유효한 최신 캔들 정보가 있는지 확인
-                        if last_candle_offset > 0 and last_candle_size > 0:
-                            # 캐시된 데이터의 타임스탬프가 더 이전이면 최신 캔들만 업데이트
-                            shm_timestamp = struct.unpack_from('!I', shm.buf, 4)[0]
-                            
-                            # 별도 저장된 최신 캔들 읽기
-                            candle_data = bytes(shm.buf[last_candle_offset:last_candle_offset+last_candle_size])
-                            latest_candle = msgpack.unpackb(candle_data, raw=False)
-                            
-                            # 최신 캔들 업데이트
-                            if chart_data['mi1']:
-                                chart_data['mi1'][0] = latest_candle
-                                
-                                # 캐시 업데이트
-                                if code in self._data_cache:
-                                    cached_full_data, _ = self._data_cache[code]
-                                    cached_full_data['mi1'][0] = latest_candle
-                                    self._data_cache[code] = (cached_full_data, time.time())
-                    except Exception as e:
-                        logging.debug(f"[{datetime.now()}] Error updating latest candle in get_chart_data: {str(e)}", exc_info=True)
-            
-            cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
-            
-            # 1분봉, 3분봉, 일봉은 있으면 바로 반환
-            if cycle_key in chart_data:
-                result = chart_data[cycle_key].copy() if chart_data[cycle_key] else []
-                
-                elapsed = time.time() - start_time
-                if elapsed > 0.01:
-                    logging.debug(f"[{datetime.now()}] get_chart_data for {code} took {elapsed:.6f} seconds")
-                
-                return result
-            
-            # 다른 분봉은 1분봉에서 생성
-            if cycle == 'mi' and 'mi1' in chart_data and chart_data['mi1']:
-                # 집계 데이터 생성
-                aggregated_data = self._aggregate_minute_data(chart_data['mi1'], tick)
-                
-                # 데이터 저장 (캐싱)
-                chart_data[cycle_key] = aggregated_data
-                self._save_code_data(code, chart_data)
-                
-                elapsed = time.time() - start_time
-                if elapsed > 0.01:
-                    logging.debug(f"[{datetime.now()}] get_chart_data with aggregation for {code} took {elapsed:.6f} seconds")
-                
-                return aggregated_data.copy()
-            
-            # 주봉, 월봉은 없으면 서버에서 가져오기
-            if cycle in ['wk', 'mo'] and cycle not in chart_data:
-                # 서버에서 가져오기
-                try:
-                    data = gm.ipc.answer('dbm', 'dbm_get_chart_data', code, cycle, tick)
-                    if data:
-                        chart_data[cycle] = data
-                        self._save_code_data(code, chart_data)
-                        
-                        elapsed = time.time() - start_time
-                        if elapsed > 0.01:
-                            logging.debug(f"[{datetime.now()}] get_chart_data from server for {code} took {elapsed:.6f} seconds")
-                        
-                        return data.copy()
-                except:
-                    pass
-            
-            # 비어있는 경우
+        """특정 종목, 주기의 차트 데이터 반환 - 데드락 안전 버전"""
+        # 코드별 락 획득 (읽기용)
+        code_lock = self._get_code_lock(code)
+        if not code_lock:
             return []
         
-    def _create_index_map(self, chart_data, code: str, cycle_key: str):
-        """시간 -> 인덱스 매핑 생성 (빠른 검색용)"""
+        try:
+            if not code_lock.acquire(timeout=self._lock_timeout):
+                logging.warning(f"[{datetime.now()}] Code lock timeout for get_chart_data: {code}")
+                return []
+            
+            try:
+                # 데이터 로드
+                chart_data = self._load_code_data_safe(code)
+                if not chart_data:
+                    return []
+                
+                cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
+                
+                # 저장된 데이터가 있으면 바로 반환
+                if cycle_key in chart_data and chart_data[cycle_key]:
+                    return chart_data[cycle_key].copy()
+                
+                # 분봉 집계 처리 (1분봉에서)
+                if cycle == 'mi' and 'mi1' in chart_data and chart_data['mi1']:
+                    aggregated_data = self._aggregate_minute_data(chart_data['mi1'], tick)
+                    
+                    # 집계 데이터 저장
+                    chart_data[cycle_key] = aggregated_data
+                    self._save_code_data_safe(code, chart_data)
+                    
+                    return aggregated_data.copy()
+                
+                return []
+                
+            finally:
+                code_lock.release()
+        except Exception as e:
+            logging.error(f"[{datetime.now()}] Error in get_chart_data for {code}: {str(e)}")
+            return []
+    
+    def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
+        """실시간 가격 정보로 차트 데이터 업데이트 - 데드락 안전 버전"""
+        # 코드별 락 획득
+        code_lock = self._get_code_lock(code)
+        if not code_lock:
+            return
+        
+        try:
+            if not code_lock.acquire(timeout=self._lock_timeout):
+                logging.warning(f"[{datetime.now()}] Code lock timeout for update_chart: {code}")
+                return
+            
+            try:
+                # 데이터 로드
+                chart_data = self._load_code_data_safe(code)
+                
+                # 1분봉 업데이트
+                self._update_minute_chart_safe(chart_data, code, price, volume, amount, datetime_str)
+                
+                # 3분봉 업데이트
+                self._update_cyclic_chart_safe(chart_data, code, price, volume, amount, datetime_str, 3)
+                
+                # 일봉 업데이트 (있는 경우에만)
+                if 'dy' in chart_data and chart_data['dy']:
+                    self._update_day_chart_safe(chart_data, code, price, volume, amount, datetime_str)
+                    # 주봉/월봉 업데이트
+                    self._update_week_month_chart_safe(chart_data, code, price, volume, amount, datetime_str)
+                
+                # 데이터 저장
+                self._save_code_data_safe(code, chart_data)
+                
+            finally:
+                code_lock.release()
+        except Exception as e:
+            logging.error(f"[{datetime.now()}] Error in update_chart for {code}: {str(e)}")
+
+    def _create_index_map_safe(self, chart_data, code: str, cycle_key: str):
+        """시간 -> 인덱스 매핑 생성 (데드락 안전)"""
         if 'index_maps' not in chart_data:
             chart_data['index_maps'] = {}
         if cycle_key not in chart_data['index_maps']:
             chart_data['index_maps'][cycle_key] = {}
-                
+        
         index_map = {}
-        data = chart_data[cycle_key]
+        data = chart_data.get(cycle_key, [])
         
         time_key = '체결시간' if cycle_key.startswith('mi') else '일자'
         
         for i, candle in enumerate(data):
             if time_key in candle:
                 index_map[candle[time_key]] = i
-                
+        
         chart_data['index_maps'][cycle_key] = index_map
     
-    def _update_index_map(self, chart_data, cycle_key, time_key):
-        """인덱스 맵 업데이트 (새 캔들 추가 시)"""
+    def _update_minute_chart_safe(self, chart_data, code, price, volume, amount, datetime_str):
+        """1분봉 업데이트 (데드락 안전)"""
+        base_time = datetime_str[:12] + '00'
+        
+        if 'mi1' not in chart_data:
+            chart_data['mi1'] = []
+        
+        minute_data = chart_data['mi1']
+        
+        # 데이터가 없는 경우
+        if not minute_data:
+            new_candle = self._create_candle(code, base_time, price, price, price, price, volume, amount)
+            minute_data.insert(0, new_candle)
+            
+            if 'index_maps' not in chart_data:
+                chart_data['index_maps'] = {}
+            if 'mi1' not in chart_data['index_maps']:
+                chart_data['index_maps']['mi1'] = {}
+            chart_data['index_maps']['mi1'][base_time] = 0
+            return
+        
+        # 최신 봉 시간 확인
+        latest_time = minute_data[0]['체결시간']
+        
+        # 같은 봉 내의 업데이트
+        if latest_time == base_time:
+            self._update_candle(minute_data[0], price, price, volume, amount)
+            return
+        
+        # 새로운 봉 처리
+        time_diff = self._calculate_time_diff(latest_time, base_time)
+        
+        # 누락된 봉이 있는 경우
+        if time_diff > 1:
+            last_price = minute_data[0]['현재가']
+            missing_times = self._generate_missing_times(latest_time, base_time)
+            
+            for missing_time in missing_times:
+                missing_candle = self._create_candle(
+                    code, missing_time, last_price, last_price, last_price, last_price, 0, 0, True)
+                minute_data.insert(0, missing_candle)
+                self._update_index_map_safe(chart_data, 'mi1', missing_time)
+        
+        # 현재 시간대의 새 봉 추가
+        new_candle = self._create_candle(code, base_time, price, price, price, price, volume, amount)
+        minute_data.insert(0, new_candle)
+        self._update_index_map_safe(chart_data, 'mi1', base_time)
+    
+    def _update_index_map_safe(self, chart_data, cycle_key, time_key):
+        """인덱스 맵 업데이트 (데드락 안전)"""
         if 'index_maps' not in chart_data:
             chart_data['index_maps'] = {}
         if cycle_key not in chart_data['index_maps']:
             chart_data['index_maps'][cycle_key] = {}
-            
+        
         # 기존 인덱스 시프트
         chart_data['index_maps'][cycle_key] = {k: v+1 for k, v in chart_data['index_maps'][cycle_key].items()}
         # 새 캔들 인덱스 추가
         chart_data['index_maps'][cycle_key][time_key] = 0
-   
+    
+    def _update_cyclic_chart_safe(self, chart_data, code, price, volume, amount, datetime_str, tick):
+        """주기적 차트 업데이트 (데드락 안전)"""
+        cycle_key = f'mi{tick}'
+        
+        if len(datetime_str) < 12:
+            return
+        
+        # 시간 계산
+        hour = int(datetime_str[8:10])
+        minute = int(datetime_str[10:12])
+        total_minutes = hour * 60 + minute
+        
+        tick_start = (total_minutes // tick) * tick
+        tick_time = f"{datetime_str[:8]}{tick_start//60:02d}{tick_start%60:02d}00"
+        
+        # 데이터 초기화
+        if cycle_key not in chart_data:
+            chart_data[cycle_key] = []
+        
+        cyclic_data = chart_data[cycle_key]
+        
+        if not cyclic_data:
+            new_candle = self._create_candle(code, tick_time, price, price, price, price, volume, amount)
+            cyclic_data.append(new_candle)
+            self._update_index_map_safe(chart_data, cycle_key, tick_time)
+            return
+        
+        latest_time = cyclic_data[0]['체결시간']
+        
+        if latest_time == tick_time:
+            self._update_candle(cyclic_data[0], price, None, volume, amount)
+            return
+        
+        # 새로운 주기 처리
+        time_diff = self._calculate_time_diff(latest_time, tick_time, tick)
+        
+        if time_diff > 1:
+            last_price = cyclic_data[0]['현재가']
+            missing_times = self._generate_missing_times(latest_time, tick_time, tick)
+            
+            for missing_time in missing_times:
+                missing_candle = self._create_candle(
+                    code, missing_time, last_price, last_price, last_price, last_price, 0, 0, True)
+                cyclic_data.insert(0, missing_candle)
+                self._update_index_map_safe(chart_data, cycle_key, missing_time)
+        
+        new_candle = self._create_candle(code, tick_time, price, price, price, price, volume, amount)
+        cyclic_data.insert(0, new_candle)
+        self._update_index_map_safe(chart_data, cycle_key, tick_time)
+
+    def _update_day_chart_safe(self, chart_data, code, price, volume, amount, datetime_str):
+        """일봉 데이터 업데이트 (데드락 안전)"""
+        day_data = chart_data.get('dy', [])
+        if not day_data:
+            return
+        
+        today = datetime_str[:8]
+        
+        # 인덱스 맵 사용하여 오늘 데이터 찾기
+        if ('index_maps' in chart_data and 'dy' in chart_data['index_maps'] and 
+            today in chart_data['index_maps']['dy']):
+            idx = chart_data['index_maps']['dy'][today]
+            if idx < len(day_data):
+                current = day_data[idx]
+                self._update_candle(current, price, None, volume, amount)
+                return
+        
+        # 당일 데이터가 없는 경우 새로 추가
+        new_day = {
+            '종목코드': code,
+            '일자': today,
+            '시가': price,
+            '고가': price,
+            '저가': price,
+            '현재가': price,
+            '거래량': volume,
+            '거래대금': amount
+        }
+        day_data.insert(0, new_day)
+        self._update_index_map_safe(chart_data, 'dy', today)
+    
+    def _update_week_month_chart_safe(self, chart_data, code, price, volume, amount, datetime_str):
+        """주봉/월봉 업데이트 (데드락 안전)"""
+        today = datetime_str[:8]
+        
+        try:
+            year = int(today[:4])
+            month = int(today[4:6])
+            day = int(today[6:8])
+            date_obj = datetime(year, month, day)
+        except ValueError:
+            return
+        
+        # 주봉 업데이트
+        self._update_period_chart_safe(chart_data, code, price, volume, amount, date_obj, 'wk', 'week')
+        
+        # 월봉 업데이트
+        self._update_period_chart_safe(chart_data, code, price, volume, amount, date_obj, 'mo', 'month')
+    
+    def _update_period_chart_safe(self, chart_data, code, price, volume, amount, date_obj, cycle_key, period_type):
+        """주봉/월봉 공통 업데이트 로직 (데드락 안전)"""
+        period_data = chart_data.get(cycle_key, [])
+        if not period_data:
+            return
+        
+        # 현재 주기 키 계산
+        if period_type == 'week':
+            days_since_monday = date_obj.weekday()
+            monday = date_obj - timedelta(days=days_since_monday)
+            current_period_key = monday.strftime('%Y%m%d')
+        else:  # month
+            current_period_key = date_obj.strftime('%Y%m01')
+        
+        # 인덱스 맵 사용하여 현재 주기 데이터 찾기
+        if ('index_maps' in chart_data and cycle_key in chart_data['index_maps'] and 
+            current_period_key in chart_data['index_maps'][cycle_key]):
+            idx = chart_data['index_maps'][cycle_key][current_period_key]
+            if idx < len(period_data):
+                current = period_data[idx]
+                self._update_candle(current, price, None, volume, amount)
+                return
+        
+        # 현재 주기 데이터가 없는 경우 새로 추가
+        new_period = {
+            '종목코드': code,
+            '일자': current_period_key,
+            '시가': price,
+            '고가': price,
+            '저가': price,
+            '현재가': price,
+            '거래량': volume,
+            '거래대금': amount
+        }
+        period_data.insert(0, new_period)
+        self._update_index_map_safe(chart_data, cycle_key, current_period_key)
+    
+    def clean_up_safe(self):
+        """공유 메모리 정리 - 데드락 안전 버전"""
+        try:
+            if not self._global_lock.acquire(timeout=self._lock_timeout):
+                logging.warning(f"[{datetime.now()}] Global lock timeout for cleanup")
+                return
+            
+            try:
+                # 모든 공유 메모리 해제
+                for code, shm in list(self._shm_map.items()):
+                    try:
+                        shm.close()
+                        shm.unlink()
+                        logging.debug(f"[{datetime.now()}] Cleaned up shared memory for {code}")
+                    except Exception as e:
+                        logging.warning(f"[{datetime.now()}] Error cleaning up memory for {code}: {str(e)}")
+                
+                # 맵 초기화
+                self._shm_map.clear()
+                self._data_cache.clear()
+                self._cache_timestamps.clear()
+                
+            finally:
+                self._global_lock.release()
+                
+        except Exception as e:
+            logging.error(f"[{datetime.now()}] Error in cleanup: {str(e)}")
+        
+        # 코드별 락 정리
+        try:
+            if not self._code_locks_lock.acquire(timeout=self._lock_timeout):
+                logging.warning(f"[{datetime.now()}] Code locks cleanup timeout")
+                return
+            
+            try:
+                self._code_locks.clear()
+            finally:
+                self._code_locks_lock.release()
+        except Exception as e:
+            logging.error(f"[{datetime.now()}] Error cleaning up code locks: {str(e)}")
+        
+        logging.debug(f"[{datetime.now()}] All resources cleaned up in PID: {os.getpid()}")
+    
     def _create_candle(self, code, time_str, close, open, high, low, volume, amount, is_missing=False):
         """캔들 객체 생성 헬퍼 함수"""
         candle = {
@@ -576,44 +687,35 @@ class ChartData:
         if amount is not None:
             candle['거래대금'] = amount
         
-        # 누락 표시 제거
         if 'is_missing' in candle:
             del candle['is_missing']
-    
+
     def _calculate_time_diff(self, time1, time2, tick=1):
         """두 시간 사이의 차이 계산 (tick 단위)"""
-        # 날짜 부분이 다르면 큰 값 반환
         if time1[:8] != time2[:8]:
-            return 1000  # 다른 날짜는 큰 차이로 처리
+            return 1000
         
-        # 시간을 분으로 변환
         minutes1 = int(time1[8:10]) * 60 + int(time1[10:12])
         minutes2 = int(time2[8:10]) * 60 + int(time2[10:12])
         
-        # tick 단위로 변환
         period1 = minutes1 // tick
         period2 = minutes2 // tick
         
-        # 차이 계산
         return period2 - period1 if period2 > period1 else 1000
 
     def _generate_missing_times(self, start_time, end_time, tick=1):
         """누락된 시간대 목록 생성"""
         result = []
         
-        # 날짜 부분이 다르면 빈 목록 반환
         if start_time[:8] != end_time[:8]:
             return result
         
-        # 시작/종료 시간을 분으로 변환
         start_minutes = int(start_time[8:10]) * 60 + int(start_time[10:12])
         end_minutes = int(end_time[8:10]) * 60 + int(end_time[10:12])
         
-        # tick 단위로 변환
         start_period = (start_minutes // tick)
         end_period = (end_minutes // tick)
         
-        # 사이에 있는 모든 시간대 생성
         for period in range(start_period + 1, end_period):
             minutes = period * tick
             hour = minutes // 60
@@ -623,133 +725,12 @@ class ChartData:
         
         return result
     
-    def _update_cyclic_chart(self, chart_data, code, price, volume, amount, datetime_str, tick):
-        """주기적 차트 업데이트 (3분봉 등)"""
-        cycle_key = f'mi{tick}'
-        
-        # 입력 데이터 형식 검증
-        if len(datetime_str) < 12:
-            return
-        
-        # 시간 계산
-        hour = int(datetime_str[8:10])
-        minute = int(datetime_str[10:12])
-        total_minutes = hour * 60 + minute
-        
-        # tick 주기 구간 계산
-        tick_start = (total_minutes // tick) * tick
-        tick_time = f"{datetime_str[:8]}{tick_start//60:02d}{tick_start%60:02d}00"
-        
-        # 데이터 없으면 초기화
-        if cycle_key not in chart_data:
-            minute_data = chart_data.get('mi1', [])
-            if minute_data:
-                chart_data[cycle_key] = self._aggregate_minute_data(minute_data, tick)
-                self._create_index_map(chart_data, code, cycle_key)
-            else:
-                chart_data[cycle_key] = []
-            return
-        
-        # 주기 데이터 참조
-        cyclic_data = chart_data[cycle_key]
-        
-        # 주기 데이터가 비어있으면 새로 생성
-        if not cyclic_data:
-            new_candle = self._create_candle(code, tick_time, price, price, price, price, volume, amount)
-            cyclic_data.append(new_candle)
-            
-            # 인덱스 맵 초기화
-            if 'index_maps' not in chart_data:
-                chart_data['index_maps'] = {}
-            if cycle_key not in chart_data['index_maps']:
-                chart_data['index_maps'][cycle_key] = {}
-            chart_data['index_maps'][cycle_key][tick_time] = 0
-            return
-        
-        # 현재 주기 시간 확인
-        latest_time = cyclic_data[0]['체결시간']
-        
-        # 같은 주기 내의 업데이트인 경우
-        if latest_time == tick_time:
-            # 기존 주기 캔들 업데이트
-            self._update_candle(cyclic_data[0], price, None, volume, amount)
-            return
-        
-        # 시간 차이 확인
-        time_diff = self._calculate_time_diff(latest_time, tick_time, tick)
-        
-        # 누락된 주기 캔들이 있는 경우
-        if time_diff > 1:
-            # 직전 주기 캔들의 종가
-            last_price = cyclic_data[0]['현재가']
-            
-            # 누락된 주기 시간대 목록 생성
-            missing_times = self._generate_missing_times(latest_time, tick_time, tick)
-            
-            # 누락된 주기 캔들 생성
-            for missing_time in missing_times:
-                missing_candle = self._create_candle(
-                code, missing_time, last_price, last_price, last_price, last_price, 0, 0, True)
-                cyclic_data.insert(0, missing_candle)
-                self._update_index_map(chart_data, cycle_key, missing_time)
-        
-        # 현재 주기 캔들 추가
-        new_candle = self._create_candle(code, tick_time, price, price, price, price, volume, amount)
-        cyclic_data.insert(0, new_candle)
-        self._update_index_map(chart_data, cycle_key, tick_time)
-    
-    def _update_day_chart(self, chart_data, code, price, volume, amount, datetime_str):
-        """일봉 데이터 업데이트 (당일)"""
-        day_data = chart_data.get('dy', [])
-        if not day_data:
-            return
-            
-        today = datetime_str[:8]  # YYYYMMDD
-        
-        # 인덱스 맵 사용하여 오늘 데이터 빠르게 찾기
-        if 'index_maps' in chart_data and 'dy' in chart_data['index_maps'] and today in chart_data['index_maps']['dy']:
-            idx = chart_data['index_maps']['dy'][today]
-            if idx < len(day_data):
-                current = day_data[idx]
-                self._update_candle(current, price, None, volume, amount)
-                return
-        
-        # 당일 데이터가 없는 경우
-        # 전일 봉 찾기
-        if day_data:
-            # 새 일봉 추가
-            new_day = {
-                '종목코드': code,
-                '일자': today,
-                '시가': price,  # 첫 체결가가 시가가 됨
-                '고가': price,
-                '저가': price,
-                '현재가': price,
-                '거래량': volume,
-                '거래대금': amount
-            }
-            day_data.insert(0, new_day)
-            
-            # 인덱스 맵 업데이트
-            if 'index_maps' not in chart_data:
-                chart_data['index_maps'] = {}
-            if 'dy' not in chart_data['index_maps']:
-                chart_data['index_maps']['dy'] = {}
-            
-            # 기존 인덱스 시프트
-            chart_data['index_maps']['dy'] = {k: v+1 for k, v in chart_data['index_maps']['dy'].items()}
-            # 새 데이터 인덱스 추가
-            chart_data['index_maps']['dy'][today] = 0
-    
     def _aggregate_minute_data(self, minute_data, tick):
         """1분봉 데이터를 특정 tick으로 집계"""
         if not minute_data:
             return []
         
-        # 그룹별 데이터 저장용 해시맵
         grouped_data = {}
-        
-        # 분 계산용 룩업 테이블 (캐싱)
         minute_map = {}
         
         for candle in minute_data:
@@ -757,15 +738,12 @@ class ChartData:
             if len(dt_str) < 12:
                 continue
             
-            # 시간 계산 최적화
             if dt_str in minute_map:
                 group_key = minute_map[dt_str]
             else:
-                # 분 단위로 계산
                 hour = int(dt_str[8:10])
                 minute = int(dt_str[10:12])
                 total_minutes = hour * 60 + minute
-                # tick 단위로 그룹화
                 tick_start = (total_minutes // tick) * tick
                 group_hour = tick_start // 60
                 group_minute = tick_start % 60
@@ -773,110 +751,141 @@ class ChartData:
                 minute_map[dt_str] = group_key
             
             if group_key not in grouped_data:
-                # 새 그룹 생성
                 grouped_data[group_key] = {
-                '종목코드': candle['종목코드'],
-                '체결시간': group_key,
-                '시가': candle['시가'],
-                '고가': candle['고가'],
-                '저가': candle['저가'],
-                '현재가': candle['현재가'],
-                '거래량': candle['거래량'],
-                '거래대금': candle.get('거래대금', 0)
+                    '종목코드': candle['종목코드'],
+                    '체결시간': group_key,
+                    '시가': candle['시가'],
+                    '고가': candle['고가'],
+                    '저가': candle['저가'],
+                    '현재가': candle['현재가'],
+                    '거래량': candle['거래량'],
+                    '거래대금': candle.get('거래대금', 0)
                 }
             else:
-                # 기존 그룹 업데이트
                 group = grouped_data[group_key]
-                group['현재가'] = candle['현재가']  # 마지막 값이 종가가 됨
+                group['현재가'] = candle['현재가']
                 group['고가'] = max(group['고가'], candle['고가'])
                 group['저가'] = min(group['저가'], candle['저가'])
                 group['거래량'] += candle['거래량']
                 group['거래대금'] += candle.get('거래대금', 0)
         
-        # 시간 기준 정렬하여 결과 반환 (최신이 먼저)
         result = list(grouped_data.values())
         result.sort(key=lambda x: x['체결시간'], reverse=True)
         return result
     
-    # 메모리 관리 및 클린업 함수
-    def clean_up(self):
-        """공유 메모리 정리 - 프로그램 종료 시 호출"""
-        with self._lock:
-            # 모든 공유 메모리 해제
-            for code, shm in self._shm_map.items():
-                try:
-                    shm.close()
-                    shm.unlink()
-                    logging.debug(f"[{datetime.now()}] Cleaned up shared memory for {code}")
-                except Exception as e:
-                    logging.debug(f"[{datetime.now()}] Error cleaning up memory for {code}: {str(e)}", exc_info=True)
-                
-            # 맵 초기화
-            self._shm_map.clear()
-            self._code_locks.clear()
-            self._data_cache.clear()
+    def _aggregate_day_data(self, day_data, period_type):
+        """일봉 데이터를 주봉/월봉으로 집계"""
+        if not day_data:
+            return []
+        
+        grouped_data = {}
+        period_map = {}
+        
+        for candle in day_data:
+            date_str = candle['일자']
+            if len(date_str) != 8:
+                continue
             
-            logging.debug(f"[{datetime.now()}] All shared memory cleaned up in PID: {os.getpid()}")
+            if date_str in period_map:
+                group_key = period_map[date_str]
+            else:
+                try:
+                    year = int(date_str[:4])
+                    month = int(date_str[4:6])
+                    day = int(date_str[6:8])
+                    
+                    if period_type == 'week':
+                        date_obj = datetime(year, month, day)
+                        days_since_monday = date_obj.weekday()
+                        monday = date_obj - timedelta(days=days_since_monday)
+                        group_key = monday.strftime('%Y%m%d')
+                    else:  # month
+                        group_key = f"{year:04d}{month:02d}01"
+                    
+                    period_map[date_str] = group_key
+                except ValueError:
+                    continue
+            
+            if group_key not in grouped_data:
+                grouped_data[group_key] = {
+                    '종목코드': candle['종목코드'],
+                    '일자': group_key,
+                    '시가': candle['시가'],
+                    '고가': candle['고가'],
+                    '저가': candle['저가'],
+                    '현재가': candle['현재가'],
+                    '거래량': candle['거래량'],
+                    '거래대금': candle.get('거래대금', 0)
+                }
+            else:
+                group = grouped_data[group_key]
+                group['현재가'] = candle['현재가']
+                group['고가'] = max(group['고가'], candle['고가'])
+                group['저가'] = min(group['저가'], candle['저가'])
+                group['거래량'] += candle['거래량']
+                group['거래대금'] += candle.get('거래대금', 0)
+        
+        result = list(grouped_data.values())
+        result.sort(key=lambda x: x['일자'], reverse=True)
+        return result
     
     # 속성 접근 메서드 (기존 코드와의 호환성 유지)
-    @property
-    def _data(self):
-        """_data 속성 접근 - 모든 코드의 데이터 사전 형태로 반환"""
-        all_data = {}
+    # @property
+    # def _data(self):
+    #     """_data 속성 접근 - 모든 코드의 데이터 사전 형태로 반환"""
+    #     all_data = {}
         
-        # 모든 코드 목록 가져오기
-        code_list = [code for code in self._shm_map.keys()]
+    #     # 모든 코드 목록 가져오기
+    #     code_list = [code for code in self._shm_map.keys()]
         
-        # 각 코드별 데이터 로드
-        for code in code_list:
-            try:
-                code_data = self._load_code_data(code)
-                # 주기별 데이터 추출
-                data_by_cycle = {}
-                for key, value in code_data.items():
-                    if key != 'index_maps':  # 인덱스 맵은 제외
-                        data_by_cycle[key] = value
+    #     # 각 코드별 데이터 로드
+    #     for code in code_list:
+    #         try:
+    #             code_data = self._load_code_data(code)
+    #             # 주기별 데이터 추출
+    #             data_by_cycle = {}
+    #             for key, value in code_data.items():
+    #                 if key != 'index_maps':  # 인덱스 맵은 제외
+    #                     data_by_cycle[key] = value
                 
-                all_data[code] = data_by_cycle
-            except:
-                pass
+    #             all_data[code] = data_by_cycle
+    #         except:
+    #             pass
         
-        return all_data
+    #     return all_data
    
-    @property
-    def _index_maps(self):
-        """_index_maps 속성 접근 - 모든 코드의 인덱스 맵 사전 형태로 반환"""
-        all_index_maps = {}
+    # @property
+    # def _index_maps(self):
+    #     """_index_maps 속성 접근 - 모든 코드의 인덱스 맵 사전 형태로 반환"""
+    #     all_index_maps = {}
         
-        # 모든 코드 목록 가져오기
-        code_list = [code for code in self._shm_map.keys()]
+    #     # 모든 코드 목록 가져오기
+    #     code_list = [code for code in self._shm_map.keys()]
         
-        # 각 코드별 인덱스 맵 로드
-        for code in code_list:
-            try:
-                code_data = self._load_code_data(code)
-                if 'index_maps' in code_data:
-                    all_index_maps[code] = code_data['index_maps']
-                else:
-                    all_index_maps[code] = {}
-            except:
-                all_index_maps[code] = {}
+    #     # 각 코드별 인덱스 맵 로드
+    #     for code in code_list:
+    #         try:
+    #             code_data = self._load_code_data(code)
+    #             if 'index_maps' in code_data:
+    #                 all_index_maps[code] = code_data['index_maps']
+    #             else:
+    #                 all_index_maps[code] = {}
+    #         except:
+    #             all_index_maps[code] = {}
         
-        return all_index_maps
+    #     return all_index_maps
 
-ctdt = ChartData()
+cht_dt = ChartData()
 
 class ChartManager:
     def __init__(self, code, cycle='mi', tick=3):
         self.cycle = cycle  # 'mo', 'wk', 'dy', 'mi' 중 하나
         self.tick = tick    # 분봉일 경우 주기
-        # self.chart_data = ChartData()  # 싱글톤 인스턴스
         self._data_cache = {}  # 종목별 데이터 캐시 {code: data}
         self.code = code    # 종목코드 (없으면 컨텍스트에서 가져옴)
 
     def _get_data(self) -> list:
         """현재 종목의 차트 데이터 가져오기 (캐싱)"""
-        #code = self._get_code()
         if self.code not in self._data_cache:
             # 데이터 가져오기
             self._data_cache[self.code] = self._load_chart_data(self.code)
@@ -884,7 +893,7 @@ class ChartManager:
     
     def _load_chart_data(self, code: str) -> list:
         """차트 데이터 로드 및 변환"""
-        data = ctdt.get_chart_data(code, self.cycle, self.tick)
+        data = cht_dt.get_chart_data(code, self.cycle, self.tick)
         
         # 데이터 변환 (API 형식 -> 내부 형식)
         result = []
@@ -2734,70 +2743,14 @@ def enhance_script_manager(script_manager, cache_dir=dc.fp.cache_path):
     
 # 예제 실행
 if __name__ == '__main__':
-    # 예제 1: 기본 가격 비교 스크립트
-    price_check_script = """
-    # 일봉 차트의 종가가 지정된 가격보다 높은지 확인
-    dy = ChartManager('dy')  # 코드는 kwargs에서 자동으로 가져옴
-    result = dy.c() > price  # 종가 > 사용자 지정 가격
+    mi3 = ChartManager('005930', 'mi', 3)
 
-    if result:
-        debug(f"{name}(종가:{dy.c()})가 목표가({price})보다 높습니다")
-    else:
-        debug(f"{name}(종가:{dy.c()})가 목표가({price})보다 낮습니다")
-    """
+    ma5 = mi3.indicator(mi3.ma, mi3.c, 5)
+    ma20 = mi3.indicator(mi3.ma, mi3.c, 20)
 
-    # 예제 2: 스크립트 호출 예제
-    call_script = """
-    # 다른 스크립트 호출 (code를 직접 지정하지 않음)
-    samsung_result = price_check()  # 현재 컨텍스트의 코드 사용
-    hyundai_result = price_check(code='005380', price=70000)  # 다른 종목, 다른 가격
+    c1 = ma5() > ma20() and mi3.c > ma5()
+    c2 = ma5(1) < ma5() and ma20(1) < ma20()
 
-    result = f"삼성: {samsung_result}, 현대: {hyundai_result}"
-    """
+    result = ma5(1)
 
-    # 예제 3: 여러 종목 비교 스크립트
-    multi_stock_script = """
-    # 여러 종목의 상대 강도 비교
-    samsung = ChartManager('dy', code='005930')  # 삼성전자
-    hyundai = ChartManager('dy', code='005380')  # 현대차
-    sk = ChartManager('dy', code='017670')       # SK텔레콤
-
-    # 상대 강도 계산 (20일 이동평균 대비 현재가 비율)
-    samsung_strength = samsung.c() / samsung.ma(samsung.c, 20)
-    hyundai_strength = hyundai.c() / hyundai.ma(hyundai.c, 20)
-    sk_strength = sk.c() / sk.ma(sk.c, 20)
-
-    # 결과 정리
-    stocks = [
-        {"name": "삼성전자", "strength": samsung_strength},
-        {"name": "현대차", "strength": hyundai_strength},
-        {"name": "SK텔레콤", "strength": sk_strength}
-    ]
-
-    # 강도 순으로 정렬
-    sorted_stocks = sorted(stocks, key=lambda x: x["strength"], reverse=True)
-
-    # 결과 출력
-    result = "상대 강도 순위:\\n"
-    for i, stock in enumerate(sorted_stocks, 1):
-        result += f"{i}. {stock['name']}: {stock['strength']:.2f}\\n"
-    """
-
-    sm = ScriptManager()
-    enhance_script_manager(sm)
-    
-    # 스크립트 저장
-    sm.set_script_compiled('price_check', price_check_script, vars={'price': 55800})
-    sm.set_script_compiled('call_script', call_script)
-    sm.set_script_compiled('multi_stock', multi_stock_script)
-    
-    # 실행 (종목코드는 kwargs로 전달)
-    result1 = sm.run_script('price_check', kwargs={'code': '005930'})
-    logging.debug("가격 체크 결과:", result1)
-    
-    result2 = sm.run_script('call_script', kwargs={'code': '005930'})
-    logging.debug("호출 스크립트 결과:", result2)
-    
-    result3 = sm.run_script('multi_stock')  # 스크립트 내에서 코드 지정
-    logging.debug("여러 종목 비교 결과:", result3)
-
+    print(result)

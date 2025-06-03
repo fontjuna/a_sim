@@ -1,5 +1,5 @@
 from public import dc, get_path, profile_operation
-from chart import ctdt
+from chart import cht_dt
 from datetime import datetime, timedelta
 import logging
 import sqlite3
@@ -8,6 +8,7 @@ import threading
 import copy
 import time
 import multiprocessing as mp
+from collections import defaultdict
 
 class DBMServer:
     def __init__(self):
@@ -15,68 +16,82 @@ class DBMServer:
         self.running = False
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
-        self.done_code = []
+        
+        # 락-프리 최적화: 읽기 전용 데이터를 분리
+        self.done_code = set()  # list -> set 변경 (O(1) 조회)
         self.todo_code = {}
-
-        self._lock = None#threading.Lock()
-        self.thread_local = None#threading.local()  # 스레드 로컬 변수 추가
+        
+        # 읽기-쓰기 락 분리
+        self._write_lock = None  # 쓰기 전용 락 (최소화)
+        self._done_lock = threading.RLock()  # done_code 전용 락 (재진입 가능)
+        
+        self.thread_local = None
         self.thread_run = False
         self.thread_chart = None    
-
-        self.database = {} # 테스트용
+        self.database = {}  # 테스트용
+        
+        # 성능 최적화: 백그라운드 등록 큐
+        self._pending_registrations = []
+        self._pending_lock = threading.Lock()
 
     def initialize(self):
-        self._lock = threading.Lock()
-        self.thread_local = threading.local()  # 스레드 로컬 변수 추가
+        self._write_lock = threading.Lock()
+        self.thread_local = threading.local()
+        self.running = True
         self.init_dbm()
-        self.start_request_chart_data()
+        # self.start_request_chart_data()
 
     def cleanup(self):
-        # 모든 연결 닫기 시도 (각 스레드의 연결)
         try:
             print(f"{self.__class__.__name__} 중지 중...")
             self.running = False
-            # 중지 관련 코드
-            self.stop_request_chart_data()
-            self.thread_chart = None
+            # self.stop_request_chart_data()
+            
+            # 스레드 종료 대기
+            if self.thread_chart:
+                self.thread_chart.join(timeout=2.0)
+                self.thread_chart = None
+            
+            # 연결 정리
             if hasattr(self.thread_local, 'chart'):
-                conn = self.thread_local.chart
-                conn.close()
+                self.thread_local.chart.close()
             if hasattr(self.thread_local, 'db'):
-                conn = self.thread_local.db
-                conn.close()
+                self.thread_local.db.close()
+                
             self.thread_local = None
-            self._lock = None
+            self._write_lock = None
+            self._done_lock = None
+            
         except Exception as e:
-            logging.error(f"Error closing database connections: {e}", exc_info=True)
+            logging.error(f"Error in cleanup: {e}", exc_info=True)
 
     def get_status(self):
-        """상태 확인"""
+        """상태 확인 (락 프리)"""
         return {
             "name": self.__class__.__name__,
             "running": self.running,
-            # 추가 상태 정보
+            "done_count": len(self.done_code),
+            "todo_count": len(self.todo_code),
         }
     
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
         logging.debug(f'DBM 로그 레벨 설정: {level}')
 
-    # 각 클래스(Admin, API, DBM)에 추가할 메서드
     def get_var(self, var_name, default=None):
-        """인스턴스 변수 가져오기"""
+        """인스턴스 변수 가져오기 (락 프리)"""
         return getattr(self, var_name, default)
 
     def set_var(self, var_name, value):
-        """인스턴스 변수 설정하기"""
+        """인스턴스 변수 설정하기 (락 프리)"""
         setattr(self, var_name, value)
         return True
 
     def set_rate(self, fee_rate, tax_rate):
+        """요율 설정 (락 프리)"""
         self.fee_rate = fee_rate
         self.tax_rate = tax_rate    
 
-    # 스레드별 연결 관리 메서드 추가
     def get_connection(self, db_type='chart'):
         """스레드별 데이터베이스 연결 반환"""
         if not hasattr(self.thread_local, db_type):
@@ -95,8 +110,8 @@ class DBMServer:
         conn = self.get_connection(db_type)
         return conn.cursor()
 
-    # 디비 초기화 --------------------------------------------------------------------------------------------------
     def init_dbm(self):
+        """DB 초기화"""
         logging.debug('dbm_init_db')
 
         # 통합 디비
@@ -135,10 +150,8 @@ class DBMServer:
 
         chart_conn.commit()
 
-        #self.cleanup_old_data()
-
-    # 테이블 생성 SQL문 생성 함수
     def create_table_sql(self, table_name, fields, pk_columns=None):
+        """테이블 생성 SQL문 생성"""
         field_definitions = []
         for field in fields:
             definition = f"{field.name} {field.type}"
@@ -162,15 +175,12 @@ class DBMServer:
             field_definitions.append(f"PRIMARY KEY ({', '.join(pk_columns)})")
         return f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(field_definitions)});"
 
-    # 2. 오래된 데이터 정리 함수
     def cleanup_old_data(self):
-        """monitor 테이블에서 3개월 이상 지난 데이터 삭제"""
+        """오래된 데이터 정리"""
         try:
-            # 현재 날짜로부터 3개월 이전 날짜 계산
             three_months_ago = datetime.now() - timedelta(days=90)
             date_str = three_months_ago.strftime('%Y-%m-%d')
             
-            # 3개월 이전 데이터 삭제
             sql = f"DELETE FROM {dc.ddb.MON_TABLE_NAME} WHERE DATE(처리일시) < ?"
             self.execute_query(sql, db='db', params=(date_str,))
             
@@ -178,13 +188,13 @@ class DBMServer:
             deleted_rows = cursor.rowcount
             logging.info(f"monitor 테이블에서 {date_str} 이전 데이터 {deleted_rows}건 삭제 완료")
             
-            # 데이터베이스 최적화 (VACUUM)
             self.execute_query("VACUUM", db='db')
             
         except Exception as e:
             logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)
 
     def send_result(self, result, error=None):
+        """결과 전송"""
         order = 'dbm_query_result'
         job = {
             'result': result,
@@ -193,49 +203,52 @@ class DBMServer:
         self.order('admin', order, **job)
 
     def execute_query(self, sql, db='chart', params=None):
+        """SQL 실행"""
         try:
             cursor = self.get_cursor(db)
-            query_command = cursor.executemany if isinstance(params, list) else cursor.execute
-            if params: 
-                query_command(sql, params)
-            else: 
-                query_command(sql)
-
+            conn = self.get_connection(db)
+            
+            if isinstance(params, list) and params and isinstance(params[0], tuple):
+                cursor.executemany(sql, params)
+            else:
+                cursor.execute(sql, params if params else ())
+            
             if sql.strip().upper().startswith('SELECT'):
                 result = cursor.fetchall()
                 return result
             else:
-                conn = self.get_connection(db)
                 conn.commit()
                 return cursor.rowcount
 
         except Exception as e:
             logging.error(f"Database error: {e}", exc_info=True)
-            conn = self.get_connection(db)
             conn.rollback()
             self.send_result(None, e)
 
     def table_upsert(self, db, table, dict_data):
+        """테이블 업서트"""
         try:
             is_list = isinstance(dict_data, list)   
             temp = dict_data[0] if is_list else dict_data
             columns = ','.join(temp.keys())
             column_str = ', '.join(['?'] * len(temp))
-            params = tuple(dict_data.values()) if not is_list else [tuple(item.values()) for item in dict_data]
+            params = [tuple(item.values()) for item in dict_data] if is_list else [tuple(dict_data.values())]
             sql = f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ({column_str})"
+            
             self.execute_query(sql, db=db, params=params)
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)
 
+    @profile_operation        
     def upsert_chart(self, dict_data, cycle, tick=1):
-        """차트 데이터를 데이터베이스에 저장"""
+        """차트 데이터 저장"""
         table = dc.ddb.MIN_TABLE_NAME if cycle in ['mi', 'tk'] else dc.ddb.DAY_TABLE_NAME
         logging.debug(f'upsert_chart: {cycle}, {tick}, len={len(dict_data)} {dict_data[:1]}')
         dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
         self.table_upsert('chart', table, dict_data)
 
-    def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno,  st_no, st_name, st_buy):
-        """체결 정보를 데이터베이스에 저장하고 손익 계산"""
+    def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno, st_no, st_name, st_buy):
+        """체결 정보 저장 및 손익 계산"""
         table = dc.ddb.CONC_TABLE_NAME
         record = None
         dt = datetime.now().strftime("%Y%m%d")
@@ -243,13 +256,14 @@ class DBMServer:
         전략 = f'전략{st_no:02d}'
 
         def new_record():
-            return { '전략': 전략, '종목번호': code, '종목명': name, '매수일자': dt, '매수시간': tm, '매수수량': qty, '매수가': price, '매수금액': amount, \
-                '매수번호': ordno, '매도수량': 0, '매수전략': st_buy, '전략명칭': st_name, }
+            return { 
+                '전략': 전략, '종목번호': code, '종목명': name, '매수일자': dt, '매수시간': tm, 
+                '매수수량': qty, '매수가': price, '매수금액': amount, '매수번호': ordno, 
+                '매도수량': 0, '매수전략': st_buy, '전략명칭': st_name, 
+            }
 
         try:
-            # 1. 대상 레코드 준비 (기존 레코드 찾기 또는 새 레코드 생성)
             if kind == '매수':
-                # 미매도된 레코드 조회
                 sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND 매수일자 = ? AND 매수번호 = ? LIMIT 1"
                 result = self.execute_query(sql, db='db', params=(code, dt, ordno))
                 
@@ -257,42 +271,32 @@ class DBMServer:
                     record = result[0]
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
-                    # 신규 레코드
                     record = new_record()
             
             elif kind == '매도':
-                # 매도 기록 확인
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
                 result = self.execute_query(sql, db='db', params=(dt, ordno))
                 
                 if result:
                     record = result[0]
                 else:
-                    # 미매도 매수 레코드 확인
                     sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND 매수수량 > 매도수량 ORDER BY 매수일자 ASC, 매수시간 ASC LIMIT 1"
                     result = self.execute_query(sql, db='db', params=(code,))
                     
                     if result:
                         record = result[0]
                     else:
-                        # 신규 레코드 (매수 기록 없는 경우 자동 생성)
                         record = new_record()
 
-                # 매도 처리용 기존 매수가 결정
                 buy_price = record.get('매수가', price)
                 
-                # v. 매도 정보 업데이트
-                record['매도번호'] = ordno
-                record['매도일자'] = dt
-                record['매도시간'] = tm
-                
-                # z. 매도 금액, 손익 정보 업데이트
-                record['매도수량'] = qty
-                record['매도가'] = price
-                record['매도금액'] = amount
+                record.update({
+                    '매도번호': ordno, '매도일자': dt, '매도시간': tm,
+                    '매도수량': qty, '매도가': price, '매도금액': amount
+                })
                 
                 # 손익 계산
-                buy_amount = qty * buy_price  # 매도수량 * 매수가
+                buy_amount = qty * buy_price
                 buy_fee = int(buy_amount * self.fee_rate / 10) * 10
                 sell_fee = int(amount * self.fee_rate / 10) * 10
                 tax = int(amount * self.tax_rate)
@@ -300,32 +304,35 @@ class DBMServer:
                 profit = amount - buy_amount - total_fee
                 profit_rate = (profit / buy_amount) * 100 if buy_amount > 0 else 0
                 
-                record['제비용'] = total_fee
-                record['손익금액'] = profit
-                record['손익율'] = round(profit_rate, 2)
+                record.update({
+                    '제비용': total_fee,
+                    '손익금액': profit,
+                    '손익율': round(profit_rate, 2)
+                })
                 
-                # 매수 수량보다 매도 수량이 많은 경우 매수 수량도 갱신
-                # 이경우는 해당 매수가 없었던 경우
                 if record.get('매수수량', 0) < qty:
-                    record['매수수량'] = qty
-                    record['매수가'] = price
-                    record['매수금액'] = amount
+                    record.update({
+                        '매수수량': qty, '매수가': price, '매수금액': amount
+                    })
             
-            # 3. 최종 데이터베이스 업데이트 (한 번만 수행)
             self.table_upsert('db', table, record)
-            
             return True
+            
         except Exception as e:
             logging.error(f"upsert_conclusion error: {e}", exc_info=True)
             return False
-        
-    def dbm_get_chart_data(self, code, cycle, tick=None, times=1):
+
+    def dbm_get_chart_data(self, code, cycle, tick=1, times=1):
+        """차트 데이터 조회"""
         try:
-            if not code: return []
+            if not code: 
+                return []
+                
             rqname = f'{dc.scr.차트종류[cycle]}차트'
             trcode = dc.scr.차트TR[cycle]
             screen = dc.scr.화면[rqname]
             date = datetime.now().strftime('%Y%m%d')
+            
             if cycle in ['mi', 'tk']:
                 if tick == None:
                     tick = '1'
@@ -344,17 +351,21 @@ class DBMServer:
             dict_list = []
             while True:
                 data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen)
-                if data is None or len(data) == 0: break
+                if data is None or len(data) == 0: 
+                    break
                 dict_list.extend(data)
                 times -= 1
-                if not remain or times <= 0: break
+                if not remain or times <= 0: 
+                    break
                 next = '2' 
             
             if not dict_list:
-                logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}, dict_list:"{dict_list}"')
+                logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}')
                 return dict_list
             
-            logging.debug(f'{rqname} 데이타 얻기: times:{times}, code:{code}, cycle:{cycle}, tick:{tick}, dict_list:{dict_list[:1]}')
+            logging.debug(f'{rqname} 데이타 얻기: times:{times}, code:{code}, cycle:{cycle}, tick:{tick}, count:{len(dict_list)}')
+            
+            # 데이터 변환
             if cycle in ['mi', 'tk']:
                 dict_list = [{
                     '종목코드': code,
@@ -377,10 +388,12 @@ class DBMServer:
                     '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
                     '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
                 } for item in dict_list]
+            
             if cycle in ['dy', 'mi']:
                 self.upsert_chart(dict_list, cycle, tick)
-                self.done_todo_code(code, cycle)
-                ctdt.set_chart_data(code, dict_list, cycle, tick)
+                self._mark_done_safe(code, cycle)
+                #cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
+            
             return dict_list
         
         except Exception as e:
@@ -388,59 +401,158 @@ class DBMServer:
             return []
 
     def start_request_chart_data(self):
-        if self.thread_run: return
-        if not hasattr(self, '_lock'): self._lock = threading.Lock()
+        """차트 데이터 요청 스레드 시작"""
+        if self.thread_run: 
+            return
         self.thread_run = True
         self.thread_chart = threading.Thread(target=self.request_chart_data, daemon=True)
         self.thread_chart.start()
         logging.debug('차트 데이터 요청 스레드 시작')
 
     def stop_request_chart_data(self):
+        """차트 데이터 요청 스레드 중지"""
         self.thread_run = False
         if self.thread_chart:
-            self.thread_chart.join()
+            self.thread_chart.join(timeout=2.0)
             self.thread_chart = None
 
     def request_chart_data(self):
+        """차트 데이터 요청 메인 루프"""
         while self.thread_run:
-            with self._lock:
-                codes = copy.deepcopy(self.todo_code)
-                if not codes:
-                    time.sleep(0.0001)
-                    continue
+            # 백그라운드 등록 처리
+            self._process_pending_registrations()
+            
+            # 처리할 코드 복사 (락 최소화)
+            codes_to_process = []
+            if self._write_lock and self._write_lock.acquire(timeout=0.01):
+                try:
+                    for code, status in list(self.todo_code.items()):
+                        if not status['mi'] or not status['dy']:
+                            codes_to_process.append((code, status.copy()))
+                finally:
+                    self._write_lock.release()
+            
+            if not codes_to_process:
+                time.sleep(0.001)
+                continue
 
-            for code in codes:
-                #if not codes[code]['tk']: self.dbm_get_chart_data(code, cycle='tk', tick=30, times=99)
-                if not codes[code]['mi']: self.dbm_get_chart_data(code, cycle='mi', tick=1)
-                if not codes[code]['dy']: self.dbm_get_chart_data(code, cycle='dy')
+            # 락 밖에서 API 호출
+            for code, status in codes_to_process:
+                if not self.thread_run:  # 조기 종료 체크
+                    break
+                if not status['mi']: 
+                    self.dbm_get_chart_data(code, cycle='mi', tick=1)
+                if not status['dy']: 
+                    self.dbm_get_chart_data(code, cycle='dy')
 
-            time.sleep(0.0001)
+            time.sleep(0.001)
 
-    def done_todo_code(self, code, cycle):                    
-        with self._lock:
-            self.todo_code[code][cycle] = True
-            if all(self.todo_code[code].values()):
-                self.done_code.append(code)
-                del self.todo_code[code]
+    def _process_pending_registrations(self):
+        """백그라운드 등록 처리"""
+        if not self._pending_lock.acquire(timeout=0.01):
+            return
+            
+        try:
+            if not self._pending_registrations:
+                return
+                
+            codes_to_register = self._pending_registrations[:]
+            self._pending_registrations.clear()
+        finally:
+            self._pending_lock.release()
+        
+        # 실제 등록
+        for code in codes_to_register:
+            self._register_code_internal(code)
+
+    def _mark_done_safe(self, code, cycle):
+        """안전한 완료 표시"""
+        if not self._write_lock:
+            return
+            
+        if self._write_lock.acquire(timeout=0.01):
+            try:
+                if code in self.todo_code:
+                    self.todo_code[code][cycle] = True
+                    if all(self.todo_code[code].values()):
+                        # done_code는 별도 락으로 보호
+                        with self._done_lock:
+                            self.done_code.add(code)
+                        del self.todo_code[code]
+            finally:
+                self._write_lock.release()
 
     def register_code(self, code):
-        if not self.thread_run: return
-        with self._lock:
-            if code in self.done_code or code in self.todo_code:
+        """종목 코드 등록 (최적화됨)"""
+        if not self.thread_run:
+            return False
+        
+        # 빠른 중복 체크 (락 프리)
+        with self._done_lock:
+            if code in self.done_code:
                 return False
-
-            logging.debug(f'차트관리 종목코드 등록: {code}')
-            self.todo_code[code] = {'mi': False, 'dy': False}
+        
+        # 즉시 등록 시도
+        if self._register_code_internal(code):
+            return True
+        
+        # 실패 시 백그라운드 등록
+        with self._pending_lock:
+            if code not in self._pending_registrations:
+                self._pending_registrations.append(code)
+                logging.debug(f"백그라운드 등록 예약: {code}")
+        
         return True
-    
+
+    def _register_code_internal(self, code):
+        """내부 등록 로직"""
+        if not self._write_lock:
+            return False
+            
+        if self._write_lock.acquire(timeout=0.01):
+            try:
+                # 중복 체크
+                with self._done_lock:
+                    if code in self.done_code:
+                        return False
+                
+                if code in self.todo_code:
+                    return False
+
+                logging.debug(f'차트관리 종목코드 등록: {code}')
+                self.todo_code[code] = {'mi': False, 'dy': False}
+                return True
+            finally:
+                self._write_lock.release()
+        
+        return False
+
     def is_done(self, code):
-        with self._lock:
-            return code in self.done_code
+        return True
+        return code in self.done_code
 
     def update_script_chart(self, job):
-        #self.order('admin', 'on_fx실시간_주식체결', **job)
+        """실시간 차트 업데이트"""
         code = job['code']
         dictFID = job['dictFID']
-        if code in self.todo_code or code in self.done_code:
-            ctdt.update_chart(code, dictFID['현재가'], dictFID['누적거래량'], dictFID['누적거래대금'], dictFID['체결시간'])
-
+        
+        # 관리 대상 코드인지 빠른 체크
+        is_managed = False
+        with self._done_lock:
+            is_managed = code in self.done_code
+        
+        if not is_managed and self._write_lock:
+            # todo_code도 체크 (짧은 타임아웃)
+            if self._write_lock.acquire(timeout=0.001):
+                try:
+                    is_managed = code in self.todo_code
+                finally:
+                    self._write_lock.release()
+        if is_managed:
+            cht_dt.update_chart(
+                code, 
+                abs(int(dictFID['현재가'])) if dictFID['현재가'] else 0,
+                abs(int(dictFID['누적거래량'])) if dictFID['누적거래량'] else 0,
+                abs(int(dictFID['누적거래대금'])) if dictFID['누적거래대금'] else 0,
+                dictFID['체결시간']
+            )
