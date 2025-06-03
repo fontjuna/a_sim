@@ -370,7 +370,7 @@ class Strategy:
             gm.counter.set_strategy(self.전략, self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
             if gm.config.gui_on: 
-                la.work('gui', 'set_strategy_toggle', run=(any(gm.매수문자열들) or any(gm.매도문자열들)))
+                gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any(gm.매수문자열들) or any(gm.매도문자열들)}))
 
         except Exception as e:
             logging.error(f'전략 초기화 오류: {self.전략} {type(e).__name__} - {e}', exc_info=True)
