@@ -270,7 +270,7 @@ class GUI(QMainWindow, form_class):
             response = True
         if response:
             gm.admin.cdn_fx실행_전략매매()
-            if not any(gm.매수문자열들) and not any(gm.매도문자열들):
+            if not any([gm.매수문자열, gm.매도문자열]):
                 gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
                 return
             gm.toast.toast('전략매매를 실행했습니다.', duration=3000)
@@ -316,7 +316,7 @@ class GUI(QMainWindow, form_class):
         logging.info(f'로깅 설정 변경: {key} = {value}')
 
     def gui_balance_held_select(self, row_index, col_index):
-        code = self.tblBalanceHeld.item(row_index, 1).text()
+        code = self.tblBalanceHeld.item(row_index, 0).text()
         logging.debug(f'cell = [{row_index:02d}:{col_index:02d}] code = {code}')
         row = gm.잔고목록.get(key=code)
         if row:
@@ -325,12 +325,12 @@ class GUI(QMainWindow, form_class):
             self.spbTrPrice.setValue(row['현재가'])
             self.spbTrQty.setValue(row['보유수량'])
             self.rbTrSell.setChecked(True)
-            self.leTrStrategy.setText(row['전략'])
+            # self.leTrStrategy.setText(row['전략'])
         #self.tblBalanceHeld.clearSelection()  
 
     def gui_receipt_list_select(self, row_index, col_index):
-        code = self.tblReceiptList.item(row_index, 3).text()
-        kind = self.tblReceiptList.item(row_index, 1).text()
+        code = self.tblReceiptList.item(row_index, 2).text()
+        kind = self.tblReceiptList.item(row_index, 0).text()
         key = f'{code}_{kind}'
         logging.debug(f'cell = [{row_index:02d}:{col_index:02d}] code = {code} kind = {kind} key = {key}')
         row = gm.주문목록.get(key=key)
@@ -340,13 +340,13 @@ class GUI(QMainWindow, form_class):
             self.spbTrPrice.setValue(row['주문가격'])
             self.spbTrQty.setValue(row['주문수량'])
             self.rbTrSell.setChecked(True if row['구분'] == '매도' else False)
-            self.leTrStrategy.setText(row['전략'])
+            # self.leTrStrategy.setText(row['전략'])
             self.leTrCancelKey.setText(row['키'])
 
     def gui_tr_code_changed(self):
         code = self.leTrCode.text()
         if code:
-            self.leTrName.setText(gm.ipc.answer('api', 'GetMasterCodeName', code))
+            self.leTrName.setText(gm.api.GetMasterCodeName(code))
 
     def gui_tr_order(self):
         kind = '매수' if self.rbTrBuy.isChecked() else '매도'
@@ -406,7 +406,7 @@ class GUI(QMainWindow, form_class):
             'ordno': ''
         }
         if kind == '매수':
-            gm.ipc.order('api', 'SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
+            gm.api.SetRealReg(dc.scr.화면['실시간감시'], code, '10', '1')
         else:
             if row['주문가능수량'] == 0:
                 QMessageBox.warning(self, '알림', '주문가능수량이 없습니다.')
@@ -632,108 +632,45 @@ class GUI(QMainWindow, form_class):
     
     # 전략설정 탭 ----------------------------------------------------------------------------------------
     def gui_tabs_init(self):
-        """10개의 전략탭 초기화"""
         try:
-            tab_widget = self.findChild(QTabWidget, "tabDeca")
-            for i in range(1, 6):
-                seq = f'{i:02d}'
-                current_tab = tab_widget.widget(i-1)
-
-                btn_get_strategy = current_tab.findChild(QPushButton, f'btnTabGetStrategy_{seq}')
-                btn_clear = current_tab.findChild(QPushButton, f'btnTabClear_{seq}')
-                btn_save = current_tab.findChild(QPushButton, f'btnTabSave_{seq}')
-
-                btn_clear.clicked.connect(lambda _, tab=seq: self.gui_tabs_clear(tab))
-                btn_get_strategy.clicked.connect(lambda _, tab=seq: self.gui_tabs_get(tab))
-                btn_save.clicked.connect(lambda _, tab=seq: self.gui_tabs_save(tab))
-
-                chk_run = current_tab.findChild(QCheckBox, f'chkRun_{seq}')
-                led_condition = current_tab.findChild(QLineEdit, f'ledTabStrategy_{seq}')
-                chk_run.setChecked(gm.전략설정[i]['전략적용'])
-                led_condition.setText(gm.전략설정[i]['전략명칭'])
+            self.btnClearStrategy.clicked.connect(self.gui_tabs_clear)
+            self.btnGetStrategy.clicked.connect(self.gui_tabs_get)
+            self.btnSaveStrategy.clicked.connect(self.gui_tabs_save)
+            self.ledCurrStrategy.setText(gm.전략설정[0]['전략명칭'])
 
         except Exception as e:
             logging.error(f'전략탭 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_tabs_clear(self, seq):
-        """10개 전략탭 설정 초기화"""
+    def gui_tabs_clear(self):
         try:
-            tab = self.findChild(QTabWidget, "tabDeca")
-            chk_run = tab.findChild(QCheckBox, f'chkRun_{seq}')
-            led_condition = tab.findChild(QLineEdit, f'ledTabStrategy_{seq}')
-            chk_run.setChecked(False)
-            led_condition.setText('')
+            self.ledCurrStrategy.setText('')
         except Exception as e:
             logging.error(f'전략 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_tabs_get(self, seq):
+    def gui_tabs_get(self):
         try:
             condition_text = self.cbTabStrategy.currentText()
-            led_condition = self.findChild(QLineEdit, f'ledTabStrategy_{seq}')
-            led_condition.setText(condition_text)
+            self.ledCurrStrategy.setText(condition_text)
         except Exception as e:
             logging.error(f'전략 선택 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_tabs_save(self, seq):
+    def gui_tabs_save(self):
         try:
-            tab = self.findChild(QTabWidget, "tabDeca")
-            chk_run = tab.findChild(QCheckBox, f'chkRun_{seq}')
-            led_condition = tab.findChild(QLineEdit, f'ledTabStrategy_{seq}')
-            전략명칭 = led_condition.text()
+            전략명칭 = self.ledCurrStrategy.text()
 
-            if chk_run.isChecked() and not 전략명칭:
+            if not 전략명칭:
                 QMessageBox.warning(None, '경고', '전략명칭이 입력되지 않았습니다.')
                 logging.warning(f'전략명칭이 입력되지 않았습니다.')
                 return
 
-            if 전략명칭 == dc.const.BASIC_STRATEGY:
-                QMessageBox.warning(None, '경고', f'{dc.const.BASIC_STRATEGY}은 사용할 수 없습니다.')
-                logging.warning(f'{dc.const.BASIC_STRATEGY}은 사용할 수 없습니다.')
-                return
-
-            gm.전략설정[int(seq)] = {
-                '전략': f'전략{seq}',
-                '전략적용': chk_run.isChecked(),
+            gm.전략설정[0] = {
+                '전략': f'전략00',
+                '전략적용': True,
                 '전략명칭': 전략명칭,
             }
 
-            # 전략명칭 중복 검사 - 빈 문자열 제외
-            strategy_names = [
-                d['전략명칭']
-                for d in gm.전략설정
-                if '전략명칭' in d and d['전략명칭']
-            ]
-            if len(strategy_names) != len(set(strategy_names)):
-                QMessageBox.warning(None, '경고', f'전략명칭 {전략명칭}이 중복되었습니다.')
-                logging.warning(f'전략명칭 {전략명칭}이 중복되었습니다.')
-                return
-
-            # 매수전략 중복 검사 - 빈 문자열과 None 제외
-            buy_strategies = [
-                gm.전략정의.get(key=strategy.get('전략명칭', ''), column='매수전략')
-                for strategy in gm.전략설정
-                if strategy.get('전략명칭', '') and
-                   gm.전략정의.get(key=strategy.get('전략명칭', ''), column='매수전략') not in ['', 'None', None]
-            ]
-            if len(buy_strategies) != len(set(buy_strategies)):
-                QMessageBox.warning(None, '경고', f'{전략명칭}의 매수전략이 중복되었습니다.')
-                logging.warning(f'{전략명칭}의 매수전략이 중복되었습니다.')
-                return
-
-            # 매도전략 중복 검사 - 빈 문자열과 None 제외
-            sell_strategies = [
-                gm.전략정의.get(key=strategy.get('전략명칭', ''), column='매도전략')
-                for strategy in gm.전략설정
-                if strategy.get('전략명칭', '') and
-                   gm.전략정의.get(key=strategy.get('전략명칭', ''), column='매도전략') not in ['', 'None', None]
-            ]
-            if len(sell_strategies) != len(set(sell_strategies)):
-                QMessageBox.warning(None, '경고', f'{전략명칭}의 매도전략이 중복되었습니다.')
-                logging.warning(f'{전략명칭}의 매도전략이 중복되었습니다.')
-                return
-
             gm.admin.json_save_define_sets()
-            gm.toast.toast(f'전략{seq} 전략적용={chk_run.isChecked()} 전략명칭={전략명칭} 저장 완료', duration=4000)
+            gm.toast.toast(f'전략00 전략명칭={전략명칭} 저장 완료', duration=4000)
 
         except Exception as e:
            logging.error(f'전략 설정 저장 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -835,7 +772,7 @@ class GUI(QMainWindow, form_class):
             if name == dc.const.BASIC_STRATEGY:
                 QMessageBox.warning(self, '알림', f'{dc.const.BASIC_STRATEGY}은 삭제할 수 없습니다.')
                 return
-            if (any(gm.매수문자열들) or any(gm.매도문자열들)):
+            if any([gm.매수문자열, gm.매도문자열]):
                 QMessageBox.warning(self, '알림', f'전략매매가 실행중입니다. 중지 후 삭제 하세요.')
                 return
 
