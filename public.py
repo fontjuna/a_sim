@@ -884,6 +884,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     admin = None
     gui = None
     api = None
+    stg = None
     scm = None # 스크립트 매니저
     ipc = None # 프로세스 매니저
     trd = None # 쓰레드 매니저

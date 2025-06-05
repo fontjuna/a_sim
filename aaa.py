@@ -78,10 +78,10 @@ class Main:
             gm.ipc = IPCManager()
             gm.main = self
             gm.admin = gm.ipc.register("admin", Admin, type=None, start=True, stream=True)
+            # gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=True)
             gm.api = APIServer()
             gm.api.api_init(gm.config.sim_no)
             gm.api.CommConnect(True)
-            gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=True)
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)

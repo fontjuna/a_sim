@@ -1009,7 +1009,7 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
+        #logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
         gm.admin.on_fx실시간_조건검색(**data)
 
     def OnReceiveRealData(self, code, rtype, data):
@@ -1029,7 +1029,7 @@ class APIServer:
                     gm.admin.on_fx실시간_주식체결(**job)
                 elif rtype == '장시작시간': 
                     gm.admin.on_fx실시간_장운영감시(**job)
-                logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
+                #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
@@ -1049,7 +1049,7 @@ class APIServer:
 
             if gubun == '0': gm.admin.odr_recieve_chegyeol_data(dictFID)
             elif gubun == '1': gm.admin.odr_recieve_balance_data(dictFID)
-            logging.debug(f"ChejanData: API 서버에서 보냄 {gubun} {dictFID['종목코드']} {dictFID['종목명']}")
+            #logging.debug(f"ChejanData: API 서버에서 보냄 {gubun} {dictFID['종목코드']} {dictFID['종목명']}")
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)

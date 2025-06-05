@@ -40,7 +40,7 @@ class Admin:
             logging.debug(f'스크립트 확장 결과={result}')
         except Exception as e:
             logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
-        gm.ipc.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
+        # gm.ipc.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
 
     def get_login_info(self):
         accounts = gm.api.GetLoginInfo('ACCNO')
@@ -139,7 +139,7 @@ class Admin:
         dict_data = { '전략번호': idx, '전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
         #logging.debug(f'dbm_order_upsert 호출 전 *****')
-        self.dbm_order_upsert(dict_data)
+        # self.dbm_order_upsert(dict_data)
         #logging.debug(f'com_SendOrder에서 SendOrder 호출 전 *****')
         success = gm.api.SendOrder(**cmd)
         #logging.debug(f'com_SendOrder에서 SendOrder 호출 후 *****')
@@ -242,7 +242,7 @@ class Admin:
 
     def on_fx실시간_조건검색(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
         if not gm.config.ready: return
-        if not gm.config.sim_on: logging.debug(f'실시간 조건검색 처리: API로 부터 받음')
+        # if not gm.config.sim_on: logging.debug(f'실시간 조건검색 처리: API로 부터 받음')
         if not gm.config.sim_on and time.time() < 90000: return
         try:
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
@@ -673,12 +673,10 @@ class Admin:
         try:
             self.json_load_strategy_sets()
             _, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
-            gm.전략쓰레드 = [None] * 1
-            전략 = f'전략00'
             전략정의 = gm.전략정의.get(key=gm.전략설정[0]['전략명칭'])
-            gm.전략쓰레드[0] = gm.ipc.register(전략, Strategy, type='thread', start=False, cls_name=전략, ticker=gm.dict종목정보, strategy_set=전략정의)
-            logging.debug(f'{전략} {gm.전략쓰레드[0]}')
-        except Exception as e:
+            gm.stg = Strategy(cls_name='전략00', ticker=gm.dict종목정보, strategy_set=전략정의)
+            logging.debug(f'{gm.stg}')
+        except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def cdn_fx실행_전략매매(self):
@@ -687,11 +685,10 @@ class Admin:
             gm.매수문자열 = ""     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
             gm.매도문자열 = ""     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
             msgs = ''
-            gm.ipc.start(f'전략00')
-            msg = gm.ipc.answer(f'전략00', 'cdn_fx실행_전략매매', timeout=1)
+            # gm.ipc.start(f'전략00')
+            msg = gm.stg.cdn_fx실행_전략매매()
             logging.debug(f'전략00 msg={msg}')
             if msg:
-                gm.ipc.stop(f'전략00')
                 msgs += f'\n{msg}' if msgs else msg
             if msgs: gm.toast.toast(msgs, duration=3000) #dc.TOAST_TIME
             if gm.config.gui_on: 
@@ -702,8 +699,7 @@ class Admin:
 
     def cdn_fx중지_전략매매(self):
         try:
-            gm.ipc.order(f'전략00', 'cdn_fx실행_전략마무리')
-            gm.ipc.unregister(f'전략00')
+            gm.stg.cdn_fx실행_전략마무리()
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()
@@ -771,7 +767,7 @@ class Admin:
             #logging.debug(f'체결잔고 : 주문상태={주문상태} order_no={order_no} ' +
             #                f'\n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
 
-            self.dbm_trade_upsert(dictFID)
+            # self.dbm_trade_upsert(dictFID)
 
             if '접수' in 주문상태:
                 self.odr_redeipt_data(dictFID)
