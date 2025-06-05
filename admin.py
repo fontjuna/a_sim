@@ -1,6 +1,7 @@
 from public import gm, dc, Work,load_json, save_json
 from classes import TableManager, TimeLimiter, ThreadSafeDict, CounterTicker
 from strategy import Strategy
+from worker import SimpleManager
 from chart import ChartData, ScriptManager, enhance_script_manager
 from tabulate import tabulate
 from datetime import datetime
@@ -122,8 +123,8 @@ class Admin:
         #if not self.com_request_time_check(kind='order'): return -308 # 5회 제한 초과
 
         전략 = f'전략{idx:02d}'
-        전략명칭 = gm.전략쓰레드[idx].전략명칭
-        매수전략 = gm.전략쓰레드[idx].매수전략
+        전략명칭 = gm.stg.전략명칭
+        매수전략 = gm.stg.매수전략
         name = gm.api.GetMasterCodeName(code)
         주문유형 = dc.fid.주문유형FID[ordtype]
         kind = msg if msg else 주문유형
@@ -522,7 +523,6 @@ class Admin:
         if row['보유수량'] == 0: return
         if row['현재가'] == 0: return
         if row['상태'] == 0: return
-        if 전략 not in gm.ipc.workers: return
         key = f'{code}_매도'
         data={'키': key, '구분': '매도', '상태': '요청', '전략': 전략, '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
         if gm.주문목록.in_key(key): return
@@ -674,7 +674,7 @@ class Admin:
             self.json_load_strategy_sets()
             _, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
             전략정의 = gm.전략정의.get(key=gm.전략설정[0]['전략명칭'])
-            gm.stg = Strategy(cls_name='전략00', ticker=gm.dict종목정보, strategy_set=전략정의)
+            gm.stg = SimpleManager('stg', Strategy, 'thread', cls_name='전략00', ticker=gm.dict종목정보, strategy_set=전략정의)
             logging.debug(f'{gm.stg}')
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -685,8 +685,8 @@ class Admin:
             gm.매수문자열 = ""     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
             gm.매도문자열 = ""     # ['000 : 전략01', '001 : 전략02', ...]  # SendConditionStop 에서 사용
             msgs = ''
-            # gm.ipc.start(f'전략00')
-            msg = gm.stg.cdn_fx실행_전략매매()
+            gm.stg.start()
+            msg = gm.stg.answer('cdn_fx실행_전략매매')
             logging.debug(f'전략00 msg={msg}')
             if msg:
                 msgs += f'\n{msg}' if msgs else msg
@@ -699,6 +699,7 @@ class Admin:
 
     def cdn_fx중지_전략매매(self):
         try:
+            gm.stg.stop()
             gm.stg.cdn_fx실행_전략마무리()
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
@@ -723,7 +724,7 @@ class Admin:
 
             data={'키': f'{key}', '구분': kind, '상태': '취소요청', '전략': origin_row['전략'], '종목코드': code, '종목명': name}
             gm.주문목록.set(key=key, data=data)
-            #gm.전략쓰레드[idx].order_cancel(kind, order_no, code)
+            #gm.stg[idx].order_cancel(kind, order_no, code)
             gm.ipc.order(f'전략{idx:02d}', 'order_cancel', kind, order_no, code)
 
             logging.info(f'{kind}\n주문 타임아웃: {origin_row["전략"]} {code} {name} 주문번호={order_no} 주문수량={주문수량} 미체결수량={미체결수량}')
@@ -741,8 +742,8 @@ class Admin:
             row = gm.주문목록.get(key=key)
             전략 = row.get('전략', '전략00') if row else '전략00'
             전략번호 = int(전략[-2:]) if 전략 else 0
-            전략명칭 = gm.전략쓰레드[전략번호].전략명칭
-            전략정의 = gm.전략쓰레드[전략번호].전략정의
+            전략명칭 = gm.stg.전략명칭
+            전략정의 = gm.stg.전략정의
             주문상태 = dictFID.get('주문상태', '')
             주문수량 = int(dictFID.get('주문수량', 0) or 0)
             주문가격 = int(dictFID.get('주문가격', 0) or 0)
@@ -825,7 +826,7 @@ class Admin:
             try:
                 if row['구분'] in ['매수', '매도']:
                     전략번호 = dictFID.get('전략번호', 0)
-                    strategy = gm.전략쓰레드[전략번호]
+                    strategy = gm.stg
                     sec = 0
                     if row['구분'] == '매수':
                         if strategy.매수취소: sec = strategy.매수지연초
@@ -868,8 +869,8 @@ class Admin:
             else:
                 전략 = order_row.get('전략', '전략00')
             전략번호 = int(전략[-2:]) if 전략 else 0
-            전략명칭 = gm.전략쓰레드[전략번호].전략명칭
-            전략정의 = gm.전략쓰레드[전략번호].전략정의
+            전략명칭 = gm.stg.전략명칭
+            전략정의 = gm.stg.전략정의
             매매시간 = datetime.now().strftime('%H:%M:%S')
             단위체결량 = int(dictFID.setdefault('단위체결량', 0) or 0)
             단위체결가 = int(dictFID.setdefault('단위체결가', 0) or 0)

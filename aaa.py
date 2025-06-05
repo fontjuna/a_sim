@@ -1,6 +1,6 @@
 from gui import GUI
 from admin import Admin
-from worker import IPCManager
+from worker import SimpleManager
 from public import init_logger, dc, gm
 from classes import Toast, set_tables
 from dbm_server import DBMServer
@@ -75,9 +75,8 @@ class Main:
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
             gm.toast = Toast()
-            gm.ipc = IPCManager()
             gm.main = self
-            gm.admin = gm.ipc.register("admin", Admin, type=None, start=True, stream=True)
+            gm.admin = SimpleManager('admin',Admin, None)
             # gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=True)
             gm.api = APIServer()
             gm.api.api_init(gm.config.sim_no)
@@ -143,12 +142,12 @@ class Main:
             if hasattr(gm, 'admin') and gm.admin:
                 gm.admin.cdn_fx중지_전략매매()
 
+            if hasattr(gm, 'stg') and gm.stg:
+                gm.stg.stop()
+
             # 짧은 대기 후 강제 종료
             time.sleep(0.5)
             
-            if hasattr(gm, 'ipc') and gm.ipc:
-                gm.ipc.shutdown()
-
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:

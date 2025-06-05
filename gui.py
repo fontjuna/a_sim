@@ -350,16 +350,7 @@ class GUI(QMainWindow, form_class):
 
     def gui_tr_order(self):
         kind = '매수' if self.rbTrBuy.isChecked() else '매도'
-        if kind == '매수':
-            전략 = '전략00'
-        else:
-            전략 = self.leTrStrategy.text()
-            if 전략: 
-                if 전략 not in gm.ipc.workers:
-                    logging.warning(f'전략이 실행중이지 않습니다. {전략}')
-                    return
-            
-        전략번호 = int(전략[-2:])
+        전략번호 = 0
         code = self.leTrCode.text()
         price = self.spbTrPrice.value()
         qty = self.spbTrQty.value()
@@ -415,7 +406,7 @@ class GUI(QMainWindow, form_class):
             gm.잔고목록.set(key=code, data=row)
 
         key = f'{code}_{kind}'
-        data={'키': key, '구분': kind, '상태': '요청', '전략': 전략, '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
+        data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 
         # 주문 전송
         gm.admin.com_SendOrder(전략번호, **send_data)
@@ -1031,7 +1022,7 @@ class GUI(QMainWindow, form_class):
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
             self.lbl2.setText('연결됨' if gm.connected else '끊어짐')
             self.lbl2.setStyleSheet("color: green;" if gm.connected else "color: red;")
-            self.lbl4.setText(gm.ipc.answer('admin', 'com_market_status'))
+            self.lbl4.setText(gm.admin.com_market_status())
 
             # 큐 메시지 처리
             while not gm.qwork['gui'].empty():
