@@ -529,7 +529,7 @@ class Admin:
         gm.주문목록.set(key=key, data=data)
         gm.잔고목록.set(key=code, data={'주문가능수량': 0})
         row.update({'rqname': '신규매도', 'account': gm.config.account})
-        gm.ipc.order(전략, 'order_sell', row)
+        gm.stg.order_sell(row)
 
     def pri_fx등록_종목감시(self):
         try:
