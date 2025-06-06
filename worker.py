@@ -6,8 +6,13 @@ import logging
 import queue
 import threading
 from queue import Queue, Empty
+from PyQt5.QtWidgets import QApplication
+import sys
+from PyQt5.QAxContainer import QAxWidget
+import pythoncom
+from public import init_logger
 
-TIMEOUT = 15
+WAIT_TIMEOUT = 15
 HIGH_FREQ_TIMEOUT = 0.001  # 1ms 고빈도 처리
 
 class SimpleManager:
@@ -42,7 +47,6 @@ class SimpleManager:
     def __getattr__(self, name):
         return getattr(self.instance, name)
 
-
 class ComponentRegistry:
     """컴포넌트 레지스트리"""
     _components = {}
@@ -55,7 +59,6 @@ class ComponentRegistry:
     @classmethod
     def get(cls, name):
         return cls._components.get(name)
-
 
 class QThreadComponent(QThread):
     """QThread 래퍼 - 고성능"""
@@ -82,7 +85,6 @@ class QThreadComponent(QThread):
     def run(self):
         try:
             self.instance = self.cls(*self.init_args, **self.init_kwargs)
-            self._inject_references()
             
             if hasattr(self.instance, 'initialize'): 
                 self.instance.initialize()
@@ -100,27 +102,11 @@ class QThreadComponent(QThread):
         except Exception as e:
             logging.error(f"[{self.name}] QThread 실행 오류: {e}")
     
-    def _inject_references(self):
-        """컴포넌트 참조 주입"""
-        # 참조 주입 대기 (다른 컴포넌트들이 등록될 때까지)
-        max_wait = 50  # 5초 대기
-        wait_count = 0
-        
-        while len(ComponentRegistry._components) < 4 and wait_count < max_wait:
-            time.sleep(0.1)
-            wait_count += 1
-        
-        # 모든 컴포넌트 참조 주입
-        injected_count = 0
-        for comp_name, component in ComponentRegistry._components.items():
-            if comp_name != self.name:
-                setattr(self.instance, comp_name, component)
-                injected_count += 1
-                logging.info(f"[{self.name}] {comp_name} 참조 주입")
-        
-        logging.info(f"[{self.name}] 참조 주입 완료: {injected_count}개 컴포넌트")
-    
     def order(self, method, *args, **kwargs):
+        if not self.running:
+            logging.warning(f"[{self.name}] 종료 중 - order {method} 요청 거부")
+            return
+            
         if self.instance and hasattr(self.instance, method):
             try: 
                 getattr(self.instance, method)(*args, **kwargs)
@@ -129,6 +115,10 @@ class QThreadComponent(QThread):
                 logging.error(f"[{self.name}] {method} 실행 오류: {e}")
     
     def answer(self, method, *args, **kwargs):
+        if not self.running:
+            logging.warning(f"[{self.name}] 종료 중 - answer {method} 요청 거부")
+            return None
+            
         if self.instance and hasattr(self.instance, method):
             try: 
                 result = getattr(self.instance, method)(*args, **kwargs)
@@ -140,6 +130,10 @@ class QThreadComponent(QThread):
         return None
     
     def frq_order(self, target, method, *args, **kwargs):
+        if not self.running:
+            logging.warning(f"[{self.name}] 종료 중 - frq_order {target}.{method} 요청 거부")
+            return False
+            
         if target_component := ComponentRegistry.get(target):
             try:
                 if hasattr(target_component, 'order'):
@@ -212,8 +206,12 @@ class ProcessComponent:
         logging.info(f"[{self.name}] 프로세스 중지")
     
     def order(self, method, *args, **kwargs):
+        if not self.running:
+            logging.warning(f"[{self.name}] 종료 중 - order {method} 요청 거부")
+            return
+            
         request = {
-            'type': 'order',
+            'type': 'process_order',
             'method': method, 
             'args': self._serialize(args), 
             'kwargs': self._serialize(kwargs)
@@ -225,9 +223,13 @@ class ProcessComponent:
             logging.error(f"[{self.name}] {method} 요청 실패")
     
     def answer(self, method, *args, **kwargs):
+        if not self.running:
+            logging.warning(f"[{self.name}] 종료 중 - answer {method} 요청 거부")
+            return None
+            
         req_id = str(uuid.uuid4())
         request = {
-            'type': 'answer',
+            'type': 'inbound_answer',  # 외부→프로세스 직접 실행용
             'id': req_id, 
             'method': method, 
             'args': self._serialize(args), 
@@ -244,7 +246,7 @@ class ProcessComponent:
             logging.error(f"[{self.name}] 요청 실패: {e}")
             return None
         
-        if event.wait(TIMEOUT):
+        if event.wait(WAIT_TIMEOUT):
             result = self.pending_responses.pop(req_id)['result']
             logging.debug(f"[{self.name}] answer {method} 완료")
             return result
@@ -254,12 +256,17 @@ class ProcessComponent:
             return None
     
     def frq_order(self, target, method, *args, **kwargs):
+        if not self.running:
+            logging.warning(f"[{self.name}] 종료 중 - frq_order {target}.{method} 요청 거부")
+            return False
+            
+        """프로세스→외부 frq_order (target 필요, 라우팅)"""
         request = {
-            'type': 'frq_order', 
+            'type': 'outbound_frq_order',  # 프로세스→외부 구분
             'target': target, 
             'method': method,
-            'args': self._serialize(args), 
-            'kwargs': self._serialize(kwargs)
+            'args': args, 
+            'kwargs': kwargs
         }
         try:
             self.request_queue.put_nowait(request)
@@ -272,10 +279,11 @@ class ProcessComponent:
             return False
     
     def frq_answer(self, method, *args, **kwargs):
+        """외부→프로세스 frq_answer (target 불필요, 직접 메서드 실행)"""
         req_id = str(uuid.uuid4())
         request = {
-            'type': 'frq_answer',
-            'id': req_id, 
+            'type': 'inbound_frq_answer',  # 외부→프로세스 구분
+            'id': req_id,
             'method': method,
             'args': self._serialize(args), 
             'kwargs': self._serialize(kwargs)
@@ -315,9 +323,18 @@ class ProcessComponent:
                 response = self.response_queue.get(timeout=HIGH_FREQ_TIMEOUT)
                 response_type = response.get('type')
                 
-                if response_type == 'route_frq_order':
-                    self._handle_route_frq_order(response)
-                elif response_type in ['answer', 'frq_answer']:
+                # 프로세스→외부 (target 있음)
+                if response_type == 'outbound_frq_order':
+                    self._handle_outbound_frq_order(response)
+                elif response_type == 'process_order':
+                    self._handle_process_order(response)
+                elif response_type == 'process_answer':
+                    self._handle_process_answer(response)
+                
+                # 외부→프로세스 응답 처리
+                elif response_type in ['answer', 'inbound_answer', 'inbound_frq_answer']:
+                    self._handle_answer_response(response)
+                elif response_type == 'answer_response':
                     self._handle_answer_response(response)
                     
             except Empty: 
@@ -325,8 +342,56 @@ class ProcessComponent:
             except Exception as e: 
                 logging.error(f"[{self.name}] 응답 처리 오류: {e}")
     
-    def _handle_route_frq_order(self, response):
-        """frq_order 라우팅 처리"""
+    def _handle_process_order(self, response):
+        """프로세스 내부 order 라우팅 처리"""
+        target = response.get('target')
+        method = response.get('method')
+        args = response.get('args', ())
+        kwargs = response.get('kwargs', {})
+        
+        if target_component := ComponentRegistry.get(target):
+            try:
+                if hasattr(target_component, 'order'):
+                    target_component.order(method, *args, **kwargs)
+                elif hasattr(target_component, method):
+                    getattr(target_component, method)(*args, **kwargs)
+                logging.debug(f"[{self.name}] 라우팅 order: {target}.{method}")
+            except Exception as e: 
+                logging.error(f"[{self.name}] 라우팅 order 오류: {e}")
+        else: 
+            logging.warning(f"[{self.name}] 타겟 없음: {target}")
+    
+    def _handle_process_answer(self, response):
+        """프로세스 내부 answer 라우팅 처리"""
+        target = response.get('target')
+        method = response.get('method')
+        args = response.get('args', ())
+        kwargs = response.get('kwargs', {})
+        request_id = response.get('request_id')
+        
+        result = None
+        if target_component := ComponentRegistry.get(target):
+            try:
+                if hasattr(target_component, 'answer'):
+                    result = target_component.answer(method, *args, **kwargs)
+                elif hasattr(target_component, method):
+                    result = getattr(target_component, method)(*args, **kwargs)
+                logging.debug(f"[{self.name}] 라우팅 answer: {target}.{method}")
+            except Exception as e:
+                logging.error(f"[{self.name}] 라우팅 answer 오류: {e}")
+        else:
+            logging.warning(f"[{self.name}] 타겟 없음: {target}")
+        
+        # 응답 전송
+        response_msg = {
+            'type': 'answer_response',
+            'request_id': request_id,
+            'result': self._serialize(result)
+        }
+        self.request_queue.put(response_msg)
+    
+    def _handle_outbound_frq_order(self, response):
+        """outbound_frq_order 라우팅 처리"""
         target = response.get('target')
         method = response.get('method')
         args = response.get('args', ())
@@ -345,8 +410,8 @@ class ProcessComponent:
             logging.warning(f"[{self.name}] 타겟 없음: {target}")
     
     def _handle_answer_response(self, response):
-        """answer/frq_answer 응답 처리"""
-        req_id = response.get('id')
+        """answer 응답 처리"""
+        req_id = response.get('id') or response.get('request_id')
         result = response.get('result')
         
         if req_id and req_id in self.pending_responses:
@@ -361,24 +426,25 @@ class ProcessComponent:
             instance = cls(*args, **kwargs)
             
             # 프로세스 내 인터페이스 함수 정의
-            def order(method, *args, **kwargs):
+            def order(target, method, *args, **kwargs):
                 """프로세스 내에서 다른 컴포넌트로 order 전송"""
                 request = {
-                    'type': 'route_order',
+                    'type': 'process_order',
+                    'target': target,
                     'method': method, 
                     'args': args, 
                     'kwargs': kwargs
                 }
                 try: 
                     response_queue.put(request)
-                    logging.debug(f"[{name}] 내부 order {method} 전송")
+                    logging.debug(f"[{name}] 내부 order {target}.{method} 전송")
                 except: 
                     pass
             
             def frq_order(target, method, *args, **kwargs):
                 """프로세스 내에서 다른 컴포넌트로 frq_order 전송"""
                 request = {
-                    'type': 'route_frq_order',
+                    'type': 'outbound_frq_order',  # 프로세스→외부 구분
                     'target': target, 
                     'method': method, 
                     'args': args, 
@@ -390,9 +456,46 @@ class ProcessComponent:
                 except: 
                     pass
             
+            def answer(target, method, *args, **kwargs):
+                """프로세스 내에서 다른 컴포넌트로 answer 요청"""
+                import uuid
+                req_id = str(uuid.uuid4())
+                request = {
+                    'type': 'process_answer',
+                    'target': target,
+                    'method': method,
+                    'args': args,
+                    'kwargs': kwargs,
+                    'request_id': req_id
+                }
+                
+                # 요청 전송
+                response_queue.put(request)
+                logging.debug(f"[{name}] 내부 answer {target}.{method} 전송")
+                
+                # 응답 대기
+                timeout = 15  # 15초 타임아웃
+                start_time = time.time()
+                
+                while time.time() - start_time < timeout:
+                    try:
+                        response = request_queue.get(timeout=0.1)
+                        if (response.get('type') == 'answer_response' and 
+                            response.get('request_id') == req_id):
+                            result = response.get('result')
+                            logging.debug(f"[{name}] answer {target}.{method} 응답 수신")
+                            return result
+                    except:
+                        continue
+                    time.sleep(0.01)
+                
+                logging.warning(f"[{name}] answer {target}.{method} 타임아웃")
+                return None
+            
             # 인스턴스에 인터페이스 주입
             instance.order = order
             instance.frq_order = frq_order
+            instance.answer = answer
             
             # 초기화
             if hasattr(instance, 'initialize'):
@@ -420,7 +523,8 @@ class ProcessComponent:
                             result = getattr(instance, method_name)(*args, **kwargs)
                             logging.debug(f"[{name}] {method_name} 실행 완료")
                             
-                            if request_type in ['answer', 'frq_answer'] and req_id:
+                            # 응답이 필요한 요청들
+                            if request_type in ['answer', 'inbound_answer', 'inbound_frq_answer'] and req_id:
                                 response_queue.put({
                                     'type': request_type,
                                     'id': req_id, 
@@ -428,14 +532,14 @@ class ProcessComponent:
                                 })
                         except Exception as e:
                             logging.error(f"[{name}] {method_name} 오류: {e}")
-                            if request_type in ['answer', 'frq_answer'] and req_id:
+                            if request_type in ['answer', 'inbound_answer', 'inbound_frq_answer'] and req_id:
                                 response_queue.put({
                                     'type': request_type,
                                     'id': req_id, 
                                     'result': None
                                 })
                     else:
-                        if request_type in ['answer', 'frq_answer'] and req_id:
+                        if request_type in ['answer', 'inbound_answer', 'inbound_frq_answer'] and req_id:
                             response_queue.put({
                                 'type': request_type,
                                 'id': req_id, 
@@ -466,260 +570,198 @@ class ProcessComponent:
         else: 
             return str(data)
 
-# 테스트용 컴포넌트들
-class AdminComponent:
-    """관리자 컴포넌트 - 메인스레드"""
-    
-    def __init__(self, name="Admin"):
-        self.name = name
-        self.results = []
-        self.status = "ready"
-        self.real_data_count = 0
-    
-    def initialize(self):
-        logging.info(f"[{self.name}] 관리자 초기화")
-    
-    def real_data_procedure(self, data):
-        """실시간 데이터 수신 처리 (frq_order로 받음)"""
-        self.real_data_count += 1
-        if self.real_data_count % 5 == 0:  # 5회마다 로그
-            logging.info(f"[{self.name}] 실시간 데이터 수신 #{self.real_data_count}: {data}")
-    
-    def receive_trade_result(self, trade_info):
-        """거래 결과 수신 (order로 받음)"""
-        self.results.append(trade_info)
-        logging.info(f"[{self.name}] 거래 결과 수신: {trade_info}")
-    
-    def get_system_status(self):
-        """시스템 상태 조회 (answer로 응답)"""
-        status_info = {
-            'status': self.status,
-            'results_count': len(self.results),
-            'real_data_count': self.real_data_count
-        }
-        logging.debug(f"[{self.name}] 시스템 상태 조회: {status_info}")
-        return status_info
-    
-    def start_trading(self):
-        self.status = "trading"
-        logging.info(f"[{self.name}] 매매 시작")
-    
-    def stop_trading(self):
-        self.status = "stopped"
-        logging.info(f"[{self.name}] 매매 중지")
-    
-    def cleanup(self):
-        logging.info(f"[{self.name}] 관리자 정리")
 
-class StrategyComponent:
-    """전략 컴포넌트 - QThread"""
-    
-    def __init__(self, name="Strategy"):
-        self.name = name
-        self.api = None
+# 이하 테스트용 코드
+class GlobalMemory:
+    def __init__(self):
         self.admin = None
+        self.stg = None
+        self.api = None
         self.dbm = None
-        self.position = 0
-        self.trade_count = 0
-    
-    def initialize(self):
-        logging.info(f"[{self.name}] 전략 초기화")
-    
-    def run_main_loop(self):
-        """메인 실행 루프"""
-        logging.info(f"[{self.name}] 전략 실행 시작")
+
+        self.api_connected = False
+        self.account_list = []
+        self.account = None
+
+gm = GlobalMemory()
+
+class Admin:
+    def __init__(self):
+        self.name = 'admin'
+        self.trading_done = False
         
-        # 참조 확인
-        self._check_references()
+        # 각 컴포넌트 완료 플래그
+        self.stg_done = False
+        self.api_done = False
+        self.dbm_done = False
         
-        cycle_count = 0
-        while cycle_count < 10:
+    def on_component_done(self, component_name):
+        """컴포넌트 완료 통보 수신"""
+        if component_name == 'stg':
+            self.stg_done = True
+            logging.info(f"[{self.name}] STG 완료 통보 수신")
+        elif component_name == 'api':
+            self.api_done = True
+            logging.info(f"[{self.name}] API 완료 통보 수신")
+        elif component_name == 'dbm':
+            self.dbm_done = True
+            logging.info(f"[{self.name}] DBM 완료 통보 수신")
+    
+    def wait_for_component(self, component_name, timeout=30):
+        """특정 컴포넌트 완료 대기"""
+        import time
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            if component_name == 'stg' and self.stg_done:
+                return True
+            elif component_name == 'api' and self.api_done:
+                return True  
+            elif component_name == 'dbm' and self.dbm_done:
+                return True
+            time.sleep(0.1)  # 짧은 폴링 간격
+        
+        logging.warning(f"[{self.name}] {component_name} 완료 대기 타임아웃")
+        return False
+
+    def start_admin(self):
+        logging.info(f"\n[{self.name}] 시작 {'*' * 10}")
+
+        result = gm.api.answer('GetMasterCodeName', '005930')
+        logging.info(f"[{self.name}] -> API / 종목코드: 005930, 종목명: {result}")
+
+        result = gm.dbm.answer('dbm_response', 'dbm call')
+        logging.info(f"[{self.name}] -> DBM / {result}")
+
+        gm.stg = SimpleManager('stg', Strategy, 'thread')
+        gm.stg.start()
+        time.sleep(1.0)  # STG 시작 대기만 유지
+
+        result = gm.stg.answer('stg_response', 'stg call')
+        logging.info(f"[{self.name}] -> STG  / {result}")
+
+        logging.info(f"[{self.name}] -> STG 로 제어 넘김")
+        gm.stg.order('start_stg')
+        
+        # STG 완료 대기 (플래그 기반)
+        if self.wait_for_component('stg'):
+            logging.info(f"[{self.name}] STG 완료 확인")
+        
+        logging.info(f"[{self.name}] -> API 로 제어 넘김")
+        gm.api.order('start_api')
+        
+        # API 완료 대기 (플래그 기반)
+        if self.wait_for_component('api'):
+            logging.info(f"[{self.name}] API 완료 확인")
+
+        logging.info(f"[{self.name}] -> DBM 로 제어 넘김")
+        gm.dbm.order('start_dbm')
+        
+        # DBM 완료 대기 (플래그 기반)
+        if self.wait_for_component('dbm'):
+            logging.info(f"[{self.name}] DBM 완료 확인")
+
+        gm.stg.stop()
+        logging.info(f"[{self.name}] 모든 작업 완료")
+
+    def on_receive_real_data(self, data):
+        logging.info(f"[{self.name}] -> 실시간 데이터 수신: {data}")
+
+    def admin_response(self, data):
+        return f"[{self.name}] 응답: {data}"
+
+    def order(self, method, *args, **kwargs):
+        result = None
+        if hasattr(self, method):
             try:
-                cycle_count += 1
-                logging.info(f"[{self.name}] 사이클 {cycle_count}/10 시작")
-                
-                # Admin 상태 확인 (answer - 양방향)
-                if self.admin:
-                    status = self.admin.answer('get_system_status')
-                    if status and status.get('status') == 'trading':
-                        logging.info(f"[{self.name}] 매매 상태 확인됨, 전략 실행")
-                        self._execute_strategy()
-                    else:
-                        logging.info(f"[{self.name}] 매매 대기 중: {status}")
-                else:
-                    logging.warning(f"[{self.name}] Admin 참조 없음")
-                
-                time.sleep(1)
-                
+                result = getattr(self, method)(*args, **kwargs)
+                logging.debug(f"[{self.name}] order {method} 완료")
             except Exception as e:
-                logging.error(f"[{self.name}] 전략 실행 오류: {e}")
-                break
+                logging.error(f"[{self.name}] {method} 실행 오류: {e}")
+        else:
+            logging.warning(f"[{self.name}] {method} 메서드 없음")
+        return result
+
+    def answer(self, method, *args, **kwargs):
+        return self.order(method, *args, **kwargs)
+
+    def shutdown(self):
+        pass
+
+class Strategy:
+    def __init__(self):
+        self.name = 'stg'
+        self.trading_done = False
+        self.initialized = False
+
+    def initialize(self):
+        self.initialized = True
+
+    def start_stg(self):
+        logging.info(f"\n[{self.name}] 시작 {'*' * 10}")
+
+        result = gm.admin.answer('admin_response', 'admin call')
+        logging.info(f"[{self.name}] -> Admin / {result}")
+
+        name = gm.api.answer('GetMasterCodeName', '000660')
+        last_price = gm.api.answer('GetMasterLastPrice', '000660')
+        logging.info(f"[{self.name}] -> API / 종목코드: 000660, 종목명: {name}, 전일가: {last_price}")
+
+        result = gm.dbm.answer('dbm_response', 'dbm call')
+        logging.info(f"[{self.name}] -> DBM / {result}")
+
+        gm.admin.trading_done = True
+        self.trading_done = True
+        logging.info(f"[{self.name}] 작업 완료")
         
-        logging.info(f"[{self.name}] 전략 실행 완료 ({cycle_count}사이클)")
+        # Admin에게 완료 통보
+        gm.admin.order('on_component_done', 'stg')
+
+    def stg_response(self, data):
+        return f"[{self.name}] 응답: {data}"
     
-    def _check_references(self):
-        """참조 상태 확인"""
-        refs = {
-            'admin': self.admin,
-            'api': self.api, 
-            'dbm': self.dbm
-        }
-        
-        for name, ref in refs.items():
-            if ref:
-                logging.info(f"[{self.name}] {name} 참조 OK: {type(ref).__name__}")
-            else:
-                logging.error(f"[{self.name}] {name} 참조 실패!")
-        
-        return all(refs.values())
-    
-    def _execute_strategy(self):
-        """전략 실행"""
-        try:
-            logging.info(f"[{self.name}] 전략 실행 시작")
-            
-            # 1. API에서 현재가 조회 (frq_answer - 고빈도 양방향)
-            price = None
-            if self.api:
-                logging.info(f"[{self.name}] API 현재가 조회 시도")
-                price = self.api.frq_answer('get_current_price', "005930")
-                logging.info(f"[{self.name}] 현재가 조회 결과: {price}")
-            else:
-                logging.error(f"[{self.name}] API 참조 없음!")
-                return
-            
-            if self._should_buy(price):
-                logging.info(f"[{self.name}] 매수 조건 충족, 주문 실행")
-                
-                # 2. API로 주문 전송 (order - 단방향)
-                if self.api:
-                    logging.info(f"[{self.name}] API 주문 전송 시도")
-                    self.api.order('send_order', "buy", "005930", 10, price)
-                    self.position += 10
-                    self.trade_count += 1
-                    logging.info(f"[{self.name}] 주문 전송 완료, 포지션: {self.position}")
-                
-                # 3. DBM에 거래 기록 저장 (answer - 양방향)
-                if self.dbm:
-                    trade_data = {
-                        'symbol': '005930',
-                        'action': 'buy',
-                        'quantity': 10,
-                        'price': price,
-                        'timestamp': time.time()
-                    }
-                    logging.info(f"[{self.name}] DBM 거래 기록 저장 시도")
-                    save_result = self.dbm.answer('save_trade', trade_data)
-                    logging.info(f"[{self.name}] 거래 기록 저장 결과: {save_result}")
-                
-                # 4. Admin에 거래 결과 알림 (order - 단방향)
-                if self.admin:
-                    trade_info = {
-                        "action": "buy", 
-                        "symbol": "005930", 
-                        "quantity": 10, 
-                        "price": price,
-                        "trade_count": self.trade_count
-                    }
-                    logging.info(f"[{self.name}] Admin 거래 결과 알림 시도")
-                    self.admin.order('receive_trade_result', trade_info)
-                    logging.info(f"[{self.name}] 거래 결과 알림 완료")
-            else:
-                logging.info(f"[{self.name}] 매수 조건 불충족: price={price}, position={self.position}")
-                
-        except Exception as e:
-            logging.error(f"[{self.name}] 전략 실행 오류: {e}", exc_info=True)
-    
-    def _should_buy(self, price):
-        return price and price > 0 and self.position < 50  # 최대 50주까지
+    def stg_done(self):
+        return self.trading_done
     
     def cleanup(self):
-        logging.info(f"[{self.name}] 전략 정리")
+        pass
 
-class APIComponent:
-    """API 컴포넌트 - 키움 OpenAPI (프로세스)"""
-    from public import init_logger
-    init_logger()
-    
-    def __init__(self, name="API"):
-        self.name = name
-        # QAxWidget 객체는 프로세스 내에서만 생성
+class Api:
+    def __init__(self):
+        self.name = 'api'
+        self.app = None
         self.kiwoom = None
         self.connected = False
-        self.account_list = []
-        self.app = None
-        self.real_data_timer = 0
-        self.order = None  # 프로세스 내에서 주입됨
-        self.frq_order = None  # 프로세스 내에서 주입됨
-    
+        self.trading_done = False
+
     def initialize(self):
-        """키움 API 초기화 - 프로세스 내에서 실행"""
+        from public import init_logger
+        init_logger()
+        logging.info(f"[{self.name}] 프로세스 내 키움 API 초기화 시작")
+        
+        from PyQt5.QtWidgets import QApplication
+        import sys
+        self.app = QApplication(sys.argv)
+        self.set_component()
+        self.set_signal_slot()
+
+    def set_component(self):
         try:
-            logging.info(f"[{self.name}] 프로세스 내 키움 API 초기화 시작")
-            
-            # PyQt5 애플리케이션 초기화 (프로세스 내에서)
-            from PyQt5.QtWidgets import QApplication
-            import sys
-            
-            # 새로운 QApplication 생성 (프로세스마다 독립적)
-            self.app = QApplication(sys.argv)
-            logging.info(f"[{self.name}] QApplication 생성 완료")
-            
-            # 키움 API 임포트 및 초기화 (프로세스 내에서)
-            try:
-                from PyQt5.QAxContainer import QAxWidget
-                import pythoncom
-                
-                # COM 초기화 (프로세스마다 독립적)
-                pythoncom.CoInitialize()
-                logging.info(f"[{self.name}] COM 초기화 완료")
-                
-                # QAxWidget 객체 생성 (프로세스 내에서만!)
-                self.kiwoom = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
-                logging.info(f"[{self.name}] QAxWidget 객체 생성 완료")
-                
-                # 이벤트 연결
-                self.kiwoom.OnEventConnect.connect(self._on_event_connect)
-                self.kiwoom.OnReceiveTrData.connect(self._on_receive_tr_data)
-                self.kiwoom.OnReceiveRealData.connect(self._on_receive_real_data)
-                logging.info(f"[{self.name}] 이벤트 연결 완료")
-                
-            except ImportError as e:
-                logging.error(f"[{self.name}] 키움 API 임포트 실패 (개발환경): {e}")
-                return False
-                
+            from PyQt5.QAxContainer import QAxWidget
+            import pythoncom
+            pythoncom.CoInitialize()
+            self.kiwoom = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+            logging.info(f"[{self.name}] QAxWidget 객체 생성 완료")
+
         except Exception as e:
             logging.error(f"[{self.name}] 초기화 오류: {e}")
-            return False
-    
-    def login(self):
-        """키움 로그인"""
-        import pythoncom
-        
-        logging.info(f"[{self.name}] 로그인 시도 시작")
-        
-        # 로그인 요청
-        self.kiwoom.dynamicCall("CommConnect()")
-        while not self.connected:
-            pythoncom.PumpWaitingMessages()
-            time.sleep(0.1)
-            
-        if self.connected:
-            # 계좌 정보 조회
-            try:
-                account_info = self.kiwoom.dynamicCall("GetLoginInfo(QString)", "ACCNO")
-                if account_info:
-                    self.account_list = account_info.split(';')[:-1]  # 마지막 빈 문자열 제거
-                
-                logging.info(f"[{self.name}] 로그인 성공")
-                logging.info(f"[{self.name}] 계좌 목록: {self.account_list}")
-                return True
-            except Exception as e:
-                logging.error(f"[{self.name}] 계좌 정보 조회 오류: {e}")
-                return False
+
+    def set_signal_slot(self):
+        self.kiwoom.OnEventConnect.connect(self._on_event_connect)
+        self.kiwoom.OnReceiveTrData.connect(self._on_receive_tr_data)
+        self.kiwoom.OnReceiveRealData.connect(self._on_receive_real_data)
 
     def _on_event_connect(self, err_code):
-        """로그인 결과 이벤트"""
         if err_code == 0:
             self.connected = True
             logging.info(f"[{self.name}] 키움서버 연결 성공 (이벤트)")
@@ -733,338 +775,201 @@ class APIComponent:
             logging.error(f"[{self.name}] 키움서버 연결 실패: {error_msg}")
     
     def _on_receive_tr_data(self, screen_no, rqname, trcode, record_name, next, *args):
-        """TR 데이터 수신 이벤트"""
         logging.info(f"[{self.name}] TR 데이터 수신: {rqname} ({trcode})")
     
     def _on_receive_real_data(self, code, real_type, real_data):
-        """실시간 데이터 수신 이벤트"""
-        # 실시간 데이터를 Admin에게 전송
-        if self.connected:
+        if gm.api_connected:
             real_data_info = {
                 'code': code,
                 'real_type': real_type,
                 'timestamp': time.time()
             }
-            # frq_order로 Admin에게 실시간 데이터 전송
-            if self.frq_order:
-                self.frq_order('admin', 'real_data_procedure', real_data_info)
-    
-    def start_real_data_stream(self):
-        """실시간 데이터 스트림 시작"""
-        import threading
+            # admin에게 실시간 데이터 전송 (order 사용)
+            if hasattr(gm.admin, 'order'):
+                gm.admin.order('on_receive_real_data', real_data_info)
+
+    def login(self):
+        import pythoncom
+        WAIT_TIMEOUT = 30  # 30초 타임아웃
         
-        def send_real_data():
-            """실시간 데이터 전송 함수"""
-            while self.connected:
-                try:
-                    self.real_data_timer += 1
-                    
-                    if self.kiwoom:
-                        # 실제 키움 API에서 삼성전자(005930) 실시간 데이터 요청
-                        try:
-                            # 실시간 등록
-                            if self.real_data_timer == 1:  # 최초 1회만 등록
-                                self.kiwoom.dynamicCall("SetRealReg(QString, QString, QString, QString)", "0150", "005930", "9001;10", "0")
-                                logging.info(f"[{self.name}] 삼성전자 실시간 등록 완료")
-                            
-                            # 현재가 조회하여 실시간처럼 전송
-                            current_price = self._get_real_current_price("005930")
-                            if current_price:
-                                real_data = {
-                                    'symbol': '005930',
-                                    'price': current_price,
-                                    'volume': 1000 + (self.real_data_timer % 50),
-                                    'timestamp': time.time(),
-                                    'count': self.real_data_timer
-                                }
-                                
-                                # Admin에게 실시간 데이터 전송 (frq_order - 고빈도 단방향)
-                                if self.frq_order:
-                                    self.frq_order('admin', 'real_data_procedure', real_data)
-                                    logging.debug(f"[{self.name}] 실제 실시간 데이터 #{self.real_data_timer} 전송")
-                            
-                        except Exception as e:
-                            logging.error(f"[{self.name}] 실제 데이터 처리 오류: {e}")
-                            # 실패 시 시뮬레이션 데이터라도 전송
-                            real_data = {
-                                'symbol': '005930',
-                                'price': 75000 + (self.real_data_timer % 100) * 10,
-                                'volume': 1000 + (self.real_data_timer % 50),
-                                'timestamp': time.time(),
-                                'count': self.real_data_timer
-                            }
-                            if self.frq_order:
-                                self.frq_order('admin', 'real_data_procedure', real_data)
-                    else:
-                        # 키움 API 없으면 시뮬레이션
-                        real_data = {
-                            'symbol': '005930',
-                            'price': 75000 + (self.real_data_timer % 100) * 10,
-                            'volume': 1000 + (self.real_data_timer % 50),
-                            'timestamp': time.time(),
-                            'count': self.real_data_timer
-                        }
-                        if self.frq_order:
-                            self.frq_order('admin', 'real_data_procedure', real_data)
-                    
-                    time.sleep(0.5)  # 0.5초마다 전송
-                    
-                except Exception as e:
-                    logging.error(f"[{self.name}] 실시간 데이터 전송 오류: {e}")
-                    break
-            
-            logging.info(f"[{self.name}] 실시간 데이터 스트림 종료")
-        
-        stream_thread = threading.Thread(target=send_real_data, daemon=True)
-        stream_thread.start()
-        logging.info(f"[{self.name}] 실시간 데이터 스트림 시작")
-    
-    def _get_real_current_price(self, symbol):
-        """실제 현재가 조회"""
-        try:
-            if not self.kiwoom or not self.connected:
-                return None
-            
-            import pythoncom
-            
-            # 현재가 조회를 위한 TR 요청
-            self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", symbol)
-            ret = self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)", "현재가조회", "opt10001", 0, "1001")
-            
-            if ret == 0:
-                # 간단한 대기 후 데이터 조회 시도
-                for _ in range(10):  # 1초간 대기
-                    pythoncom.PumpWaitingMessages()
-                    time.sleep(0.1)
-                
-                # 실제 데이터 파싱은 복잡하므로 기본값 반환
-                import random
-                return 75000 + random.randint(-1000, 1000)
-            
-            return None
-            
-        except Exception as e:
-            logging.error(f"[{self.name}] 실제 현재가 조회 오류: {e}")
-            return None
-    
-    def get_current_price(self, symbol):
-        """현재가 조회 (frq_answer로 호출됨)"""
-        if not self.connected:
-            logging.warning(f"[{self.name}] API 연결되지 않음")
-            return None
-        
-        try:
-            if self.kiwoom:
-                # 실제 키움 API 호출
-                price = self._get_real_current_price(symbol)
-                if price:
-                    logging.debug(f"[{self.name}] {symbol} 실제 현재가: {price}")
-                    return price
-            
-            # 실패 시 시뮬레이션 가격
-            import random
-            price = 75000 + random.randint(-1000, 1000)
-            logging.debug(f"[{self.name}] {symbol} 시뮬레이션 현재가: {price}")
-            return price
-            
-        except Exception as e:
-            logging.error(f"[{self.name}] 현재가 조회 오류: {e}")
-            return None
-    
-    def send_order(self, action, symbol, quantity, price):
-        """주문 전송 (order로 호출됨)"""
-        if not self.connected:
-            logging.error(f"[{self.name}] 연결되지 않음")
-            return
-        
-        if not self.account_list:
-            logging.error(f"[{self.name}] 계좌 정보 없음")
-            return
-        
-        try:
-            account = self.account_list[0]  # 첫 번째 계좌 사용
-            
-            if self.kiwoom:
-                # 실제 키움 주문
-                order_type = 1 if action == "buy" else 2  # 1:신규매수, 2:신규매도
-                hoga_type = "00"  # 지정가
-                
-                ret = self.kiwoom.dynamicCall("SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)",
-                                            ["주문", "0101", account, order_type, symbol, quantity, price, hoga_type, ""])
-                
-                if ret == 0:
-                    logging.info(f"[{self.name}] 실제 주문 전송 성공: {action} {symbol} {quantity}주 @{price}")
-                else:
-                    logging.error(f"[{self.name}] 실제 주문 전송 실패: {ret}")
-                    # 실패 시 시뮬레이션으로 처리
-                    logging.info(f"[{self.name}] 시뮬레이션 주문 (실패 대체): {action} {symbol} {quantity}주 @{price}")
-            else:
-                # 시뮬레이션
-                logging.info(f"[{self.name}] 시뮬레이션 주문: {action} {symbol} {quantity}주 @{price} (계좌: {account})")
-                
-        except Exception as e:
-            logging.error(f"[{self.name}] 주문 전송 오류: {e}")
-            # 에러 발생 시 시뮬레이션으로 처리
-            logging.info(f"[{self.name}] 시뮬레이션 주문 (에러 대체): {action} {symbol} {quantity}주 @{price}")
-    
-    def get_account_list(self):
-        """계좌 목록 조회"""
-        return self.account_list
-    
-    def is_connected(self):
-        """연결 상태 확인"""
+        logging.info(f"[{self.name}] 로그인 시도 시작")
+        self.kiwoom.dynamicCall("CommConnect()")
+        start_time = time.time()
+        self.connected = False
+        while not self.connected:
+            pythoncom.PumpWaitingMessages()
+            time.sleep(0.1)
+            if time.time() - start_time > WAIT_TIMEOUT:
+                logging.error(f"[{self.name}] 로그인 실패: 타임아웃 초과")
+                break
         return self.connected
     
-    def cleanup(self):
-        """정리"""
-        try:
-            self.connected = False
-            if self.kiwoom:
-                logging.info(f"[{self.name}] 키움 API 정리 완료")
-            else:
-                logging.info(f"[{self.name}] 시뮬레이션 모드 정리 완료")
-                
-            # COM 정리
-            import pythoncom
-            pythoncom.CoUninitialize()
-            
-        except Exception as e:
-            logging.error(f"[{self.name}] 정리 오류: {e}")
-
-class DBMComponent:
-    """데이터베이스 컴포넌트 - 프로세스"""
-    from public import init_logger
-    init_logger()
-    def __init__(self, name="DBM"):
-        self.name = name
-        self.database = []
+    def is_connected(self):
+        return self.connected
     
+    def GetConnectState(self):
+        return self.kiwoom.dynamicCall("GetConnectState()")
+
+    def GetMasterCodeName(self, code):
+        data = self.kiwoom.dynamicCall("GetMasterCodeName(QString)", code)
+        return data
+
+    def GetMasterLastPrice(self, code):
+        data = self.kiwoom.dynamicCall("GetMasterLastPrice(QString)", code)
+        data = int(data) if data else 0
+        return data
+
+    def start_api(self):
+        logging.info(f"\n[{self.name}] 시작 {'*' * 10}")
+
+        result = self.answer('admin', 'admin_response', 'admin call')
+        logging.info(f"[{self.name}] -> Admin / {result}")
+
+        result = self.answer('dbm', 'dbm_response', 'dbm call')
+        logging.info(f"[{self.name}] -> DBM / {result}")
+
+        result = self.answer('stg', 'stg_response', 'stg call')
+        logging.info(f"[{self.name}] -> STG / {result}")
+
+        logging.info(f"[{self.name}] 실시간 데이터 전송 시작")
+        for i in range(10):
+            self.frq_order('admin', 'on_receive_real_data', f'real_data_info_{i}')
+        
+        self.trading_done = True
+        logging.info(f"[{self.name}] 작업 완료")
+        
+        # Admin에게 완료 통보
+        self.order('admin', 'on_component_done', 'api')
+
+    def api_response(self, data):
+        return f"[{self.name}] 응답: {data}"
+
+    def api_done(self):
+        return self.trading_done
+
+class Dbm:
+    def __init__(self):
+        self.name = 'dbm'
+        self.initialized = False
+        self.trading_done = False
+
     def initialize(self):
-        logging.info(f"[{self.name}] 데이터베이스 초기화")
-    
-    def save_trade(self, trade_data):
-        """거래 데이터 저장 (answer로 호출됨)"""
-        trade_id = len(self.database) + 1
-        trade_data['id'] = trade_id
-        self.database.append(trade_data)
-        
-        logging.info(f"[{self.name}] 거래 저장: ID={trade_id}, {trade_data.get('action')} {trade_data.get('symbol')}")
-        return f"거래 저장 완료: ID={trade_id}"
-    
-    def get_trade_count(self):
-        count = len(self.database)
-        logging.info(f"[{self.name}] 총 거래 건수: {count}")
-        return count
-    
-    def get_trades(self):
-        logging.info(f"[{self.name}] 거래 내역 조회: {len(self.database)}건")
-        return self.database
-    
-    def cleanup(self):
-        logging.info(f"[{self.name}] 데이터베이스 정리")
+        from public import init_logger
+        init_logger()
+        self.initialized = True
+        logging.info(f"[{self.name}] 데이터베이스 초기화 완료")
 
-def test_1to1_communication():
-    """1대1 통신 시스템 테스트"""
-    from PyQt5.QtWidgets import QApplication
-    import sys
-    
-    app = QApplication(sys.argv)
-    
-    logging.info("=== 통신 시스템 테스트 ===")
-    
-    try:
-        # 컴포넌트 생성
-        logging.info("\n1. 컴포넌트 생성")
-        admin = SimpleManager('admin', AdminComponent, None, "AdminComp")
-        api = SimpleManager('api', APIComponent, 'process', "APIComp")
-        strategy = SimpleManager('strategy', StrategyComponent, 'thread', "StrategyComp")
-        dbm = SimpleManager('dbm', DBMComponent, 'process', "DBMComp")
+    def start_dbm(self):
+        logging.info(f"\n[{self.name}] 작업 시작 {'*' * 10}")
+
+        result = self.answer('admin', 'admin_response', 'admin call')
+        logging.info(f"[{self.name}] -> Admin / {result}")
+
+        result = self.answer('api', 'api_response', 'api call')
+        logging.info(f"[{self.name}] -> API / {result}")
+
+        result = self.answer('stg', 'stg_response', 'stg call')
+        logging.info(f"[{self.name}] -> STG / {result}")
+
+        self.trading_done = True
+        logging.info(f"[{self.name}] 작업 완료")
         
-        # 시작
-        logging.info("\n2. 컴포넌트 시작")
-        admin.start()
-        api.start()
-        dbm.start()
+        # Admin에게 완료 통보
+        self.order('admin', 'on_component_done', 'dbm')
+
+    def dbm_response(self, data):
+        return f"[{self.name}] 응답: {data}"
+
+    def dbm_done(self):
+        return self.trading_done
+
+class Main:
+    def __init__(self):
+        pass
+
+    def run(self):
+        try:
+            gm.admin = SimpleManager('admin', Admin, None)    # 메인 쓰레드 실행
+            gm.api = SimpleManager('api', Api, 'process')     # 별도 프로세스
+            gm.dbm = SimpleManager('dbm', Dbm, 'process')     # 별도 프로세스
+
+            gm.admin.start()
+            gm.api.start() 
+            gm.dbm.start()
+
+            # API 로그인
+            gm.api.order('login')
+            # 연결 확인 (1이면 연결됨)
+            timeout_count = 0
+            while not gm.api.answer('is_connected') and timeout_count < 100:
+                time.sleep(0.1)
+                timeout_count += 1
+            
+            if gm.api.answer('is_connected'):
+                gm.api_connected = True
+                logging.info(f"[Main] API 연결 완료")
+                gm.admin.order('start_admin')
+            else:
+                logging.error(f"[Main] API 연결 실패")
+
+        except Exception as e:
+            logging.error(f"[Main] 실행 오류: {e}", exc_info=True)
         
-        # Strategy는 마지막에 시작 (다른 컴포넌트들이 모두 준비된 후)
-        time.sleep(2)  # 프로세스 초기화 대기
-        strategy.start()
+        finally:
+            logging.info(f"[Main] 시스템 종료 시작")
+            self.cleanup()
+            logging.info(f"[Main] 시스템 종료 완료")
         
-        time.sleep(2)  # 전체 초기화 완료 대기
+        return
+
+    def cleanup(self):
+        """강제 종료 포함한 정리"""
+        # ComponentRegistry에서 모든 컴포넌트 가져오기
+        all_components = ComponentRegistry._components.copy()
         
-        # API 연결 상태 확인 (answer - 양방향)
-        logging.info("\n3. API 연결")
-        api.order('login')
-        connected = api.answer('is_connected')
-        account_list = api.answer('get_account_list')
-        logging.info(f"API 연결: {connected}, 계좌: {account_list}")
-        api.order('start_real_data_stream')
+        # 종료 순서 정의 (중요: 의존성 역순)
+        shutdown_order = ['stg', 'api', 'dbm', 'admin']
         
-        # 매매 시작
-        logging.info("\n4. 매매 시작")
-        admin.start_trading()
+        # 순서대로 종료
+        for name in shutdown_order:
+            if component := all_components.get(name):
+                try:
+                    component.stop()
+                    logging.info(f"[Main] {name.upper()} 종료")
+                except Exception as e:
+                    logging.error(f"[Main] {name.upper()} 종료 오류: {e}")
         
-        # 12초간 실행 (Strategy가 10사이클 실행)
-        logging.info("\n5. 시스템 실행 (12초)")
-        time.sleep(12)
+        # 혹시 누락된 컴포넌트들 처리
+        for name, component in all_components.items():
+            if name not in shutdown_order:
+                try:
+                    component.stop()
+                    logging.info(f"[Main] {name.upper()} (추가) 종료")
+                except Exception as e:
+                    logging.error(f"[Main] {name.upper()} (추가) 종료 오류: {e}")
         
-        # 결과 확인
-        logging.info("\n6. 최종 결과 확인")
+        # 프로세스 강제 종료
+        self._force_exit()
+
+    def _force_exit(self):
+        """프로세스 강제 종료"""
+        import os
+        import signal
+        import time
         
-        # Admin 상태 확인 (직접 호출)
-        final_status = admin.get_system_status()
-        logging.info(f"Admin 최종 상태: {final_status}")
-        
-        # DBM 거래 내역 확인 (answer - 양방향)
-        trade_count = dbm.answer('get_trade_count')
-        trades = dbm.answer('get_trades')
-        logging.info(f"DBM 거래 건수: {trade_count}")
-        if trades:
-            logging.info(f"DBM 거래 내역 샘플: {trades[:3] if len(trades) > 3 else trades}")
-        
-        # 매매 중지
-        logging.info("\n7. 매매 중지")
-        admin.stop_trading()
-        
-        # 성공 여부 판정
-        success_criteria = {
-            'real_data_count': final_status.get('real_data_count', 0) > 0,
-            'trade_results': final_status.get('results_count', 0) > 0,
-            'db_trades': trade_count > 0,
-            'api_connected': connected
-        }
-        
-        logging.info("\n=== 테스트 결과 분석 ===")
-        for criteria, result in success_criteria.items():
-            status = "✅ 성공" if result else "❌ 실패"
-            logging.info(f"{criteria}: {status}")
-        
-        if all(success_criteria.values()):
-            logging.info("\n🎉 전체 테스트 성공!")
-            logging.info("✅ order: 1대1 단방향 통신")
-            logging.info("✅ answer: 1대1 양방향 통신")
-            logging.info("✅ frq_order: 1대1 고빈도 단방향 (스트림)")
-            logging.info("✅ frq_answer: 1대1 고빈도 양방향 (폴링)")
-            logging.info("✅ 모든 컴포넌트 간 6가지 인터페이스 통신 성공")
-        else:
-            logging.warning("\n⚠️ 일부 테스트 실패")
-        
-    except Exception as e:
-        logging.error(f"테스트 오류: {e}", exc_info=True)
-    
-    finally:
-        # 정리
-        logging.info("\n8. 컴포넌트 정리")
-        for comp in [strategy, dbm, api, admin]:
-            try:
-                comp.stop()
-            except:
-                pass
-        app.quit()
+        try:
+            # 1초 후 강제 종료
+            time.sleep(1)
+            logging.info(f"[Main] 프로세스 강제 종료")
+            os.kill(os.getpid(), signal.SIGTERM)
+        except:
+            pass
 
 if __name__ == "__main__":
     mp.set_start_method('spawn', force=True)
     from public import init_logger
     init_logger()
-    logging.info("수정된 키움 API 프로세스 트레이딩 시스템 시작")
-    test_1to1_communication()
+    logging.info("트레이딩 시스템 시작")
+    main = Main()
+    main.run()
+
