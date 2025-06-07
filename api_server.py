@@ -568,6 +568,21 @@ class APIServer:
 
         self.counter = 0 # 테스트용
 
+    def order(self, method, *args, **kwargs):
+        result = None
+        if hasattr(self, method):
+            try:
+                result = getattr(self, method)(*args, **kwargs)
+                logging.debug(f"[{self.name}] order {method} 완료")
+            except Exception as e:
+                logging.error(f"[{self.name}] {method} 실행 오류: {e}")
+        else:
+            logging.warning(f"[{self.name}] {method} 메서드 없음")
+        return result
+
+    def answer(self, method, *args, **kwargs):
+        return self.order(method, *args, **kwargs)
+
     def api_stop(self):
         """APIServer 종료 시 실행되는 메서드"""
         logging.info(f"APIServer 종료 시작 (sim_no={self.sim_no})")
@@ -841,6 +856,7 @@ class APIServer:
     def GetConditionLoad(self, block=True):
         if self.sim_no == 1:  
             self.strategy_loaded = True
+            result = 1
         else:  
             self.strategy_loaded = False
             result = self.ocx.dynamicCall("GetConditionLoad()")

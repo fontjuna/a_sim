@@ -253,11 +253,10 @@ class DBMServer:
         record = None
         dt = datetime.now().strftime("%Y%m%d")
         tm = datetime.now().strftime("%H%M%S")
-        전략 = f'전략{st_no:02d}'
 
         def new_record():
             return { 
-                '전략': 전략, '종목번호': code, '종목명': name, '매수일자': dt, '매수시간': tm, 
+                '종목번호': code, '종목명': name, '매수일자': dt, '매수시간': tm, 
                 '매수수량': qty, '매수가': price, '매수금액': amount, '매수번호': ordno, 
                 '매도수량': 0, '매수전략': st_buy, '전략명칭': st_name, 
             }

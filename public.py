@@ -175,9 +175,7 @@ class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
     수수료율 = FieldsAttributes(name='수수료율', type='REAL', not_null=True, default=0.0)
     요청명 = FieldsAttributes(name='요청명', type='TEXT', not_null=True, default="''")
     원주문번호 = FieldsAttributes(name='원주문번호', type='TEXT', not_null=True, default="''")
-    전략 = FieldsAttributes(name='전략', type='TEXT', not_null=True, default="''")
     전략명칭 = FieldsAttributes(name='전략명칭', type='TEXT', not_null=True, default="''")
-    전략번호 = FieldsAttributes(name='전략번호', type='INTEGER', not_null=True, default=0)
     제비용 = FieldsAttributes(name='제비용', type='INTEGER', not_null=True, default=0)
     종목명 = FieldsAttributes(name='종목명', type='TEXT', not_null=True, default="''")
     종목번호 = FieldsAttributes(name='종목번호', type='TEXT', not_null=True, default="''")
@@ -216,7 +214,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     TRD_SELECT_COLUMNS = "substr(처리일시, 12, 8) AS 처리시간, 주문구분, 주문상태, 종목코드, 종목명, 주문수량, 주문가격, 미체결수량,\
           체결량, 체결가, 체결누계금액, 매매구분, 주문번호, 원주문번호, 전략명칭, 처리일시"
     TRD_SELECT_DATE = f"SELECT substr(처리일시, 12, 12) AS 처리시간, * FROM {TRD_TABLE_NAME} WHERE DATE(처리일시) = ? ORDER BY 처리일시 ASC"
-    TRD_COLUMNS = [fd.id, fd.전략번호, fd.전략명칭, fd.주문구분, fd.주문상태, fd.주문번호, fd.종목코드, fd.종목명, fd.현재가, fd.주문수량, fd.주문가격, \
+    TRD_COLUMNS = [fd.id, fd.전략명칭, fd.주문구분, fd.주문상태, fd.주문번호, fd.종목코드, fd.종목명, fd.현재가, fd.주문수량, fd.주문가격, \
                     fd.미체결수량, fd.매매구분, fd.체결량, fd.체결가, fd.체결누계금액, fd.체결번호, fd.체결시간, fd.단위체결가, fd.단위체결량, fd.당일매매수수료, \
                         fd.당일매매세금, fd.원주문번호, fd.처리일시]
     TRD_COLUMN_NAMES = [col.name for col in TRD_COLUMNS]
@@ -228,7 +226,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
 
     CONC_TABLE_NAME = 'conclusion'
     CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND 매도수량 > 0 ORDER BY 매수일자, 매수시간 ASC"
-    CONC_COLUMNS = [fd.id, fd.전략, fd.종목번호, fd.종목명, fd.손익금액, fd.손익율, fd.매수일자, fd.매수시간,\
+    CONC_COLUMNS = [fd.id, fd.종목번호, fd.종목명, fd.손익금액, fd.손익율, fd.매수일자, fd.매수시간,\
                     fd.매수수량, fd.매수가, fd.매수금액, fd.매수번호, fd.매도일자, fd.매도시간, fd.매도수량,\
                     fd.매도가, fd.매도금액, fd.매도번호, fd.제비용, fd.매수전략, fd.전략명칭]
     CONC_COLUMN_NAMES = [col.name for col in CONC_COLUMNS]
@@ -619,15 +617,12 @@ class Constants:        # 상수 정의
         '매수스크립트AND': True,
         '매수스크립트OR': False,
         '매도스크립트적용': False,
-        '매도스크립트': '',
-        '매도스크립트AND': True,
+        '매도스크립트': '', '매도스크립트AND': True,
         '매도스크립트OR': False,
 
         '남은횟수': 1000,
     }
-    DEFAULT_DEFINE_SETS = [
-        {'전략':'전략00', '전략적용': False, '전략명칭': BASIC_STRATEGY}, *[{'전략':f'전략{seq:02d}', '전략적용': False, '전략명칭': ''} for seq in range(1,6)]
-    ]
+    DEFAULT_DEFINE_SETS = {'전략명칭': BASIC_STRATEGY}
 
     # 색상정의
     list전일가대비 = ['현재가', '시가', '고가', '저가', '등락율']
@@ -735,7 +730,7 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
         '실수': ["수익률(%)", "등락율", '이익보존율', '감시시작율'],
         '컬럼': ["종목번호", "종목명", "보유수량", "매입가", "매입금액", "현재가", "평가금액", "평가손익", "수익률(%)"],
         '추가': ['주문가능수량', '전일대비', "등락율", '누적거래량', '거래량', '최고가', '매수수량', '매수가', '매수금액',\
-                        '보존', '이익보존율', '감시', '감시시작율', '상태', '전략', '매수전략', '전략명칭', '매수일자', '매수시간', '매수번호'], # 상태: 0-일반, 1-매수, 2-매도
+                        '보존', '이익보존율', '감시', '감시시작율', '상태', '매수전략', '전략명칭', '매수일자', '매수시간', '매수번호'], # 상태: 0-일반, 1-매수, 2-매도
     }
     hd잔고목록.update({
         '헤더': hd잔고목록['컬럼'] + ["매수일자", "매수시간", '등락율', '전일대비', '누적거래량'],
@@ -744,7 +739,7 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
 
     hd조건목록 = {
         '키': '종목코드',
-        '정수': ['현재가', '누적거래량', '시가', '고가', '저가', '전략번호', '주문수량', '체결량', '미체결수량'],
+        '정수': ['현재가', '누적거래량', '시가', '고가', '저가', '주문수량', '체결량', '미체결수량'],
         '실수': ['등락율'],
         '추가': ['전송번호', '주문번호', '주문유형', '전략명칭', '주문수량', '체결량', '미체결수량', '원주문번호'],
     }
@@ -929,7 +924,6 @@ class GlobalMemory:      # 글로벌 메모리 정의
     strategy_row = None
     basic_strategy = None
     전략설정 = None # json
-    전략쓰레드 = None
     매수문자열 = ''
     매도문자열 = ''
     set종목감시 = set()

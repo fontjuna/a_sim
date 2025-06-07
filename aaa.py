@@ -78,7 +78,7 @@ class Main:
             gm.main = self
             gm.admin = SimpleManager('admin',Admin, None)
             # gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=True)
-            gm.api = APIServer()
+            gm.api = SimpleManager('api', APIServer, None)
             gm.api.api_init(gm.config.sim_no)
             gm.api.CommConnect(True)
         except Exception as e:
@@ -136,17 +136,35 @@ class Main:
 
     def cleanup(self):
         try:
-            if hasattr(gm, 'ipc') and gm.ipc:
-                gm.ipc.shutting_down = True
-
             if hasattr(gm, 'admin') and gm.admin:
                 gm.admin.cdn_fx중지_전략매매()
-
-            if hasattr(gm, 'stg') and gm.stg:
-                gm.stg.stop()
-
-            # 짧은 대기 후 강제 종료
-            time.sleep(0.5)
+                
+            from worker import ComponentRegistry
+            all_components = ComponentRegistry._components.copy()
+            
+            # 종료 순서 정의 (중요: 의존성 역순)
+            shutdown_order = ['stg', 'api', 'dbm', 'admin']
+            
+            # 순서대로 종료
+            for name in shutdown_order:
+                if component := all_components.get(name):
+                    try:
+                        component.stop()
+                        logging.info(f"[Main] {name.upper()} 종료")
+                    except Exception as e:
+                        logging.error(f"[Main] {name.upper()} 종료 오류: {e}")
+            
+            # 혹시 누락된 컴포넌트들 처리
+            for name, component in all_components.items():
+                if name not in shutdown_order:
+                    try:
+                        component.stop()
+                        logging.info(f"[Main] {name.upper()} (추가) 종료")
+                    except Exception as e:
+                        logging.error(f"[Main] {name.upper()} (추가) 종료 오류: {e}")
+            
+            # 프로세스 강제 종료
+            self._force_exit()
             
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
@@ -154,6 +172,21 @@ class Main:
             self.cleanup_flag = True
             if hasattr(self, 'app'): self.app.quit()
             logging.info("cleanup completed")
+
+    def _force_exit(self):
+        """프로세스 강제 종료"""
+        import os
+        import signal
+        import time
+        
+        try:
+            # 1초 후 강제 종료
+            time.sleep(1)
+            logging.info(f"[Main] 프로세스 강제 종료")
+            os.kill(os.getpid(), signal.SIGTERM)
+        except:
+            pass
+
             
 if __name__ == "__main__":
     import multiprocessing

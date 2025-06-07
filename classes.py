@@ -181,13 +181,9 @@ class Toast(QWidget):
         self.hide()
 
 class CounterTicker:
-    """
-    쓰레드 안전한, 전략별 종목 매수 횟수 카운터 클래스
-    날짜가 변경되면 자동으로 카운터를 초기화합니다.
-    """
     DEFAULT_STRATEGY_LIMIT = 1000   # 전략 자체 기본 제한
     DEFAULT_TICKER_LIMIT = 10       # 종목 기본 제한
-    DEFAULT_DATA = { "date": dc.td.ToDay, "data": {} } # data = { strategy: {code: { name: "", limit: 0, count: 0 }, ... } } 
+    DEFAULT_DATA = { "date": dc.td.ToDay, "data": {} } # data = { code: { name: "", limit: 0, count: 0 }, ... } 
    
     def __init__(self, file_name="counter_data.json"):
         data_path = get_path('db')
@@ -211,59 +207,58 @@ class CounterTicker:
             success, _ = save_json(self.file_path, save_obj)
             return success
     
-    def set_strategy(self, strategy, name, strategy_limit=None, ticker_limit=None):
+    def set_strategy(self, name, strategy_limit=None, ticker_limit=None):
         with self.lock:
             update = False
-            if strategy not in self.data: 
-                self.data[strategy] = {}
-                self.data[strategy]["000000"] = { 
+            if "000000" not in self.data: 
+                self.data["000000"] = { 
                     "name": name, 
                     "all": ticker_limit if ticker_limit is not None else self.DEFAULT_TICKER_LIMIT, 
                     "limit": strategy_limit if strategy_limit is not None else self.DEFAULT_STRATEGY_LIMIT, 
                     "count": 0 }
                 update = True
-            else:
-                if self.data[strategy]["000000"]["name"] != name:
-                    self.data[strategy]["000000"]["name"] = name
+
+            if self.data["000000"]["name"] != name:
+                self.data["000000"]["name"] = name
+                update = True
+
+            if strategy_limit is not None:
+                if self.data["000000"]["limit"] != strategy_limit:
+                    self.data["000000"].update({ "limit": strategy_limit, "count": 0 })
                     update = True
-                if strategy_limit is not None:
-                    if self.data[strategy]["000000"]["limit"] != strategy_limit:
-                        self.data[strategy]["000000"].update({ "limit": strategy_limit, "count": 0 })
-                        update = True
-                if ticker_limit is not None:
-                    if self.data[strategy]["000000"]["all"] != ticker_limit:
-                        self.data[strategy]["000000"].update({ "all": ticker_limit, "count": 0 })
-                        update = True
+
+            if ticker_limit is not None:
+                if self.data["000000"]["all"] != ticker_limit:
+                    self.data["000000"].update({ "all": ticker_limit, "count": 0 })
+                    update = True
+
             if update: self.save_data()
     
     def set_batch(self, data):
         with self.lock:
-            for strategy, codes in data.items(): 
-                for code, name in codes.items():
-                    self.set(strategy, code, name)
+            for code, name in data.items():
+                self.set(code, name)
             self.save_data()
 
-    def set(self, strategy, code, name, limit=0):
-        if strategy not in self.data:
-            self.set_strategy(strategy, name)
+    def set(self, code, name, limit=0):
         with self.lock:
-            self.data[strategy][code] = { "name": name, "limit": limit, "count": 0 }
+            self.data[code] = { "name": name, "limit": limit, "count": 0 }
             self.save_data()
 
-    def set_add(self, strategy, code):
+    def set_add(self, code):
         with self.lock:
-            self.data[strategy][code]["count"] += 1
-            self.data[strategy]["000000"]["count"] += 1
+            self.data[code]["count"] += 1
+            self.data["000000"]["count"] += 1
             self.save_data()
     
-    def get(self, strategy, code, name=None):
+    def get(self, code, name=""):
         with self.lock:
-            if code not in self.data[strategy]:
-                self.set(strategy, code, name if name is not None else "")
-            if self.data[strategy]["000000"]["count"] >= self.data[strategy]["000000"]["limit"]:
+            if code not in self.data:
+                self.set(code, name)
+            if self.data["000000"]["count"] >= self.data["000000"]["limit"]:
                 return False
-            ticker_info = self.data[strategy][code]
-            ticker_limit = ticker_info["limit"] if ticker_info["limit"] > 0 else self.data[strategy]["000000"]["all"]
+            ticker_info = self.data[code]
+            ticker_limit = ticker_info["limit"] if ticker_info["limit"] > 0 else self.data["000000"]["all"]
             return ticker_info["count"] < ticker_limit
 
 class TimeLimiter:

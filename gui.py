@@ -627,7 +627,7 @@ class GUI(QMainWindow, form_class):
             self.btnClearStrategy.clicked.connect(self.gui_tabs_clear)
             self.btnGetStrategy.clicked.connect(self.gui_tabs_get)
             self.btnSaveStrategy.clicked.connect(self.gui_tabs_save)
-            self.ledCurrStrategy.setText(gm.전략설정[0]['전략명칭'])
+            self.ledCurrStrategy.setText(gm.전략설정['전략명칭'])
 
         except Exception as e:
             logging.error(f'전략탭 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -654,9 +654,7 @@ class GUI(QMainWindow, form_class):
                 logging.warning(f'전략명칭이 입력되지 않았습니다.')
                 return
 
-            gm.전략설정[0] = {
-                '전략': f'전략00',
-                '전략적용': True,
+            gm.전략설정 = {
                 '전략명칭': 전략명칭,
             }
 
@@ -777,12 +775,9 @@ class GUI(QMainWindow, form_class):
                 result = gm.전략정의.delete(key=name)
                 if result:
                     msg = '설정이 삭제되었습니다.'
-                    for i in range(1, 11):
-                        if gm.전략설정[i]['전략명칭'] == name:
-                            gm.전략설정[i]['전략명칭'] = ''
-                            gm.전략설정[i]['전략적용'] = False
-                            self.gui_tabs_clear(f'{i:02d}')
-                            break
+                    if gm.전략설정['전략명칭'] == name:
+                        gm.전략설정['전략명칭'] = ''
+                        self.gui_tabs_clear()
                     gm.admin.json_save_strategy_sets()
                     gm.admin.json_save_define_sets()
 
@@ -1025,8 +1020,8 @@ class GUI(QMainWindow, form_class):
             self.lbl4.setText(gm.admin.com_market_status())
 
             # 큐 메시지 처리
-            while not gm.qwork['gui'].empty():
-                data = gm.qwork['gui'].get()
+            while not gm.qwork['msg'].empty():
+                data = gm.qwork['msg'].get()
                 if data.order == '주문내용':
                     self.gui_fx게시_주문내용(data.job['msg'])
                 elif data.order == '검색내용':

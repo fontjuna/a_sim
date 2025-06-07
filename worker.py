@@ -110,7 +110,7 @@ class QThreadComponent(QThread):
         if self.instance and hasattr(self.instance, method):
             try: 
                 getattr(self.instance, method)(*args, **kwargs)
-                logging.debug(f"[{self.name}] order {method} 완료")
+                #logging.debug(f"[{self.name}] order {method} 완료")
             except Exception as e: 
                 logging.error(f"[{self.name}] {method} 실행 오류: {e}")
     
@@ -633,7 +633,7 @@ class Admin:
         result = gm.dbm.answer('dbm_response', 'dbm call')
         logging.info(f"[{self.name}] -> DBM / {result}")
 
-        gm.stg = SimpleManager('stg', Strategy, 'thread')
+        gm.stg = SimpleManager('stg', Strategy, 'thread', 'arg_1', 'kwarg_1')
         gm.stg.start()
         time.sleep(1.0)  # STG 시작 대기만 유지
 
@@ -689,10 +689,11 @@ class Admin:
         pass
 
 class Strategy:
-    def __init__(self):
+    def __init__(self, arg, kwarg):
         self.name = 'stg'
         self.trading_done = False
         self.initialized = False
+        logging.info(f"[{self.name}] 초기화 완료: {arg}, {kwarg}")
 
     def initialize(self):
         self.initialized = True
