@@ -43,6 +43,40 @@ class SimpleManager:
         elif hasattr(self.instance, 'cleanup'):
             self.instance.cleanup()
         logging.info(f"[{self.name}] 중지")
+
+    """
+    order 와 answer 는 랩퍼 메소드 인스턴스 메소드 직접 호출도 가능 admin.is_started() 처럼 사용
+    """
+    def order(self, method, *args, **kwargs):
+        """통일된 order 인터페이스"""
+        if hasattr(self.instance, 'order'):
+            # thread/process 컴포넌트
+            return self.instance.order(method, *args, **kwargs)
+        else:
+            # 직접 실행 컴포넌트
+            if hasattr(self.instance, method):
+                try:
+                    result = getattr(self.instance, method)(*args, **kwargs)
+                    logging.debug(f"[{self.name}] order {method} 완료")
+                    return result
+                except Exception as e:
+                    logging.error(f"[{self.name}] {method} 실행 오류: {e}")
+            else:
+                logging.warning(f"[{self.name}] {method} 메서드 없음")
+            return None
+    
+    def answer(self, method, *args, **kwargs):
+        """통일된 answer 인터페이스"""
+        if hasattr(self.instance, 'answer'):
+            # thread/process 컴포넌트
+            return self.instance.answer(method, *args, **kwargs)
+        else:
+            # 직접 실행 컴포넌트는 order와 동일
+            return self.order(method, *args, **kwargs)
+        
+    """
+    frq_order 와 frq_answer 는 해당 인스턴스 메소드 직접 사용 connected = api.frq_answer('is_connected') 처럼 사용
+    """
     
     def __getattr__(self, name):
         return getattr(self.instance, name)
