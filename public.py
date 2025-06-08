@@ -933,6 +933,43 @@ class GlobalMemory:      # 글로벌 메모리 정의
     수수료율 = 0.0
     세금율 = 0.0
     holdings = {}
+    
+    def order(self, target, method, *args, **kwargs):
+        """통일된 order 인터페이스 - target 중복 해결"""
+        component = getattr(self, target, None)
+        if component:
+            return component.order(method, *args, **kwargs)
+        else:
+            logging.warning(f"[GlobalComponent] 타겟 없음: {target}")
+            return None
+    
+    def answer(self, target, method, *args, **kwargs):
+        """통일된 answer 인터페이스 - target 중복 해결"""
+        component = getattr(self, target, None)
+        if component:
+            return component.answer(method, *args, **kwargs)
+        else:
+            logging.warning(f"[GlobalComponent] 타겟 없음: {target}")
+            return None
+    
+    def frq_order(self, target, method, *args, **kwargs):
+        """통일된 frq_order 인터페이스 - target 중복 해결"""
+        component = getattr(self, target, None)
+        if component:
+            return component.frq_order(method, *args, **kwargs)
+        else:
+            logging.warning(f"[GlobalComponent] 타겟 없음: {target}")
+            return False
+    
+    def frq_answer(self, target, method, *args, **kwargs):
+        """통일된 frq_answer 인터페이스 - target 중복 해결"""
+        component = getattr(self, target, None)
+        if component:
+            return component.frq_answer(method, *args, **kwargs)
+        else:
+            logging.warning(f"[GlobalComponent] 타겟 없음: {target}")
+            return None
+
 gm = GlobalMemory()
 
 def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):
