@@ -12,6 +12,7 @@ import logging
 import time
 import sys
 from datetime import datetime
+from chart import ChartUpdater
 
 init_logger()
 
@@ -77,11 +78,15 @@ class Main:
             gm.toast = Toast()
             gm.main = self
             gm.admin = SimpleManager('admin',Admin, None)
+            gm.admin.start()
             gm.api = SimpleManager('api', APIServer, None)
-            gm.api.api_init(gm.config.sim_no)
-            gm.api.CommConnect(True)
+            gm.api.start()
+            gm.order('api', 'api_init', gm.config.sim_no)
+            gm.order('api', 'CommConnect', True)
             gm.dbm = SimpleManager('dbm', DBMServer, 'process')
             gm.dbm.start()
+            gm.ctu = SimpleManager('ctu', ChartUpdater, 'thread')
+            gm.ctu.start()
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -92,10 +97,10 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    if gm.api.api_connected: break
+                    if gm.answer('api', 'api_connected'): break
                     time.sleep(0.1)
-            gm.api.set_tickers()
-            gm.admin.init()
+            gm.order('api', 'set_tickers')
+            gm.order('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
 
             if gm.config.gui_on: gm.gui.init()
@@ -144,7 +149,7 @@ class Main:
             all_components = ComponentRegistry._components.copy()
             
             # 종료 순서 정의 (중요: 의존성 역순)
-            shutdown_order = ['stg', 'api', 'dbm', 'admin']
+            shutdown_order = ['stg', 'ctu', 'api', 'dbm', 'admin']
             
             # 순서대로 종료
             for name in shutdown_order:
