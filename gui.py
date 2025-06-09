@@ -175,7 +175,9 @@ class GUI(QMainWindow, form_class):
         else:
             self.rbInfo.setChecked(True)
             self.rbDebug.setChecked(False)
+
         self.refresh_data_timer.start(200)
+
         success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
         logging.getLogger().setLevel(gm.json_config['root']['level'])
         self.rbDebug.setChecked(gm.json_config['root']['level'] == logging.DEBUG)
@@ -343,6 +345,7 @@ class GUI(QMainWindow, form_class):
             # self.leTrStrategy.setText(row['전략'])
             self.leTrCancelKey.setText(row['키'])
 
+    # 수동 주문 ---------------------------------------------------------------------------------------------
     def gui_tr_code_changed(self):
         code = self.leTrCode.text()
         if code:
@@ -409,7 +412,7 @@ class GUI(QMainWindow, form_class):
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 
         # 주문 전송
-        gm.admin.com_SendOrder(전략번호, **send_data)
+        gm.admin.com_SendOrder(**send_data)
 
     def gui_tr_cancel(self):
         key = self.leTrCancelKey.text()

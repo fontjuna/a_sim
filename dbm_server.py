@@ -247,7 +247,7 @@ class DBMServer:
         dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
         self.table_upsert('chart', table, dict_data)
 
-    def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno, st_no, st_name, st_buy):
+    def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno, st_name, st_buy):
         """체결 정보 저장 및 손익 계산"""
         table = dc.ddb.CONC_TABLE_NAME
         record = None

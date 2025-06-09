@@ -77,10 +77,11 @@ class Main:
             gm.toast = Toast()
             gm.main = self
             gm.admin = SimpleManager('admin',Admin, None)
-            # gm.dbm = gm.ipc.register('dbm', DBMServer, type='process', start=True)
             gm.api = SimpleManager('api', APIServer, None)
             gm.api.api_init(gm.config.sim_no)
             gm.api.CommConnect(True)
+            gm.dbm = SimpleManager('dbm', DBMServer, 'process')
+            gm.dbm.start()
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -187,7 +188,6 @@ class Main:
         except:
             pass
 
-            
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support() # 없으면 실행파일(exe)로 실행시 DBMServer멀티프로세스 생성시 프로그램 리셋되어 시작 반복 하는 것 방지

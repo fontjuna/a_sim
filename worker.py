@@ -223,330 +223,330 @@ class QThreadComponent(QThread):
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
 class ProcessComponent:
-   """프로세스 래퍼 - 고성능"""
-   
-   def __init__(self, name, cls, *args, **kwargs):
-       self.name, self.cls = name, cls
-       self.init_args, self.init_kwargs = args, kwargs
-       self._init_queues()
-       self.process, self.running = None, False
-       self.response_thread, self.pending_responses = None, {}
-       self.init_complete = mp.Event()
-   
-   def _init_queues(self):
-       """5개 큐로 3채널 구현"""
-       # 1. 일반채널 (order/answer 공용)
-       self.normal_request_queue = mp.Queue(maxsize=1000)
-       self.normal_response_queue = mp.Queue(maxsize=1000)
-       
-       # 2. 고빈도 요청 채널 (frq_order 전용)
-       self.frq_order_queue = mp.Queue(maxsize=5000)
-       
-       # 3. 고빈도 요청및 응답 채널 (frq_answer 전용)
-       self.frq_answer_request_queue = mp.Queue(maxsize=5000)
-       self.frq_answer_response_queue = mp.Queue(maxsize=5000)
-   
-   def start(self):
-       """프로세스 시작"""
-       self.running = True
-       self._start_process()
-       self._wait_for_initialization()
-       self._start_response_handler()
-       logging.info(f"[{self.name}] 프로세스 시작")
-   
-   def _start_process(self):
-       """프로세스 워커 시작"""
-       self.process = mp.Process(
-           target=self._process_worker, 
-           args=(self.name, self.cls, self.init_args, self.init_kwargs,
-                 self.normal_request_queue, self.normal_response_queue,
-                 self.frq_order_queue,
-                 self.frq_answer_request_queue, self.frq_answer_response_queue,
-                 self.init_complete), 
-           daemon=False
-       )
-       self.process.start()
-   
-   def _wait_for_initialization(self):
-       """초기화 완료 대기"""
-       if self.init_complete.wait(10):
-           logging.info(f"[{self.name}] 프로세스 초기화 완료")
-       else:
-           logging.error(f"[{self.name}] 프로세스 초기화 타임아웃")
-   
-   def _start_response_handler(self):
-       """응답 처리 스레드 시작"""
-       self.response_thread = threading.Thread(target=self._response_handler, daemon=True)
-       self.response_thread.start()
-   
-   def stop(self):
-       """프로세스 중지"""
-       self.running = False
-       if self.process and self.process.is_alive():
-           try: 
-               self.normal_request_queue.put({'command': 'stop'}, timeout=1.0)
-           except: 
-               pass
-           self.process.join(timeout=1.0)
-           if self.process.is_alive(): 
-               self.process.terminate()
-       #logging.info(f"[{self.name}] 프로세스 중지")
-   
-   def order(self, method, *args, **kwargs):
-       """order 인터페이스 - 일반채널 사용"""
-       if not self.running:
-           logging.warning(f"[{self.name}] 종료 중 - order {method} 요청 거부")
-           return
-           
-       request = self._create_request('process_order', method, args, kwargs)
-       self._send_normal_request(request, method)
-   
-   def answer(self, method, *args, **kwargs):
-       """answer 인터페이스 - 일반채널 사용"""
-       if not self.running:
-           logging.warning(f"[{self.name}] 종료 중 - answer {method} 요청 거부")
-           return None
-           
-       return self._send_answer_request('inbound_answer', method, args, kwargs, WAIT_TIMEOUT)
-   
-   def frq_order(self, target, method, *args, **kwargs):
-       """고빈도 order 인터페이스 - 고빈도 요청채널 사용"""
-       if not self.running:
-           logging.warning(f"[{self.name}] 종료 중 - frq_order {target}.{method} 요청 거부")
-           return False
-           
-       request = {
-           'type': 'outbound_frq_order',
-           'target': target, 
-           'method': method,
-           'args': args, 
-           'kwargs': kwargs
-       }
-       return self._send_frq_order_request(request, f"{target}.{method}")
-   
-   def frq_answer(self, method, *args, **kwargs):
-       """고빈도 answer 인터페이스 - 고빈도 응답채널 사용"""
-       return self._send_frq_answer_request('inbound_frq_answer', method, args, kwargs, 0.1)
-   
-   def _create_request(self, request_type, method, args, kwargs, req_id=None):
-       """요청 메시지 생성"""
-       request = {
-           'type': request_type,
-           'method': method, 
-           'args': self._serialize(args), 
-           'kwargs': self._serialize(kwargs)
-       }
-       if req_id:
-           request['id'] = req_id
-       return request
-   
-   def _send_normal_request(self, request, method_name):
-       """일반채널 요청 전송"""
-       try: 
-           self.normal_request_queue.put(request, timeout=0.1)
-           #logging.debug(f"[{self.name}] order {method_name} 전송")
-       except: 
-           logging.error(f"[{self.name}] {method_name} 요청 실패")
-   
-   def _send_frq_order_request(self, request, method_name):
-       """고빈도 요청채널 전송"""
-       try:
-           self.frq_order_queue.put_nowait(request)
-           #logging.debug(f"[{self.name}] frq_order {method_name} 전송")
-           return True
-       except queue.Full:
-           logging.debug(f"[{self.name}] frq_order 드롭: {method_name}")
-           return False
-       except: 
-           return False
-   
-   def _send_answer_request(self, request_type, method, args, kwargs, timeout):
-       """일반채널 answer 요청 전송 및 응답 대기"""
-       req_id = str(uuid.uuid4())
-       request = self._create_request(request_type, method, args, kwargs, req_id)
-       
-       event = threading.Event()
-       self.pending_responses[req_id] = {'result': None, 'ready': event}
-       
-       try: 
-           self.normal_request_queue.put(request, timeout=HIGH_FREQ_TIMEOUT)
-       except:
-           self.pending_responses.pop(req_id, None)
-           return None
-       
-       if event.wait(timeout):
-           result = self.pending_responses.pop(req_id)['result']
-           #logging.debug(f"[{self.name}] {request_type} {method} 완료")
-           return result
-       else:
-           self.pending_responses.pop(req_id, None)
-           return None
-   
-   def _send_frq_answer_request(self, request_type, method, args, kwargs, timeout):
-       """고빈도 응답채널 answer 요청 전송 및 응답 대기"""
-       req_id = str(uuid.uuid4())
-       request = self._create_request(request_type, method, args, kwargs, req_id)
-       
-       event = threading.Event()
-       self.pending_responses[req_id] = {'result': None, 'ready': event}
-       
-       try: 
-           self.frq_answer_request_queue.put(request, timeout=HIGH_FREQ_TIMEOUT)
-       except:
-           self.pending_responses.pop(req_id, None)
-           return None
-       
-       if event.wait(timeout):
-           result = self.pending_responses.pop(req_id)['result']
-           #logging.debug(f"[{self.name}] {request_type} {method} 완료")
-           return result
-       else:
-           self.pending_responses.pop(req_id, None)
-           return None
-   
-   def _serialize(self, data):
-       """데이터 직렬화"""
-       if isinstance(data, (str, int, float, bool, type(None))): 
-           return data
-       elif isinstance(data, (list, tuple)): 
-           return [self._serialize(item) for item in data]
-       elif isinstance(data, dict): 
-           return {k: self._serialize(v) for k, v in data.items()}
-       else: 
-           return str(data)
-   
-   def _response_handler(self):
-       """5채널 응답 처리"""
-       while self.running:
-           try:
-               # 일반채널 응답 처리
-               try:
-                   response = self.normal_response_queue.get(timeout=HIGH_FREQ_TIMEOUT)
-                   self._handle_response(response)
-                   continue
-               except Empty:
-                   pass
-               
-               # 고빈도 요청채널 응답 처리 (frq_order로부터)
-               try:
-                   response = self.frq_order_queue.get(timeout=HIGH_FREQ_TIMEOUT)
-                   self._handle_response(response)
-                   continue
-               except Empty:
-                   pass
-               
-               # 고빈도 응답채널 응답 처리
-               try:
-                   response = self.frq_answer_response_queue.get(timeout=HIGH_FREQ_TIMEOUT)
-                   self._handle_response(response)
-                   continue
-               except Empty:
-                   pass
-                   
-           except Exception as e: 
-               logging.error(f"[{self.name}] 응답 처리 오류: {e}")
-   
-   def _handle_response(self, response):
-       """응답 타입별 처리"""
-       response_type = response.get('type')
-       
-       if response_type == 'outbound_frq_order':
-           self._handle_outbound_frq_order(response)
-       elif response_type == 'process_order':
-           self._handle_process_order(response)
-       elif response_type == 'process_answer':
-           self._handle_process_answer(response)
-       elif response_type in ['answer', 'inbound_answer', 'inbound_frq_answer']:
-           self._handle_answer_response(response)
-       elif response_type == 'answer_response':
-           self._handle_answer_response(response)
-   
-   def _handle_process_order(self, response):
-       """프로세스 내부 order 라우팅 처리"""
-       target = response.get('target')
-       method = response.get('method')
-       args = response.get('args', ())
-       kwargs = response.get('kwargs', {})
-       
-       self._route_to_component(target, 'order', method, args, kwargs)
-   
-   def _handle_process_answer(self, response):
-       """프로세스 내부 answer 라우팅 처리"""
-       target = response.get('target')
-       method = response.get('method')
-       args = response.get('args', ())
-       kwargs = response.get('kwargs', {})
-       request_id = response.get('request_id')
-       
-       result = self._route_to_component(target, 'answer', method, args, kwargs)
-       
-       response_msg = {
-           'type': 'answer_response',
-           'request_id': request_id,
-           'result': self._serialize(result)
-       }
-       self.normal_request_queue.put(response_msg)
-   
-   def _handle_outbound_frq_order(self, response):
-       """outbound_frq_order 라우팅 처리"""
-       target = response.get('target')
-       method = response.get('method')
-       args = response.get('args', ())
-       kwargs = response.get('kwargs', {})
-       
-       self._route_to_component(target, 'order', method, args, kwargs)
-   
-   def _handle_answer_response(self, response):
-       """answer 응답 처리"""
-       req_id = response.get('id') or response.get('request_id')
-       result = response.get('result')
-       
-       if req_id and req_id in self.pending_responses:
-           self.pending_responses[req_id]['result'] = result
-           self.pending_responses[req_id]['ready'].set()
-   
-   def _route_to_component(self, target, interface_type, method, args, kwargs):
-       """컴포넌트로 라우팅"""
-       if target_component := ComponentRegistry.get(target):
-           try:
-               if hasattr(target_component, interface_type):
-                   result = getattr(target_component, interface_type)(method, *args, **kwargs)
-               elif hasattr(target_component, method):
-                   result = getattr(target_component, method)(*args, **kwargs)
-               else:
-                   logging.warning(f"[{self.name}] {target}에 {method} 메서드 없음")
-                   return None
-               #logging.debug(f"[{self.name}] 라우팅 {interface_type}: {target}.{method}")
-               return result
-           except Exception as e:
-               logging.error(f"[{self.name}] 라우팅 {interface_type} 오류: {e}")
-               return None
-       else:
-           logging.warning(f"[{self.name}] 타겟 없음: {target}")
-           return None
-   
-   @staticmethod
-   def _process_worker(name, cls, args, kwargs, normal_req_q, normal_resp_q, 
-                      frq_order_q, frq_ans_req_q, frq_ans_resp_q, init_complete):
-       """5채널 프로세스 워커"""
-       try:
-           logging.info(f"[{name}] 프로세스 워커 시작")
-           instance = cls(*args, **kwargs)
-           
-           ProcessComponent._inject_interfaces(instance, name, normal_req_q, normal_resp_q, 
-                                             frq_order_q, frq_ans_req_q, frq_ans_resp_q)
-           ProcessComponent._initialize_worker(instance, name, init_complete)
-           ProcessComponent._run_worker_loop(instance, name, normal_req_q, normal_resp_q, 
-                                           frq_order_q, frq_ans_req_q, frq_ans_resp_q)
-           ProcessComponent._cleanup_worker(instance, name)
-           
-       except Exception as e: 
-           logging.error(f"[{name}] 초기화 오류: {e}")
-           init_complete.set()
-   
-   @staticmethod
-   def _inject_interfaces(instance, name, normal_req_q, normal_resp_q, 
-                            frq_order_q, frq_ans_req_q, frq_ans_resp_q):
+    """프로세스 래퍼 - 고성능"""
+    
+    def __init__(self, name, cls, *args, **kwargs):
+        self.name, self.cls = name, cls
+        self.init_args, self.init_kwargs = args, kwargs
+        self._init_queues()
+        self.process, self.running = None, False
+        self.response_thread, self.pending_responses = None, {}
+        self.init_complete = mp.Event()
+    
+    def _init_queues(self):
+        """5개 큐로 3채널 구현"""
+        # 1. 일반채널 (order/answer 공용)
+        self.normal_request_queue = mp.Queue(maxsize=1000)
+        self.normal_response_queue = mp.Queue(maxsize=1000)
+        
+        # 2. 고빈도 요청 채널 (frq_order 전용)
+        self.frq_order_queue = mp.Queue(maxsize=5000)
+        
+        # 3. 고빈도 요청및 응답 채널 (frq_answer 전용)
+        self.frq_answer_request_queue = mp.Queue(maxsize=5000)
+        self.frq_answer_response_queue = mp.Queue(maxsize=5000)
+    
+    def start(self):
+        """프로세스 시작"""
+        self.running = True
+        self._start_process()
+        self._wait_for_initialization()
+        self._start_response_handler()
+        logging.info(f"[{self.name}] 프로세스 시작")
+    
+    def _start_process(self):
+        """프로세스 워커 시작"""
+        self.process = mp.Process(
+            target=self._process_worker, 
+            args=(self.name, self.cls, self.init_args, self.init_kwargs,
+                  self.normal_request_queue, self.normal_response_queue,
+                  self.frq_order_queue,
+                  self.frq_answer_request_queue, self.frq_answer_response_queue,
+                  self.init_complete), 
+            daemon=False
+        )
+        self.process.start()
+    
+    def _wait_for_initialization(self):
+        """초기화 완료 대기"""
+        if self.init_complete.wait(10):
+            logging.info(f"[{self.name}] 프로세스 초기화 완료")
+        else:
+            logging.error(f"[{self.name}] 프로세스 초기화 타임아웃")
+    
+    def _start_response_handler(self):
+        """응답 처리 스레드 시작"""
+        self.response_thread = threading.Thread(target=self._response_handler, daemon=True)
+        self.response_thread.start()
+    
+    def stop(self):
+        """프로세스 중지"""
+        self.running = False
+        if self.process and self.process.is_alive():
+            try: 
+                self.normal_request_queue.put({'command': 'stop'}, timeout=1.0)
+            except: 
+                pass
+            self.process.join(timeout=1.0)
+            if self.process.is_alive(): 
+                self.process.terminate()
+        #logging.info(f"[{self.name}] 프로세스 중지")
+    
+    def order(self, method, *args, **kwargs):
+        """order 인터페이스 - 일반채널 사용"""
+        if not self.running:
+            logging.warning(f"[{self.name}] 종료 중 - order {method} 요청 거부")
+            return
+            
+        request = self._create_request('process_order', method, args, kwargs)
+        self._send_normal_request(request, method)
+    
+    def answer(self, method, *args, **kwargs):
+        """answer 인터페이스 - 일반채널 사용"""
+        if not self.running:
+            logging.warning(f"[{self.name}] 종료 중 - answer {method} 요청 거부")
+            return None
+            
+        return self._send_answer_request('inbound_answer', method, args, kwargs, WAIT_TIMEOUT)
+    
+    def frq_order(self, target, method, *args, **kwargs):
+        """고빈도 order 인터페이스 - 고빈도 요청채널 사용"""
+        if not self.running:
+            logging.warning(f"[{self.name}] 종료 중 - frq_order {target}.{method} 요청 거부")
+            return False
+            
+        request = {
+            'type': 'outbound_frq_order',
+            'target': target, 
+            'method': method,
+            'args': args, 
+            'kwargs': kwargs
+        }
+        return self._send_frq_order_request(request, f"{target}.{method}")
+    
+    def frq_answer(self, method, *args, **kwargs):
+        """고빈도 answer 인터페이스 - 고빈도 응답채널 사용"""
+        return self._send_frq_answer_request('inbound_frq_answer', method, args, kwargs, 0.1)
+    
+    def _create_request(self, request_type, method, args, kwargs, req_id=None):
+        """요청 메시지 생성"""
+        request = {
+            'type': request_type,
+            'method': method, 
+            'args': self._serialize(args), 
+            'kwargs': self._serialize(kwargs)
+        }
+        if req_id:
+            request['id'] = req_id
+        return request
+    
+    def _send_normal_request(self, request, method_name):
+        """일반채널 요청 전송"""
+        try: 
+            self.normal_request_queue.put(request, timeout=0.1)
+            #logging.debug(f"[{self.name}] order {method_name} 전송")
+        except: 
+            logging.error(f"[{self.name}] {method_name} 요청 실패")
+    
+    def _send_frq_order_request(self, request, method_name):
+        """고빈도 요청채널 전송"""
+        try:
+            self.frq_order_queue.put_nowait(request)
+            #logging.debug(f"[{self.name}] frq_order {method_name} 전송")
+            return True
+        except queue.Full:
+            logging.debug(f"[{self.name}] frq_order 드롭: {method_name}")
+            return False
+        except: 
+            return False
+    
+    def _send_answer_request(self, request_type, method, args, kwargs, timeout):
+        """일반채널 answer 요청 전송 및 응답 대기"""
+        req_id = str(uuid.uuid4())
+        request = self._create_request(request_type, method, args, kwargs, req_id)
+        
+        event = threading.Event()
+        self.pending_responses[req_id] = {'result': None, 'ready': event}
+        
+        try: 
+            self.normal_request_queue.put(request, timeout=HIGH_FREQ_TIMEOUT)
+        except:
+            self.pending_responses.pop(req_id, None)
+            return None
+        
+        if event.wait(timeout):
+            result = self.pending_responses.pop(req_id)['result']
+            #logging.debug(f"[{self.name}] {request_type} {method} 완료")
+            return result
+        else:
+            self.pending_responses.pop(req_id, None)
+            return None
+    
+    def _send_frq_answer_request(self, request_type, method, args, kwargs, timeout):
+        """고빈도 응답채널 answer 요청 전송 및 응답 대기"""
+        req_id = str(uuid.uuid4())
+        request = self._create_request(request_type, method, args, kwargs, req_id)
+        
+        event = threading.Event()
+        self.pending_responses[req_id] = {'result': None, 'ready': event}
+        
+        try: 
+            self.frq_answer_request_queue.put(request, timeout=HIGH_FREQ_TIMEOUT)
+        except:
+            self.pending_responses.pop(req_id, None)
+            return None
+        
+        if event.wait(timeout):
+            result = self.pending_responses.pop(req_id)['result']
+            #logging.debug(f"[{self.name}] {request_type} {method} 완료")
+            return result
+        else:
+            self.pending_responses.pop(req_id, None)
+            return None
+    
+    def _serialize(self, data):
+        """데이터 직렬화"""
+        if isinstance(data, (str, int, float, bool, type(None))): 
+            return data
+        elif isinstance(data, (list, tuple)): 
+            return [self._serialize(item) for item in data]
+        elif isinstance(data, dict): 
+            return {k: self._serialize(v) for k, v in data.items()}
+        else: 
+            return str(data)
+    
+    def _response_handler(self):
+        """5채널 응답 처리"""
+        while self.running:
+            try:
+                # 일반채널 응답 처리
+                try:
+                    response = self.normal_response_queue.get(timeout=HIGH_FREQ_TIMEOUT)
+                    self._handle_response(response)
+                    continue
+                except Empty:
+                    pass
+                
+                # 고빈도 요청채널 응답 처리 (frq_order로부터)
+                try:
+                    response = self.frq_order_queue.get(timeout=HIGH_FREQ_TIMEOUT)
+                    self._handle_response(response)
+                    continue
+                except Empty:
+                    pass
+                
+                # 고빈도 응답채널 응답 처리
+                try:
+                    response = self.frq_answer_response_queue.get(timeout=HIGH_FREQ_TIMEOUT)
+                    self._handle_response(response)
+                    continue
+                except Empty:
+                    pass
+                    
+            except Exception as e: 
+                logging.error(f"[{self.name}] 응답 처리 오류: {e}")
+    
+    def _handle_response(self, response):
+        """응답 타입별 처리"""
+        response_type = response.get('type')
+        
+        if response_type == 'outbound_frq_order':
+            self._handle_outbound_frq_order(response)
+        elif response_type == 'process_order':
+            self._handle_process_order(response)
+        elif response_type == 'process_answer':
+            self._handle_process_answer(response)
+        elif response_type in ['answer', 'inbound_answer', 'inbound_frq_answer']:
+            self._handle_answer_response(response)
+        elif response_type == 'answer_response':
+            self._handle_answer_response(response)
+    
+    def _handle_process_order(self, response):
+        """프로세스 내부 order 라우팅 처리"""
+        target = response.get('target')
+        method = response.get('method')
+        args = response.get('args', ())
+        kwargs = response.get('kwargs', {})
+        
+        self._route_to_component(target, 'order', method, args, kwargs)
+    
+    def _handle_process_answer(self, response):
+        """프로세스 내부 answer 라우팅 처리"""
+        target = response.get('target')
+        method = response.get('method')
+        args = response.get('args', ())
+        kwargs = response.get('kwargs', {})
+        request_id = response.get('request_id')
+        
+        result = self._route_to_component(target, 'answer', method, args, kwargs)
+        
+        response_msg = {
+            'type': 'answer_response',
+            'request_id': request_id,
+            'result': self._serialize(result)
+        }
+        self.normal_request_queue.put(response_msg)
+    
+    def _handle_outbound_frq_order(self, response):
+        """outbound_frq_order 라우팅 처리"""
+        target = response.get('target')
+        method = response.get('method')
+        args = response.get('args', ())
+        kwargs = response.get('kwargs', {})
+        
+        self._route_to_component(target, 'order', method, args, kwargs)
+    
+    def _handle_answer_response(self, response):
+        """answer 응답 처리"""
+        req_id = response.get('id') or response.get('request_id')
+        result = response.get('result')
+        
+        if req_id and req_id in self.pending_responses:
+            self.pending_responses[req_id]['result'] = result
+            self.pending_responses[req_id]['ready'].set()
+    
+    def _route_to_component(self, target, interface_type, method, args, kwargs):
+        """컴포넌트로 라우팅"""
+        if target_component := ComponentRegistry.get(target):
+            try:
+                if hasattr(target_component, interface_type):
+                    result = getattr(target_component, interface_type)(method, *args, **kwargs)
+                elif hasattr(target_component, method):
+                    result = getattr(target_component, method)(*args, **kwargs)
+                else:
+                    logging.warning(f"[{self.name}] {target}에 {method} 메서드 없음")
+                    return None
+                #logging.debug(f"[{self.name}] 라우팅 {interface_type}: {target}.{method}")
+                return result
+            except Exception as e:
+                logging.error(f"[{self.name}] 라우팅 {interface_type} 오류: {e}")
+                return None
+        else:
+            logging.warning(f"[{self.name}] 타겟 없음: {target}")
+            return None
+
+    @staticmethod
+    def _process_worker(name, cls, args, kwargs, normal_req_q, normal_resp_q, 
+                       frq_order_q, frq_ans_req_q, frq_ans_resp_q, init_complete):
+        """5채널 프로세스 워커"""
+        try:
+            logging.info(f"[{name}] 프로세스 워커 시작")
+            instance = cls(*args, **kwargs)
+            
+            ProcessComponent._inject_interfaces(instance, name, normal_req_q, normal_resp_q, 
+                                              frq_order_q, frq_ans_req_q, frq_ans_resp_q)
+            ProcessComponent._initialize_worker(instance, name, init_complete)
+            ProcessComponent._run_worker_loop(instance, name, normal_req_q, normal_resp_q, 
+                                            frq_order_q, frq_ans_req_q, frq_ans_resp_q)
+            ProcessComponent._cleanup_worker(instance, name)
+            
+        except Exception as e: 
+            logging.error(f"[{name}] 초기화 오류: {e}")
+            init_complete.set()
+    
+    @staticmethod
+    def _inject_interfaces(instance, name, normal_req_q, normal_resp_q, 
+                           frq_order_q, frq_ans_req_q, frq_ans_resp_q):
         """인터페이스 주입 - 5채널 사용"""
         def order(target, method, *args, **kwargs):
             request = {
@@ -646,99 +646,99 @@ class ProcessComponent:
         instance.frq_order = frq_order
         instance.answer = answer
         instance.frq_answer = frq_answer
-   
-   @staticmethod
-   def _initialize_worker(instance, name, init_complete):
-       """워커 초기화"""
-       if hasattr(instance, 'initialize'):
-           init_result = instance.initialize()
-           logging.info(f"[{name}] 프로세스 초기화 완료: {init_result}")
-       
-       init_complete.set()
-   
-   @staticmethod
-   def _run_worker_loop(instance, name, normal_req_q, normal_resp_q, 
-                       frq_order_q, frq_ans_req_q, frq_ans_resp_q):
-       """5채널 워커 메인 루프"""
-       while True:
-           try:
-               # 일반채널 처리
-               try:
-                   request = normal_req_q.get(timeout=HIGH_FREQ_TIMEOUT)
-                   if request.get('command') == 'stop': 
-                       break
-                   ProcessComponent._handle_worker_request(instance, name, request, normal_resp_q)
-                   continue
-               except Empty:
-                   pass
-               
-               # 고빈도 요청채널 처리 (단방향이므로 요청만 받음)
-               
-               # 고빈도 응답채널 처리
-               try:
-                   request = frq_ans_req_q.get(timeout=HIGH_FREQ_TIMEOUT)
-                   ProcessComponent._handle_worker_request(instance, name, request, frq_ans_resp_q)
-                   continue
-               except Empty:
-                   pass
-           
-           except Exception as e: 
-               logging.error(f"[{name}] 처리 오류: {e}")
-   
-   @staticmethod
-   def _handle_worker_request(instance, name, request, response_queue):
-       """워커 요청 처리"""
-       request_type = request.get('type')
-       method_name = request.get('method')
-       args = request.get('args', ())
-       kwargs = request.get('kwargs', {})
-       req_id = request.get('id')
-       
-       if method_name and hasattr(instance, method_name):
-           try:
-               result = getattr(instance, method_name)(*args, **kwargs)
-               #logging.debug(f"[{name}] {method_name} 실행 완료")
-               
-               if request_type in ['answer', 'inbound_answer', 'inbound_frq_answer'] and req_id:
-                   response_queue.put({
-                       'type': request_type,
-                       'id': req_id, 
-                       'result': ProcessComponent._serialize_static(result)
-                   })
-           except Exception as e:
-               logging.error(f"[{name}] {method_name} 오류: {e}")
-               if request_type in ['answer', 'inbound_answer', 'inbound_frq_answer'] and req_id:
-                   response_queue.put({
-                       'type': request_type,
-                       'id': req_id, 
-                       'result': None
-                   })
-       else:
-           if request_type in ['answer', 'inbound_answer', 'inbound_frq_answer'] and req_id:
-               response_queue.put({
-                   'type': request_type,
-                   'id': req_id, 
-                   'result': None
-               })
-   
-   @staticmethod
-   def _cleanup_worker(instance, name):
-       """워커 정리"""
-       if hasattr(instance, 'cleanup'): 
-           instance.cleanup()
-       logging.info(f"[{name}] 프로세스 종료")
-   
-   @staticmethod
-   def _serialize_static(data):
-       """정적 직렬화 메서드"""
-       if isinstance(data, (str, int, float, bool, type(None))): 
-           return data
-       elif isinstance(data, (list, tuple)): 
-           return [ProcessComponent._serialize_static(item) for item in data]
-       elif isinstance(data, dict): 
-           return {k: ProcessComponent._serialize_static(v) for k, v in data.items()}
-       else: 
-           return str(data)
+    
+    @staticmethod
+    def _initialize_worker(instance, name, init_complete):
+        """워커 초기화"""
+        if hasattr(instance, 'initialize'):
+            init_result = instance.initialize()
+            logging.info(f"[{name}] 프로세스 초기화 완료: {init_result}")
+        
+        init_complete.set()
+    
+    @staticmethod
+    def _run_worker_loop(instance, name, normal_req_q, normal_resp_q, 
+                        frq_order_q, frq_ans_req_q, frq_ans_resp_q):
+        """5채널 워커 메인 루프"""
+        while True:
+            try:
+                # 일반채널 처리
+                try:
+                    request = normal_req_q.get(timeout=HIGH_FREQ_TIMEOUT)
+                    if request.get('command') == 'stop': 
+                        break
+                    ProcessComponent._handle_worker_request(instance, name, request, normal_resp_q)
+                    continue
+                except Empty:
+                    pass
+                
+                # 고빈도 요청채널 처리 (단방향이므로 요청만 받음)
+                
+                # 고빈도 응답채널 처리
+                try:
+                    request = frq_ans_req_q.get(timeout=HIGH_FREQ_TIMEOUT)
+                    ProcessComponent._handle_worker_request(instance, name, request, frq_ans_resp_q)
+                    continue
+                except Empty:
+                    pass
+            
+            except Exception as e: 
+                logging.error(f"[{name}] 처리 오류: {e}")
+    
+    @staticmethod
+    def _handle_worker_request(instance, name, request, response_queue):
+        """워커 요청 처리"""
+        request_type = request.get('type')
+        method_name = request.get('method')
+        args = request.get('args', ())
+        kwargs = request.get('kwargs', {})
+        req_id = request.get('id')
+        
+        if method_name and hasattr(instance, method_name):
+            try:
+                result = getattr(instance, method_name)(*args, **kwargs)
+                #logging.debug(f"[{name}] {method_name} 실행 완료")
+                
+                if request_type in ['answer', 'inbound_answer', 'inbound_frq_answer'] and req_id:
+                    response_queue.put({
+                        'type': request_type,
+                        'id': req_id, 
+                        'result': ProcessComponent._serialize_static(result)
+                    })
+            except Exception as e:
+                logging.error(f"[{name}] {method_name} 오류: {e}")
+                if request_type in ['answer', 'inbound_answer', 'inbound_frq_answer'] and req_id:
+                    response_queue.put({
+                        'type': request_type,
+                        'id': req_id, 
+                        'result': None
+                    })
+        else:
+            if request_type in ['answer', 'inbound_answer', 'inbound_frq_answer'] and req_id:
+                response_queue.put({
+                    'type': request_type,
+                    'id': req_id, 
+                    'result': None
+                })
+    
+    @staticmethod
+    def _cleanup_worker(instance, name):
+        """워커 정리"""
+        if hasattr(instance, 'cleanup'): 
+            instance.cleanup()
+        logging.info(f"[{name}] 프로세스 종료")
+    
+    @staticmethod
+    def _serialize_static(data):
+        """정적 직렬화 메서드"""
+        if isinstance(data, (str, int, float, bool, type(None))): 
+            return data
+        elif isinstance(data, (list, tuple)): 
+            return [ProcessComponent._serialize_static(item) for item in data]
+        elif isinstance(data, dict): 
+            return {k: ProcessComponent._serialize_static(v) for k, v in data.items()}
+        else: 
+            return str(data)
 
 class GlobalComponent:
     """글로벌 컴포넌트 관리자 - target 중복 해결"""
@@ -915,7 +915,7 @@ class Strategy:
 
         name = gm.answer('api', 'GetMasterCodeName', '000660')
         last_price = gm.answer('api', 'GetMasterLastPrice', '000660')
-        logging.info(f"[{self.name}] -> API / 종목코드: 000660, 종목명: {name}, 전일가: {last_price}")
+        logging.info(f"[{self.name}] -> API / 종목코드: 000660, 종목명: {name}, 전일가: {last_price} type={type(last_price)}")
 
         # frq_order 테스트 (다른 컴포넌트에게 고빈도 명령)
         gm.frq_order('admin', 'on_receive_real_data', 'stg_frq_order_test')

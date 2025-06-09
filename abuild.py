@@ -7,8 +7,8 @@ def build():
         '--onedir',            
         '--clean',            
         '--noconfirm',         
-        '--distpath=../dist',                       # 빌드 결과물 저장 경로
-        '--workpath=../build',                      # 빌드 작업 경로
+        '--distpath=D:/Exec/dist',                       # 빌드 결과물 저장 경로
+        '--workpath=D:/Exec/build',                      # 빌드 작업 경로
         '--specpath=../spec',                       # spec 파일 저장 경로
         '--add-data=../aaa/resources/aaa.ui;resources',    # --add-data=소스파일경로;대상폴더경로
         '--add-data=../aaa/resources/aaa.ico;resources',

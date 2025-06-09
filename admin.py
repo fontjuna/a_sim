@@ -57,7 +57,7 @@ class Admin:
             logging.debug(f'스크립트 확장 결과={result}')
         except Exception as e:
             logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
-        # gm.ipc.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
+        gm.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
 
     def get_login_info(self):
         accounts = gm.api.GetLoginInfo('ACCNO')
@@ -154,11 +154,8 @@ class Admin:
             gm.잔고목록.set(key=code, data={'주문가능수량': 0})
         dict_data = {'전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
-        #logging.debug(f'dbm_order_upsert 호출 전 *****')
-        # self.dbm_order_upsert(dict_data)
-        #logging.debug(f'com_SendOrder에서 SendOrder 호출 전 *****')
+        self.dbm_order_upsert(dict_data)
         success = gm.api.SendOrder(**cmd)
-        #logging.debug(f'com_SendOrder에서 SendOrder 호출 후 *****')
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
 
     def com_market_status(self):
@@ -624,9 +621,7 @@ class Admin:
     def pri_fx얻기_매매목록(self, date_text):
         try:
             gm.매매목록.delete()
-            #dict_list = gm.ipc.answer('dbm', 'execute_query', sql=dc.ddb.ipc_SELECT_DATE, db='db', params=(date_text,))
-            dict_list = gm.ipc.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
-            #logging.debug(f'매매목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
+            dict_list = gm.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
             if dict_list is not None and len(dict_list) > 0:
                 gm.매매목록.set(data=dict_list)
                 logging.info(f"매매목록 얻기 완료: data count={gm.매매목록.len()}")
@@ -638,9 +633,7 @@ class Admin:
     def pri_fx얻기_체결목록(self, date_text):
         try:
             gm.체결목록.delete()
-            #dict_list = gm.ipc.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
-            dict_list = gm.ipc.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
-            #logging.debug(f'체결목록 얻기: date:{date_text}, dict_list:{dict_list} type:{type(dict_list)}')
+            dict_list = gm.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
             if dict_list is not None and len(dict_list) > 0:
                 gm.체결목록.set(data=dict_list)
                 손익금액, 매수금액 = gm.체결목록.sum(column=['손익금액', '매수금액'], filter={'매도수량': ('==', '@매수수량')})
@@ -660,7 +653,7 @@ class Admin:
             if min_check: params = (date_text, cycle, tick, code,)
             else: params = (date_text, cycle,)
             selected_sql = dc.ddb.MIN_SELECT_DATE if min_check else dc.ddb.DAY_SELECT_DATE
-            dict_list = gm.ipc.answer('dbm', 'execute_query', sql=selected_sql, db='chart', params=params)
+            dict_list = gm.answer('dbm', 'execute_query', sql=selected_sql, db='chart', params=params)
             if dict_list is not None and len(dict_list) > 0:
                 if min_check:
                     dict_list = [{ **item, '일자': item['체결시간'][:8], '시간': item['체결시간'][8:], } for item in dict_list]
@@ -770,7 +763,7 @@ class Admin:
             #logging.debug(f'체결잔고 : 주문상태={주문상태} order_no={order_no} ' +
             #                f'\n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
 
-            # self.dbm_trade_upsert(dictFID)
+            self.dbm_trade_upsert(dictFID)
 
             if '접수' in 주문상태:
                 self.odr_redeipt_data(dictFID)
@@ -929,8 +922,8 @@ class Admin:
             else:
                 if gm.잔고목록.in_key(code):
                     gm.잔고목록.set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량, '주문가능수량': 주문가능수량, '현재가': 현재가})
-            # dictFID['주문상태'] = '잔고'
-            # self.dbm_trade_upsert(dictFID)
+            dictFID['주문상태'] = '잔고'
+            self.dbm_trade_upsert(dictFID)
             msg = f"잔고변경 : {code} {dictFID['종목명']} 보유수량:{보유수량}주 매입단가:{매입단가}원 매입금액:{보유수량 * 매입단가}원 주문가능수량:{주문가능수량}주"
             logging.info(msg)
             logging.debug(f'잔고 dictFID:\n{tabulate(pd.DataFrame([dictFID]), headers="keys", showindex=True, numalign="right")}')
@@ -940,19 +933,19 @@ class Admin:
     # dbm 처리 메소드 -----------------------------------------------------------------------------------------------
 
     def dbm_stop(self):
-        gm.ipc.order('dbm', 'stop')
+        gm.order('dbm', 'stop')
         time.sleep(0.1)  # 마지막 메시지 처리를 위한 대기
 
     def dbm_order_upsert(self, dict_data):
         try:
-            gm.ipc.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
+            gm.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
         except Exception as e:
             logging.error(f"dbm_order_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
 
     def dbm_trade_upsert(self, dictFID):
         try:
             dict_data = {key: dictFID[key] for key in dc.ddb.TRD_COLUMN_NAMES if key in dictFID}
-            gm.ipc.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
+            gm.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
 
             if dictFID['주문상태'] == '체결':
                 kind = dictFID['주문구분']
@@ -965,7 +958,7 @@ class Admin:
                 ordno = dictFID['주문번호']
                 st_buy = dictFID['매수전략']
 
-                gm.ipc.order('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_no, st_name, st_buy)
+                gm.order('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_name, st_buy)
         except Exception as e:
             logging.error(f"dbm_trade_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
 

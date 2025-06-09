@@ -501,7 +501,7 @@ class Strategy:
             gm.주문목록.set(key=key, data=data) # 아래 보다 먼저 실행 해야 함
 
             if kind == '매수' and self.매수시장가:
-                price = self.dict종목정보.get(code, '현재가') or self.dict종목정보.get(code, '전일가')
+                price = int((self.dict종목정보.get(code, '현재가') or self.dict종목정보.get(code, '전일가')) * 1.3)
                 logging.debug(f'매수 시장가: {code} {종목명} {price}')
                 self.order_buy(code, '신규매수', price)
             elif kind == '매도' and self.매도시장가:
