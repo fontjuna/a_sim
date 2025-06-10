@@ -270,60 +270,87 @@ class TimeLimiter:
         self.request_count = { 'second': 0, 'minute': 0, 'hour': 0 }
         self.first_request_time = { 'second': 0, 'minute': 0, 'hour': 0 }
         self.condition_times = {}  # 조건별 마지막 실행 시간
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()  # RLock으로 변경
 
     def check_interval(self) -> int:
         current_time = time.time() * 1000
+        
+        # 락을 최소한으로 잡아서 데이터만 읽기
         with self.lock:
-            if current_time - self.first_request_time['second'] >= 1000:
-                self.request_count['second'] = 0
-                self.first_request_time['second'] = 0
-            if current_time - self.first_request_time['minute'] >= 60000:
-                self.request_count['minute'] = 0
-                self.first_request_time['minute'] = 0
-            if current_time - self.first_request_time['hour'] >= 3600000:
-                self.request_count['hour'] = 0
-                self.first_request_time['hour'] = 0
-
-            wait_time = 0
-            if self.request_count['second'] >= self.SEC:
-                wait_time = max(wait_time, 1000 - (current_time - self.first_request_time['second']))
-            elif self.request_count['minute'] >= self.MIN:
-                wait_time = max(wait_time, 60000 - (current_time - self.first_request_time['minute']))
-            elif self.request_count['hour'] >= self.HOUR:
-                wait_time = max(wait_time, 3600000 - (current_time - self.first_request_time['hour']))
-            return max(0, wait_time)
+            req_counts = self.request_count.copy()
+            first_times = self.first_request_time.copy()
+        
+        # 시간 계산은 락 밖에서 수행
+        need_reset = {
+            'second': current_time - first_times['second'] >= 1000,
+            'minute': current_time - first_times['minute'] >= 60000,
+            'hour': current_time - first_times['hour'] >= 3600000
+        }
+        
+        wait_time = 0
+        if req_counts['second'] >= self.SEC and not need_reset['second']:
+            wait_time = max(wait_time, 1000 - (current_time - first_times['second']))
+        elif req_counts['minute'] >= self.MIN and not need_reset['minute']:
+            wait_time = max(wait_time, 60000 - (current_time - first_times['minute']))
+        elif req_counts['hour'] >= self.HOUR and not need_reset['hour']:
+            wait_time = max(wait_time, 3600000 - (current_time - first_times['hour']))
+        
+        # 리셋이 필요한 경우만 락을 다시 잡아서 업데이트
+        if any(need_reset.values()):
+            with self.lock:
+                if need_reset['second']:
+                    self.request_count['second'] = 0
+                    self.first_request_time['second'] = 0
+                if need_reset['minute']:
+                    self.request_count['minute'] = 0
+                    self.first_request_time['minute'] = 0
+                if need_reset['hour']:
+                    self.request_count['hour'] = 0
+                    self.first_request_time['hour'] = 0
+        
+        return max(0, wait_time)
 
     def check_condition_interval(self, condition) -> int:
         current_time = time.time() * 1000
+        
+        # 락을 최소한으로 잡아서 데이터만 읽기
         with self.lock:
             last_time = self.condition_times.get(condition, 0)
-
-            if current_time - last_time >= 60000:  # 1분(60000ms) 체크
+        
+        # 시간 계산은 락 밖에서 수행
+        if current_time - last_time >= 60000:  # 1분(60000ms) 체크
+            # 삭제가 필요한 경우만 락을 다시 잡음
+            with self.lock:
                 if condition in self.condition_times:
                     del self.condition_times[condition]
-                return 0
-            wait_time = int(60000 - (current_time - last_time))
-            return max(0, wait_time)
+            return 0
+        
+        wait_time = int(60000 - (current_time - last_time))
+        return max(0, wait_time)
+
+    def _update_request_times_unsafe(self, current_time):
+        """락 없이 실행되는 내부 메서드"""
+        if self.request_count['second'] == 0:
+            self.first_request_time['second'] = current_time
+        if self.request_count['minute'] == 0:
+            self.first_request_time['minute'] = current_time
+        if self.request_count['hour'] == 0:
+            self.first_request_time['hour'] = current_time
+
+        self.request_count['second'] += 1
+        self.request_count['minute'] += 1
+        self.request_count['hour'] += 1
 
     def update_request_times(self):
         current_time = time.time() * 1000
         with self.lock:
-            if self.request_count['second'] == 0:
-                self.first_request_time['second'] = current_time
-            if self.request_count['minute'] == 0:
-                self.first_request_time['minute'] = current_time
-            if self.request_count['hour'] == 0:
-                self.first_request_time['hour'] = current_time
-
-            self.request_count['second'] += 1
-            self.request_count['minute'] += 1
-            self.request_count['hour'] += 1
+            self._update_request_times_unsafe(current_time)
 
     def update_condition_time(self, condition):
+        current_time = time.time() * 1000
         with self.lock:
-            self.condition_times[condition] = time.time() * 1000
-        self.update_request_times()
+            self.condition_times[condition] = current_time
+            self._update_request_times_unsafe(current_time)
 
 class TableManager:
     """

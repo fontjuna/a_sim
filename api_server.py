@@ -548,20 +548,12 @@ class OnReceiveRealDataSim3(QThread):
       self._stop_event.set()
 
 class APIServer:
-    #app = QApplication(sys.argv)
+    app = QApplication(sys.argv)
     def __init__(self):
         self.name = 'api'
         self.sim_no = 0
         self.ocx = None
         self.connected = False
-
-        self.im_process = False
-
-        self.app = None
-        #self.order = None
-        #self.answer = None
-        #self.frq_order = None
-        #self.frq_answer = None
 
         self.strategy_loaded = False        # GetConditionLoad에서 대기 플래그로 사용 ConditionVer에서 조건 로드 완료 플래그로 사용
         self.strategy_list = None           # GetConditionNameList에서 리스트 담기
@@ -635,16 +627,6 @@ class APIServer:
             # 추가 상태 정보
         }
     
-    def initialize(self):
-        if self.im_process: 
-            self.app = QApplication(sys.argv)
-        else:
-            pass
-            #self.order = gm.order
-            #self.answer = gm.answer
-            #self.frq_order = gm.frq_order
-            #self.frq_answer = gm.frq_answer
-
     def api_init(self, sim_no=0):
         try:
             #global toast

@@ -2763,6 +2763,7 @@ class ChartUpdater:
             trcode = dc.scr.차트TR[cycle]
             screen = dc.scr.화면[rqname]
             date = datetime.now().strftime('%Y%m%d')
+            dict_list = []
             
             if cycle in ['mi', 'tk']:
                 if tick == None:
@@ -2857,13 +2858,12 @@ class ChartUpdater:
         """차트 데이터 요청 메인 루프"""
         for code, status in list(self.todo_code.items()):
             logging.debug(f"차트관리 종목코드 요청: {self.answer('api', 'GetMasterCodeName', code)}")
-            #self._mark_done(code, 'mi')
-            #self._mark_done(code, 'dy')
-            #continue
             if not status['mi']: 
-                self.get_first_chart_data(code, cycle='mi', tick=1)
+                #self.get_first_chart_data(code, cycle='mi', tick=1)
+                self._mark_done(code, 'mi')
             if not status['dy']: 
-                self.get_first_chart_data(code, cycle='dy')
+                #self.get_first_chart_data(code, cycle='dy')
+                self._mark_done(code, 'dy')
 
     def _mark_done(self, code, cycle):
         """완료 표시"""

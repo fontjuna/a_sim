@@ -85,8 +85,8 @@ class Main:
             gm.api.order('api', 'CommConnect', True)
             gm.dbm = SimpleManager('dbm', DBMServer, 'process')
             gm.dbm.start()
-            gm.ctu = SimpleManager('ctu', ChartUpdater, 'process')
-            gm.ctu.start() # self.run 에서 실행
+            #gm.ctu = SimpleManager('ctu', ChartUpdater, None)
+            #gm.ctu.start() # self.run 에서 실행
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)

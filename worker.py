@@ -16,108 +16,136 @@ WAIT_TIMEOUT = 15
 HIGH_FREQ_TIMEOUT = 0.001  # 1ms 고빈도 처리
 
 class SimpleManager:
-    """컴포넌트 관리자"""
-    
-    def __init__(self, name, cls, comm_type, *args, **kwargs):
-        self.name, self.comm_type = name, comm_type
-        
-        if comm_type == 'thread':
-            self.instance = QThreadComponent(name, cls, *args, **kwargs)
-        elif comm_type == 'process':
-            self.instance = ProcessComponent(name, cls, *args, **kwargs)
-        else:
-            self.instance = cls(*args, **kwargs)
-        
-        ComponentRegistry.register(name, self.instance)
-    
-    def start(self):
-        """컴포넌트 시작"""
-        if self.comm_type in ['thread', 'process']:
-            self.instance.start()
-        elif hasattr(self.instance, 'initialize'):
-            self.instance.initialize()
+   """컴포넌트 관리자"""
+   
+   def __init__(self, name, cls, comm_type, *args, **kwargs):
+       self.name, self.comm_type = name, comm_type
+       
+       if comm_type == 'thread':
+           self.instance = QThreadComponent(name, cls, *args, **kwargs)
+       elif comm_type == 'process':
+           self.instance = ProcessComponent(name, cls, *args, **kwargs)
+       else:
+           self.instance = cls(*args, **kwargs)
+       
+       ComponentRegistry.register(name, self.instance)
+   
+   def start(self):
+       """컴포넌트 시작"""
+       if self.comm_type in ['thread', 'process']:
+           self.instance.start()
+       elif hasattr(self.instance, 'initialize'):
+           self.instance.initialize()
+       
+       # None type도 인터페이스 주입
+       if self.comm_type is None:
+           self._inject_interfaces_for_none()
+       
+       logging.info(f"[{self.name}] 시작")
+   
+   def stop(self):
+       """컴포넌트 중지"""
+       if self.comm_type in ['thread', 'process']:
+           self.instance.stop()
+       elif hasattr(self.instance, 'cleanup'):
+           self.instance.cleanup()
+       logging.info(f"[{self.name}] 중지")
 
-        if self.comm_type == None:
-            self._inject_interfaces_for_none()
-
-        logging.info(f"[{self.name}] 시작")
-
-    def _inject_interfaces_for_none(self):
-        """None type 인터페이스 주입"""
-        def order(target, method, *args, **kwargs):
-            if target_component := ComponentRegistry.get(target):
-                if hasattr(target_component, 'order'):
-                    target_component.order(method, *args, **kwargs)
-                elif hasattr(target_component, method):
-                    getattr(target_component, method)(*args, **kwargs)
-        
-        def answer(target, method, *args, **kwargs):
-            if target_component := ComponentRegistry.get(target):
-                if hasattr(target_component, 'answer'):
-                    return target_component.answer(method, *args, **kwargs)
-                elif hasattr(target_component, method):
-                    return getattr(target_component, method)(*args, **kwargs)
-            return None
-    
-        # frq_order, frq_answer도 동일하게 구현
-        
-        self.instance.order = order
-        self.instance.answer = answer
-        self.instance.frq_order = order
-        self.instance.frq_answer = answer
-                
-    def stop(self):
-        """컴포넌트 중지"""
-        if self.comm_type in ['thread', 'process']:
-            self.instance.stop()
-        elif hasattr(self.instance, 'cleanup'):
-            self.instance.cleanup()
-        logging.info(f"[{self.name}] 중지")
-
-    def order(self, method, *args, **kwargs):
-        """통일된 order 인터페이스"""
-        if hasattr(self.instance, 'order'):
-            return self.instance.order(method, *args, **kwargs)
-        else:
-            return self._direct_call(method, *args, **kwargs)
-    
-    def answer(self, method, *args, **kwargs):
-        """통일된 answer 인터페이스"""
-        if hasattr(self.instance, 'answer'):
-            return self.instance.answer(method, *args, **kwargs)
-        else:
-            return self._direct_call(method, *args, **kwargs)
-    
-    def frq_order(self, method, *args, **kwargs):
-        """고빈도 order 인터페이스"""
-        if hasattr(self.instance, 'frq_order'):
-            return self.instance.frq_order(method, *args, **kwargs)
-        else:
-            return self._direct_call(method, *args, **kwargs)
-    
-    def frq_answer(self, method, *args, **kwargs):
-        """고빈도 answer 인터페이스"""
-        if hasattr(self.instance, 'frq_answer'):
-            return self.instance.frq_answer(method, *args, **kwargs)
-        else:
-            return self._direct_call(method, *args, **kwargs)
-    
-    def _direct_call(self, method, *args, **kwargs):
-        """직접 실행 컴포넌트 메서드 호출"""
-        if hasattr(self.instance, method):
-            try:
-                result = getattr(self.instance, method)(*args, **kwargs)
-                #logging.debug(f"[{self.name}] {method} 완료")
-                return result
-            except Exception as e:
-                logging.error(f"[{self.name}] {method} 실행 오류: {e}")
-        else:
-            logging.warning(f"[{self.name}] {method} 메서드 없음")
-        return None
-        
-    def __getattr__(self, name):
-        return getattr(self.instance, name)
-
+   def order(self, target, method, *args, **kwargs):
+       """통일된 order 인터페이스 - target 필수"""
+       if hasattr(self.instance, 'order'):
+           return self.instance.order(target, method, *args, **kwargs)
+       else:
+           return self._direct_call_with_target(target, method, *args, **kwargs)
+   
+   def answer(self, target, method, *args, **kwargs):
+       """통일된 answer 인터페이스 - target 필수"""
+       if hasattr(self.instance, 'answer'):
+           return self.instance.answer(target, method, *args, **kwargs)
+       else:
+           return self._direct_call_with_target(target, method, *args, **kwargs)
+   
+   def frq_order(self, target, method, *args, **kwargs):
+       """고빈도 order 인터페이스 - target 필수"""
+       if hasattr(self.instance, 'frq_order'):
+           return self.instance.frq_order(target, method, *args, **kwargs)
+       else:
+           return self._direct_call_with_target(target, method, *args, **kwargs)
+   
+   def frq_answer(self, target, method, *args, **kwargs):
+       """고빈도 answer 인터페이스 - target 필수"""
+       if hasattr(self.instance, 'frq_answer'):
+           return self.instance.frq_answer(target, method, *args, **kwargs)
+       else:
+           return self._direct_call_with_target(target, method, *args, **kwargs)
+   
+   def _inject_interfaces_for_none(self):
+       """None type 인터페이스 주입"""
+       def order(target, method, *args, **kwargs):
+           if target == self.name:  # 자기 자신 호출
+               if hasattr(self.instance, method):
+                   getattr(self.instance, method)(*args, **kwargs)
+           else:  # 다른 컴포넌트 호출
+               if target_component := ComponentRegistry.get(target):
+                   if hasattr(target_component, 'order'):
+                       target_component.order(target, method, *args, **kwargs)
+                   elif hasattr(target_component, method):
+                       getattr(target_component, method)(*args, **kwargs)
+       
+       def answer(target, method, *args, **kwargs):
+           if target == self.name:  # 자기 자신 호출
+               if hasattr(self.instance, method):
+                   return getattr(self.instance, method)(*args, **kwargs)
+           else:  # 다른 컴포넌트 호출
+               if target_component := ComponentRegistry.get(target):
+                   if hasattr(target_component, 'answer'):
+                       return target_component.answer(target, method, *args, **kwargs)
+                   elif hasattr(target_component, method):
+                       return getattr(target_component, method)(*args, **kwargs)
+           return None
+       
+       def frq_order(target, method, *args, **kwargs):
+           if target == self.name:  # 자기 자신 호출
+               if hasattr(self.instance, method):
+                   getattr(self.instance, method)(*args, **kwargs)
+           else:  # 다른 컴포넌트 호출
+               if target_component := ComponentRegistry.get(target):
+                   if hasattr(target_component, 'frq_order'):
+                       target_component.frq_order(target, method, *args, **kwargs)
+                   elif hasattr(target_component, method):
+                       getattr(target_component, method)(*args, **kwargs)
+       
+       def frq_answer(target, method, *args, **kwargs):
+           if target == self.name:  # 자기 자신 호출
+               if hasattr(self.instance, method):
+                   return getattr(self.instance, method)(*args, **kwargs)
+           else:  # 다른 컴포넌트 호출
+               if target_component := ComponentRegistry.get(target):
+                   if hasattr(target_component, 'frq_answer'):
+                       return target_component.frq_answer(target, method, *args, **kwargs)
+                   elif hasattr(target_component, method):
+                       return getattr(target_component, method)(*args, **kwargs)
+           return None
+       
+       self.instance.order = order
+       self.instance.answer = answer
+       self.instance.frq_order = frq_order
+       self.instance.frq_answer = frq_answer
+   
+   def _direct_call_with_target(self, target, method, *args, **kwargs):
+       """None type용 - target 파라미터 포함"""
+       if target == self.name:  # 자기 자신 호출
+           if hasattr(self.instance, method):
+               return getattr(self.instance, method)(*args, **kwargs)
+       else:  # 다른 컴포넌트 호출
+           if target_component := ComponentRegistry.get(target):
+               if hasattr(target_component, method):
+                   return getattr(target_component, method)(*args, **kwargs)
+       return None
+       
+   def __getattr__(self, name):
+       return getattr(self.instance, name)
+   
 class ComponentRegistry:
     """컴포넌트 레지스트리"""
     _components = {}
@@ -174,7 +202,7 @@ class QThreadComponent(QThread):
             if target_component := ComponentRegistry.get(target):
                 try:
                     if hasattr(target_component, 'answer'):
-                        result = target_component.answer(method, *args, **kwargs)
+                        result = target_component.answer(target, method, *args, **kwargs)
                     elif hasattr(target_component, method):
                         result = getattr(target_component, method)(*args, **kwargs)
                     else:
@@ -196,7 +224,7 @@ class QThreadComponent(QThread):
             if target_component := ComponentRegistry.get(target):
                 try:
                     if hasattr(target_component, 'frq_answer'):
-                        result = target_component.frq_answer(method, *args, **kwargs)
+                        result = target_component.frq_answer(target, method, *args, **kwargs)
                     elif hasattr(target_component, method):
                         result = getattr(target_component, method)(*args, **kwargs)
                     else:
@@ -227,7 +255,7 @@ class QThreadComponent(QThread):
         if hasattr(self.instance, 'run_main_loop'):
             self.instance.run_main_loop()
         else:
-            while self.running: 
+            while self.running:
                 if hasattr(self.instance, 'run_main_work'):
                     self.instance.run_main_work()
                 time.sleep(HIGH_FREQ_TIMEOUT)
@@ -238,7 +266,7 @@ class QThreadComponent(QThread):
             self.instance.cleanup()
         logging.info(f"[{self.name}] QThread 종료")
     
-    def order(self, method, *args, **kwargs):
+    def order(self, target, method, *args, **kwargs):
         """order 인터페이스"""
         if not self.running:
             logging.warning(f"[{self.name}] 종료 중 - order {method} 요청 거부")
@@ -250,7 +278,7 @@ class QThreadComponent(QThread):
             except Exception as e: 
                 logging.error(f"[{self.name}] {method} 실행 오류: {e}")
     
-    def answer(self, method, *args, **kwargs):
+    def answer(self, target, method, *args, **kwargs):
         """answer 인터페이스"""
         if not self.running:
             logging.warning(f"[{self.name}] 종료 중 - answer {method} 요청 거부")
@@ -274,20 +302,20 @@ class QThreadComponent(QThread):
             
         return self._route_to_target(target, 'order', method, *args, **kwargs)
     
-    def frq_answer(self, method, *args, **kwargs):
+    def frq_answer(self, target, method, *args, **kwargs):
         """고빈도 answer 인터페이스"""
-        return self.answer(method, *args, **kwargs)
+        return self.answer(target, method, *args, **kwargs)
     
     def _route_to_target(self, target, interface_type, method, *args, **kwargs):
         """타겟 컴포넌트로 라우팅"""
         if target_component := ComponentRegistry.get(target):
             try:
                 if hasattr(target_component, interface_type):
-                    getattr(target_component, interface_type)(method, *args, **kwargs)
-                    logging.debug(f"[{self.name}] {interface_type} {target}.{method} (via {interface_type})")
+                    getattr(target_component, interface_type)(target, method, *args, **kwargs)
+                    #logging.debug(f"[{self.name}] {interface_type} {target}.{method} (via {interface_type})")
                 elif hasattr(target_component, method):
                     getattr(target_component, method)(*args, **kwargs)
-                    logging.debug(f"[{self.name}] {interface_type} {target}.{method} (직접 호출)")
+                    #logging.debug(f"[{self.name}] {interface_type} {target}.{method} (직접 호출)")
                 else:
                     logging.warning(f"[{self.name}] {target}에 {method} 메서드 없음")
                     return False
@@ -303,7 +331,7 @@ class QThreadComponent(QThread):
         if self.instance and hasattr(self.instance, name): 
             return getattr(self.instance, name)
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-
+    
 class ProcessComponent:
     """프로세스 래퍼 - 고성능"""
     
@@ -372,9 +400,9 @@ class ProcessComponent:
             self.process.join(timeout=1.0)
             if self.process.is_alive(): 
                 self.process.terminate()
-        #logging.info(f"[{self.name}] 프로세스 중지")
+        logging.info(f"[{self.name}] 프로세스 중지")
     
-    def order(self, method, *args, **kwargs):
+    def order(self, target, method, *args, **kwargs):
         """order 인터페이스 - 일반채널 사용"""
         if not self.running:
             logging.warning(f"[{self.name}] 종료 중 - order {method} 요청 거부")
@@ -383,7 +411,7 @@ class ProcessComponent:
         request = self._create_request('process_order', method, args, kwargs)
         self._send_normal_request(request, method)
     
-    def answer(self, method, *args, **kwargs):
+    def answer(self, target, method, *args, **kwargs):
         """answer 인터페이스 - 일반채널 사용"""
         if not self.running:
             logging.warning(f"[{self.name}] 종료 중 - answer {method} 요청 거부")
@@ -406,7 +434,7 @@ class ProcessComponent:
         }
         return self._send_frq_order_request(request, f"{target}.{method}")
     
-    def frq_answer(self, method, *args, **kwargs):
+    def frq_answer(self, target, method, *args, **kwargs):
         """고빈도 answer 인터페이스 - 고빈도 응답채널 사용"""
         return self._send_frq_answer_request('inbound_frq_answer', method, args, kwargs, 0.1)
     
@@ -434,7 +462,7 @@ class ProcessComponent:
         """고빈도 요청채널 전송"""
         try:
             self.frq_order_queue.put_nowait(request)
-            #logging.debug(f"[{self.name}] frq_order {method_name} 전송")
+            logging.debug(f"[{self.name}] frq_order {method_name} 전송")
             return True
         except queue.Full:
             logging.debug(f"[{self.name}] frq_order 드롭: {method_name}")
@@ -480,7 +508,7 @@ class ProcessComponent:
         
         if event.wait(timeout):
             result = self.pending_responses.pop(req_id)['result']
-            #logging.debug(f"[{self.name}] {request_type} {method} 완료")
+            logging.debug(f"[{self.name}] {request_type} {method} 완료")
             return result
         else:
             self.pending_responses.pop(req_id, None)
@@ -592,7 +620,7 @@ class ProcessComponent:
         if target_component := ComponentRegistry.get(target):
             try:
                 if hasattr(target_component, interface_type):
-                    result = getattr(target_component, interface_type)(method, *args, **kwargs)
+                    result = getattr(target_component, interface_type)(target, method, *args, **kwargs)
                 elif hasattr(target_component, method):
                     result = getattr(target_component, method)(*args, **kwargs)
                 else:
@@ -606,7 +634,7 @@ class ProcessComponent:
         else:
             logging.warning(f"[{self.name}] 타겟 없음: {target}")
             return None
-
+    
     @staticmethod
     def _process_worker(name, cls, args, kwargs, normal_req_q, normal_resp_q, 
                        frq_order_q, frq_ans_req_q, frq_ans_resp_q, init_complete):
@@ -628,9 +656,9 @@ class ProcessComponent:
     
     @staticmethod
     def _inject_interfaces(instance, name, normal_req_q, normal_resp_q, 
-                           frq_order_q, frq_ans_req_q, frq_ans_resp_q):
-        """인터페이스 주입 - 5채널 사용"""
-        def order(target, method, *args, **kwargs):
+                          frq_order_q, frq_ans_req_q, frq_ans_resp_q):
+       """인터페이스 주입 - 5채널 사용"""
+       def order(target, method, *args, **kwargs):
             request = {
                 'type': 'process_order',
                 'target': target,
@@ -640,11 +668,11 @@ class ProcessComponent:
             }
             try: 
                 normal_resp_q.put(request)
-                logging.debug(f"[{name}] 내부 order {target}.{method} 전송")
+                #logging.debug(f"[{name}] 내부 order {target}.{method} 전송")
             except: 
                 pass
         
-        def frq_order(target, method, *args, **kwargs):
+       def frq_order(target, method, *args, **kwargs):
             request = {
                 'type': 'outbound_frq_order',
                 'target': target, 
@@ -656,79 +684,79 @@ class ProcessComponent:
                 frq_order_q.put(request)
                 #logging.debug(f"[{name}] 내부 frq_order {target}.{method} 전송")
             except: 
-                pass
-        
-        def answer(target, method, *args, **kwargs):
-            import uuid
-            req_id = str(uuid.uuid4())
-            request = {
-                'type': 'process_answer',
-                'target': target,
-                'method': method,
-                'args': args,
-                'kwargs': kwargs,
-                'request_id': req_id
-            }
-            
-            normal_resp_q.put(request)  # 내부→외부 전송
-            #logging.debug(f"[{name}] 내부 answer {target}.{method} 전송")
-            
-            timeout = 15
-            start_time = time.time()
-            
-            while time.time() - start_time < timeout:
-                try:
-                    response = normal_req_q.get(timeout=0.1)  # 외부→내부에서 응답 대기
-                    if (response.get('type') == 'answer_response' and 
-                        response.get('request_id') == req_id):
-                        result = response.get('result')
-                        #logging.debug(f"[{name}] answer {target}.{method} 응답 수신")
-                        return result
-                except:
-                    continue
-                time.sleep(0.01)
-            
-            logging.warning(f"[{name}] answer {target}.{method} 타임아웃")
-            return None
-        
-        def frq_answer(method, *args, **kwargs):
-            import uuid
-            req_id = str(uuid.uuid4())
-            request = {
-                'type': 'inbound_frq_answer',
-                'id': req_id,
-                'method': method,
-                'args': args,
-                'kwargs': kwargs
-            }
-            
-            try:
-                frq_ans_resp_q.put(request, timeout=0.01)  # 내부→외부 전송
-            except:
-                return None
-            
-            timeout = 0.1
-            start_time = time.time()
-            
-            while time.time() - start_time < timeout:
-                try:
-                    response = frq_ans_req_q.get(timeout=0.01)  # 외부→내부에서 응답 대기
-                    if (response.get('type') == 'inbound_frq_answer' and 
-                        response.get('id') == req_id):
-                        result = response.get('result')
-                        #logging.debug(f"[{name}] frq_answer {method} 응답 수신")
-                        return result
-                except:
-                    continue
-                time.sleep(0.001)
-            
-            return None
-        
-        instance.order = order
-        instance.frq_order = frq_order
-        instance.answer = answer
-        instance.frq_answer = frq_answer
-    
+               pass
+       
+       def answer(target, method, *args, **kwargs):
+           import uuid
+           req_id = str(uuid.uuid4())
+           request = {
+               'type': 'process_answer',
+               'target': target,
+               'method': method,
+               'args': args,
+               'kwargs': kwargs,
+               'request_id': req_id
+           }
+           
+           normal_resp_q.put(request)
+           #logging.debug(f"[{name}] 내부 answer {target}.{method} 전송")
+           
+           timeout = 15
+           start_time = time.time()
+           
+           while time.time() - start_time < timeout:
+               try:
+                   response = normal_req_q.get(timeout=0.1)
+                   if (response.get('type') == 'answer_response' and 
+                       response.get('request_id') == req_id):
+                       result = response.get('result')
+                       #logging.debug(f"[{name}] answer {target}.{method} 응답 수신")
+                       return result
+               except:
+                   continue
+               time.sleep(0.01)
+           
+           logging.warning(f"[{name}] answer {target}.{method} 타임아웃")
+           return None
+       
+       def frq_answer(target, method, *args, **kwargs):
+           import uuid
+           req_id = str(uuid.uuid4())
+           request = {
+               'type': 'inbound_frq_answer',
+               'id': req_id,
+               'method': method,
+               'args': args,
+               'kwargs': kwargs
+           }
+           
+           try:
+               frq_ans_resp_q.put(request, timeout=0.01)
+           except:
+               return None
+           
+           timeout = 0.1
+           start_time = time.time()
+           
+           while time.time() - start_time < timeout:
+               try:
+                   response = frq_ans_req_q.get(timeout=0.01)
+                   if (response.get('type') == 'inbound_frq_answer' and 
+                       response.get('id') == req_id):
+                       result = response.get('result')
+                       #logging.debug(f"[{name}] frq_answer {target}.{method} 응답 수신")
+                       return result
+               except:
+                   continue
+               time.sleep(0.001)
+           
+           return None
+       
+       instance.order = order
+       instance.frq_order = frq_order
+       instance.answer = answer
+       instance.frq_answer = frq_answer
+   
     @staticmethod
     def _initialize_worker(instance, name, init_complete):
         """워커 초기화"""
@@ -742,7 +770,6 @@ class ProcessComponent:
     def _run_worker_loop(instance, name, normal_req_q, normal_resp_q, 
                         frq_order_q, frq_ans_req_q, frq_ans_resp_q):
         """5채널 워커 메인 루프"""
-        
         while True:
             try:
                 # 일반채널 처리
@@ -751,23 +778,20 @@ class ProcessComponent:
                     if request.get('command') == 'stop': 
                         break
                     ProcessComponent._handle_worker_request(instance, name, request, normal_resp_q)
-                    continue
                 except Empty:
                     pass
-                
-                # 고빈도 요청채널 처리 (단방향이므로 요청만 받음)
                 
                 # 고빈도 응답채널 처리
                 try:
                     request = frq_ans_req_q.get(timeout=HIGH_FREQ_TIMEOUT)
                     ProcessComponent._handle_worker_request(instance, name, request, frq_ans_resp_q)
-                    continue
                 except Empty:
                     pass
-            
+                
+                # 사용자 정의 반복 작업
                 if hasattr(instance, 'run_main_work'):
                     instance.run_main_work()
-
+            
             except Exception as e: 
                 logging.error(f"[{name}] 처리 오류: {e}")
     
@@ -836,42 +860,6 @@ class GlobalComponent:
         self.stg = None
         self.api_connected = False
     
-    def order(self, target, method, *args, **kwargs):
-        """통일된 order 인터페이스 - target 중복 해결"""
-        component = getattr(self, target, None)
-        if component:
-            return component.order(method, *args, **kwargs)
-        else:
-            logging.warning(f"[GlobalComponent] 타겟 없음: {target}")
-            return None
-    
-    def answer(self, target, method, *args, **kwargs):
-        """통일된 answer 인터페이스 - target 중복 해결"""
-        component = getattr(self, target, None)
-        if component:
-            return component.answer(method, *args, **kwargs)
-        else:
-            logging.warning(f"[GlobalComponent] 타겟 없음: {target}")
-            return None
-    
-    def frq_order(self, target, method, *args, **kwargs):
-        """통일된 frq_order 인터페이스 - target 중복 해결"""
-        component = getattr(self, target, None)
-        if component:
-            return component.frq_order(method, *args, **kwargs)
-        else:
-            logging.warning(f"[GlobalComponent] 타겟 없음: {target}")
-            return False
-    
-    def frq_answer(self, target, method, *args, **kwargs):
-        """통일된 frq_answer 인터페이스 - target 중복 해결"""
-        component = getattr(self, target, None)
-        if component:
-            return component.frq_answer(method, *args, **kwargs)
-        else:
-            logging.warning(f"[GlobalComponent] 타겟 없음: {target}")
-            return None
-
 gm = GlobalComponent()
 
 class Admin:
@@ -922,48 +910,48 @@ class Admin:
 
         # Admin 컴포넌트 테스트 *****************************************************************************
         # order 테스트
-        gm.order('dbm', 'dbm_response', 'dbm call')
+        self.order('dbm', 'dbm_response', 'dbm call')
         logging.info(f"[{self.name}] -> DBM / dbm_response 요청 완료")
 
         # answer 테스트
-        result = gm.answer('api', 'GetMasterCodeName', '005930')
+        result = self.answer('api', 'GetMasterCodeName', '005930')
         logging.info(f"[{self.name}] -> API / 종목코드: 005930, 종목명: {result}")
 
         # frq_order 테스트 (다른 컴포넌트에게 고빈도 명령) - 직접 gm 통해서 호출
-        gm.frq_order('dbm', 'dbm_response', 'frq_order test') # 현재가를 계속 보내서 차트 데이타 업데이트
+        self.frq_order('dbm', 'dbm_response', 'frq_order test') # 현재가를 계속 보내서 차트 데이타 업데이트
         logging.info(f"[{self.name}] -> DBM frq_order dbm_response 요청 완료")
 
         # frq_answer 테스트 (다른 컴포넌트에게 고빈도 질의) - 직접 gm 통해서 호출
-        result = gm.frq_answer('api', 'GetConnectState')
+        result = self.frq_answer('api', 'GetConnectState')
         logging.info(f"[{self.name}] -> API frq_answer GetConnectState 확인 / {result}")
 
         # 타 쓰레드 테스트 
-        result = gm.frq_answer('stg', 'stg_response', 'stg call')
+        result = self.frq_answer('stg', 'stg_response', 'stg call')
         logging.info(f"[{self.name}] -> STG  / {result}")
 
         # 컴포넌트 제어 넘김 *****************************************************************************
         logging.info(f"[{self.name}] -> STG 로 제어 넘김")
-        gm.order('stg', 'start_stg')
+        self.order('stg', 'start_stg')
         
         # STG 완료 대기 (플래그 기반)
         if self.wait_for_component('stg'):
             logging.info(f"[{self.name}] STG 완료 확인")
         
         logging.info(f"[{self.name}] -> API 로 제어 넘김")
-        gm.order('api', 'start_api')
+        self.order('api', 'start_api')
         
         # API 완료 대기 (플래그 기반)
         if self.wait_for_component('api'):
             logging.info(f"[{self.name}] API 완료 확인")
 
         logging.info(f"[{self.name}] -> DBM 로 제어 넘김")
-        gm.order('dbm', 'start_dbm')
+        self.order('dbm', 'start_dbm')
         
         # DBM 완료 대기 (플래그 기반)
         if self.wait_for_component('dbm'):
             logging.info(f"[{self.name}] DBM 완료 확인")
 
-        gm.order('stg', 'stop')
+        self.order('stg', 'stop')
         logging.info(f"[{self.name}] 모든 작업 완료")
 
     def on_receive_real_data(self, data):
@@ -989,26 +977,26 @@ class Strategy:
         logging.info(f"\n[{self.name}] 시작 {'*' * 10}")
 
         # order 테스트
-        gm.order('admin', 'admin_response', 'admin call')
+        self.order('admin', 'admin_response', 'admin call')
         logging.info(f"[{self.name}] -> Admin / admin_response 요청 완료")
 
-        gm.order('dbm', 'dbm_response', 'dbm order test')
+        self.order('dbm', 'dbm_response', 'dbm order test')
         logging.info(f"[{self.name}] -> DBM / dbm_response 요청 완료")
 
         # answer 테스트
-        result = gm.answer('admin', 'admin_response', 'admin question')
+        result = self.answer('admin', 'admin_response', 'admin question')
         logging.info(f"[{self.name}] -> Admin / {result}")
 
-        name = gm.answer('api', 'GetMasterCodeName', '000660')
-        last_price = gm.answer('api', 'GetMasterLastPrice', '000660')
+        name = self.answer('api', 'GetMasterCodeName', '000660')
+        last_price = self.answer('api', 'GetMasterLastPrice', '000660')
         logging.info(f"[{self.name}] -> API / 종목코드: 000660, 종목명: {name}, 전일가: {last_price} type={type(last_price)}")
 
         # frq_order 테스트 (다른 컴포넌트에게 고빈도 명령)
-        gm.frq_order('admin', 'on_receive_real_data', 'stg_frq_order_test')
+        self.frq_order('admin', 'on_receive_real_data', 'stg_frq_order_test')
         logging.info(f"[{self.name}] -> Admin frq_order 테스트 완료")
 
         # frq_answer 테스트 (다른 컴포넌트에게 고빈도 질의)
-        result = gm.frq_answer('admin', 'admin_response', 'frq_answer test')
+        result = self.frq_answer('admin', 'admin_response', 'frq_answer test')
         logging.info(f"[{self.name}] -> Admin frq_answer 테스트 / {result}")
 
         # 작업 완료 플래그 설정
@@ -1017,7 +1005,7 @@ class Strategy:
         logging.info(f"[{self.name}] 작업 완료")
         
         # Admin에게 완료 통보
-        gm.order('admin', 'on_component_done', 'stg')
+        self.order('admin', 'on_component_done', 'stg')
 
     def stg_response(self, data):
         return f"[{self.name}] 응답: {data}"
@@ -1220,17 +1208,17 @@ class Main:
             gm.dbm.start()
 
             # API 로그인
-            gm.api.order('login')
+            gm.api.order('api', 'login')
             # 연결 확인 (1이면 연결됨)
             timeout_count = 0
-            while not gm.api.answer('is_connected') and timeout_count < 100:
+            while not gm.api.answer('api', 'is_connected') and timeout_count < 100:
                 time.sleep(0.1)
                 timeout_count += 1
             
-            if gm.api.answer('is_connected'):
+            if gm.api.answer('api', 'is_connected'):
                 gm.api_connected = True
                 logging.info(f"[Main] API 연결 완료")
-                gm.admin.order('start_admin')
+                gm.admin.order('admin', 'start_admin')
             else:
                 logging.error(f"[Main] API 연결 실패")
 

@@ -349,7 +349,7 @@ class GUI(QMainWindow, form_class):
     def gui_tr_code_changed(self):
         code = self.leTrCode.text()
         if code:
-            self.leTrName.setText(gm.api.GetMasterCodeName(code))
+            self.leTrName.setText(gm.api.answer('api', 'GetMasterCodeName', code))
 
     def gui_tr_order(self):
         kind = '매수' if self.rbTrBuy.isChecked() else '매도'
@@ -400,7 +400,7 @@ class GUI(QMainWindow, form_class):
             'ordno': ''
         }
         if kind == '매수':
-            gm.api.SetRealReg(dc.scr.화면['실시간감시'], code, '10', '1')
+            gm.api.order('api', 'SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
         else:
             if row['주문가능수량'] == 0:
                 QMessageBox.warning(self, '알림', '주문가능수량이 없습니다.')
