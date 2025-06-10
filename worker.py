@@ -36,8 +36,36 @@ class SimpleManager:
             self.instance.start()
         elif hasattr(self.instance, 'initialize'):
             self.instance.initialize()
+
+        if self.comm_type == None:
+            self._inject_interfaces_for_none()
+
         logging.info(f"[{self.name}] 시작")
+
+    def _inject_interfaces_for_none(self):
+        """None type 인터페이스 주입"""
+        def order(target, method, *args, **kwargs):
+            if target_component := ComponentRegistry.get(target):
+                if hasattr(target_component, 'order'):
+                    target_component.order(method, *args, **kwargs)
+                elif hasattr(target_component, method):
+                    getattr(target_component, method)(*args, **kwargs)
+        
+        def answer(target, method, *args, **kwargs):
+            if target_component := ComponentRegistry.get(target):
+                if hasattr(target_component, 'answer'):
+                    return target_component.answer(method, *args, **kwargs)
+                elif hasattr(target_component, method):
+                    return getattr(target_component, method)(*args, **kwargs)
+            return None
     
+        # frq_order, frq_answer도 동일하게 구현
+        
+        self.instance.order = order
+        self.instance.answer = answer
+        self.instance.frq_order = order
+        self.instance.frq_answer = answer
+                
     def stop(self):
         """컴포넌트 중지"""
         if self.comm_type in ['thread', 'process']:
@@ -79,7 +107,7 @@ class SimpleManager:
         if hasattr(self.instance, method):
             try:
                 result = getattr(self.instance, method)(*args, **kwargs)
-                logging.debug(f"[{self.name}] {method} 완료")
+                #logging.debug(f"[{self.name}] {method} 완료")
                 return result
             except Exception as e:
                 logging.error(f"[{self.name}] {method} 실행 오류: {e}")
@@ -130,11 +158,63 @@ class QThreadComponent(QThread):
         """QThread 메인 루프"""
         try:
             self.instance = self.cls(*self.init_args, **self.init_kwargs)
+            self._inject_interfaces()
             self._initialize_instance()
             self._run_main_loop()
             self._cleanup_instance()
         except Exception as e:
             logging.error(f"[{self.name}] QThread 실행 오류: {e}")
+    
+    def _inject_interfaces(self):
+        """QThread 인터페이스 주입"""
+        def order(target, method, *args, **kwargs):
+            self.frq_order(target, method, *args, **kwargs)
+        
+        def answer(target, method, *args, **kwargs):
+            if target_component := ComponentRegistry.get(target):
+                try:
+                    if hasattr(target_component, 'answer'):
+                        result = target_component.answer(method, *args, **kwargs)
+                    elif hasattr(target_component, method):
+                        result = getattr(target_component, method)(*args, **kwargs)
+                    else:
+                        logging.warning(f"[{self.name}] {target}에 {method} 메서드 없음")
+                        return None
+                    logging.debug(f"[{self.name}] answer {target}.{method} 완료")
+                    return result
+                except Exception as e:
+                    logging.error(f"[{self.name}] answer {target}.{method} 오류: {e}")
+                    return None
+            else:
+                logging.warning(f"[{self.name}] 타겟 없음: {target}")
+                return None
+        
+        def frq_order(target, method, *args, **kwargs):
+            return self.frq_order(target, method, *args, **kwargs)
+        
+        def frq_answer(target, method, *args, **kwargs):
+            if target_component := ComponentRegistry.get(target):
+                try:
+                    if hasattr(target_component, 'frq_answer'):
+                        result = target_component.frq_answer(method, *args, **kwargs)
+                    elif hasattr(target_component, method):
+                        result = getattr(target_component, method)(*args, **kwargs)
+                    else:
+                        logging.warning(f"[{self.name}] {target}에 {method} 메서드 없음")
+                        return None
+                    logging.debug(f"[{self.name}] frq_answer {target}.{method} 완료")
+                    return result
+                except Exception as e:
+                    logging.error(f"[{self.name}] frq_answer {target}.{method} 오류: {e}")
+                    return None
+            else:
+                logging.warning(f"[{self.name}] 타겟 없음: {target}")
+                return None
+        
+        self.instance.order = order
+        self.instance.answer = answer
+        self.instance.frq_order = frq_order
+        self.instance.frq_answer = frq_answer
     
     def _initialize_instance(self):
         """인스턴스 초기화"""
@@ -148,6 +228,8 @@ class QThreadComponent(QThread):
             self.instance.run_main_loop()
         else:
             while self.running: 
+                if hasattr(self.instance, 'run_main_work'):
+                    self.instance.run_main_work()
                 time.sleep(HIGH_FREQ_TIMEOUT)
     
     def _cleanup_instance(self):
@@ -660,6 +742,7 @@ class ProcessComponent:
     def _run_worker_loop(instance, name, normal_req_q, normal_resp_q, 
                         frq_order_q, frq_ans_req_q, frq_ans_resp_q):
         """5채널 워커 메인 루프"""
+        
         while True:
             try:
                 # 일반채널 처리
@@ -682,6 +765,9 @@ class ProcessComponent:
                 except Empty:
                     pass
             
+                if hasattr(instance, 'run_main_work'):
+                    instance.run_main_work()
+
             except Exception as e: 
                 logging.error(f"[{name}] 처리 오류: {e}")
     
@@ -1088,12 +1174,16 @@ class Dbm:
         logging.info(f"[{self.name}] -> Admin / admin_response 요청 완료")
 
         # answer 테스트
-        result = self.answer('api', 'api_response', 'api call')
+        result = self.answer('api', 'api_response', 'api request')
         logging.info(f"[{self.name}] -> API / {result}")
 
 
         result = self.answer('stg', 'stg_response', 'stg call')
         logging.info(f"[{self.name}] -> STG / {result}")
+
+        # frq_order 테스트 (다른 컴포넌트에게 고빈도 명령)
+        result = self.answer('admin', 'admin_response', 'admin request')
+        logging.info(f"[{self.name}] -> Admin / {result} **********")
 
         # frq_order 테스트 (다른 컴포넌트에게 고빈도 명령)
         self.frq_order('admin', 'on_receive_real_data', 'dbm_frq_order_test')
@@ -1160,7 +1250,7 @@ class Main:
         all_components = ComponentRegistry._components.copy()
         
         # 종료 순서 정의 (중요: 의존성 역순)
-        shutdown_order = ['stg', 'api', 'dbm', 'admin']
+        shutdown_order = ['stg', 'api', 'dbm']
         
         # 순서대로 종료
         for name in shutdown_order:

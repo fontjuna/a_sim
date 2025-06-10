@@ -27,22 +27,6 @@ class Admin:
         self.get_holdings()
         self.json_load_define_sets()
 
-    def order(self, method, *args, **kwargs):
-        result = None
-        if hasattr(self, method):
-            try:
-                result = getattr(self, method)(*args, **kwargs)
-                logging.debug(f"[{self.name}] order {method} 완료")
-            except Exception as e:
-                logging.error(f"[{self.name}] {method} 실행 오류: {e}")
-        else:
-            logging.warning(f"[{self.name}] {method} 메서드 없음")
-        return result
-
-    def answer(self, method, *args, **kwargs):
-        return self.order(method, *args, **kwargs)
-
-
     # 준비 작업 -------------------------------------------------------------------------------------------
     def set_connected(self, connected):
         gm.connected = connected
@@ -60,21 +44,21 @@ class Admin:
         gm.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
 
     def get_login_info(self):
-        accounts = gm.api.GetLoginInfo('ACCNO')
+        accounts = gm.answer('api', 'GetLoginInfo', 'ACCNO')
         logging.debug(f'GetLoginInfo Accounts: {accounts}')
         gm.list계좌콤보 = accounts
         gm.config.account = accounts[0]
 
-        gm.config.server = gm.api.GetLoginInfo('GetServerGubun')
+        gm.config.server = gm.answer('api', 'GetLoginInfo', 'GetServerGubun')
         gm.수수료율 = dc.const.fee_sim if gm.config.server == '1' else dc.const.fee_real # 모의투자 0.35%, 실전투자 0.15% 매수, 매도 각각
         gm.세금율 = dc.const.tax_rate # 코스피 거래세 0.03 + 농어촌 특별세 0.12%, 코스닥 거래세 0.15 매도시적용
         logging.debug(f"서버:{gm.config.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.config.account}")
 
     def get_conditions(self):
         try:
-            loaded = gm.api.GetConditionLoad()
+            loaded = gm.answer('api', 'GetConditionLoad')
             if loaded: # sucess=1, fail=0
-                gm.list전략튜플 = gm.api.GetConditionNameList()
+                gm.list전략튜플 = gm.answer('api', 'GetConditionNameList')
                 logging.debug(f'전략 로드 : {gm.list전략튜플}')
                 gm.list전략콤보 = [condition[0] + ' : ' + condition[1] for condition in gm.list전략튜플]
                 logging.info(f'전략 로드 : 총 {len(gm.list전략콤보)}개의 전략이 있습니다.')
@@ -97,12 +81,12 @@ class Admin:
 
     def set_real_remove_all(self):
         logging.debug('set_real_remove_all')
-        gm.api.SetRealRemove('ALL', 'ALL')
+        gm.order('api', 'SetRealRemove', 'ALL', 'ALL')
 
     def get_holdings(self):
         logging.info('* get_holdings *')
         gm.dict잔고종목감시 = {}
-        gm.api.SetRealRemove(dc.scr.화면['실시간감시'], 'ALL')
+        gm.order('api', 'SetRealRemove', dc.scr.화면['실시간감시'], 'ALL')
         self.pri_fx얻기_잔고합산()
         self.pri_fx얻기_잔고목록()
         self.pri_fx등록_종목감시()
@@ -111,12 +95,13 @@ class Admin:
     def trade_start(self):
         logging.debug('trade_start')
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
-        codes = gm.잔고목록.get(column='종목코드')
-        #for code in codes:
-        #    gm.ipc.order('dbm', 'register_code', code)
         self.cdn_fx실행_전략매매()
-
+        codes = gm.잔고목록.get(column='종목코드')
         gm.config.ready = True
+        gm.order('ctu', 'latch_off')
+        #for code in codes:
+        #    gm.order('ctu', 'register_code', code)
+
 
     # 공용 함수 -------------------------------------------------------------------------------------------
 
@@ -127,7 +112,7 @@ class Admin:
         #     return [], False
 
         #logging.debug(f'조건 검색 요청 전: {cond_text}')
-        condition_list = gm.api.SendCondition(screen, cond_name, cond_index, search)
+        condition_list = gm.answer('api', 'SendCondition', screen, cond_name, cond_index, search)
         if not isinstance(condition_list, list):
             logging.warning(f'조건 검색 실패: {cond_text} result={condition_list}')
             return [], False
@@ -140,7 +125,7 @@ class Admin:
 
         전략명칭 = gm.stg.전략명칭
         매수전략 = gm.stg.매수전략
-        name = gm.api.GetMasterCodeName(code)
+        name = gm.answer('api', 'GetMasterCodeName', code)
         주문유형 = dc.fid.주문유형FID[ordtype]
         kind = msg if msg else 주문유형
         job = {"구분": kind, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
@@ -155,7 +140,7 @@ class Admin:
         dict_data = {'전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
         self.dbm_order_upsert(dict_data)
-        success = gm.api.SendOrder(**cmd)
+        success = gm.answer('api', 'SendOrder', **cmd)
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
 
     def com_market_status(self):
@@ -264,11 +249,11 @@ class Admin:
                 logging.warning(f"조건식 서버 해제 안 됨 : type={type}, condition={condition}")
                 return
 
-            job = {'kind': kind, 'code': code, 'type': type, 'cond_name': cond_name, 'cond_index': cond_index}
+            job = (kind, code, type, cond_name, cond_index,)
             if type == 'I':
-                gm.stg.order('cdn_fx편입_실시간조건감시', **job)  
+                gm.order('stg', 'cdn_fx편입_실시간조건감시', *job)  
             elif type == 'D':
-                gm.stg.order('cdn_fx이탈_실시간조건감시', **job)
+                gm.order('stg', 'cdn_fx이탈_실시간조건감시', *job)
         except Exception as e:
             logging.error(f"쓰레드 찾기오류 {code} {type} {cond_name} {cond_index}: {type(e).__name__} - {e}", exc_info=True)
 
@@ -291,7 +276,7 @@ class Admin:
                 gm.dict주문대기종목.remove(code)
 
             job = {'code': code, 'dictFID': dictFID}
-            #gm.ipc.order('dbm', 'update_script_chart', job)
+            gm.order('ctu', 'update_script_chart', job)
 
         try:
             if gm.잔고목록.in_key(code):
@@ -354,7 +339,7 @@ class Admin:
             output = gm.tbl.hd잔고합산['컬럼']
             next = '0'
             screen = dc.scr.화면[rqname]
-            data, remain = gm.api.api_request(rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+            data, remain = gm.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
             dict_list.extend(data)
             if dict_list:
                 for i, item in enumerate(dict_list):
@@ -379,7 +364,7 @@ class Admin:
             next = '0'
             screen = dc.scr.화면[rqname]
             while True:
-                data, remain = gm.api.api_request(rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+                data, remain = gm.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
                 logging.debug(f'잔고목록 얻기: data count={len(data)}, remain={remain}')
                 dict_list.extend(data)
                 if not remain: break
@@ -426,7 +411,7 @@ class Admin:
             def save_counter(dict_list):
                 data = {}
                 for item in dict_list:
-                    전일가 = gm.api.GetMasterLastPrice(item['종목번호'])
+                    전일가 = gm.answer('api', 'GetMasterLastPrice', item['종목번호'])
                     종목정보 = {'종목명': item['종목명'], '전일가': 전일가, "현재가": 0}
                     # 락 획득시간 최소화
                     gm.dict종목정보.set(item['종목번호'], 종목정보)
@@ -441,7 +426,7 @@ class Admin:
 
                     data[item['종목번호']] = item['종목명']
 
-                    #gm.ipc.order('dbm', 'register_code', item['종목번호'])
+                    gm.order('ctu', 'register_code', item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.counter.set_batch(data)
 
@@ -451,7 +436,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            #gm.ipc.order('dbm', 'register_code', '005930')
+            gm.order('ctu', 'register_code', '005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -540,15 +525,15 @@ class Admin:
             gm.set종목감시 = set(gm.잔고목록.get(column='종목번호') or [])
             gm.set종목감시.add('005930')
             for code in gm.set종목감시:
-                종목명 = gm.api.GetMasterCodeName(code)
-                전일가 = gm.api.GetMasterLastPrice(code)
+                종목명 = gm.answer('api', 'GetMasterCodeName', code)
+                전일가 = gm.answer('api', 'GetMasterLastPrice', code)
                 value = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
                 # 락 획득시간 최소화
                 gm.dict종목정보.set(code, value=value)
 
             logging.debug(f'실시간 시세 요청: codes={gm.set종목감시}')
             codes = ";".join(gm.set종목감시)
-            gm.api.SetRealReg(dc.scr.화면['실시간감시'], codes, "10", 0)
+            gm.order('api', 'SetRealReg', dc.scr.화면['실시간감시'], codes, "10", 0)
         except Exception as e:
             logging.error(f'실시간 시세 요청 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -563,7 +548,7 @@ class Admin:
             output = gm.tbl.hd일지합산['컬럼']
             next = '0'
             screen = dc.scr.화면['일지합산']
-            data, remain = gm.api.api_request(rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+            data, remain = gm.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
             if data:
                 for i, item in enumerate(data):
                     item.update({'순번':i})
@@ -580,7 +565,7 @@ class Admin:
             screen = dc.scr.화면['일지목록']
             next = '0'
             while True:
-                data, remain = gm.api.api_request(rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+                data, remain = gm.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
                 logging.debug(f'일지목록 얻기: data count={len(data)}, remain={remain}')
                 dict_list.extend(data)
                 if not remain: break
@@ -605,7 +590,7 @@ class Admin:
             output = gm.tbl.hd예수금['컬럼']
             next = '0'
             screen = dc.scr.화면['예수금']
-            data, remain = gm.api.api_request(rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+            data, remain = gm.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
             if data:
                 for i, item in enumerate(data):
                     item.update({'순번':i})
@@ -658,7 +643,7 @@ class Admin:
                 if min_check:
                     dict_list = [{ **item, '일자': item['체결시간'][:8], '시간': item['체결시간'][8:], } for item in dict_list]
                 else:
-                    dict_list = [{ **item, '일자': item['일자'], '시간': '', '종목명': gm.api.GetMasterCodeName(item['종목코드']), } for item in dict_list]
+                    dict_list = [{ **item, '일자': item['일자'], '시간': '', '종목명': gm.answer('api', 'GetMasterCodeName', item['종목코드']), } for item in dict_list]
 
                 gm.차트자료.set(data=dict_list)
                 logging.info(f"차트자료 얻기 완료: data count={gm.차트자료.len()}")

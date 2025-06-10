@@ -421,7 +421,7 @@ class Strategy:
             def stop_trade(cond_index, cond_name, trade_type):
                 if cond_name:
                     screen = f'2{"1" if trade_type == "매수" else "2"}00'
-                    gm.api.SendConditionStop(screen, cond_name, cond_index)
+                    gm.order('api', 'SendConditionStop', screen, cond_name, cond_index)
                 else:
                     raise Exception(f'{trade_type} 조건이 없습니다.')
                 logging.info(f'{trade_type} 전략 중지 - {cond_index:03d} : {cond_name}')
@@ -445,9 +445,9 @@ class Strategy:
 
     def cdn_fx편입_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
-            종목명 = gm.api.GetMasterCodeName(code)
+            종목명 = gm.order('api', 'GetMasterCodeName', code)
             if not self.dict종목정보.contains(code):
-                전일가 = gm.api.GetMasterLastPrice(code)
+                전일가 = gm.order('api', 'GetMasterLastPrice', code)
                 value={'종목명': 종목명, '전일가': 전일가, '현재가': 0}
                 # 락 획득시간 최소화
                 self.dict종목정보.set(code, value=value)
@@ -472,7 +472,7 @@ class Strategy:
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'종목명': 종목명})
                     gm.admin.send_status_msg('주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                    #self.order('dbm', 'register_code', code)
+                    gm.order('ctu', 'register_code', code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
@@ -489,7 +489,7 @@ class Strategy:
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'종목명': 종목명})
                     gm.admin.send_status_msg('주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                    #self.order('dbm', 'register_code', code)
+                    gm.order('ctu', 'register_code', code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
@@ -515,7 +515,7 @@ class Strategy:
 
     def cdn_fx이탈_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
-            name = gm.api.GetMasterCodeName(code)
+            name = gm.order('api', 'GetMasterCodeName', code)
             if kind == '매도':
                 if gm.매도조건목록.in_key(code):
                     logging.info(f'{kind}이탈 : {self.전략명칭} {code} {name}')
@@ -528,7 +528,7 @@ class Strategy:
 
             # 실시간 감시 해지하지 않는다.
             if len(gm.set조건감시) > 90 and code in gm.set조건감시:
-                gm.api.SetRealRemove(dc.scr.화면['조건감시'], code)
+                gm.order('api', 'SetRealRemove', dc.scr.화면['조건감시'], code)
                 gm.set조건감시.remove(code)
                 logging.debug(f'실시간 감시 해지: {gm.set조건감시}')
 
@@ -544,7 +544,7 @@ class Strategy:
 
             codes = ",".join(condition_list)
             fids = "10"  # 현재가
-            gm.api.SetRealReg(dc.scr.화면['조건감시'], codes, fids, search_flag)
+            gm.order('api', 'SetRealReg', dc.scr.화면['조건감시'], codes, fids, search_flag)
             gm.set조건감시.update(condition_list)
             logging.debug(f'실시간 감시 요청: {gm.set조건감시}')
         except Exception as e:

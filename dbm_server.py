@@ -16,6 +16,8 @@ class DBMServer:
         self.running = False
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
+
+        self.latch_on = True
         
         # 락-프리 최적화: 읽기 전용 데이터를 분리
         self.done_code = set()  # list -> set 변경 (O(1) 조회)
@@ -26,8 +28,6 @@ class DBMServer:
         self._done_lock = threading.RLock()  # done_code 전용 락 (재진입 가능)
         
         self.thread_local = None
-        self.thread_run = False
-        self.thread_chart = None    
         self.database = {}  # 테스트용
         
         # 성능 최적화: 백그라운드 등록 큐
@@ -38,19 +38,16 @@ class DBMServer:
         self._write_lock = threading.Lock()
         self.thread_local = threading.local()
         self.running = True
+        self.latch_on = True
         self.init_dbm()
-        # self.start_request_chart_data()
+
+    def latch_off(self):
+        self.latch_on = False
 
     def cleanup(self):
         try:
             print(f"{self.__class__.__name__} 중지 중...")
             self.running = False
-            # self.stop_request_chart_data()
-            
-            # 스레드 종료 대기
-            if self.thread_chart:
-                self.thread_chart.join(timeout=2.0)
-                self.thread_chart = None
             
             # 연결 정리
             if hasattr(self.thread_local, 'chart'):
@@ -209,8 +206,10 @@ class DBMServer:
             conn = self.get_connection(db)
             
             if isinstance(params, list) and params and isinstance(params[0], tuple):
+                #logging.debug(f'execute_many: {sql}')
                 cursor.executemany(sql, params)
             else:
+                #logging.debug(f'execute_query: {sql}')
                 cursor.execute(sql, params if params else ())
             
             if sql.strip().upper().startswith('SELECT'):
@@ -234,7 +233,7 @@ class DBMServer:
             column_str = ', '.join(['?'] * len(temp))
             params = [tuple(item.values()) for item in dict_data] if is_list else [tuple(dict_data.values())]
             sql = f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ({column_str})"
-            
+            #logging.debug(f'table_upsert: {sql}')
             self.execute_query(sql, db=db, params=params)
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)
@@ -349,7 +348,12 @@ class DBMServer:
             next = '0'
             dict_list = []
             while True:
-                data, remain = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen)
+                result = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen, timeout=15)
+                if result is None:
+                    break
+                else:
+                    data, remain = result
+
                 if data is None or len(data) == 0: 
                     break
                 dict_list.extend(data)
@@ -391,7 +395,7 @@ class DBMServer:
             if cycle in ['dy', 'mi']:
                 self.upsert_chart(dict_list, cycle, tick)
                 self._mark_done_safe(code, cycle)
-                #cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
+                cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
             
             return dict_list
         
@@ -399,52 +403,37 @@ class DBMServer:
             logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
             return []
 
-    def start_request_chart_data(self):
-        """차트 데이터 요청 스레드 시작"""
-        if self.thread_run: 
-            return
-        self.thread_run = True
-        self.thread_chart = threading.Thread(target=self.request_chart_data, daemon=True)
-        self.thread_chart.start()
-        logging.debug('차트 데이터 요청 스레드 시작')
-
-    def stop_request_chart_data(self):
-        """차트 데이터 요청 스레드 중지"""
-        self.thread_run = False
-        if self.thread_chart:
-            self.thread_chart.join(timeout=2.0)
-            self.thread_chart = None
+    #def run_main_work(self):
+    #    if self.latch_on: return
+    #    self.latch_on = True
+        # 프로세스로 등록시 자동으로 0.001초마다 실행 됨
+    #    self.request_chart_data()
+    #    self.latch_on = False
 
     def request_chart_data(self):
         """차트 데이터 요청 메인 루프"""
-        while self.thread_run:
-            # 백그라운드 등록 처리
-            self._process_pending_registrations()
-            
-            # 처리할 코드 복사 (락 최소화)
-            codes_to_process = []
-            if self._write_lock and self._write_lock.acquire(timeout=0.01):
-                try:
-                    for code, status in list(self.todo_code.items()):
-                        if not status['mi'] or not status['dy']:
-                            codes_to_process.append((code, status.copy()))
-                finally:
-                    self._write_lock.release()
-            
-            if not codes_to_process:
-                time.sleep(0.001)
-                continue
+        # 백그라운드 등록 처리
+        self._process_pending_registrations()
+        
+        # 처리할 코드 복사 (락 최소화)
+        codes_to_process = []
+        if self._write_lock and self._write_lock.acquire(timeout=0.01):
+            try:
+                for code, status in list(self.todo_code.items()):
+                    if not status['mi'] or not status['dy']:
+                        codes_to_process.append((code, status.copy()))
+            finally:
+                self._write_lock.release()
+        
+        if not codes_to_process:
+            return
 
-            # 락 밖에서 API 호출
-            for code, status in codes_to_process:
-                if not self.thread_run:  # 조기 종료 체크
-                    break
-                if not status['mi']: 
-                    self.dbm_get_chart_data(code, cycle='mi', tick=1)
-                if not status['dy']: 
-                    self.dbm_get_chart_data(code, cycle='dy')
-
-            time.sleep(0.001)
+        # 락 밖에서 API 호출
+        for code, status in codes_to_process:
+            if not status['mi']: 
+                self.dbm_get_chart_data(code, cycle='mi', tick=1)
+            if not status['dy']: 
+                self.dbm_get_chart_data(code, cycle='dy')
 
     def _process_pending_registrations(self):
         """백그라운드 등록 처리"""
@@ -483,8 +472,6 @@ class DBMServer:
 
     def register_code(self, code):
         """종목 코드 등록 (최적화됨)"""
-        if not self.thread_run:
-            return False
         
         # 빠른 중복 체크 (락 프리)
         with self._done_lock:
@@ -527,7 +514,6 @@ class DBMServer:
         return False
 
     def is_done(self, code):
-        return True
         return code in self.done_code
 
     def update_script_chart(self, job):
@@ -555,3 +541,5 @@ class DBMServer:
                 abs(int(dictFID['누적거래대금'])) if dictFID['누적거래대금'] else 0,
                 dictFID['체결시간']
             )
+
+

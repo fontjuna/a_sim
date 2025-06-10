@@ -880,6 +880,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     gui = None
     api = None
     stg = None
+    ctu = None
     scm = None # 스크립트 매니저
     ipc = None # 프로세스 매니저
     trd = None # 쓰레드 매니저
@@ -944,13 +945,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
             return None
     
     def answer(self, target, method, *args, **kwargs):
-        """통일된 answer 인터페이스 - target 중복 해결"""
-        component = getattr(self, target, None)
-        if component:
-            return component.answer(method, *args, **kwargs)
-        else:
-            logging.warning(f"[GlobalComponent] 타겟 없음: {target}")
-            return None
+        return self.order(target, method, *args, **kwargs)
     
     def frq_order(self, target, method, *args, **kwargs):
         """통일된 frq_order 인터페이스 - target 중복 해결"""

@@ -81,12 +81,12 @@ class Main:
             gm.admin.start()
             gm.api = SimpleManager('api', APIServer, None)
             gm.api.start()
-            gm.order('api', 'api_init', gm.config.sim_no)
-            gm.order('api', 'CommConnect', True)
+            gm.api.order('api', 'api_init', gm.config.sim_no)
+            gm.api.order('api', 'CommConnect', True)
             gm.dbm = SimpleManager('dbm', DBMServer, 'process')
             gm.dbm.start()
-            gm.ctu = SimpleManager('ctu', ChartUpdater, 'thread')
-            gm.ctu.start()
+            gm.ctu = SimpleManager('ctu', ChartUpdater, 'process')
+            gm.ctu.start() # self.run 에서 실행
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -97,10 +97,13 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    if gm.answer('api', 'api_connected'): break
-                    time.sleep(0.1)
-            gm.order('api', 'set_tickers')
-            gm.order('admin', 'init')
+                    #connected = gm.answer('api', 'api_connected')
+                    connected = gm.api.answer('api', 'GetConnectState')
+                    if connected: break
+                    logging.debug(f"로그인 대기 중: {connected}")
+                    time.sleep(0.5)
+            gm.api.order('api', 'set_tickers')
+            gm.admin.order('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
 
             if gm.config.gui_on: gm.gui.init()
