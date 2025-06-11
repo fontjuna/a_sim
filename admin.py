@@ -267,11 +267,11 @@ class Admin:
             if data:
                 gm.주문목록.set(key=f'{code}_{data["kind"]}', data={'상태': '요청'})
                 if data['kind'] == '매수':
-                    gm.stg.order('order_buy', code, '신규매수', 현재가)
+                    self.order('stg', 'order_buy', code, '신규매수', 현재가)
                 elif data['kind'] == '매도':
                     row = gm.잔고목록.get(key=code)
                     row['현재가'] = 현재가
-                    gm.stg.order('order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
+                    self.order('stg', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
                 gm.dict주문대기종목.remove(code)
 
             job = {'code': code, 'dictFID': dictFID}
@@ -708,7 +708,7 @@ class Admin:
 
             data={'키': f'{key}', '구분': kind, '상태': '취소요청', '종목코드': code, '종목명': name}
             gm.주문목록.set(key=key, data=data)
-            gm.stg.order('order_cancel', kind, order_no, code)
+            self.order('stg', 'order_cancel', kind, order_no, code)
 
             logging.info(f'{kind}\n주문 타임아웃: {code} {name} 주문번호={order_no} 주문수량={주문수량} 미체결수량={미체결수량}')
 

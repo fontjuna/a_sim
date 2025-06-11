@@ -208,7 +208,7 @@ class QThreadComponent(QThread):
                     else:
                         logging.warning(f"[{self.name}] {target}에 {method} 메서드 없음")
                         return None
-                    logging.debug(f"[{self.name}] answer {target}.{method} 완료")
+                    #logging.debug(f"[{self.name}] answer {target}.{method} 완료")
                     return result
                 except Exception as e:
                     logging.error(f"[{self.name}] answer {target}.{method} 오류: {e}")
@@ -230,7 +230,7 @@ class QThreadComponent(QThread):
                     else:
                         logging.warning(f"[{self.name}] {target}에 {method} 메서드 없음")
                         return None
-                    logging.debug(f"[{self.name}] frq_answer {target}.{method} 완료")
+                    #logging.debug(f"[{self.name}] frq_answer {target}.{method} 완료")
                     return result
                 except Exception as e:
                     logging.error(f"[{self.name}] frq_answer {target}.{method} 오류: {e}")
