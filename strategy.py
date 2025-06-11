@@ -445,9 +445,9 @@ class Strategy:
 
     def cdn_fx편입_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
-            종목명 = self.order('api', 'GetMasterCodeName', code)
+            종목명 = self.answer('api', 'GetMasterCodeName', code)
             if not self.dict종목정보.contains(code):
-                전일가 = self.order('api', 'GetMasterLastPrice', code)
+                전일가 = self.answer('api', 'GetMasterLastPrice', code)
                 value={'종목명': 종목명, '전일가': 전일가, '현재가': 0}
                 self.dict종목정보.set(code, value=value)
 
@@ -514,7 +514,7 @@ class Strategy:
 
     def cdn_fx이탈_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
-            name = self.order('api', 'GetMasterCodeName', code)
+            name = self.answer('api', 'GetMasterCodeName', code)
             if kind == '매도':
                 if gm.매도조건목록.in_key(code):
                     logging.info(f'{kind}이탈 : {self.전략명칭} {code} {name}')

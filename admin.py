@@ -124,6 +124,7 @@ class Admin:
         전략명칭 = gm.stg.전략명칭
         매수전략 = gm.stg.매수전략
         name = self.answer('api', 'GetMasterCodeName', code)
+        logging.debug(f'주문 요청 확인: code={code}, name={name}')
         주문유형 = dc.fid.주문유형FID[ordtype]
         kind = msg if msg else 주문유형
         job = {"구분": kind, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
