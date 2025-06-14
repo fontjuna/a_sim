@@ -98,7 +98,7 @@ class Admin:
         self.cdn_fx실행_전략매매()
         codes = gm.잔고목록.get(column='종목코드')
         gm.config.ready = True
-        #self.order('ctu', 'latch_off')
+        self.order('ctu', 'latch_off')
 
 
     # 공용 함수 -------------------------------------------------------------------------------------------
@@ -275,7 +275,7 @@ class Admin:
                 gm.dict주문대기종목.remove(code)
 
             job = {'code': code, 'dictFID': dictFID}
-            #self.order('ctu', 'update_script_chart', job)
+            self.order('ctu', 'update_script_chart', job)
 
         try:
             if gm.잔고목록.in_key(code):
@@ -425,7 +425,7 @@ class Admin:
 
                     data[item['종목번호']] = item['종목명']
 
-                    #self.order('ctu', 'register_code', item['종목번호'])
+                    self.order('ctu', 'register_code', item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.counter.set_batch(data)
 
@@ -435,7 +435,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            #self.order('ctu', 'register_code', '005930')
+            self.order('ctu', 'register_code', '005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -811,11 +811,8 @@ class Admin:
                     elif row['구분'] == '매도':
                         if strategy.매도취소: sec = strategy.매도지연초
 
-                    # if sec > 0:
-                    #     QTimer.singleShot(sec * 1000, lambda idx=전략번호, kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(idx, kind, origin_row, dictFID))
                     if sec > 0:
-                        timer = threading.Timer(sec, lambda kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(kind, origin_row, dictFID))
-                        timer.start()
+                        QTimer.singleShot(int(sec * 1000), lambda kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(kind, origin_row, dictFID))
             except Exception as e:
                 logging.debug(f'전략 처리 오류: {row}')
                 logging.error(f"전략 처리 오류: {type(e).__name__} - {e}", exc_info=True)

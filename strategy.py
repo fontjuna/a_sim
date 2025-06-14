@@ -340,19 +340,12 @@ class Strategy:
         now = datetime.now()
         current = now.strftime('%H:%M')
         if self.당일청산:
-            if self.clear_timer is None:
-                row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 0, '매수가': 0, '수익률(%)': 0 }
-                self.clear_timer = threading.Timer(1, lambda: self.order_sell(row))
-                self.clear_timer.daemon = True
-            else:
-                self.clear_timer.cancel()
-                
+            if self.clear_timer is not None:
+                self.clear_timer = None
+            row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 0, '매수가': 0, '수익률(%)': 0 }
             start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.청산시간}", '%Y-%m-%d %H:%M')
             delay_secs = max(0, (start_time - now).total_seconds())
-            
-            self.clear_timer = threading.Timer(delay_secs, lambda: self.order_sell(row))
-            self.clear_timer.daemon = True
-            self.clear_timer.start()
+            QTimer.singleShot(int(delay_secs * 1000), lambda: self.order_sell(row))
 
     def cdn_fx실행_전략매매(self):
         try:
@@ -471,7 +464,7 @@ class Strategy:
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'종목명': 종목명})
                     self.order('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                    #self.order('ctu', 'register_code', code)
+                    self.order('ctu', 'register_code', code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
@@ -488,7 +481,7 @@ class Strategy:
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'종목명': 종목명})
                     self.order('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                    #self.order('ctu', 'register_code', code)
+                    self.order('ctu', 'register_code', code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
@@ -591,24 +584,11 @@ class Strategy:
                 else:
                     end_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.stop_time}", '%Y-%m-%d %H:%M')
                     remain_secs = max(0, (end_time - now).total_seconds())
-                    
-                    if self.end_timer is not None:
-                        self.end_timer.cancel()
-                    
-                    self.end_timer = threading.Timer(remain_secs, lambda: self.cdn_fx실행_전략마무리(sell_stop=self.매도도같이적용))
-                    self.end_timer.daemon = True
-                    self.end_timer.start()
-
+                    QTimer.singleShot(int(remain_secs * 1000), lambda: self.cdn_fx실행_전략마무리(sell_stop=self.매도도같이적용))
                 if current < self.start_time:
                     start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.start_time}", '%Y-%m-%d %H:%M')
                     delay_secs = max(0, (start_time - now).total_seconds())
-                    
-                    if self.start_timer is not None:
-                        self.start_timer.cancel()
-                    
-                    self.start_timer = threading.Timer(delay_secs, lambda: gm.toast.toast(f'전략을 시작합니다. {self.start_time} {current}'))
-                    self.start_timer.daemon = True
-                    self.start_timer.start()
+                    QTimer.singleShot(int(delay_secs * 1000), lambda: gm.toast.toast(f'전략을 시작합니다. {self.start_time} {current}'))
 
         except Exception as e:
             logging.error(f'전략매매 체크 오류: {type(e).__name__} - {e}', exc_info=True)
