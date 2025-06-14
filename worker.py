@@ -160,13 +160,14 @@ class ComponentRegistry:
         return cls._components.get(name)
 
 class QThreadComponent(QThread):
-    """QThread 래퍼 - 고성능"""
-    
     def __init__(self, name, cls, *args, **kwargs):
         super().__init__()
-        self.name, self.cls = name, cls
-        self.init_args, self.init_kwargs = args, kwargs
-        self.instance, self.running = None, False
+        self.name = name
+        self.cls = cls
+        self.init_args = args
+        self.init_kwargs = kwargs
+        self.instance = None
+        self.running = False
     
     def start(self):
         """QThread 시작"""
