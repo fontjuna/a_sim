@@ -1,4 +1,4 @@
-from public import dc, gm, get_path, save_json, load_json
+from public import dc, gm, get_path, save_json, load_json, QData
 from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
 from typing import Dict, Any, List, Callable, Optional, Tuple, Union
@@ -1222,7 +1222,54 @@ def set_tables():
     gm.당일종목 = TableManager(gm.tbl.hd당일종목)
     gm.수동종목 = TableManager(gm.tbl.hd수동종목)
 
+class QThreadModel(QThread):
+    def __init__(self, name, cls, shared_qes, args, kwargs):
+        super().__init__()
+        self.name = name
+        self.cls = cls
+        self.shared_qes = shared_qes
+        self.args = args
+        self.kwargs = kwargs
+        self.instance = None
+        self.my_qes = shared_qes.get(name)
+        self.running = False
+
+    def run(self):
+        self.running = True
+        self.instance = self.cls(*self.args, **self.kwargs)
+        while self.running:
+            if not self.my_qes.request.empty():
+                request = self.my_qes.request.get()
+                self.process_q_data(request, 'request')
+            if not self.my_qes.stream.empty():
+                stream = self.my_qes.stream.get()
+                self.process_q_data(stream, 'stream')
+            time.sleep(0.01)
+
+    def stop(self):
+        self.running = False
+        self.wait()
+
+    def process_q_data(self, q_data, type='request'):
+        if not isinstance(q_data, QData): return None
+        result = None
+        sender = q_data.sender
+        method = q_data.method
+        answer = q_data.answer
+        args = q_data.args
+        kwargs = q_data.kwargs
+        if hasattr(self.instance, method):
+            if answer:
+                result = getattr(self.instance, method)(sender, *args, **kwargs)
+                if type == 'request':
+                    self.shared_qes[sender].result.put(result)
+                else:
+                    self.shared_qes[sender].payback.put(result)
+            else:
+                getattr(self, method)(sender, *args, **kwargs)
+
+    def __getattr__(self, name):
+        if self.instance and hasattr(self.instance, name): 
+            return getattr(self.instance, name)
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
     
-
-
-

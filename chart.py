@@ -2747,11 +2747,13 @@ class ChartUpdater:
         self.running = False
         self.done_code = set()
         self.todo_code = {}
+        self.cht_updater = {}
         self.latch_on = True
 
     def initialize(self):
         self.running = True
         self.latch_on = True
+        self.lock = threading.Lock()
 
     def latch_off(self):
         self.latch_on = False
@@ -2851,12 +2853,14 @@ class ChartUpdater:
     def run_main_work(self):
         if self.latch_on: return
         self.latch_on = True
+        self.chart_data_updater()
         self.request_chart_data()
         self.latch_on = False
 
     def request_chart_data(self):
-        """차트 데이터 요청 메인 루프"""
-        for code, status in list(self.todo_code.items()):
+        with self.lock:
+            todo_items = list(self.todo_code.items())
+        for code, status in todo_items:
             logging.debug(f"차트관리 종목코드 요청: {self.answer('api', 'GetMasterCodeName', code)}")
             if not status['mi']: 
                 self.get_first_chart_data(code, cycle='mi', tick=1)
@@ -2866,38 +2870,46 @@ class ChartUpdater:
                 #self._mark_done(code, 'dy')
 
     def _mark_done(self, code, cycle):
-        """완료 표시"""
-        if code in self.todo_code:
-            self.todo_code[code][cycle] = True
-            if all(self.todo_code[code].values()):
-                self.done_code.add(code)
-                del self.todo_code[code]
+        with self.lock:
+            if code in self.todo_code:
+                self.todo_code[code][cycle] = True
+                if all(self.todo_code[code].values()):
+                    self.done_code.add(code)
+                    del self.todo_code[code]
 
     def register_code(self, code):
-        """종목 코드 등록"""
-        if not code or code in self.done_code or code in self.todo_code:
-            return False
-        
-        logging.debug(f'차트관리 종목코드 등록: {code}')
-        self.todo_code[code] = {'mi': False, 'dy': False}
-        return True
+        if not code: return False
+        with self.lock:
+            if not code or code in self.done_code or code in self.todo_code:
+                return False
+            
+            logging.debug(f'차트관리 종목코드 등록: {code}')
+            self.todo_code[code] = {'mi': False, 'dy': False}
+            return True
 
     def is_done(self, code):
         return code in self.done_code
 
-    def update_script_chart(self, job):
-        """실시간 차트 업데이트"""
+    def register_chart_data(self, job):
         code = job['code']
         dictFID = job['dictFID']
-        
-        if code in self.done_code or code in self.todo_code:
+        with self.lock: 
+            if code in self.done_code or code in self.todo_code:
+                self.cht_updater[code] = dictFID
+
+    def chart_data_updater(self):
+        with self.lock:
+            cht_updater_items = list(self.cht_updater.items())
+        for code, job in cht_updater_items:
             cht_dt.update_chart(
                 code, 
-                abs(int(dictFID['현재가'])) if dictFID['현재가'] else 0,
-                abs(int(dictFID['누적거래량'])) if dictFID['누적거래량'] else 0,
-                abs(int(dictFID['누적거래대금'])) if dictFID['누적거래대금'] else 0,
-                dictFID['체결시간']
+                abs(int(job['현재가'])) if job['현재가'] else 0,
+                abs(int(job['누적거래량'])) if job['누적거래량'] else 0,
+                abs(int(job['누적거래대금'])) if job['누적거래대금'] else 0,
+                job['체결시간']
             )
+            with self.lock: 
+                del self.cht_updater[code]
 
 # 예제 실행
 if __name__ == '__main__':

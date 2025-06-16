@@ -275,7 +275,7 @@ class Admin:
                 gm.dict주문대기종목.remove(code)
 
             job = {'code': code, 'dictFID': dictFID}
-            self.order('ctu', 'update_script_chart', job)
+            self.order('ctu', 'register_chart_data', job)
 
         try:
             if gm.잔고목록.in_key(code):

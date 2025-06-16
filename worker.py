@@ -1246,7 +1246,8 @@ class Main:
         for name in shutdown_order:
             if component := all_components.get(name):
                 try:
-                    component.stop()
+                    if hasattr(component, 'stop'):
+                        component.stop()
                     #logging.info(f"[Main] {name.upper()} 종료")
                 except Exception as e:
                     logging.error(f"[Main] {name.upper()} 종료 오류: {e}")
@@ -1255,7 +1256,8 @@ class Main:
         for name, component in all_components.items():
             if name not in shutdown_order:
                 try:
-                    component.stop()
+                    if hasattr(component, 'stop'):
+                        component.stop()
                     #logging.info(f"[Main] {name.upper()} (추가) 종료")
                 except Exception as e:
                     logging.error(f"[Main] {name.upper()} (추가) 종료 오류: {e}")

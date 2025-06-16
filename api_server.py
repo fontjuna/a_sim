@@ -1,4 +1,4 @@
-from public import hoga, dc, gm, init_logger, profile_operation
+from public import hoga, dc, init_logger, profile_operation
 from classes import TimeLimiter, Toast
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtWidgets import QApplication
@@ -1036,7 +1036,7 @@ class APIServer:
                     self.frq_order('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.frq_order('admin', 'on_fx실시간_장운영감시', **job)
-                logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
+                #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
