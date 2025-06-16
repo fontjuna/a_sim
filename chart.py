@@ -2793,9 +2793,7 @@ class ChartUpdater:
             if cycle in ['dy', 'mi']:
                 self.order('dbm', 'upsert_chart', dict_list, cycle, tick)
                 self._mark_done(code, cycle)
-                logging.debug(f'차트 데이타 업데이트 전')
                 cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
-                logging.debug(f'차트 데이타 업데이트 후')
             
             return dict_list
         

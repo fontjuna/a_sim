@@ -176,7 +176,7 @@ class GUI(QMainWindow, form_class):
             self.rbInfo.setChecked(True)
             self.rbDebug.setChecked(False)
 
-        self.refresh_data_timer.start(200)
+        self.refresh_data_timer.start(100)
 
         success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
         logging.getLogger().setLevel(gm.json_config['root']['level'])

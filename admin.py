@@ -250,9 +250,9 @@ class Admin:
 
             job = (kind, code, type, cond_name, cond_index,)
             if type == 'I':
-                self.order('stg', 'cdn_fx편입_실시간조건감시', *job)  
+                self.order('stg', 'stg_fx편입_실시간조건감시', *job)  
             elif type == 'D':
-                self.order('stg', 'cdn_fx이탈_실시간조건감시', *job)
+                self.order('stg', 'stg_fx이탈_실시간조건감시', *job)
         except Exception as e:
             logging.error(f"쓰레드 찾기오류 {code} {type} {cond_name} {cond_index}: {type(e).__name__} - {e}", exc_info=True)
 
@@ -668,13 +668,12 @@ class Admin:
             self.cdn_fx준비_전략매매()
             gm.매수문자열 = "" 
             gm.매도문자열 = "" 
-            msgs = ''
             gm.stg.start()
-            msg = self.answer('stg', 'cdn_fx실행_전략매매')
-            logging.debug(f'전략 msg={msg}')
+            msg = self.answer('stg', 'stg_fx실행_전략매매')
             if msg:
-                msgs += f'\n{msg}' if msgs else msg
-            if msgs: gm.toast.toast(msgs, duration=3000) #dc.TOAST_TIME
+                logging.debug(f'전략 실패 메세지: {msg}')
+            else:
+                logging.debug(f'전략 실행 완료')
             if gm.config.gui_on: 
                 gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
 
@@ -684,7 +683,7 @@ class Admin:
     def cdn_fx중지_전략매매(self):
         try:
             self.order('stg', 'stop')
-            self.order('stg', 'cdn_fx실행_전략마무리')
+            self.order('stg', 'stg_fx실행_전략마무리')
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()

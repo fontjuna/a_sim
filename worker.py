@@ -13,7 +13,8 @@ import pythoncom
 from public import init_logger
 
 WAIT_TIMEOUT = 15
-HIGH_FREQ_TIMEOUT = 0.001  # 1ms 고빈도 처리
+HIGH_FREQ_TIMEOUT = 0.01  # 1ms 고빈도 처리
+THREAD_TIMEOUT = 0.01
 
 class SimpleManager:
    """컴포넌트 관리자"""
@@ -259,7 +260,7 @@ class QThreadComponent(QThread):
             while self.running:
                 if hasattr(self.instance, 'run_main_work'):
                     self.instance.run_main_work()
-                time.sleep(HIGH_FREQ_TIMEOUT)
+                time.sleep(THREAD_TIMEOUT)
     
     def _cleanup_instance(self):
         """인스턴스 정리"""
@@ -288,7 +289,7 @@ class QThreadComponent(QThread):
         if self.instance and hasattr(self.instance, method):
             try: 
                 result = getattr(self.instance, method)(*args, **kwargs)
-                logging.debug(f"[{self.name}] answer {method} 완료")
+                #logging.debug(f"[{self.name}] answer {method} 완료")
                 return result
             except Exception as e: 
                 logging.error(f"[{self.name}] {method} 실행 오류: {e}")

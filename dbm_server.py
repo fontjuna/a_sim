@@ -62,27 +62,9 @@ class DBMServer:
         except Exception as e:
             logging.error(f"Error in cleanup: {e}", exc_info=True)
 
-    def get_status(self):
-        """상태 확인 (락 프리)"""
-        return {
-            "name": self.__class__.__name__,
-            "running": self.running,
-            "done_count": len(self.done_code),
-            "todo_count": len(self.todo_code),
-        }
-    
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
         logging.debug(f'DBM 로그 레벨 설정: {level}')
-
-    def get_var(self, var_name, default=None):
-        """인스턴스 변수 가져오기 (락 프리)"""
-        return getattr(self, var_name, default)
-
-    def set_var(self, var_name, value):
-        """인스턴스 변수 설정하기 (락 프리)"""
-        setattr(self, var_name, value)
-        return True
 
     def set_rate(self, fee_rate, tax_rate):
         """요율 설정 (락 프리)"""
@@ -238,14 +220,6 @@ class DBMServer:
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)
 
-    @profile_operation        
-    def upsert_chart(self, dict_data, cycle, tick=1):
-        """차트 데이터 저장"""
-        table = dc.ddb.MIN_TABLE_NAME if cycle in ['mi', 'tk'] else dc.ddb.DAY_TABLE_NAME
-        logging.debug(f'upsert_chart: {cycle}, {tick}, len={len(dict_data)} {dict_data[:1]}')
-        dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
-        self.table_upsert('chart', table, dict_data)
-
     def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno, st_name, st_buy):
         """체결 정보 저장 및 손익 계산"""
         table = dc.ddb.CONC_TABLE_NAME
@@ -320,6 +294,21 @@ class DBMServer:
             logging.error(f"upsert_conclusion error: {e}", exc_info=True)
             return False
 
+    def upsert_chart(self, dict_data, cycle, tick=1):
+        """차트 데이터 저장"""
+        table = dc.ddb.MIN_TABLE_NAME if cycle in ['mi', 'tk'] else dc.ddb.DAY_TABLE_NAME
+        logging.debug(f'upsert_chart: {cycle}, {tick}, len={len(dict_data)} {dict_data[:1]}')
+        dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
+        self.table_upsert('chart', table, dict_data)
+
+    #def run_main_work(self):
+    #    if self.latch_on: return
+    #    self.latch_on = True
+        # 프로세스로 등록시 자동으로 0.001초마다 실행 됨
+    #    self.request_chart_data()
+    #    self.latch_on = False
+
+    #@profile_operation        
     def dbm_get_chart_data(self, code, cycle, tick=1, times=1):
         """차트 데이터 조회"""
         try:
@@ -402,13 +391,6 @@ class DBMServer:
         except Exception as e:
             logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
             return []
-
-    #def run_main_work(self):
-    #    if self.latch_on: return
-    #    self.latch_on = True
-        # 프로세스로 등록시 자동으로 0.001초마다 실행 됨
-    #    self.request_chart_data()
-    #    self.latch_on = False
 
     def request_chart_data(self):
         """차트 데이터 요청 메인 루프"""

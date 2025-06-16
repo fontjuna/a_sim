@@ -3,8 +3,11 @@ from PyQt5.QtCore import QTimer
 from datetime import datetime
 import threading
 import logging
+import sys
+from PyQt5.QtWidgets import QApplication
 
 class Strategy:
+    #app = QApplication(sys.argv)
     def __init__(self, ticker=None, strategy_set=None):
         self.dict종목정보 = ticker
         self.전략정의 = strategy_set if strategy_set else dc.const.DEFAULT_STRATEGY_SETS
@@ -345,37 +348,37 @@ class Strategy:
             row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 0, '매수가': 0, '수익률(%)': 0 }
             start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.청산시간}", '%Y-%m-%d %H:%M')
             delay_secs = max(0, (start_time - now).total_seconds())
-            QTimer.singleShot(int(delay_secs * 1000), lambda: self.order_sell(row))
+            threading.Timer(delay_secs, lambda: self.order_sell(row)).start()
 
-    def cdn_fx실행_전략매매(self):
+    def stg_fx실행_전략매매(self):
         try:
             logging.debug(f'전략 초기화 시작: {self.전략명칭}')
-            msg = self.cdn_fx체크_전략매매()
+            msg = self.stg_fx체크_전략매매()
             if msg: return msg
-            self.cdn_fx실행_전략매매시작()
+            self.stg_fx실행_전략매매시작()
 
             gm.counter.set_strategy(self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
-            if gm.config.gui_on: 
-                gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
+            #if gm.config.gui_on: 
+            #    gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
 
         except Exception as e:
             logging.error(f'전략 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def cdn_fx실행_전략매매시작(self):
+    def stg_fx실행_전략매매시작(self):
         try:
             def run_trade(cond_index, cond_name, trade_type):
                 condition = f'{int(cond_index):03d} : {cond_name.strip()}'
-                condition_list, bool_ok = self.cdn_fx등록_조건검색(trade_type, cond_name, cond_index) #-------------------- 조건 검색 실행
+                condition_list, bool_ok = self.stg_fx등록_조건검색(trade_type, cond_name, cond_index) #-------------------- 조건 검색 실행
                 if bool_ok:
                     if trade_type == '매수':
-                        self.cdn_fx등록_종목감시(condition_list, 0) # ------------------------------- 조건 만족 종목 실시간 감시
+                        self.stg_fx등록_종목감시(condition_list, 0) # ------------------------------- 조건 만족 종목 실시간 감시
                         gm.매수문자열 = condition
+                        for code in condition_list:
+                            self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
                     elif trade_type == '매도':
                         gm.매도문자열 = condition
                     logging.info(f'전략 실행 - {self.전략명칭} {trade_type}전략={condition}')
-                    for code in condition_list:
-                        self.cdn_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
                     gm.admin.send_status_msg('검색내용', f'{trade_type} {condition}')
                 else:
                     logging.warning(f'전략 실행 실패 - 전략명칭={self.전략명칭} {trade_type}전략={condition}') # 같은 조건 1분 제한 조건 위반
@@ -386,7 +389,7 @@ class Strategy:
         except Exception as e:
             logging.error(f'전략 매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def cdn_fx실행_전략마무리(self, buy_stop=True, sell_stop=True):
+    def stg_fx실행_전략마무리(self, buy_stop=True, sell_stop=True):
         try:
             if not (gm.매수문자열 or  gm.매도문자열): return
             if self.end_timer:
@@ -396,7 +399,7 @@ class Strategy:
                 self.start_timer.cancel()
                 self.start_timer = None
 
-            self.cdn_fx중지_전략매매(buy_stop, sell_stop)
+            self.stg_fx중지_전략매매(buy_stop, sell_stop)
 
             if buy_stop:
                 gm.매수문자열 = ""
@@ -409,7 +412,7 @@ class Strategy:
         except Exception as e:
             logging.error(f'전략 마무리 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def cdn_fx중지_전략매매(self, buy_stop=True, sell_stop=True):
+    def stg_fx중지_전략매매(self, buy_stop=True, sell_stop=True):
         try:
             def stop_trade(cond_index, cond_name, trade_type):
                 if cond_name:
@@ -424,7 +427,7 @@ class Strategy:
         except Exception as e:
             logging.error(f'전략 중지 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def cdn_fx등록_조건검색(self, trade_type, cond_name, cond_index):
+    def stg_fx등록_조건검색(self, trade_type, cond_name, cond_index):
         screen = f'2{"1" if trade_type == "매수" else "2"}00'
         logging.debug(f'조건 검색 요청: 화면={screen} 인덱스={cond_index:03d} 수식명={cond_name} 구분={trade_type}')
         condition_list = []
@@ -436,7 +439,7 @@ class Strategy:
             logging.error(f'조건 검색 요청 오류: {type(e).__name__} - {e}', exc_info=True)
             return [], False
 
-    def cdn_fx편입_실시간조건감시(self, kind, code, type, cond_name, cond_index):
+    def stg_fx편입_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
             종목명 = self.answer('api', 'GetMasterCodeName', code)
             if not self.dict종목정보.contains(code):
@@ -468,7 +471,7 @@ class Strategy:
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
-                    self.cdn_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
+                    self.stg_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
 
             else: # if kind == '매수':
                 if gm.잔고목록.in_key(code): 
@@ -485,7 +488,7 @@ class Strategy:
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
-                    self.cdn_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
+                    self.stg_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
 
             logging.info(f'{kind}편입 : {self.전략명칭} {code} {종목명}')
            
@@ -505,7 +508,7 @@ class Strategy:
         except Exception as e:
             logging.error(f'{kind}조건 편입 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def cdn_fx이탈_실시간조건감시(self, kind, code, type, cond_name, cond_index):
+    def stg_fx이탈_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
             name = self.answer('api', 'GetMasterCodeName', code)
             if kind == '매도':
@@ -528,7 +531,7 @@ class Strategy:
         except Exception as e:
             logging.error(f'{kind}조건 이탈 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def cdn_fx등록_종목감시(self, condition_list, search_flag):
+    def stg_fx등록_종목감시(self, condition_list, search_flag):
         try:
             # 종목 실시간 감시 요청
             if len(condition_list) == 1 and search_flag == 1:
@@ -542,7 +545,7 @@ class Strategy:
         except Exception as e:
             logging.error(f'종목 검색 요청 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def cdn_fx체크_전략매매(self):
+    def stg_fx체크_전략매매(self):
         try:
             if self.매수적용:
                 매수전략 = self.매수전략.strip()
@@ -584,11 +587,11 @@ class Strategy:
                 else:
                     end_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.stop_time}", '%Y-%m-%d %H:%M')
                     remain_secs = max(0, (end_time - now).total_seconds())
-                    QTimer.singleShot(int(remain_secs * 1000), lambda: self.cdn_fx실행_전략마무리(sell_stop=self.매도도같이적용))
+                    threading.Timer(remain_secs, lambda: self.stg_fx실행_전략마무리(sell_stop=self.매도도같이적용)).start()
                 if current < self.start_time:
                     start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.start_time}", '%Y-%m-%d %H:%M')
                     delay_secs = max(0, (start_time - now).total_seconds())
-                    QTimer.singleShot(int(delay_secs * 1000), lambda: gm.toast.toast(f'전략을 시작합니다. {self.start_time} {current}'))
+                    threading.Timer(delay_secs, lambda: gm.toast.toast(f'전략을 시작합니다. {self.start_time} {current}')).start()
 
         except Exception as e:
             logging.error(f'전략매매 체크 오류: {type(e).__name__} - {e}', exc_info=True)

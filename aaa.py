@@ -82,10 +82,10 @@ class Main:
             gm.api = SimpleManager('api', APIServer, None)
             gm.api.start()
             gm.api.order('api', 'api_init', gm.config.sim_no)
-            gm.api.order('api', 'CommConnect', True)
+            gm.api.order('api', 'CommConnect', False)
             gm.dbm = SimpleManager('dbm', DBMServer, 'process')
             gm.dbm.start()
-            gm.ctu = SimpleManager('ctu', ChartUpdater, 'thread')
+            gm.ctu = SimpleManager('ctu', ChartUpdater, 'process')
             gm.ctu.start()
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -97,8 +97,8 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    #connected = gm.answer('api', 'api_connected')
-                    connected = gm.api.answer('api', 'GetConnectState')
+                    connected = gm.api.answer('api', 'api_connected')
+                    #connected = gm.api.answer('api', 'GetConnectState') == 1
                     if connected: break
                     logging.debug(f"로그인 대기 중: {connected}")
                     time.sleep(0.5)

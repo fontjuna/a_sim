@@ -45,7 +45,7 @@ def com_request_time_check(kind='order', cond_text = None):
         #toast.toast(msg, duration=wait_time)
         logging.info(msg)
 
-    time.sleep((wait_time+10)/1000) 
+    time.sleep((wait_time+100)/1000) 
 
     if kind == 'order':
         ord.update_request_times()
@@ -470,7 +470,6 @@ class OnReceiveRealDataSim1And2(QThread):
             }
             self.frq_order('admin', 'on_fx실시간_주식체결', **job)
 
-
             if self._stop_event.wait(timeout=0.2/len(sim.ticker)):
                return
 
@@ -736,9 +735,9 @@ class APIServer:
         else:
             return 1
 
-    @profile_operation        
+    #@profile_operation        
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
-        logging.debug(f'api_request: rqname={rqname}, trcode={trcode}, input={input}, output={output}, next={next}, screen={screen}, form={form}, timeout={timeout}')
+        logging.debug(f'api_request: rqname={rqname}, trcode={trcode}, input={input}, next={next}, screen={screen}, form={form}, timeout={timeout}')
         try:
             if not com_request_time_check(kind='request'): return [], False
 
@@ -984,7 +983,7 @@ class APIServer:
                 if rows == 0: rows = 1
 
                 #if trcode in [dc.scr.차트TR['mi'], dc.scr.차트TR['dy']]:
-                logging.debug(f'api_request 콜백 수신: {rqname} {trcode} {record} {next}')
+                #logging.debug(f'api_request 콜백 수신: {rqname} {trcode} {record} {next}')
 
                 data_list = []
                 is_dict = self.tr_result_format == 'dict_list'
@@ -1037,7 +1036,7 @@ class APIServer:
                     self.frq_order('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.frq_order('admin', 'on_fx실시간_장운영감시', **job)
-                #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
+                logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
