@@ -737,7 +737,7 @@ class APIServer:
 
     #@profile_operation        
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
-        logging.debug(f'api_request: rqname={rqname}, trcode={trcode}, input={input}, next={next}, screen={screen}, form={form}, timeout={timeout}')
+        #logging.debug(f'api_request: rqname={rqname}, trcode={trcode}, input={input}, next={next}, screen={screen}, form={form}, timeout={timeout}')
         try:
             if not com_request_time_check(kind='request'): return [], False
 

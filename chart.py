@@ -367,10 +367,14 @@ class ChartData:
     
     def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
         """실시간 가격 정보로 차트 데이터 업데이트 - 데드락 안전 버전"""
+        # 공유 메모리 존재 여부만 먼저 확인 (락 없이)
+        if not self._get_shared_memory_safe(code):
+            #logging.warning(f"[{datetime.now()}] No shared memory found for code: {code}")
+            return
+            
         # 코드별 락 획득
         code_lock = self._get_code_lock(code)
-        if not code_lock:
-            return
+        if not code_lock: return
         
         try:
             if not code_lock.acquire(timeout=self._lock_timeout):
@@ -2787,7 +2791,7 @@ class ChartUpdater:
                 logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}')
                 return dict_list
             
-            logging.debug(f'{rqname} 데이타 얻기: times:{times}, code:{code}, cycle:{cycle}, tick:{tick}, count:{len(dict_list)}')
+            logging.debug(f'{rqname}: code:{code}, cycle:{cycle}, tick:{tick}, count:{len(dict_list)} {dict_list[:1]}')
             
             # 데이터 변환
             dict_list = self._convert_chart_data(dict_list, code, cycle)
@@ -2795,7 +2799,7 @@ class ChartUpdater:
             if cycle in ['dy', 'mi']:
                 self.order('dbm', 'upsert_chart', dict_list, cycle, tick)
                 self._mark_done(code, cycle)
-                cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
+                #cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
             
             return dict_list
         
@@ -2853,15 +2857,15 @@ class ChartUpdater:
     def run_main_work(self):
         if self.latch_on: return
         self.latch_on = True
-        self.chart_data_updater()
         self.request_chart_data()
+        self.chart_data_updater()
         self.latch_on = False
 
     def request_chart_data(self):
         with self.lock:
             todo_items = list(self.todo_code.items())
         for code, status in todo_items:
-            logging.debug(f"차트관리 종목코드 요청: {self.answer('api', 'GetMasterCodeName', code)}")
+            logging.debug(f"get_first_chart_data 요청: {code}")
             if not status['mi']: 
                 self.get_first_chart_data(code, cycle='mi', tick=1)
                 #self._mark_done(code, 'mi')

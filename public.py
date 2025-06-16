@@ -4,8 +4,6 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, Optional, Union
-import multiprocessing as mp
 import logging
 import logging.config
 import logging.handlers
@@ -13,7 +11,6 @@ import os
 import sys
 import json
 import time
-from queue import Queue
 
 def hoga(current_price, position=0):
     # logging.debug(f'hoga : current_price={current_price}, position={position}')
@@ -123,15 +120,6 @@ class Work:
     order: str              # 수신자가 실행할 함수명 또는 메세지(루프에서 인식할 조건)
     job: dict = field(default_factory={})              # 수신자가 실행할 함수에 전달할 데이터
 
-# 각 컴퍼넌트의 통신용 큐 정의
-@dataclass
-class TQueue:
-    request = Queue()   # sender의 타 클래스에 대한 요청
-    result = Queue()	# sender가 받아 볼 결과
-    stream = Queue()	# 다른 객체가 고빈도로 보낸 데이타 또는 요청 (stream을 읽어 실행후 
-    payback = Queue()	# 다른 객체에게서 받은 나의 고빈도 요청에 대한 응답
-
-# 큐에 담을 행낭 정의
 @dataclass
 class QData:
     sender : str = None
@@ -140,15 +128,6 @@ class QData:
     args : tuple = field(default_factory=tuple)
     kwargs : dict = field(default_factory=dict)
 
-# 공유할 컴퍼넌트들의 큐들
-shared_qes = {
-	'admin': TQueue(), 
-	'api': TQueue(), 
-	'dbm': TQueue(), 
-	'stg': TQueue(), 
-	}
-
-## Define Constants *************************************************************************
 @dataclass
 class FieldsAttributes: # 데이터베이스 필드 속성
     name: str

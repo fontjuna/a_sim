@@ -91,7 +91,7 @@ class Main:
             gm.main = self
             gm.dbm = SimpleManager('dbm', DBMServer, 'process')
             gm.dbm.start()
-            gm.ctu = SimpleManager('ctu', ChartUpdater, 'process')
+            gm.ctu = SimpleManager('ctu', ChartUpdater, 'thread')
             gm.ctu.start()
             if gm.config.sim_no != 1:
                 logging.debug('prepare : 로그인 대기 시작')
@@ -157,7 +157,8 @@ class Main:
             for name in shutdown_order:
                 if component := all_components.get(name):
                     try:
-                        component.stop()
+                        if hasattr(component, 'stop'):          
+                            component.stop()
                         logging.info(f"[Main] {name.upper()} 종료")
                     except Exception as e:
                         logging.error(f"[Main] {name.upper()} 종료 오류: {e}")
@@ -166,7 +167,8 @@ class Main:
             for name, component in all_components.items():
                 if name not in shutdown_order:
                     try:
-                        component.stop()
+                        if hasattr(component, 'stop'):
+                            component.stop()
                         logging.info(f"[Main] {name.upper()} (추가) 종료")
                     except Exception as e:
                         logging.error(f"[Main] {name.upper()} (추가) 종료 오류: {e}")

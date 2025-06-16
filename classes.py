@@ -1,20 +1,13 @@
 from public import dc, gm, get_path, save_json, load_json, QData
-from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QWidget, QLabel
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
-from typing import Dict, Any, List, Callable, Optional, Tuple, Union
-from PyQt5.QtGui import QColor
-from datetime import datetime
-import multiprocessing as mp
-from multiprocessing import shared_memory
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel
+from PyQt5.QtCore import Qt, QTimer, QThread
+from multiprocessing import Process
 import threading
-import types
-import queue
 import copy
 import time
 import logging
-import uuid
 import os
-    
+
 class ThreadSafeList:
     def __init__(self):
         self.list = []
@@ -1222,8 +1215,10 @@ def set_tables():
     gm.당일종목 = TableManager(gm.tbl.hd당일종목)
     gm.수동종목 = TableManager(gm.tbl.hd수동종목)
 
+# QThreadModel (BaseQueueModel 없이, 직접 큐 처리)
+from PyQt5.QtCore import QThread
 class QThreadModel(QThread):
-    def __init__(self, name, cls, shared_qes, args, kwargs):
+    def __init__(self, name, cls, shared_qes, *args, **kwargs):
         super().__init__()
         self.name = name
         self.cls = cls
@@ -1234,42 +1229,111 @@ class QThreadModel(QThread):
         self.my_qes = shared_qes.get(name)
         self.running = False
 
+    def process_q_data(self, q_data):
+        if not isinstance(q_data, QData):
+            return None
+        method = q_data.method
+        answer = q_data.answer
+        args = q_data.args
+        kwargs = q_data.kwargs
+        sender = q_data.sender
+        if hasattr(self.instance, method):
+            if answer:
+                result = getattr(self.instance, method)(*args, **kwargs)
+                self.shared_qes[sender].result.put(result)
+            else:
+                getattr(self.instance, method)(*args, **kwargs)
+
     def run(self):
         self.running = True
         self.instance = self.cls(*self.args, **self.kwargs)
         while self.running:
             if not self.my_qes.request.empty():
-                request = self.my_qes.request.get()
-                self.process_q_data(request, 'request')
-            if not self.my_qes.stream.empty():
-                stream = self.my_qes.stream.get()
-                self.process_q_data(stream, 'stream')
-            time.sleep(0.01)
+                q_data = self.my_qes.request.get()
+                self.process_q_data(q_data)
+            self.msleep(10)
 
     def stop(self):
         self.running = False
         self.wait()
 
-    def process_q_data(self, q_data, type='request'):
-        if not isinstance(q_data, QData): return None
-        result = None
-        sender = q_data.sender
+# ProcessModel (BaseQueueModel 없이, 직접 큐 처리)
+from multiprocessing import Process
+class ProcessModel(Process):
+    def __init__(self, name, cls, shared_qes, *args, **kwargs):
+        super().__init__()
+        self.name = name
+        self.cls = cls
+        self.shared_qes = shared_qes
+        self.args = args
+        self.kwargs = kwargs
+        self.instance = None
+        self.my_qes = shared_qes.get(name)
+        self.running = False
+
+    def process_q_data(self, q_data):
+        if not isinstance(q_data, QData):
+            return None
         method = q_data.method
         answer = q_data.answer
         args = q_data.args
         kwargs = q_data.kwargs
+        sender = q_data.sender
         if hasattr(self.instance, method):
             if answer:
-                result = getattr(self.instance, method)(sender, *args, **kwargs)
-                if type == 'request':
-                    self.shared_qes[sender].result.put(result)
-                else:
-                    self.shared_qes[sender].payback.put(result)
+                result = getattr(self.instance, method)(*args, **kwargs)
+                self.shared_qes[sender].result.put(result)
             else:
-                getattr(self, method)(sender, *args, **kwargs)
+                getattr(self.instance, method)(*args, **kwargs)
 
-    def __getattr__(self, name):
-        if self.instance and hasattr(self.instance, name): 
-            return getattr(self.instance, name)
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-    
+    def run(self):
+        self.running = True
+        self.instance = self.cls(*self.args, **self.kwargs)
+        while self.running:
+            try:
+                q_data = self.my_qes.request.get(timeout=0.1)
+                self.process_q_data(q_data)
+            except Exception:
+                pass
+
+    def stop(self):
+        self.running = False
+
+# SharedQueue: Manager().Queue() 기반
+class SharedQueue:
+    def __init__(self, manager):
+        self.request = manager.Queue()
+        self.result = manager.Queue()
+
+# 테스트용 워커
+class TestWorker:
+    def test_method(self, x, y=0):
+        return x + y
+
+if __name__ == "__main__":
+    import multiprocessing as mp
+    import time
+    mp.freeze_support()
+    manager = mp.Manager()
+    shared_qes = {
+        'test': SharedQueue(manager)
+    }
+
+    print("--- QThreadModel 테스트 ---")
+    worker = QThreadModel('test', TestWorker, shared_qes)
+    worker.start()
+    shared_qes['test'].request.put(QData('test', 'test_method', True, args=(1,), kwargs={'y': 2}))
+    result = shared_qes['test'].result.get(timeout=5)
+    print(f"QThreadModel Result: {result}")
+    worker.running = False
+    worker.wait()
+
+    print("--- ProcessModel 테스트 ---")
+    proc_worker = ProcessModel('test', TestWorker, shared_qes)
+    proc_worker.start()
+    shared_qes['test'].request.put(QData('test', 'test_method', True, args=(10,), kwargs={'y': 5}))
+    result = shared_qes['test'].result.get(timeout=5)
+    print(f"ProcessModel Result: {result}")
+    proc_worker.terminate()
+    proc_worker.join()
+    manager.shutdown()
