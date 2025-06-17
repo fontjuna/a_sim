@@ -547,7 +547,7 @@ class OnReceiveRealDataSim3(QThread):
       self._stop_event.set()
 
 class APIServer:
-    app = QApplication(sys.argv)
+    #app = QApplication(sys.argv)
     def __init__(self):
         self.name = 'api'
         self.sim_no = 0

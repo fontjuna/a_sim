@@ -2,7 +2,7 @@ from gui import GUI
 from admin import Admin
 from worker import SimpleManager
 from public import init_logger, dc, gm
-from classes import Toast, set_tables
+from classes import Toast, set_tables, MainModel, QThreadModel, ProcessModel
 from dbm_server import DBMServer
 from api_server import APIServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
@@ -75,12 +75,12 @@ class Main:
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
-            gm.admin = SimpleManager('admin',Admin, None)
+            gm.admin = MainModel('admin',Admin, gm.shared_qes)
             gm.admin.start()
-            gm.api = SimpleManager('api', APIServer, None)
+            gm.api = MainModel('api', APIServer, gm.shared_qes)
             gm.api.start()
-            gm.api.order('api', 'api_init', gm.config.sim_no)
-            gm.api.order('api', 'CommConnect', False)
+            gm.admin.order('api', 'api_init', False, gm.config.sim_no)
+            gm.admin.order('api', 'CommConnect', False, False)
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -88,20 +88,19 @@ class Main:
     def prepare(self):
         try:
             gm.toast = Toast()
-            gm.main = self
-            gm.dbm = SimpleManager('dbm', DBMServer, 'process')
+            gm.dbm = ProcessModel('dbm', DBMServer, gm.shared_qes)
             gm.dbm.start()
-            gm.ctu = SimpleManager('ctu', ChartUpdater, 'thread')
+            gm.ctu = QThreadModel('ctu', ChartUpdater, gm.shared_qes)
             gm.ctu.start()
             if gm.config.sim_no != 1:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    connected = gm.api.answer('api', 'api_connected')
+                    connected = gm.admin.answer('api', 'api_connected')
                     if connected: break
                     logging.debug(f"로그인 대기 중: {connected}")
                     time.sleep(0.5)
-            gm.api.order('api', 'set_tickers')
+            gm.admin.order('api', 'set_tickers')
             gm.admin.order('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
 
@@ -199,6 +198,7 @@ class Main:
 
 if __name__ == "__main__":
     import multiprocessing
+    from public import gm
     multiprocessing.freeze_support() # 없으면 실행파일(exe)로 실행시 DBMServer멀티프로세스 생성시 프로그램 리셋되어 시작 반복 하는 것 방지
     try:
         logging.info(f"{'#'*10} LIBERANIMO logiacl intelligence enhanced robo aotonomic investment management operations START {'#'*10}")

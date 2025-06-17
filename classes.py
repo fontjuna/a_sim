@@ -1,4 +1,5 @@
-from public import dc, gm, get_path, save_json, load_json, QData
+from public import dc, gm, get_path, save_json, load_json, QData, SharedQueue
+from dataclasses import dataclass, field
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread
 from multiprocessing import Process
@@ -1215,53 +1216,13 @@ def set_tables():
     gm.당일종목 = TableManager(gm.tbl.hd당일종목)
     gm.수동종목 = TableManager(gm.tbl.hd수동종목)
 
-# QThreadModel (BaseQueueModel 없이, 직접 큐 처리)
 from PyQt5.QtCore import QThread
-class QThreadModel(QThread):
-    def __init__(self, name, cls, shared_qes, *args, **kwargs):
-        super().__init__()
-        self.name = name
-        self.cls = cls
-        self.shared_qes = shared_qes
-        self.args = args
-        self.kwargs = kwargs
-        self.instance = None
-        self.my_qes = shared_qes.get(name)
-        self.running = False
-
-    def process_q_data(self, q_data):
-        if not isinstance(q_data, QData):
-            return None
-        method = q_data.method
-        answer = q_data.answer
-        args = q_data.args
-        kwargs = q_data.kwargs
-        sender = q_data.sender
-        if hasattr(self.instance, method):
-            if answer:
-                result = getattr(self.instance, method)(*args, **kwargs)
-                self.shared_qes[sender].result.put(result)
-            else:
-                getattr(self.instance, method)(*args, **kwargs)
-
-    def run(self):
-        self.running = True
-        self.instance = self.cls(*self.args, **self.kwargs)
-        while self.running:
-            if not self.my_qes.request.empty():
-                q_data = self.my_qes.request.get()
-                self.process_q_data(q_data)
-            self.msleep(10)
-
-    def stop(self):
-        self.running = False
-        self.wait()
-
-# ProcessModel (BaseQueueModel 없이, 직접 큐 처리)
 from multiprocessing import Process
-class ProcessModel(Process):
+from dataclasses import dataclass, field
+import time
+
+class BaseModel:
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
-        super().__init__()
         self.name = name
         self.cls = cls
         self.shared_qes = shared_qes
@@ -1271,39 +1232,91 @@ class ProcessModel(Process):
         self.my_qes = shared_qes.get(name)
         self.running = False
 
-    def process_q_data(self, q_data):
+    def process_q_data(self, q_data, queue_type='request'):
         if not isinstance(q_data, QData):
             return None
-        method = q_data.method
-        answer = q_data.answer
-        args = q_data.args
-        kwargs = q_data.kwargs
-        sender = q_data.sender
-        if hasattr(self.instance, method):
-            if answer:
-                result = getattr(self.instance, method)(*args, **kwargs)
-                self.shared_qes[sender].result.put(result)
+        if hasattr(self.instance, q_data.method):
+            if q_data.answer:
+                result = getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
+                if queue_type == 'request':
+                    self.shared_qes[q_data.sender].result.put(result)
+                elif queue_type == 'stream':
+                    self.shared_qes[q_data.sender].payback.put(result)
             else:
-                getattr(self.instance, method)(*args, **kwargs)
+                getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
 
     def run(self):
         self.running = True
         self.instance = self.cls(*self.args, **self.kwargs)
         while self.running:
             try:
-                q_data = self.my_qes.request.get(timeout=0.1)
-                self.process_q_data(q_data)
+                if not self.my_qes.request.empty():
+                    q_data = self.my_qes.request.get()
+                    self.process_q_data(q_data, 'request')
+                if not self.shared_qes[self.name].stream.empty():
+                    q_data = self.shared_qes[self.name].stream.get()
+                    self.process_q_data(q_data, 'stream')
+                time.sleep(0.01)
+            except (EOFError, ConnectionError, BrokenPipeError):
+                # 프로세스 종료 시 발생할 수 있는 예외들
+                break
             except Exception:
+                # 기타 예외는 무시하고 계속
                 pass
 
     def stop(self):
         self.running = False
+        # Process는 자기 자신에 대해 join()을 호출하면 안됨
+        if hasattr(self, 'wait'):  # QThread만
+            self.wait()
 
-# SharedQueue: Manager().Queue() 기반
-class SharedQueue:
-    def __init__(self, manager):
-        self.request = manager.Queue()
-        self.result = manager.Queue()
+    # 인터페이스 메서드들
+    def order(self, target, method, *args, **kwargs):
+        """응답이 필요없는 명령 (answer=False)"""
+        q_data = QData(sender=self.name, method=method, answer=False, args=args, kwargs=kwargs)
+        self.shared_qes[target].request.put(q_data)
+
+    def answer(self, target, method, *args, **kwargs):
+        """응답이 필요한 요청 (answer=True)"""
+        q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs)
+        self.shared_qes[target].request.put(q_data)
+        return self.shared_qes[self.name].result.get()
+
+    def frq_order(self, target, method, *args, **kwargs):
+        """스트림 명령 (answer=False)"""
+        q_data = QData(sender=self.name, method=method, answer=False, args=args, kwargs=kwargs)
+        self.shared_qes[target].stream.put(q_data)
+
+    def frq_answer(self, target, method, *args, **kwargs):
+        """스트림 요청/응답 (answer=True)"""
+        q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs)
+        self.shared_qes[target].stream.put(q_data)
+        return self.shared_qes[self.name].payback.get()
+
+class MainModel(BaseModel):
+    """메인 쓰레드나 키움API 등을 위한 모델 (별도 쓰레드/프로세스 없음)"""
+    def __init__(self, name, cls, shared_qes, *args, **kwargs):
+        BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
+        # 즉시 인스턴스 생성 (별도 쓰레드에서 run하지 않음)
+        self.instance = self.cls(*self.args, **self.kwargs)
+    
+    def start(self):
+        # 쓰레드/프로세스와 달리 별도 start 필요 없음
+        pass
+    
+    def stop(self):
+        # running 상태만 변경
+        self.running = False
+
+class QThreadModel(BaseModel, QThread):
+    def __init__(self, name, cls, shared_qes, *args, **kwargs):
+        BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
+        QThread.__init__(self)
+
+class ProcessModel(BaseModel, Process):
+    def __init__(self, name, cls, shared_qes, *args, **kwargs):
+        BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
+        Process.__init__(self, name=name)  # Process에 명시적으로 이름 전달
 
 # 테스트용 워커
 class TestWorker:
@@ -1314,26 +1327,60 @@ if __name__ == "__main__":
     import multiprocessing as mp
     import time
     mp.freeze_support()
-    manager = mp.Manager()
+    
+    # 모든 큐를 multiprocessing.Queue로 통일
     shared_qes = {
-        'test': SharedQueue(manager)
+        'admin': SharedQueue(),
+        'test': SharedQueue()
     }
 
-    print("--- QThreadModel 테스트 ---")
     worker = QThreadModel('test', TestWorker, shared_qes)
     worker.start()
-    shared_qes['test'].request.put(QData('test', 'test_method', True, args=(1,), kwargs={'y': 2}))
-    result = shared_qes['test'].result.get(timeout=5)
-    print(f"QThreadModel Result: {result}")
+    
+    print("--- MainModel 테스트 ---")
+    main_worker = MainModel('admin', TestWorker, shared_qes)
+    main_worker.start()
+    
+    # 메인에서 test로 요청 (test 워커가 실행 중이어야 함)
+    try:
+        result = main_worker.answer('test', 'test_method', 7, y=8)  # timeout=5초
+        print(f"MainModel Result: {result}")
+    except TimeoutError as e:
+        print(f"MainModel Error: {e}")
+    
+    print("--- QThreadModel 테스트 ---")
+    # 기존 방식
+    shared_qes['test'].request.put(QData('admin', 'test_method', True, args=(1,), kwargs={'y': 2}))
+    result = shared_qes['admin'].result.get(timeout=5)
+    print(f"QThreadModel Result (기존): {result}")
+    
+    # 새로운 인터페이스 방식
+    try:
+        result = main_worker.answer('test', 'test_method', 5, y=3)  # timeout=3초
+        print(f"QThreadModel Result (인터페이스): {result}")
+    except TimeoutError as e:
+        print(f"QThreadModel Error: {e}")
+    
     worker.running = False
     worker.wait()
 
     print("--- ProcessModel 테스트 ---")
     proc_worker = ProcessModel('test', TestWorker, shared_qes)
     proc_worker.start()
-    shared_qes['test'].request.put(QData('test', 'test_method', True, args=(10,), kwargs={'y': 5}))
-    result = shared_qes['test'].result.get(timeout=5)
-    print(f"ProcessModel Result: {result}")
+    
+    # 잠시 대기 (프로세스가 시작될 시간)
+    time.sleep(0.1)
+    
+    # 새로운 인터페이스 방식
+    try:
+        result = main_worker.answer('test', 'test_method', 10, y=5)  # timeout=3초
+        print(f"ProcessModel Result (인터페이스): {result}")
+    except TimeoutError as e:
+        print(f"ProcessModel Error: {e}")
+    
+    # 강제 종료
     proc_worker.terminate()
-    proc_worker.join()
-    manager.shutdown()
+    proc_worker.join(timeout=2)  # 2초 대기
+    if proc_worker.is_alive():
+        print("강제 종료")
+        proc_worker.kill()

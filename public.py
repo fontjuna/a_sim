@@ -128,6 +128,14 @@ class QData:
     args : tuple = field(default_factory=tuple)
     kwargs : dict = field(default_factory=dict)
 
+class SharedQueue:
+    def __init__(self):
+        import multiprocessing as mp
+        self.request = mp.Queue()
+        self.result = mp.Queue()
+        self.stream = mp.Queue()
+        self.payback = mp.Queue()
+
 @dataclass
 class FieldsAttributes: # 데이터베이스 필드 속성
     name: str
@@ -904,6 +912,13 @@ class GlobalMemory:      # 글로벌 메모리 정의
 
     qwork = {} #QDict().qdict
     qanswer = {} #QDict().qanswer
+    shared_qes = {
+        'admin': SharedQueue(),
+        'api': SharedQueue(),
+        'dbm': SharedQueue(),
+        'ctu': SharedQueue(),
+        'scm': SharedQueue(),
+    }
 
     tbl = TableColumns()
     잔고합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고합산))
