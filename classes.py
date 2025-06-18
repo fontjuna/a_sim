@@ -18,7 +18,7 @@ class ThreadSafeList:
     def put(self, item):
         with self.lock:
             if isinstance(item, dict):
-                print('put', len(self.list))
+                logging.debug('put', len(self.list))
             self.list.append(item)
             self.not_empty.notify() # 대기중인 스레드에게 알림
 
@@ -28,7 +28,7 @@ class ThreadSafeList:
             if self.empty():
                 self.not_empty.wait() # 대기
             if isinstance(self.list[0], dict):
-                print('get', len(self.list))
+                logging.debug('get', len(self.list))
             return self.list.pop(0)
 
     def remove(self, item):
@@ -1220,6 +1220,24 @@ from PyQt5.QtCore import QThread
 from multiprocessing import Process
 from dataclasses import dataclass, field
 import time
+import threading
+
+@dataclass
+class QData:
+    sender : str = None
+    method : str = None
+    answer : bool = False
+    args : tuple = field(default_factory=tuple)
+    kwargs : dict = field(default_factory=dict)
+
+class SharedQueue:
+    def __init__(self):
+        # 모든 경우에 multiprocessing.Queue 사용 (쓰레드와 프로세스 모두 호환)
+        import multiprocessing as mp
+        self.request = mp.Queue()
+        self.result = mp.Queue()
+        self.stream = mp.Queue()
+        self.payback = mp.Queue()
 
 class BaseModel:
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
@@ -1229,8 +1247,10 @@ class BaseModel:
         self.args = args
         self.kwargs = kwargs
         self.instance = None
-        self.my_qes = shared_qes.get(name)
+        self.my_qes = shared_qes[name]
         self.running = False
+        self.timeout = 15
+        self.process_stats = {'request': 0, 'stream': 0}  # 처리 통계
 
     def process_q_data(self, q_data, queue_type='request'):
         if not isinstance(q_data, QData):
@@ -1244,31 +1264,53 @@ class BaseModel:
                     self.shared_qes[q_data.sender].payback.put(result)
             else:
                 getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
+            
+            # 처리 통계 업데이트
+            #self.process_stats[queue_type] += 1
 
     def run(self):
         self.running = True
+        if hasattr(self.kwargs, 'timeout'):
+            self.timeout = self.kwargs.get('timeout')
         self.instance = self.cls(*self.args, **self.kwargs)
+        self.instance.order = self.order
+        self.instance.answer = self.answer
+        self.instance.frq_order = self.frq_order
+        self.instance.frq_answer = self.frq_answer
+        if hasattr(self.instance, 'initialize'):
+            self.instance.initialize()
         while self.running:
             try:
+                # 어떤 곳에서든 올 수 있는 request 처리
                 if not self.my_qes.request.empty():
                     q_data = self.my_qes.request.get()
                     self.process_q_data(q_data, 'request')
+                    #logging.debug(f"{self.name}: request 처리됨 - {q_data.method}")
+                
+                # 어떤 곳에서든 올 수 있는 stream 처리 (고빈도 가능)
                 if not self.shared_qes[self.name].stream.empty():
                     q_data = self.shared_qes[self.name].stream.get()
                     self.process_q_data(q_data, 'stream')
+                    #logging.debug(f"{self.name}: stream 처리됨 - {q_data.method}")
+                
                 time.sleep(0.01)
             except (EOFError, ConnectionError, BrokenPipeError):
                 # 프로세스 종료 시 발생할 수 있는 예외들
                 break
-            except Exception:
-                # 기타 예외는 무시하고 계속
+            except Exception as e:
+                logging.debug(f"{self.name}: run() 에러 - {e}", exc_info=True)
                 pass
 
     def stop(self):
         self.running = False
-        # Process는 자기 자신에 대해 join()을 호출하면 안됨
-        if hasattr(self, 'wait'):  # QThread만
+        if hasattr(self.instance, 'cleanup'):
+            self.instance.cleanup()
+        if hasattr(self, 'wait'):
             self.wait()
+
+    def get_stats(self):
+        """처리 통계 반환"""
+        return f"{self.name}: request={self.process_stats['request']}, stream={self.process_stats['stream']}"
 
     # 인터페이스 메서드들
     def order(self, target, method, *args, **kwargs):
@@ -1280,7 +1322,11 @@ class BaseModel:
         """응답이 필요한 요청 (answer=True)"""
         q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs)
         self.shared_qes[target].request.put(q_data)
-        return self.shared_qes[self.name].result.get()
+        try:
+            return self.shared_qes[self.name].result.get(timeout=self.timeout)
+        except:
+            logging.error(f"answer() 타임아웃:{self.name}의 요청 : {target}.{method}", exc_info=True)
+            return None
 
     def frq_order(self, target, method, *args, **kwargs):
         """스트림 명령 (answer=False)"""
@@ -1291,80 +1337,195 @@ class BaseModel:
         """스트림 요청/응답 (answer=True)"""
         q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs)
         self.shared_qes[target].stream.put(q_data)
-        return self.shared_qes[self.name].payback.get()
+        try:
+            return self.shared_qes[self.name].payback.get(timeout=self.timeout)
+        except:
+            logging.error(f"frq_answer() 타임아웃:{self.name}의 요청 : {target}.{method}", exc_info=True)
+            return None
 
 class MainModel(BaseModel):
-    """메인 쓰레드나 키움API 등을 위한 모델 (별도 쓰레드/프로세스 없음)"""
+    """메인 쓰레드나 키움API 등을 위한 모델 (별도 쓰레드에서 run 실행)"""
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
-        # 즉시 인스턴스 생성 (별도 쓰레드에서 run하지 않음)
-        self.instance = self.cls(*self.args, **self.kwargs)
+        self.thread = None
     
     def start(self):
-        # 쓰레드/프로세스와 달리 별도 start 필요 없음
-        pass
-    
-    def stop(self):
-        # running 상태만 변경
-        self.running = False
+        """별도 쓰레드에서 run() 실행"""
+        if self.thread and self.thread.is_alive():
+            return
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
 
-class QThreadModel(BaseModel, QThread):
+    def stop(self):
+        """쓰레드 정리"""
+        self.running = False
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1)
+
+class ThreadModel(BaseModel, threading.Thread):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
+        threading.Thread.__init__(self)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
-        QThread.__init__(self)
 
 class ProcessModel(BaseModel, Process):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
+        Process.__init__(self, name=name)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
-        Process.__init__(self, name=name)  # Process에 명시적으로 이름 전달
 
-# 테스트용 워커
+# 테스트용 워커 (모든 기능 통합)
 class TestWorker:
+    def __init__(self):
+        self.stream_count = 0
+    
     def test_method(self, x, y=0):
         return x + y
+    
+    def handle_stream_data(self, data):
+        self.stream_count += 1
+        logging.debug(f"스트림 데이터 처리: {data}, 총 처리 횟수: {self.stream_count}")
+        return f"처리완료-{data}"
 
 if __name__ == "__main__":
     import multiprocessing as mp
     import time
+    from public import init_logger
     mp.freeze_support()
-    
+    init_logger()
     # 모든 큐를 multiprocessing.Queue로 통일
     shared_qes = {
         'admin': SharedQueue(),
-        'test': SharedQueue()
+        'test': SharedQueue(),
+        'main1': SharedQueue(),
+        'main2': SharedQueue(),
+        'thread1': SharedQueue(),
+        'thread2': SharedQueue(),
+        'proc1': SharedQueue()
     }
 
-    worker = QThreadModel('test', TestWorker, shared_qes)
+    logging.debug("--- 다양한 조합의 고빈도 스트림 테스트 ---")
+    
+    # 다양한 타입의 워커들 생성 (TestWorker로 통일)
+    workers = {
+        'main1': MainModel('main1', TestWorker, shared_qes),
+        'main2': MainModel('main2', TestWorker, shared_qes), 
+        'thread1': ThreadModel('thread1', TestWorker, shared_qes),
+        'thread2': ThreadModel('thread2', TestWorker, shared_qes),
+        'proc1': ProcessModel('proc1', TestWorker, shared_qes)
+    }
+    
+    # 모든 워커 시작 (이제 MainModel도 동일하게 start()만 호출)
+    for name, worker in workers.items():
+        worker.start()
+        logging.debug(f"{name} 시작됨")
+    
+    time.sleep(0.5)  # 모든 워커가 준비될 시간
+    
+    # 다양한 조합으로 고빈도 스트림 테스트
+    test_combinations = [
+        ('thread1', 'main1'),    # Thread → Main
+        ('proc1', 'thread2'),    # Process → Thread  
+        ('main2', 'proc1'),      # Main → Process
+        ('thread2', 'thread1'),  # Thread → Thread
+    ]
+    
+    def send_stream(sender_name, target_name, data_prefix):
+        sender = workers[sender_name]
+        for i in range(5):
+            try:
+                sender.frq_order(target_name, 'handle_stream_data', f"{data_prefix}-{i}")
+                time.sleep(0.02)  # 50Hz 고빈도
+            except Exception as e:
+                logging.debug(f"{sender_name}→{target_name} 스트림 에러: {e}")
+    
+    # 동시에 여러 스트림 전송
+    threads = []
+    for sender, target in test_combinations:
+        thread = threading.Thread(
+            target=send_stream, 
+            args=(sender, target, f"{sender}→{target}")
+        )
+        threads.append(thread)
+        thread.start()
+        logging.debug(f"스트림 시작: {sender} → {target}")
+    
+    # 모든 스트림 완료 대기
+    for thread in threads:
+        thread.join()
+    
+    time.sleep(1)  # 처리 완료 대기
+    
+    # 각 워커의 처리 통계 출력
+    logging.debug("\n=== 처리 통계 ===")
+    for name, worker in workers.items():
+        if hasattr(worker, 'get_stats'):
+            logging.debug(worker.get_stats())
+    
+    # 모든 워커 정리
+    for worker in workers.values():
+        worker.stop()
+    
+    logging.debug("--- 기존 테스트들 ---")
+    main_worker = MainModel('admin', TestWorker, shared_qes)
+    thread_worker = ThreadModel('test', TestWorker, shared_qes)
+    
+    main_worker.start()
+    thread_worker.start()
+    
+    logging.debug("1. MainModel.order() 테스트 (응답 없음)")
+    main_worker.order('test', 'test_method', 1, y=2)
+    logging.debug("order 완료")
+    
+    logging.debug("2. MainModel.answer() 테스트 (응답 있음)")
+    try:
+        result = main_worker.answer('test', 'test_method', 7, y=8)
+        logging.debug(f"answer 결과: {result}")
+    except TimeoutError as e:
+        logging.debug(f"answer 에러: {e}")
+    
+    logging.debug("3. MainModel.frq_order() 테스트 (스트림 명령)")
+    main_worker.frq_order('test', 'test_method', 5, y=6)
+    logging.debug("frq_order 완료")
+    
+    logging.debug("4. MainModel.frq_answer() 테스트 (스트림 응답)")
+    try:
+        result = main_worker.frq_answer('test', 'test_method', 10, y=5)
+        logging.debug(f"frq_answer 결과: {result}")
+    except TimeoutError as e:
+        logging.debug(f"frq_answer 에러: {e}")
+    
+    thread_worker.stop()
+    
+    logging.debug("--- 기존 테스트들 ---")
+    worker = ThreadModel('test', TestWorker, shared_qes)
     worker.start()
     
-    print("--- MainModel 테스트 ---")
+    logging.debug("--- MainModel 테스트 ---")
     main_worker = MainModel('admin', TestWorker, shared_qes)
     main_worker.start()
     
     # 메인에서 test로 요청 (test 워커가 실행 중이어야 함)
     try:
         result = main_worker.answer('test', 'test_method', 7, y=8)  # timeout=5초
-        print(f"MainModel Result: {result}")
+        logging.debug(f"MainModel Result: {result}")
     except TimeoutError as e:
-        print(f"MainModel Error: {e}")
+        logging.debug(f"MainModel Error: {e}")
     
-    print("--- QThreadModel 테스트 ---")
     # 기존 방식
     shared_qes['test'].request.put(QData('admin', 'test_method', True, args=(1,), kwargs={'y': 2}))
     result = shared_qes['admin'].result.get(timeout=5)
-    print(f"QThreadModel Result (기존): {result}")
+    logging.debug(f"ThreadModel Result (기존): {result}")
     
     # 새로운 인터페이스 방식
     try:
         result = main_worker.answer('test', 'test_method', 5, y=3)  # timeout=3초
-        print(f"QThreadModel Result (인터페이스): {result}")
+        logging.debug(f"ThreadModel Result (인터페이스): {result}")
     except TimeoutError as e:
-        print(f"QThreadModel Error: {e}")
+        logging.debug(f"ThreadModel Error: {e}")
     
     worker.running = False
     worker.wait()
 
-    print("--- ProcessModel 테스트 ---")
+    logging.debug("--- ProcessModel 테스트 ---")
     proc_worker = ProcessModel('test', TestWorker, shared_qes)
     proc_worker.start()
     
@@ -1374,13 +1535,21 @@ if __name__ == "__main__":
     # 새로운 인터페이스 방식
     try:
         result = main_worker.answer('test', 'test_method', 10, y=5)  # timeout=3초
-        print(f"ProcessModel Result (인터페이스): {result}")
+        logging.debug(f"ProcessModel Result (인터페이스): {result}")
     except TimeoutError as e:
-        print(f"ProcessModel Error: {e}")
-    
+        logging.debug(f"ProcessModel Error: {e}")
+    proc_worker.stop()
+    time.sleep(0.1)
+
     # 강제 종료
     proc_worker.terminate()
     proc_worker.join(timeout=2)  # 2초 대기
     if proc_worker.is_alive():
-        print("강제 종료")
+        logging.debug("proc_worker 강제 종료")
         proc_worker.kill()
+
+    workers['proc1'].terminate()
+    workers['proc1'].join(timeout=2)  # 2초 대기
+    if workers['proc1'].is_alive():
+        logging.debug("proc1 강제 종료")
+        workers['proc1'].kill()

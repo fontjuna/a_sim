@@ -1,8 +1,7 @@
 from gui import GUI
 from admin import Admin
-from worker import SimpleManager
-from public import init_logger, dc, gm
-from classes import Toast, set_tables, MainModel, QThreadModel, ProcessModel
+from public import init_logger, dc, gm, DummyClass
+from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData
 from dbm_server import DBMServer
 from api_server import APIServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
@@ -75,33 +74,36 @@ class Main:
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
-            gm.admin = MainModel('admin',Admin, gm.shared_qes)
+            gm.dmy = MainModel('dmy', DummyClass, gm.shared_qes)
+            gm.dmy.start()
+            gm.admin = MainModel('admin', Admin, gm.shared_qes)
             gm.admin.start()
-            gm.api = MainModel('api', APIServer, gm.shared_qes)
+            gm.api = ProcessModel('api', APIServer, gm.shared_qes)
             gm.api.start()
-            gm.admin.order('api', 'api_init', False, gm.config.sim_no)
-            gm.admin.order('api', 'CommConnect', False, False)
+            gm.dmy.order('api', 'api_init', gm.config.sim_no)
+            gm.dmy.order('api', 'CommConnect', False)
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
 
     def prepare(self):
         try:
+            gm.main = self
             gm.toast = Toast()
             gm.dbm = ProcessModel('dbm', DBMServer, gm.shared_qes)
             gm.dbm.start()
-            gm.ctu = QThreadModel('ctu', ChartUpdater, gm.shared_qes)
+            gm.ctu = ThreadModel('ctu', ChartUpdater, gm.shared_qes)
             gm.ctu.start()
             if gm.config.sim_no != 1:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    connected = gm.admin.answer('api', 'api_connected')
+                    connected = gm.dmy.answer('api', 'api_connected')
                     if connected: break
                     logging.debug(f"로그인 대기 중: {connected}")
                     time.sleep(0.5)
-            gm.admin.order('api', 'set_tickers')
-            gm.admin.order('admin', 'init')
+            gm.dmy.order('api', 'set_tickers')
+            gm.dmy.order('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
 
             if gm.config.gui_on: gm.gui.init()
@@ -117,7 +119,7 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            gm.admin.order('admin', 'trade_start')
+            gm.dmy.order('admin', 'trade_start')
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
@@ -144,33 +146,11 @@ class Main:
     def cleanup(self):
         try:
             if hasattr(gm, 'admin') and gm.admin:
-                gm.admin.cdn_fx중지_전략매매()
+                gm.dmy.order('admin', 'cdn_fx중지_전략매매')
                 
-            from worker import ComponentRegistry
-            all_components = ComponentRegistry._components.copy()
-            
-            # 종료 순서 정의 (중요: 의존성 역순)
-            shutdown_order = ['stg', 'ctu', 'api', 'dbm', 'admin']
-            
-            # 순서대로 종료
-            for name in shutdown_order:
-                if component := all_components.get(name):
-                    try:
-                        if hasattr(component, 'stop'):          
-                            component.stop()
-                        logging.info(f"[Main] {name.upper()} 종료")
-                    except Exception as e:
-                        logging.error(f"[Main] {name.upper()} 종료 오류: {e}")
-            
-            # 혹시 누락된 컴포넌트들 처리
-            for name, component in all_components.items():
-                if name not in shutdown_order:
-                    try:
-                        if hasattr(component, 'stop'):
-                            component.stop()
-                        logging.info(f"[Main] {name.upper()} (추가) 종료")
-                    except Exception as e:
-                        logging.error(f"[Main] {name.upper()} (추가) 종료 오류: {e}")
+            shutdown_list = ['ctu', 'api', 'dbm']
+            for name in shutdown_list:
+                gm.shared_qes[name].request.put(QData(sender=name, method='stop'))
             
             # 프로세스 강제 종료
             self._force_exit()
@@ -201,7 +181,7 @@ if __name__ == "__main__":
     from public import gm
     multiprocessing.freeze_support() # 없으면 실행파일(exe)로 실행시 DBMServer멀티프로세스 생성시 프로그램 리셋되어 시작 반복 하는 것 방지
     try:
-        logging.info(f"{'#'*10} LIBERANIMO logiacl intelligence enhanced robo aotonomic investment management operations START {'#'*10}")
+        logging.info(f"{'#'*10} LIBERANIMO logiacl intelligence enhanced robo aotonomic investment management operations START {'#'*50}")
         main = Main()
         exit_code = main.main()
         logging.info(f"{'#'*10} System Shutdown {'#'*10}")
@@ -211,7 +191,7 @@ if __name__ == "__main__":
         exit_code = 1
     finally:
         if not main.cleanup_flag: main.cleanup()
-        logging.info(f"{'#'*10} LIBERANIMO End {'#'*10}")
+        logging.info(f"{'#'*10} LIBERANIMO End {'#'*50}")
         # 로깅 종료는 가장 마지막에 수행
         logging.shutdown()
         sys.exit(exit_code)

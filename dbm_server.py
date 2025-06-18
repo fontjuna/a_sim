@@ -22,6 +22,7 @@ class DBMServer:
     def initialize(self):
         self.running = True
         self.latch_on = True
+        self.thread_local = threading.local()
         self.init_dbm()
 
     def latch_off(self):

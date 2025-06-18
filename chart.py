@@ -2753,6 +2753,7 @@ class ChartUpdater:
         self.todo_code = {}
         self.cht_updater = {}
         self.latch_on = True
+        self.lock = None
 
     def initialize(self):
         self.running = True

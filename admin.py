@@ -1,7 +1,6 @@
 from public import gm, dc, Work,load_json, save_json
-from classes import TableManager, TimeLimiter, ThreadSafeDict, CounterTicker
+from classes import TableManager, TimeLimiter, ThreadSafeDict, CounterTicker, ThreadModel
 from strategy import Strategy
-from worker import SimpleManager
 from chart import ChartData, ScriptManager, enhance_script_manager
 from tabulate import tabulate
 from datetime import datetime
@@ -658,7 +657,7 @@ class Admin:
             self.json_load_strategy_sets()
             _, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
             전략정의 = gm.전략정의.get(key=gm.전략설정['전략명칭'])
-            gm.stg = SimpleManager('stg', Strategy, 'thread', ticker=gm.dict종목정보, strategy_set=전략정의)
+            gm.stg = ThreadModel('stg', Strategy, gm.shared_qes, ticker=gm.dict종목정보, strategy_set=전략정의)
             logging.debug(f'전략명칭={gm.전략설정["전략명칭"]} {gm.stg}')
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)

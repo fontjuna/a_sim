@@ -886,6 +886,10 @@ class GlobalConfig:     # 환경변수 정의
     account = ''
     ready = False
 
+class DummyClass:
+    def __init__(self):
+        pass
+
 @dataclass
 class GlobalMemory:      # 글로벌 메모리 정의
     connected = False
@@ -900,6 +904,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     scm = None # 스크립트 매니저
     ipc = None # 프로세스 매니저
     trd = None # 쓰레드 매니저
+    dmy = None # 더미 매니저
 
     toast = None
     json_config = dc.log_config
@@ -917,7 +922,8 @@ class GlobalMemory:      # 글로벌 메모리 정의
         'api': SharedQueue(),
         'dbm': SharedQueue(),
         'ctu': SharedQueue(),
-        'scm': SharedQueue(),
+        'stg': SharedQueue(),
+        'dmy': SharedQueue(),
     }
 
     tbl = TableColumns()
