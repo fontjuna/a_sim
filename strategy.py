@@ -21,7 +21,6 @@ class Strategy:
         self.stop_time = '15:18'  # 매수시간 종료
         self.end_timer = None
         self.start_timer = None
-
         self.init()
 
     def init(self):

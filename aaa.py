@@ -82,18 +82,18 @@ class Main:
             gm.api.start()
             gm.dmy.order('api', 'api_init', gm.config.sim_no)
             gm.dmy.order('api', 'CommConnect', False)
-        except Exception as e:
-            logging.error(str(e), exc_info=e)
-            exit(1)
-
-    def prepare(self):
-        try:
             gm.main = self
             gm.toast = Toast()
             gm.dbm = ProcessModel('dbm', DBMServer, gm.shared_qes)
             gm.dbm.start()
             gm.ctu = ThreadModel('ctu', ChartUpdater, gm.shared_qes)
             gm.ctu.start()
+        except Exception as e:
+            logging.error(str(e), exc_info=e)
+            exit(1)
+
+    def prepare(self):
+        try:
             if gm.config.sim_no != 1:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:

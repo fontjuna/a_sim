@@ -19,7 +19,7 @@ class Admin:
         logging.debug(f'{self.name} init')
         self.get_login_info()
         self.set_globals()
-        # self.set_script()
+        self.set_script()
         self.get_conditions()
         self.get_strategy_info()
         self.set_real_remove_all()
@@ -668,11 +668,8 @@ class Admin:
             gm.매수문자열 = "" 
             gm.매도문자열 = "" 
             gm.stg.start()
-            msg = self.answer('stg', 'stg_fx실행_전략매매')
-            if msg:
-                logging.debug(f'전략 실패 메세지: {msg}')
-            else:
-                logging.debug(f'전략 실행 완료')
+            self.order('stg', 'stg_fx실행_전략매매')
+            logging.debug(f'전략 실행 완료')
             if gm.config.gui_on: 
                 gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
 
