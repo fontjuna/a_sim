@@ -64,11 +64,14 @@ class Main:
             self.splash.show() # showFullScreen()  # 화면 전체로 표시
             self.time_over = True
 
-    def show(self):
+    def set_tables(self):
         set_tables()
+
+    def show(self):
         if not gm.config.gui_on: return
         gm.gui.gui_show()
-        gm.gui.gui_table_update()
+        #gm.gui.init()
+        #gm.gui.gui_table_update() 사용 안 함
         time.sleep(0.1)
 
     def set_proc(self):
@@ -104,6 +107,7 @@ class Main:
                     time.sleep(0.5)
             gm.dmy.order('api', 'set_tickers')
             gm.dmy.order('admin', 'init')
+            
             while not gm.admin_init: time.sleep(0.1)
             if gm.config.gui_on: gm.gui.init()
 
@@ -136,9 +140,10 @@ class Main:
     def main(self):
         self.init()
         self.show_splash()
+        self.set_tables()
         self.set_proc()
-        self.show()
         self.prepare()
+        self.show()
         self.run()
 
     def cleanup(self):

@@ -102,45 +102,6 @@ class Admin:
 
     # 공용 함수 -------------------------------------------------------------------------------------------
 
-    def com_SendCondition(self, screen, cond_name, cond_index, search=1): # search=0: 조건검색만, 1: 조건검색 + 실시간 조건검색
-        cond_text = f'{cond_index:03d} : {cond_name.strip()}'
-        # if not self.com_request_time_check(kind='request', cond_text=cond_text):
-        #     logging.warning(f'조건 검색 시간 초과: {cond_text}')
-        #     return [], False
-
-        #logging.debug(f'조건 검색 요청 전: {cond_text}')
-        condition_list = self.answer('api', 'SendCondition', screen, cond_name, cond_index, search)
-        if not isinstance(condition_list, list):
-            logging.warning(f'조건 검색 실패: {cond_text} result={condition_list}')
-            return [], False
-
-        logging.debug(f'조건 검색 결과: {condition_list}')
-        return condition_list, True
-
-    def com_SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno, msg=None):
-        #if not self.com_request_time_check(kind='order'): return -308 # 5회 제한 초과
-
-        전략명칭 = gm.실행전략['전략명칭']
-        매수전략 = gm.설정전략['매수전략']
-        name = self.answer('api', 'GetMasterCodeName', code)
-        logging.debug(f'주문 요청 확인: code={code}, name={name}')
-        주문유형 = dc.fid.주문유형FID[ordtype]
-        kind = msg if msg else 주문유형
-        job = {"구분": kind, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
-        self.send_status_msg('주문내용', job)
-
-        rqname = f'{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
-        key = f'{code}_{주문유형.lstrip("신규")}'
-        gm.주문목록.set(key=key, data={'상태': '전송', '요청명': rqname})
-        cmd = { 'rqname': rqname, 'screen': screen, 'accno': accno, 'ordtype': ordtype, 'code': code, 'hoga': hoga, 'quantity': quantity, 'price': price, 'ordno': ordno }
-        if gm.잔고목록.in_key(code):
-            gm.잔고목록.set(key=code, data={'주문가능수량': 0})
-        dict_data = {'전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
-                     '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
-        self.dbm_order_upsert(dict_data)
-        success = self.answer('api', 'SendOrder', **cmd)
-        return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
-
     def com_market_status(self):
         now = datetime.now()
         time = int(now.strftime("%H%M%S"))
@@ -283,7 +244,7 @@ class Admin:
                 row = gm.잔고목록.get(key=code)
                 if not row: return
                 self.pri_fx처리_잔고데이터(code, row, dictFID)
-                self.pri_fx검사_매도요건(code)
+                #self.pri_fx검사_매도요건(code)
             #if gm.매수조건목록.in_key(code):
             #    gm.매수조건목록.set(key=code, data=dictFID)
             #if gm.매도조건목록.in_key(code):
@@ -672,8 +633,9 @@ class Admin:
             gm.stg.start()
             self.order('stg', 'stg_fx실행_전략매매')
             logging.debug(f'전략 실행 완료')
-            #if gm.config.gui_on: 
-            #    gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
+            if gm.config.gui_on: 
+                logging.debug(f'전략 실행 토글: 매수=({gm.매수문자열}), 매도=({gm.매도문자열})')
+                gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
 
         except Exception as e:
             logging.error(f'전략매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)

@@ -210,14 +210,14 @@ class GUI(QMainWindow, form_class):
     def gui_account_reload(self):
         gm.dmy.order('admin', 'get_holdings')
         gm.toast.toast(f'계좌를 다시 읽어 왔습니다.', duration=1000)
-        logging.debug('메세지 발행: Work(pri_first_job, {})')
+        logging.debug('계좌를 다시 읽어 왔습니다.')
 
     def gui_account_changed(self):
         logging.debug('')
         if self.cbAccounts.currentText():
             gm.account = self.cbAccounts.currentText()
             gm.dmy.order('admin', 'get_holdings')
-            logging.debug('메세지 발행: Work(pri_first_job, {})')
+            logging.debug('계좌를 다시 읽어 왔습니다.')
         else:
             logging.warning('계좌를 선택하세요')
 
@@ -628,11 +628,11 @@ class GUI(QMainWindow, form_class):
     # 전략설정 탭 ----------------------------------------------------------------------------------------
     def gui_tabs_init(self):
         try:
-            if not gm.실행전략: return
+            전략명칭 = gm.실행전략.get('전략명칭', '') if gm.실행전략 else ''
             self.btnClearStrategy.clicked.connect(self.gui_tabs_clear)
             self.btnGetStrategy.clicked.connect(self.gui_tabs_get)
             self.btnSaveStrategy.clicked.connect(self.gui_tabs_save)
-            self.ledCurrStrategy.setText(gm.실행전략.get('전략명칭', ''))
+            self.ledCurrStrategy.setText(전략명칭)
 
         except Exception as e:
             logging.error(f'전략탭 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -843,44 +843,42 @@ class GUI(QMainWindow, form_class):
     # 화면 갱신 -----------------------------------------------------------------------------------------------------------------
     def gui_fx채움_계좌콤보(self):
         try:
+            cb_list = [account for account in gm.list계좌콤보 if account] if gm.list계좌콤보 else []
             self.cbAccounts.clear()
-            self.cbAccounts.addItems([account for account in gm.list계좌콤보 if account])
+            self.cbAccounts.addItems(cb_list)
             self.cbAccounts.setCurrentIndex(0)
         except Exception as e:
             logging.error(f'계좌콤보 채움 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_fx채움_조건콤보(self):
         try:
+            cb_list = [strategy for strategy in gm.list전략콤보 if strategy] if gm.list전략콤보 else []
             self.cbCondition.clear()
             self.cbCondition.addItem(dc.const.NON_STRATEGY)  # 선택없음 추가
-            self.cbCondition.addItems([strategy for strategy in gm.list전략콤보 if strategy])
+            self.cbCondition.addItems(cb_list)
             self.cbCondition.setCurrentIndex(0)
         except Exception as e:
             logging.error(f'조건콤보 채움 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_fx채움_스크립트콤보(self):
         try:
+            cb_list = [script for script in gm.list스크립트 if script] if gm.list스크립트 else []
             self.cbScript.clear()
-            self.cbScript.addItems([script for script in gm.list스크립트 if script])
+            self.cbScript.addItems(cb_list)
             self.cbScript.setCurrentIndex(0)
         except Exception as e:
             logging.error(f'스크립트콤보 채움 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_fx채움_전략정의(self):
         try:
+            cb_list = [name for name in gm.전략정의.get(column='전략명칭') if name] if gm.전략정의 else []
             self.cbTabStrategy.clear()
-            self.cbTabStrategy.addItems([name for name in gm.전략정의.get(column='전략명칭') if name])
+            self.cbTabStrategy.addItems(cb_list)
             self.cbTabStrategy.setCurrentIndex(0)
-            gm.전략정의.update_table_widget(self.tblStrategy)
+            if gm.전략정의:
+                gm.전략정의.update_table_widget(self.tblStrategy)
         except Exception as e:
             logging.error(f'전략정의 채움 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def gui_fx갱신_매매정보(self):
-        try:
-            gm.매매목록.update_table_widget(self.tblMonitor, stretch=True)
-
-        except Exception as e:
-            logging.error(f'매매정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_set_color(self, label, value):
         try:
@@ -900,19 +898,42 @@ class GUI(QMainWindow, form_class):
 
     def gui_fx갱신_목록테이블(self):
         try:
-            self.gui_set_color(self.lblProfitLoss, gm.l2손익합산)
-            row = gm.잔고합산.get(key=0)
-            if row is None: row = {}
+            if gm.l2손익합산:
+                self.gui_set_color(self.lblProfitLoss, gm.l2손익합산)
+            else:
+                self.lblProfitLoss.setText('0')
+            if gm.잔고합산:
+                row = gm.잔고합산.get(key=0)
+            else:
+                row = {}
             self.lblBuy.setText(f"{int(row.get('총매입금액', 0)):,}")
             self.lblAmount.setText(f"{int(row.get('총평가금액', 0)):,}")
             self.lblAssets.setText(f"{int(row.get('추정예탁자산', 0)):,}")
             self.gui_set_color(self.lblProfit, int(row.get('총평가손익금액', 0)))
             self.gui_set_color(self.lblFrofitRate, float(row.get('총수익률(%)', 0.0)))
-            gm.잔고목록.update_table_widget(self.tblBalanceHeld, stretch=False)
+            if gm.잔고목록:
+                gm.잔고목록.update_table_widget(self.tblBalanceHeld, stretch=False)
+            else:
+                self.tblBalanceHeld.setColumnCount(len(dc.const.hd잔고목록['헤더']))
+                self.tblBalanceHeld.setHeaderLabels(dc.const.hd잔고목록['헤더'])
 
-            gm.매수조건목록.update_table_widget(self.tblConditionBuy)
-            gm.매도조건목록.update_table_widget(self.tblConditionSell)
-            gm.주문목록.update_table_widget(self.tblReceiptList)
+            if gm.매수조건목록:
+                gm.매수조건목록.update_table_widget(self.tblConditionBuy)
+            else:
+                self.tblConditionBuy.setColumnCount(len(dc.const.hd조건목록['헤더']))
+                self.tblConditionBuy.setHeaderLabels(dc.const.hd조건목록['헤더'])
+
+            if gm.매도조건목록:
+                gm.매도조건목록.update_table_widget(self.tblConditionSell)
+            else:
+                self.tblConditionSell.setColumnCount(len(dc.const.hd조건목록['헤더']))
+                self.tblConditionSell.setHeaderLabels(dc.const.hd조건목록['헤더'])
+
+            if gm.주문목록:
+                gm.주문목록.update_table_widget(self.tblReceiptList)    
+            else:
+                self.tblReceiptList.setColumnCount(len(dc.const.hd접수목록['헤더']))
+                self.tblReceiptList.setHeaderLabels(dc.const.hd접수목록['헤더'])
 
         except Exception as e:
             logging.error(f'목록테이블 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -923,6 +944,13 @@ class GUI(QMainWindow, form_class):
             gm.전략정의.update_table_widget(self.tblStrategy)
         except Exception as e:
             logging.error(f'전략정의 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx갱신_매매정보(self):
+        try:
+            gm.매매목록.update_table_widget(self.tblMonitor, stretch=True)
+
+        except Exception as e:
+            logging.error(f'매매정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_fx갱신_일지정보(self):
         try:
