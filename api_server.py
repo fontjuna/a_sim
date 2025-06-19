@@ -1016,7 +1016,7 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        #logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
+        logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
         self.order('admin', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):

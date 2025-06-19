@@ -104,10 +104,8 @@ class Main:
                     time.sleep(0.5)
             gm.dmy.order('api', 'set_tickers')
             gm.dmy.order('admin', 'init')
-            logging.debug('prepare : admin 초기화 완료')
-
+            while not gm.admin_init: time.sleep(0.1)
             if gm.config.gui_on: gm.gui.init()
-            logging.debug('prepare : gui 초기화 완료')
 
         except Exception as e:
             logging.error(str(e), exc_info=e)

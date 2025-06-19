@@ -25,10 +25,23 @@ class Admin:
         self.set_real_remove_all()
         self.get_holdings()
         self.json_load_define_sets()
+        gm.admin_init = True
+        logging.debug('prepare : admin 초기화 완료')
 
     # 준비 작업 -------------------------------------------------------------------------------------------
     def set_connected(self, connected):
         gm.connected = connected
+
+    def get_login_info(self):
+        accounts = self.answer('api', 'GetLoginInfo', 'ACCNO')
+        logging.debug(f'GetLoginInfo Accounts: {accounts}')
+        gm.list계좌콤보 = accounts
+        gm.config.account = accounts[0]
+
+        gm.config.server = self.answer('api', 'GetLoginInfo', 'GetServerGubun')
+        gm.수수료율 = dc.const.fee_sim if gm.config.server == '1' else dc.const.fee_real # 모의투자 0.35%, 실전투자 0.15% 매수, 매도 각각
+        gm.세금율 = dc.const.tax_rate # 코스피 거래세 0.03 + 농어촌 특별세 0.12%, 코스닥 거래세 0.15 매도시적용
+        logging.debug(f"서버:{gm.config.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.config.account}")
 
     def set_globals(self):
         gm.counter = CounterTicker()
@@ -41,17 +54,6 @@ class Admin:
         except Exception as e:
             logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
         self.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
-
-    def get_login_info(self):
-        accounts = self.answer('api', 'GetLoginInfo', 'ACCNO')
-        logging.debug(f'GetLoginInfo Accounts: {accounts}')
-        gm.list계좌콤보 = accounts
-        gm.config.account = accounts[0]
-
-        gm.config.server = self.answer('api', 'GetLoginInfo', 'GetServerGubun')
-        gm.수수료율 = dc.const.fee_sim if gm.config.server == '1' else dc.const.fee_real # 모의투자 0.35%, 실전투자 0.15% 매수, 매도 각각
-        gm.세금율 = dc.const.tax_rate # 코스피 거래세 0.03 + 농어촌 특별세 0.12%, 코스닥 거래세 0.15 매도시적용
-        logging.debug(f"서버:{gm.config.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.config.account}")
 
     def get_conditions(self):
         try:
@@ -95,10 +97,8 @@ class Admin:
         logging.debug('trade_start')
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
         self.cdn_fx실행_전략매매()
-        codes = gm.잔고목록.get(column='종목코드')
         gm.config.ready = True
         self.order('ctu', 'latch_off')
-
 
     # 공용 함수 -------------------------------------------------------------------------------------------
 
@@ -120,8 +120,8 @@ class Admin:
     def com_SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno, msg=None):
         #if not self.com_request_time_check(kind='order'): return -308 # 5회 제한 초과
 
-        전략명칭 = gm.stg.전략명칭
-        매수전략 = gm.stg.매수전략
+        전략명칭 = gm.실행전략['전략명칭']
+        매수전략 = gm.설정전략['매수전략']
         name = self.answer('api', 'GetMasterCodeName', code)
         logging.debug(f'주문 요청 확인: code={code}, name={name}')
         주문유형 = dc.fid.주문유형FID[ordtype]
@@ -173,18 +173,18 @@ class Admin:
     def json_load_define_sets(self):
         try:
             result, data = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
-            gm.전략설정 = data
+            gm.실행전략 = data
             if result:
-                logging.debug(f'전략설정 JSON 파일을 로드했습니다. {gm.전략설정}')
+                logging.debug(f'실행전략 JSON 파일을 로드했습니다. {gm.실행전략}')
             return result
         except Exception as e:
-            logging.error(f'전략설정 적용 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.error(f'실행전략 적용 오류: {type(e).__name__} - {e}', exc_info=True)
             return False
 
     def json_save_define_sets(self):
-        result, data = save_json(dc.fp.define_sets_file, gm.전략설정)
+        result, data = save_json(dc.fp.define_sets_file, gm.실행전략)
         if result:
-            logging.debug(f'전략설정 JSON 파일을 저장했습니다. {data}')
+            logging.debug(f'실행전략 JSON 파일을 저장했습니다. {data}')
         return result
 
     def json_load_strategy_sets(self):
@@ -246,6 +246,8 @@ class Admin:
             else:
                 logging.warning(f"조건식 서버 해제 안 됨 : type={type}, condition={condition}")
                 return
+
+            logging.debug(f'검색 종목 수신 : {kind}=({condition})')
 
             job = (kind, code, type, cond_name, cond_index,)
             if type == 'I':
@@ -655,10 +657,10 @@ class Admin:
     def cdn_fx준비_전략매매(self):
         try:
             self.json_load_strategy_sets()
-            _, gm.전략설정 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
-            전략정의 = gm.전략정의.get(key=gm.전략설정['전략명칭'])
-            gm.stg = ThreadModel('stg', Strategy, gm.shared_qes, ticker=gm.dict종목정보, strategy_set=전략정의)
-            logging.debug(f'전략명칭={gm.전략설정["전략명칭"]} {gm.stg}')
+            _, gm.실행전략 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS)
+            gm.설정전략 = gm.전략정의.get(key=gm.실행전략['전략명칭'])
+            gm.stg = ThreadModel('stg', Strategy, gm.shared_qes, ticker=gm.dict종목정보, strategy_set=gm.설정전략)
+            logging.debug(f'전략명칭={gm.실행전략["전략명칭"]} {gm.stg}')
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -670,8 +672,8 @@ class Admin:
             gm.stg.start()
             self.order('stg', 'stg_fx실행_전략매매')
             logging.debug(f'전략 실행 완료')
-            if gm.config.gui_on: 
-                gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
+            #if gm.config.gui_on: 
+            #    gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
 
         except Exception as e:
             logging.error(f'전략매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -718,8 +720,8 @@ class Admin:
             key = f'{code}_{dictFID["주문구분"]}'
             order_no = dictFID['주문번호']
             row = gm.주문목록.get(key=key)
-            전략명칭 = gm.stg.전략명칭
-            전략정의 = gm.stg.전략정의
+            전략명칭 = gm.실행전략['전략명칭']
+            전략정의 = gm.설정전략
             주문상태 = dictFID.get('주문상태', '')
             주문수량 = int(dictFID.get('주문수량', 0) or 0)
             주문가격 = int(dictFID.get('주문가격', 0) or 0)
@@ -799,12 +801,11 @@ class Admin:
             row = gm.주문목록.get(key=key)
             try:
                 if row['구분'] in ['매수', '매도']:
-                    strategy = gm.stg
                     sec = 0
                     if row['구분'] == '매수':
-                        if strategy.매수취소: sec = strategy.매수지연초
+                        if gm.설정전략['매수취소']: sec = gm.설정전략['매수지연초']
                     elif row['구분'] == '매도':
-                        if strategy.매도취소: sec = strategy.매도지연초
+                        if gm.설정전략['매도취소']: sec = gm.설정전략['매도지연초']
 
                     if sec > 0:
                         QTimer.singleShot(int(sec * 1000), lambda kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(kind, origin_row, dictFID))
@@ -835,8 +836,8 @@ class Admin:
             order_row = gm.주문목록.get(key=key)
             if not order_row:
                 logging.error(f"주문목록이 None 입니다. {code} {name} 매도 체결처리 디비 저장 실패 ***")
-            전략명칭 = gm.stg.전략명칭
-            전략정의 = gm.stg.전략정의
+            전략명칭 = gm.실행전략['전략명칭']
+            전략정의 = gm.설정전략
             매매시간 = datetime.now().strftime('%H:%M:%S')
             단위체결량 = int(dictFID.setdefault('단위체결량', 0) or 0)
             단위체결가 = int(dictFID.setdefault('단위체결가', 0) or 0)

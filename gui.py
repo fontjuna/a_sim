@@ -181,6 +181,7 @@ class GUI(QMainWindow, form_class):
         success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
         logging.getLogger().setLevel(gm.json_config['root']['level'])
         self.rbDebug.setChecked(gm.json_config['root']['level'] == logging.DEBUG)
+        logging.debug('prepare : gui 초기화 완료')
 
     # 화면 갱신 ---------------------------------------------------------------------------------------------
     def gui_refresh_data(self):
@@ -627,11 +628,11 @@ class GUI(QMainWindow, form_class):
     # 전략설정 탭 ----------------------------------------------------------------------------------------
     def gui_tabs_init(self):
         try:
-            if not gm.전략설정: return
+            if not gm.실행전략: return
             self.btnClearStrategy.clicked.connect(self.gui_tabs_clear)
             self.btnGetStrategy.clicked.connect(self.gui_tabs_get)
             self.btnSaveStrategy.clicked.connect(self.gui_tabs_save)
-            self.ledCurrStrategy.setText(gm.전략설정.get('전략명칭', ''))
+            self.ledCurrStrategy.setText(gm.실행전략.get('전략명칭', ''))
 
         except Exception as e:
             logging.error(f'전략탭 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -658,7 +659,7 @@ class GUI(QMainWindow, form_class):
                 logging.warning(f'전략명칭이 입력되지 않았습니다.')
                 return
 
-            gm.전략설정 = {
+            gm.실행전략 = {
                 '전략명칭': 전략명칭,
             }
 
@@ -779,8 +780,8 @@ class GUI(QMainWindow, form_class):
                 result = gm.전략정의.delete(key=name)
                 if result:
                     msg = '설정이 삭제되었습니다.'
-                    if gm.전략설정['전략명칭'] == name:
-                        gm.전략설정['전략명칭'] = ''
+                    if gm.실행전략['전략명칭'] == name:
+                        gm.실행전략['전략명칭'] = ''
                         self.gui_tabs_clear()
                     gm.dmy.order('admin', 'json_save_strategy_sets')
                     gm.dmy.order('admin', 'json_save_define_sets')

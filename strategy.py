@@ -353,13 +353,17 @@ class Strategy:
         try:
             logging.debug(f'전략 초기화 시작: {self.전략명칭}')
             msg = self.stg_fx체크_전략매매()
-            if msg: return msg
+            if msg: 
+                logging.error(f'전략 초기화 실패: {msg}')
+                return
+            
             self.stg_fx실행_전략매매시작()
 
             gm.counter.set_strategy(self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
-            #if gm.config.gui_on: 
-            #    gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
+            if gm.config.gui_on: 
+                logging.debug(f'전략 실행 토글: 매수=({gm.매수문자열}), 매도=({gm.매도문자열})')
+                gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
 
         except Exception as e:
             logging.error(f'전략 초기화 오류: {type(e).__name__} - {e}', exc_info=True)

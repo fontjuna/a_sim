@@ -953,7 +953,8 @@ class GlobalMemory:      # 글로벌 메모리 정의
     
     strategy_row = None
     basic_strategy = None
-    전략설정 = None # json
+    실행전략 = None # json
+    설정전략 = None # json
     매수문자열 = ''
     매도문자열 = ''
     set종목감시 = set()
@@ -963,6 +964,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     수수료율 = 0.0
     세금율 = 0.0
     holdings = {}
+    admin_init = False
     
 gm = GlobalMemory()
 

@@ -1246,12 +1246,12 @@ class BaseModel:
         self.shared_qes = shared_qes
         self.args = args
         self.kwargs = kwargs
-        self.instance = None
+        self.instance = self.cls(*self.args, **self.kwargs)
         self.my_qes = shared_qes[name]
         self.running = False
         self.timeout = 15
         self.process_stats = {'request': 0, 'stream': 0}  # 처리 통계
-
+        
     def process_q_data(self, q_data, queue_type='request'):
         if not isinstance(q_data, QData):
             return None
@@ -1272,7 +1272,7 @@ class BaseModel:
         self.running = True
         if hasattr(self.kwargs, 'timeout'):
             self.timeout = self.kwargs.get('timeout')
-        self.instance = self.cls(*self.args, **self.kwargs)
+        #self.instance = self.cls(*self.args, **self.kwargs)
         self.instance.order = self.order
         self.instance.answer = self.answer
         self.instance.frq_order = self.frq_order
@@ -1293,6 +1293,9 @@ class BaseModel:
                     self.process_q_data(q_data, 'stream')
                     #logging.debug(f"{self.name}: stream 처리됨 - {q_data.method}")
                 
+                if hasattr(self.instance, 'run_main_work'):
+                    self.instance.run_main_work()
+
                 time.sleep(0.01)
             except (EOFError, ConnectionError, BrokenPipeError):
                 # 프로세스 종료 시 발생할 수 있는 예외들
@@ -1323,9 +1326,12 @@ class BaseModel:
         q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs)
         self.shared_qes[target].request.put(q_data)
         try:
-            return self.shared_qes[self.name].result.get(timeout=self.timeout)
-        except:
+            return self.my_qes.result.get(timeout=self.timeout)
+        except TimeoutError:
             logging.error(f"answer() 타임아웃:{self.name}의 요청 : {target}.{method}", exc_info=True)
+            return None
+        except Exception as e:
+            logging.error(f"answer() 오류:{self.name}의 요청 : {target}.{method} - {e}", exc_info=True)
             return None
 
     def frq_order(self, target, method, *args, **kwargs):
@@ -1338,9 +1344,12 @@ class BaseModel:
         q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs)
         self.shared_qes[target].stream.put(q_data)
         try:
-            return self.shared_qes[self.name].payback.get(timeout=self.timeout)
-        except:
+            return self.my_qes.payback.get(timeout=self.timeout)
+        except TimeoutError:
             logging.error(f"frq_answer() 타임아웃:{self.name}의 요청 : {target}.{method}", exc_info=True)
+            return None
+        except Exception as e:
+            logging.error(f"frq_answer() 오류:{self.name}의 요청 : {target}.{method} - {e}", exc_info=True)
             return None
 
 class MainModel(BaseModel):
