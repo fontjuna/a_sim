@@ -237,14 +237,14 @@ class Admin:
                 gm.dict주문대기종목.remove(code)
 
             job = {'code': code, 'dictFID': dictFID}
-            self.order('ctu', 'register_chart_data', job)
+            self.order('dmy', 'register_chart_data', job)
 
         try:
             if gm.잔고목록.in_key(code):
                 row = gm.잔고목록.get(key=code)
                 if not row: return
                 self.pri_fx처리_잔고데이터(code, row, dictFID)
-                #self.pri_fx검사_매도요건(code)
+                self.pri_fx검사_매도요건(code)
             #if gm.매수조건목록.in_key(code):
             #    gm.매수조건목록.set(key=code, data=dictFID)
             #if gm.매도조건목록.in_key(code):

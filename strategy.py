@@ -302,8 +302,8 @@ class Strategy:
         if reason not in ["조건없음", "장 운영시간이 아님"]:
             logging.info(f'매도결정: {reason}\nsend_data={send_data}')
         if is_ok:
-            #if not self.매도적용:
-            #    self.order('admin', 'send_status_msg', '주문내용', {'구분': f'매도편입', '전략명칭': self.전략명칭, '종목코드': row['종목번호'], '종목명': row['종목명']})
+            if not self.매도적용:
+                self.order('admin', 'send_status_msg', '주문내용', {'구분': f'매도편입', '전략명칭': self.전략명칭, '종목코드': row['종목번호'], '종목명': row['종목명']})
             if isinstance(send_data, list):
                 logging.debug(f'** 복수 매도 주문목록 **: {send_data}')
                 for data in send_data:
@@ -369,7 +369,7 @@ class Strategy:
             gm.잔고목록.set(key=code, data={'주문가능수량': 0})
         dict_data = {'전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
-        #self.dbm_order_upsert(dict_data)
+        self.dbm_order_upsert(dict_data)
         success = self.answer('api', 'SendOrder', **cmd)
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
 
@@ -405,7 +405,7 @@ class Strategy:
                             self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
                     elif trade_type == '매도':
                         gm.매도문자열 = condition
-                    #self.order('admin', 'send_status_msg', '검색내용', f'{trade_type} {condition}')
+                    self.order('admin', 'send_status_msg', '검색내용', f'{trade_type} {condition}')
                     logging.info(f'전략 실행: {trade_type}전략={self.전략명칭}({condition})')
                 else:
                     logging.warning(f'전략 실행 실패 - 전략명칭={self.전략명칭} {trade_type}전략={condition}') # 같은 조건 1분 제한 조건 위반
@@ -495,7 +495,7 @@ class Strategy:
 
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'종목명': 종목명})
-                    #self.order('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
+                    self.order('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
                     self.order('ctu', 'register_code', code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
@@ -512,7 +512,7 @@ class Strategy:
                 
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'종목명': 종목명})
-                    #self.order('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
+                    self.order('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
                     self.order('ctu', 'register_code', code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 

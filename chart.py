@@ -53,6 +53,7 @@ class ChartData:
                 self._code_locks = {}       # 코드별 락
                 self._data_cache = {}       # 코드별 데이터 캐시
                 self._cache_timestamps = {} # 캐시 타임스탬프 별도 관리
+                self._registered_code_cache = set() # 등록된 코드 캐시 (성능 최적화용)
                 
                 # 기본 설정
                 self._shm_prefix = "chart_data_"
@@ -113,6 +114,7 @@ class ChartData:
             # 기존 공유 메모리 연결 시도
             shm = shared_memory.SharedMemory(name=shm_name)
             self._shm_map[code] = shm
+            self._registered_code_cache.add(code) # 캐시에 추가
             return shm
         except FileNotFoundError:
             # 없으면 새로 생성
@@ -123,6 +125,7 @@ class ChartData:
                     size=self._default_size
                 )
                 self._shm_map[code] = shm
+                self._registered_code_cache.add(code) # 캐시에 추가
                 
                 # 헤더 초기화
                 t_stamp = int(time.time()) & 0xFFFFFFFF
@@ -405,6 +408,32 @@ class ChartData:
         except Exception as e:
             logging.error(f"[{datetime.now()}] Error in update_chart for {code}: {str(e)}")
 
+    def is_code_registered(self, code: str) -> bool:
+        """
+        특정 종목 코드의 공유 메모리가 시스템에 생성되었는지 확인 (프로세스 독립적, 캐싱 적용)
+        """
+        # 1. 로컬 캐시에서 먼저 확인 (매우 빠름)
+        if code in self._registered_code_cache:
+            return True
+
+        # 2. 캐시에 없으면 시스템 콜로 확인 (비용 발생)
+        shm_name = f"{self._shm_prefix}{code}"
+        try:
+            # 연결만 시도해보고, 성공하면 바로 닫음
+            shm = shared_memory.SharedMemory(name=shm_name)
+            shm.close()
+
+            # 3. 확인되면 캐시에 추가
+            self._registered_code_cache.add(code)
+            return True
+        except FileNotFoundError:
+            # 파일이 없으면 등록되지 않은 것
+            return False
+        except Exception as e:
+            # 그 외의 오류는 로깅
+            logging.error(f"[{datetime.now()}] Error checking shared memory for {code}: {str(e)}")
+            return False
+            
     def _create_index_map_safe(self, chart_data, code: str, cycle_key: str):
         """시간 -> 인덱스 매핑 생성 (데드락 안전)"""
         if 'index_maps' not in chart_data:
@@ -640,6 +669,7 @@ class ChartData:
                 self._shm_map.clear()
                 self._data_cache.clear()
                 self._cache_timestamps.clear()
+                self._registered_code_cache.clear() # 등록된 코드 캐시도 초기화
                 
             finally:
                 self._global_lock.release()
@@ -832,52 +862,6 @@ class ChartData:
         result = list(grouped_data.values())
         result.sort(key=lambda x: x['일자'], reverse=True)
         return result
-    
-    # 속성 접근 메서드 (기존 코드와의 호환성 유지)
-    # @property
-    # def _data(self):
-    #     """_data 속성 접근 - 모든 코드의 데이터 사전 형태로 반환"""
-    #     all_data = {}
-        
-    #     # 모든 코드 목록 가져오기
-    #     code_list = [code for code in self._shm_map.keys()]
-        
-    #     # 각 코드별 데이터 로드
-    #     for code in code_list:
-    #         try:
-    #             code_data = self._load_code_data(code)
-    #             # 주기별 데이터 추출
-    #             data_by_cycle = {}
-    #             for key, value in code_data.items():
-    #                 if key != 'index_maps':  # 인덱스 맵은 제외
-    #                     data_by_cycle[key] = value
-                
-    #             all_data[code] = data_by_cycle
-    #         except:
-    #             pass
-        
-    #     return all_data
-   
-    # @property
-    # def _index_maps(self):
-    #     """_index_maps 속성 접근 - 모든 코드의 인덱스 맵 사전 형태로 반환"""
-    #     all_index_maps = {}
-        
-    #     # 모든 코드 목록 가져오기
-    #     code_list = [code for code in self._shm_map.keys()]
-        
-    #     # 각 코드별 인덱스 맵 로드
-    #     for code in code_list:
-    #         try:
-    #             code_data = self._load_code_data(code)
-    #             if 'index_maps' in code_data:
-    #                 all_index_maps[code] = code_data['index_maps']
-    #             else:
-    #                 all_index_maps[code] = {}
-    #         except:
-    #             all_index_maps[code] = {}
-        
-    #     return all_index_maps
 
 cht_dt = ChartData()
 
@@ -2859,20 +2843,23 @@ class ChartUpdater:
         if self.latch_on: return
         self.latch_on = True
         self.request_chart_data()
-        self.chart_data_updater()
+        #self.chart_data_updater()
         self.latch_on = False
 
     def request_chart_data(self):
+        if not self.todo_code: return
         with self.lock:
-            todo_items = list(self.todo_code.items())
-        for code, status in todo_items:
-            logging.debug(f"get_first_chart_data 요청: {code}")
-            if not status['mi']: 
-                self.get_first_chart_data(code, cycle='mi', tick=1)
-                #self._mark_done(code, 'mi')
-            if not status['dy']: 
-                self.get_first_chart_data(code, cycle='dy')
-                #self._mark_done(code, 'dy')
+            code, status = list(self.todo_code.items())[0]
+        
+        logging.debug(f"get_first_chart_data 요청: {code}")
+        if not status['mi']: 
+            self.get_first_chart_data(code, cycle='mi', tick=1)
+            #self._mark_done(code, 'mi')
+            return
+        
+        if not status['dy']: 
+            self.get_first_chart_data(code, cycle='dy')
+            #self._mark_done(code, 'dy')
 
     def _mark_done(self, code, cycle):
         with self.lock:
@@ -2895,11 +2882,23 @@ class ChartUpdater:
     def is_done(self, code):
         return code in self.done_code
 
+class DummyClass:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cht_updater = {}
+        self.latch_on = True
+
+    def run_main_work(self):
+        if self.latch_on: return
+        self.latch_on = True
+        self.chart_data_updater()
+        self.latch_on = False
+
     def register_chart_data(self, job):
         code = job['code']
         dictFID = job['dictFID']
-        with self.lock: 
-            if code in self.done_code or code in self.todo_code:
+        if cht_dt.is_code_registered(code):
+            with self.lock: 
                 self.cht_updater[code] = dictFID
 
     def chart_data_updater(self):

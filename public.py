@@ -886,10 +886,6 @@ class GlobalConfig:     # 환경변수 정의
     account = ''
     ready = False
 
-class DummyClass:
-    def __init__(self):
-        pass
-
 @dataclass
 class GlobalMemory:      # 글로벌 메모리 정의
     connected = False

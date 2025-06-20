@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread
 from multiprocessing import Process
+from multiprocessing.queues import Empty
 import threading
 import copy
 import time
@@ -1327,6 +1328,8 @@ class BaseModel:
         self.shared_qes[target].request.put(q_data)
         try:
             return self.my_qes.result.get(timeout=self.timeout)
+        except Empty:
+            pass
         except TimeoutError:
             logging.error(f"answer() 타임아웃:{self.name}의 요청 : {target}.{method}", exc_info=True)
             return None
@@ -1345,6 +1348,8 @@ class BaseModel:
         self.shared_qes[target].stream.put(q_data)
         try:
             return self.my_qes.payback.get(timeout=self.timeout)
+        except Empty:
+            pass
         except TimeoutError:
             logging.error(f"frq_answer() 타임아웃:{self.name}의 요청 : {target}.{method}", exc_info=True)
             return None

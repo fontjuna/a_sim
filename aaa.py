@@ -1,6 +1,6 @@
 from gui import GUI
 from admin import Admin
-from public import init_logger, dc, gm, DummyClass
+from public import init_logger, dc, gm
 from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData
 from dbm_server import DBMServer
 from api_server import APIServer
@@ -11,7 +11,7 @@ import logging
 import time
 import sys
 from datetime import datetime
-from chart import ChartUpdater
+from chart import ChartUpdater, DummyClass
 
 init_logger()
 
