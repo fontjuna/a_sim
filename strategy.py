@@ -1,4 +1,5 @@
 from public import Work, dc, gm, hoga, profile_operation, load_json
+from chart import cht_dt
 from datetime import datetime
 import threading
 import logging
@@ -80,18 +81,18 @@ class Strategy:
         """매수 조건 충족 여부를 확인하는 메소드"""
         name = gm.dict종목정보.get(code, next='종목명')
 
-        """
+        #"""
         if self.매수스크립트적용:
-            if self.poll('dbm', 'is_done', code):
+            if cht_dt.is_code_registered(code):
                 try:
                     result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
                     if self.매수스크립트AND and not result.get('result', False): return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
                     logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
                 except Exception as e:
                     logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
-        """
+        #"""
         if not gm.config.sim_on:
-            status_market = self.answer('admin', 'com_market_status')
+            status_market = self.com_market_status()
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
         if gm.counter.get("000000", name) >= self.체결횟수: 
@@ -173,10 +174,9 @@ class Strategy:
 
     @profile_operation
     def is_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
-        """매도 조건 충족 여부를 확인하는 메소드"""
         try:
             if not gm.config.sim_on:
-                status_market = self.answer('admin', 'com_market_status')
+                status_market = self.com_market_status()
                 if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
             code = row.get('종목번호', '')          # 종목번호 ='999999' 일 때 당일청산 매도
@@ -208,17 +208,17 @@ class Strategy:
             if self.매도지정가:
                 send_data['price'] = hoga(현재가, self.매도호가)
                 send_data['msg'] = '매도지정'
-            """
+            #"""
             if self.매도스크립트적용:
-                if self.poll('dbm', 'is_done', code):
+                if cht_dt.is_code_registered(code):
                     result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
                     if self.매도스크립트OR and result.get('result', True): 
                         logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
                         send_data['msg'] = '전략매도'
                         return True, send_data, f"전략매도: {code} {종목명}"
-            """
+            #"""
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
-                #if self.매도스크립트적용 and not result.get('result', False): return False, {}, f"매도스크립트 조건 불충족: {code} {종목명}"
+                if self.매도스크립트적용 and self.매도스크립트AND and not result.get('result', False): return False, {}, f"매도스크립트 조건 불충족: {code} {종목명}"
                 send_data['msg'] = '검색매도'
                 return True, send_data,  f"검색매도: {code} {종목명}"
 
@@ -346,6 +346,19 @@ class Strategy:
             delay_secs = max(0, (start_time - now).total_seconds())
             threading.Timer(delay_secs, lambda: self.order_sell(row)).start()
 
+    def com_market_status(self):
+        now = datetime.now()
+        time = int(now.strftime("%H%M%S"))
+        if time < 83000: return dc.ms.장종료
+        elif time < 84000: return dc.ms.장전시간외종가
+        elif time < 90000: return dc.ms.장전동시호가
+        elif time < 152000: return dc.ms.장운영중
+        elif time < 153000: return dc.ms.장마감동시호가
+        elif time < 154000: return dc.ms.장마감
+        elif time < 160000: return dc.ms.장후시간외종가
+        elif time < 180000: return dc.ms.시간외단일가
+        else: return dc.ms.장종료
+
     def initialize(self):
         try:
             gm.매수문자열 = "" 
@@ -367,7 +380,7 @@ class Strategy:
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()
-            self.send_status_msg('검색내용', args='')
+            self.order('admin', 'send_status_msg', '검색내용', args='')
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 

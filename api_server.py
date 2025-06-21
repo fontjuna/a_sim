@@ -18,42 +18,32 @@ toast = None #Toast()
 ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
 req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
 def com_request_time_check(kind='order', cond_text = None):
-    start_time = time.time()
-    #logging.debug(f'com_request_time_check: Start')
     if kind == 'order':
         wait_time = ord.check_interval()
     elif kind == 'request':
         wait_time = max(req.check_interval(), req.check_condition_interval(cond_text) if cond_text else 0)
-
-    #logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
     if wait_time > 1666: # 1.666초 이내 주문 제한
         msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
             if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
         #toast.toast(msg, duration=dc.td.TOAST_TIME)
         logging.warning(msg)
         return False
-    
     elif wait_time > 1000:
         msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
         #toast.toast(msg, duration=wait_time)
         time.sleep((wait_time-10)/1000) 
         wait_time = 0
         logging.info(msg)
-
     elif wait_time > 0:
         msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
         #toast.toast(msg, duration=wait_time)
         logging.info(msg)
-
     time.sleep((wait_time+100)/1000) 
-
     if kind == 'order':
         ord.update_request_times()
     elif kind == 'request':
         if cond_text: req.update_condition_time(cond_text)
         else: req.update_request_times()
-
-    #logging.debug(f'com_request_time_check:Start ~ End: {time.time() - start_time} ms')
     return True
 
 real_thread = {}
@@ -813,15 +803,16 @@ class APIServer:
     def SendConditionStop(self, screen, cond_name, cond_index):
         global cond_thread
         #logging.debug(f'전략 중지: screen={screen}, cond_name={cond_name}, cond_index={cond_index} {"*"*50}')
-        if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
+        if self.sim_no == 0:  # 실제 API 서버
             self.ocx.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, cond_index)
-        
-        # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 종료
-        if screen in cond_thread and cond_thread[screen]:
-            cond_thread[screen].stop()
-            logging.debug(f'삭제전: {cond_thread}')
-            del cond_thread[screen]
-            logging.debug(f'삭제후: {cond_thread}')
+        else:
+            # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 종료
+            if screen in cond_thread and cond_thread[screen]:
+                cond_thread[screen].stop()
+                cond_thread[screen] = None
+                logging.debug(f'삭제전: {cond_thread}')
+                del cond_thread[screen]
+                logging.debug(f'삭제후: {cond_thread}')
         return 0
 
     def SetInputValue(self, id, value):
@@ -909,16 +900,7 @@ class APIServer:
         cond_text = f'{cond_index:03d} : {cond_name.strip()}'
         if not com_request_time_check(kind='request', cond_text=cond_text): return [], False
 
-        if self.sim_no > 0:  # (sim_no=1, 2, 3)
-            global cond_thread
-            # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 시작
-            self.tr_condition_loaded = True
-            self.tr_condition_list = []
-            cond_thread[screen] = OnReceiveRealConditionSim(cond_name, cond_index, self)
-            cond_thread[screen].start()
-            logging.debug(f'추가후: {cond_thread}')
-            return self.tr_condition_list
-        else:        
+        if self.sim_no == 0:  # 실제 API 서버
             try:
                 data = False
                 if block is True:
@@ -942,6 +924,15 @@ class APIServer:
             except Exception as e:
                 logging.error(f"SendCondition 오류: {type(e).__name__} - {e}")
                 return False
+        else:
+            global cond_thread
+            # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 시작
+            self.tr_condition_loaded = True
+            self.tr_condition_list = []
+            cond_thread[screen] = OnReceiveRealConditionSim(cond_name, cond_index, self)
+            cond_thread[screen].start()
+            logging.debug(f'추가후: {cond_thread}')
+            return self.tr_condition_list
         
     # 응답 메서드 --------------------------------------------------------------------------------------------------
     def OnEventConnect(self, code):

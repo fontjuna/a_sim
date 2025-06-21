@@ -1,4 +1,6 @@
 from public import get_path, gm, dc, save_json, load_json, hoga
+from classes import ThreadModel
+from strategy import Strategy
 from PyQt5.QtWidgets import QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox, QTableWidget, QTableWidgetItem
 from PyQt5.QtGui import QIcon, QTextCursor
 from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate, Qt
@@ -383,7 +385,9 @@ class GUI(QMainWindow, form_class):
             response = True
             
         if response:
-            gm.dmy.order('stg', 'start')
+            gm.stg = ThreadModel('stg', Strategy, gm.shared_qes)
+            gm.stg.start()
+            gm.stg_run = True
             if not any([gm.매수문자열, gm.매도문자열]):
                 gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
                 return
@@ -397,7 +401,9 @@ class GUI(QMainWindow, form_class):
         if question:
             response = QMessageBox.question(None, '전략매매 중지', '전략매매를 중지하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
         if response:
-            gm.dmy.order('stg', 'stop')
+            gm.stg_run = False
+            gm.stg.stop()
+            gm.stg = None
             self.set_strategy_toggle(run=False)
             gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
         else:
@@ -461,7 +467,7 @@ class GUI(QMainWindow, form_class):
         code = self.leTrCode.text()
         if code:
             self.leTrName.setText(gm.dmy.answer('api', 'GetMasterCodeName', code))
-
+            
     def gui_tr_order(self):
         kind = '매수' if self.rbTrBuy.isChecked() else '매도'
         전략번호 = 0
@@ -554,7 +560,7 @@ class GUI(QMainWindow, form_class):
 
         # 주문 전송
         gm.dmy.order('admin', 'com_SendOrder', **send_data)
-
+        
     # 스크립트 표시 ---------------------------------------------------------------------------------------------
     def gui_script_show(self):
         try:

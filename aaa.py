@@ -76,6 +76,8 @@ class Main:
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
+            gm.main = self
+            gm.toast = Toast()
             gm.dmy = MainModel('dmy', DummyClass, gm.shared_qes)
             gm.dmy.start()
             gm.admin = MainModel('admin', Admin, gm.shared_qes)
@@ -84,8 +86,6 @@ class Main:
             gm.api.start()
             gm.dmy.order('api', 'api_init', gm.config.sim_no)
             gm.dmy.order('api', 'CommConnect', False)
-            gm.main = self
-            gm.toast = Toast()
             gm.dbm = ProcessModel('dbm', DBMServer, gm.shared_qes)
             gm.dbm.start()
             gm.ctu = ThreadModel('ctu', ChartUpdater, gm.shared_qes)
@@ -125,7 +125,8 @@ class Main:
         gm.odr.start()
         gm.stg.start()
         gm.config.ready = True
-        gm.ctu.order('ctu', 'latch_off')
+        gm.dmy.order('ctu', 'latch_off')
+        gm.ctu.order('dmy', 'latch_off')
 
     def run(self):
         if gm.config.gui_on: 

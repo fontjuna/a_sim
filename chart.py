@@ -2782,9 +2782,9 @@ class ChartUpdater:
             dict_list = self._convert_chart_data(dict_list, code, cycle)
             
             if cycle in ['dy', 'mi']:
+                cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
                 self.order('dbm', 'upsert_chart', dict_list, cycle, tick)
                 self._mark_done(code, cycle)
-                #cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
             
             return dict_list
         
@@ -2843,7 +2843,6 @@ class ChartUpdater:
         if self.latch_on: return
         self.latch_on = True
         self.request_chart_data()
-        #self.chart_data_updater()
         self.latch_on = False
 
     def request_chart_data(self):
@@ -2887,6 +2886,9 @@ class DummyClass:
         self.lock = threading.Lock()
         self.cht_updater = {}
         self.latch_on = True
+
+    def latch_off(self):
+        self.latch_on = False
 
     def run_main_work(self):
         if self.latch_on: return

@@ -963,6 +963,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     세금율 = 0.0
     holdings = {}
     admin_init = False
+    stg_run = True
     
 gm = GlobalMemory()
 

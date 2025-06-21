@@ -42,6 +42,7 @@ class Admin:
             logging.debug(f'스크립트 확장 결과={result}')
         except Exception as e:
             logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
+        gm.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
         self.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
 
     def get_login_info(self):
@@ -93,9 +94,31 @@ class Admin:
         self.pri_fx등록_종목감시()
 
     # 공용 함수 -------------------------------------------------------------------------------------------
+    def com_order_time_check(self):
+        wait_time = gm.ord.check_interval()
+        if wait_time > 1666: # 1.666초 이내 주문 제한
+            msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초'
+            gm.toast.toast(msg, duration=dc.td.TOAST_TIME)
+            logging.warning(msg)
+            return False
+       
+        elif wait_time > 1000:
+            msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
+            gm.toast.toast(msg, duration=wait_time)
+            time.sleep((wait_time-10)/1000) 
+            wait_time = 0
+            logging.info(msg)
+        elif wait_time > 0:
+            msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
+            gm.toast.toast(msg, duration=wait_time)
+            logging.info(msg)
+
+        time.sleep((wait_time+100)/1000) 
+        gm.ord.update_request_times()
+        return True
 
     def com_SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno, msg=None):
-        #if not self.com_request_time_check(kind='order'): return -308 # 5회 제한 초과
+        if not self.com_order_time_check(): return -308 # 5회 제한 초과
 
         전략명칭 = gm.실행전략['전략명칭']
         매수전략 = gm.설정전략['매수전략']
@@ -117,19 +140,6 @@ class Admin:
         self.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
         success = self.answer('api', 'SendOrder', **cmd)
         return success # 0=성공, 나머지 실패 -308 : 5회 제한 초과
-
-    def com_market_status(self):
-        now = datetime.now()
-        time = int(now.strftime("%H%M%S"))
-        if time < 83000: return dc.ms.장종료
-        elif time < 84000: return dc.ms.장전시간외종가
-        elif time < 90000: return dc.ms.장전동시호가
-        elif time < 152000: return dc.ms.장운영중
-        elif time < 153000: return dc.ms.장마감동시호가
-        elif time < 154000: return dc.ms.장마감
-        elif time < 160000: return dc.ms.장후시간외종가
-        elif time < 180000: return dc.ms.시간외단일가
-        else: return dc.ms.장종료
 
     def send_status_msg(self, order, args):
         if order=='주문내용':
@@ -419,6 +429,7 @@ class Admin:
             logging.error(f'실시간 배치 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def pri_fx검사_매도요건(self, code):
+        if not gm.stg_run: return
         row = gm.잔고목록.get(key=code)
         if not row: return
         if row['주문가능수량'] == 0: return
