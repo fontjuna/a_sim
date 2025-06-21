@@ -895,6 +895,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     gui = None
     api = None
     dbm = None
+    odr = None
     stg = None
     ctu = None
     scm = None # 스크립트 매니저
@@ -920,6 +921,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
         'ctu': SharedQueue(),
         'stg': SharedQueue(),
         'dmy': SharedQueue(),
+        'odr': SharedQueue(),
     }
 
     tbl = TableColumns()

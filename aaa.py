@@ -1,6 +1,6 @@
 from gui import GUI
-from admin import Admin
-from public import init_logger, dc, gm
+from admin import Admin, OrderManager
+from public import init_logger, dc, gm, Work
 from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData
 from dbm_server import DBMServer
 from api_server import APIServer
@@ -12,6 +12,7 @@ import time
 import sys
 from datetime import datetime
 from chart import ChartUpdater, DummyClass
+from strategy import Strategy
 
 init_logger()
 
@@ -70,8 +71,6 @@ class Main:
     def show(self):
         if not gm.config.gui_on: return
         gm.gui.gui_show()
-        #gm.gui.init()
-        #gm.gui.gui_table_update() 사용 안 함
         time.sleep(0.1)
 
     def set_proc(self):
@@ -106,14 +105,27 @@ class Main:
                     logging.debug(f"로그인 대기 중: {connected}")
                     time.sleep(0.5)
             gm.dmy.order('api', 'set_tickers')
+
             gm.dmy.order('admin', 'init')
-            
             while not gm.admin_init: time.sleep(0.1)
+            
+            logging.debug('prepare : admin 초기화 완료')
             if gm.config.gui_on: gm.gui.init()
+            logging.debug('prepare : gui 초기화 완료')
 
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
+
+    def trade_start(self):
+        logging.debug('trade_start')
+        gm.odr = ThreadModel('odr', OrderManager, gm.shared_qes)
+        gm.stg = ThreadModel('stg', Strategy, gm.shared_qes)
+        gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
+        gm.odr.start()
+        gm.stg.start()
+        gm.config.ready = True
+        gm.ctu.order('ctu', 'latch_off')
 
     def run(self):
         if gm.config.gui_on: 
@@ -121,7 +133,6 @@ class Main:
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            gm.dmy.order('admin', 'trade_start')
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
@@ -144,6 +155,7 @@ class Main:
         self.set_proc()
         self.prepare()
         self.show()
+        self.trade_start()
         self.run()
 
     def cleanup(self):

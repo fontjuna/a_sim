@@ -90,15 +90,15 @@ class GUI(QMainWindow, form_class):
             self.btnReloadAccount.clicked.connect(self.gui_account_reload)              # 계좌 재로드
             self.cbChartCycle.currentIndexChanged.connect(lambda idx: self.gui_chart_cycle_changed(self.cbChartCycle.itemText(idx))) # 차트 주기 변경 선택
 
-            self.tblStrategy.clicked.connect(lambda x: self.gui_set_strategy(x.row()))  # 전략설정 선택
+            self.tblStrategy.clicked.connect(lambda x: self.gui_set_strategy(x.row()))  # 실행전략 선택
             self.btnLoadCondition.clicked.connect(self.gui_strategy_reload)             # 검색식 재로드
-            self.btnTabLoadStrategy.clicked.connect(self.gui_strategy_load)             # 전략설정 로드
+            self.btnTabLoadStrategy.clicked.connect(self.gui_strategy_load)             # 실행전략 로드
             self.btnConditionBuy.clicked.connect(lambda: self.gui_strategy_get(kind='buy')) # 매수전략 선택
             self.btnConditionSell.clicked.connect(lambda: self.gui_strategy_get(kind='sell'))# 매도전략 선택
             self.btnBuyClear.clicked.connect(lambda: self.gui_strategy_get(clear='buy'))    # 매수전략 클리어
             self.btnSellClear.clicked.connect(lambda: self.gui_strategy_get(clear='sell'))  # 매도전략 클리어
-            self.btnStrategySave.clicked.connect(self.gui_strategy_save)                # 전략설정 저장
-            self.btnStrategyDelete.clicked.connect(self.gui_strategy_delete)            # 전략설정 삭제
+            self.btnStrategySave.clicked.connect(self.gui_strategy_save)                # 실행전략 저장
+            self.btnStrategyDelete.clicked.connect(self.gui_strategy_delete)            # 실행전략 삭제
 
             self.btnRestartAll.clicked.connect(self.gui_strategy_restart)                 # 전략매매 재시작
             self.btnStartAll.clicked.connect(lambda: self.gui_strategy_start(question=True))                   # 전략매매 시작
@@ -223,30 +223,119 @@ class GUI(QMainWindow, form_class):
 
     def gui_monitor_load(self):
         self.btnLoadMonitor.setEnabled(False)
-        gm.dmy.order('admin', 'pri_fx얻기_매매목록', self.dtMonitor.date().toString("yyyy-MM-dd"))
-        self.gui_fx갱신_매매정보()
+        date_text = self.dtMonitor.date().toString("yyyy-MM-dd")
+        try:
+            gm.매매목록.delete()
+            dict_list = gm.dmy.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
+            if dict_list is not None and len(dict_list) > 0:
+                gm.매매목록.set(data=dict_list)
+                logging.info(f"매매목록 얻기 완료: data count={gm.매매목록.len()}")
+            else:
+                logging.warning(f'매매목록 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+        except Exception as e:
+            logging.error(f'매매목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
+        gm.매매목록.update_table_widget(self.tblMonitor, stretch=True)
         self.btnLoadMonitor.setEnabled(True)
 
     def gui_daily_load(self):
         self.btnLoadDaily.setEnabled(False)
-        gm.dmy.order('admin', 'pri_fx얻기_매매일지', self.dtDaily.date().toString("yyyyMMdd"))
+        date_text = self.dtDaily.date().toString("yyyyMMdd")
+        try:
+            gm.일지합산.delete()
+            gm.일지목록.delete()
+            data = []
+            input = {'계좌번호':gm.config.account, '비밀번호': '', '기준일자': date_text, '단주구분': 2, '현금신용구분': 0}
+            rqname = '일지합산'
+            trcode = 'opt10170'
+            output = gm.tbl.hd일지합산['컬럼']
+            next = '0'
+            screen = dc.scr.화면['일지합산']
+            data, remain = gm.dmy.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+            if data:
+                for i, item in enumerate(data):
+                    item.update({'순번':i})
+                gm.일지합산.set(data=data)
+                logging.info(f'매매일지 합산 얻기 완료: date:{date_text}, data:\n{data}')
+            else:
+                logging.warning(f'매매일지 합산 얻기 실패: date:{date_text}, data:{data}')
+
+            dict_list = []
+            input = {'계좌번호':gm.config.account, '비밀번호': '', '기준일자': date_text, '단주구분': 2, '현금신용구분': 0} # 단주구분:2=당일매도전체. 1=당일매수에대한매도
+            rqname = '일지목록'
+            trcode = 'opt10170'
+            output = gm.tbl.hd일지목록['컬럼']
+            screen = dc.scr.화면['일지목록']
+            next = '0'
+            while True:
+                data, remain = gm.dmy.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+                logging.debug(f'일지목록 얻기: data count={len(data)}, remain={remain}')
+                dict_list.extend(data)
+                if not remain: break
+                next = '2'
+            if not data:
+                logging.warning(f'매매일지 목록 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+                return
+
+            dict_list = [{**item, '종목코드': item['종목코드'][1:]} for item in dict_list]
+            gm.일지목록.set(data=dict_list)
+            logging.info(f"일지목록 얻기 완료: date:{date_text}, data count={gm.일지목록.len()}")
+
+        except Exception as e:
+            logging.error(f'매매일지 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
         self.gui_fx갱신_일지정보()
         self.btnLoadDaily.setEnabled(True)
 
     def gui_deposit_load(self):
         self.btnDeposit.setEnabled(False)
-        gm.dmy.order('admin', 'pri_fx얻기_예수금')
+        try:
+            dict_list = []
+            rqname = '예수금'
+            trcode = 'opw00001'
+            input = {'계좌번호':gm.config.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '3'}
+            output = gm.tbl.hd예수금['컬럼']
+            next = '0'
+            screen = dc.scr.화면['예수금']
+            data, remain = gm.dmy.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+            if data:
+                for i, item in enumerate(data):
+                    item.update({'순번':i})
+                gm.예수금.set(data=data)
+                row = gm.예수금.get(key=0)
+                logging.info(f'예수금 얻기 완료: 예수금={row["예수금"]:,}원 출금가능금액={row["출금가능금액"]:,}원 주문가능금액={row["주문가능금액"]:,}원')
+            else:
+                logging.warning(f'예수금 얻기 실패: dict_list={dict_list}')
+
+        except Exception as e:
+            logging.error(f'예수금 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
         self.gui_fx갱신_예수금정보()
         self.btnDeposit.setEnabled(True)
 
     def gui_conclusion_load(self):
         self.btnLoadConclusion.setEnabled(False)
-        gm.dmy.order('admin', 'pri_fx얻기_체결목록', self.dtConclusion.date().toString("yyyyMMdd"))
+        date_text = self.dtConclusion.date().toString("yyyyMMdd")
+        try:
+            gm.체결목록.delete()
+            dict_list = gm.dmy.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
+            if dict_list is not None and len(dict_list) > 0:
+                gm.체결목록.set(data=dict_list)
+                손익금액, 매수금액 = gm.체결목록.sum(column=['손익금액', '매수금액'], filter={'매도수량': ('==', '@매수수량')})
+                손익율 = round(손익금액 / 매수금액 * 100, 2) if 매수금액 else 0
+                logging.info(f"체결목록 얻기 완료: data count={gm.체결목록.len()}, 손익금액={손익금액:,}원, 손익율={손익율:,.2f}%")
+            else:
+                logging.warning(f'체결목록 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+
+        except Exception as e:
+            logging.error(f'체결목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
         self.gui_fx갱신_체결정보()
         self.btnLoadConclusion.setEnabled(True)
 
     def gui_chart_combo_add(self, item):
-        self.cbChartCode.addItem(item)
+        if item not in [self.cbChartCode.itemText(i) for i in range(self.cbChartCode.count())]:
+            self.cbChartCode.addItem(item)
 
     def gui_chart_load(self):
         self.btnChartLoad.setEnabled(False)
@@ -256,7 +345,28 @@ class GUI(QMainWindow, form_class):
         tick = int(self.cbChartTick.currentText()) if item in ('분봉', '틱봉') else 1
         code = self.cbChartCode.currentText().split()[0]
         name = self.cbChartCode.currentText().split()[1]
-        gm.dmy.order('admin', 'pri_fx얻기_차트자료', date_text, code, cycle, tick)
+        try:
+            logging.debug(f'차트자료 얻기: date:{date_text}, code:{code}, cycle:{cycle}, tick:{tick}')
+            gm.차트자료.delete()
+            min_check = cycle in ('mi', 'tk')
+            if min_check: params = (date_text, cycle, tick, code,)
+            else: params = (date_text, cycle,)
+            selected_sql = dc.ddb.MIN_SELECT_DATE if min_check else dc.ddb.DAY_SELECT_DATE
+            dict_list = gm.dmy.answer('dbm', 'execute_query', sql=selected_sql, db='chart', params=params)
+            if dict_list is not None and len(dict_list) > 0:
+                if min_check:
+                    dict_list = [{ **item, '일자': item['체결시간'][:8], '시간': item['체결시간'][8:], } for item in dict_list]
+                else:
+                    dict_list = [{ **item, '일자': item['일자'], '시간': '', '종목명': gm.dmy.answer('api', 'GetMasterCodeName', item['종목코드']), } for item in dict_list]
+
+                gm.차트자료.set(data=dict_list)
+                logging.info(f"차트자료 얻기 완료: data count={gm.차트자료.len()}")
+            else:
+                logging.warning(f'차트자료 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+
+        except Exception as e:
+            logging.error(f'체결목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
         gm.차트자료.update_table_widget(self.tblChart, header=0 if cycle in ('mi', 'tk') else 1)
         gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
         self.btnChartLoad.setEnabled(True)
@@ -271,8 +381,9 @@ class GUI(QMainWindow, form_class):
             response = QMessageBox.question(None, '전략매매 실행', '전략매매를 실행하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
         else:
             response = True
+            
         if response:
-            gm.dmy.order('admin', 'cdn_fx실행_전략매매')
+            gm.dmy.order('stg', 'start')
             if not any([gm.매수문자열, gm.매도문자열]):
                 gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
                 return
@@ -286,21 +397,20 @@ class GUI(QMainWindow, form_class):
         if question:
             response = QMessageBox.question(None, '전략매매 중지', '전략매매를 중지하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
         if response:
-            gm.dmy.order('admin', 'cdn_fx중지_전략매매')
+            gm.dmy.order('stg', 'stop')
             self.set_strategy_toggle(run=False)
             gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
         else:
             logging.debug('전략매매 중지 취소')
 
     def gui_strategy_changed(self):
-        logging.debug('')
         pass
 
     def gui_strategy_reload(self):
-        logging.debug('메세지 발행: Work(cdn_fx요청_서버전략, {})')
+        logging.debug('get_conditions: 요청_서버전략')
         gm.dmy.order('admin', 'get_conditions')
         self.gui_fx채움_조건콤보()
-        gm.toast.toast('전략매매를 다시 읽어 왔습니다.', duration=3000)
+        gm.toast.toast('매매전략을 다시 읽어 왔습니다.', duration=3000)
 
     def gui_chart_cycle_changed(self, item):
         self.cbChartTick.clear()
@@ -425,8 +535,6 @@ class GUI(QMainWindow, form_class):
             gm.주문목록.delete(key=key)
             return
         
-        전략 = row['전략']
-        전략번호 = int(전략[-2:])
         odrerno = row['주문번호']
         code = row['종목코드']
 
@@ -445,7 +553,7 @@ class GUI(QMainWindow, form_class):
         }
 
         # 주문 전송
-        gm.dmy.order('admin', 'com_SendOrder', 전략번호, **send_data)
+        gm.dmy.order('admin', 'com_SendOrder', **send_data)
 
     # 스크립트 표시 ---------------------------------------------------------------------------------------------
     def gui_script_show(self):
@@ -625,7 +733,7 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'변수 저장 오류: {type(e).__name__} - {e}', exc_info=True)
     
-    # 전략설정 탭 ----------------------------------------------------------------------------------------
+    # 실행전략 탭 ----------------------------------------------------------------------------------------
     def gui_tabs_init(self):
         try:
             전략명칭 = gm.실행전략.get('전략명칭', '') if gm.실행전략 else ''
@@ -945,13 +1053,6 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'전략정의 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_fx갱신_매매정보(self):
-        try:
-            gm.매매목록.update_table_widget(self.tblMonitor, stretch=True)
-
-        except Exception as e:
-            logging.error(f'매매정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
-
     def gui_fx갱신_일지정보(self):
         try:
             row = gm.일지합산.get(key=0)
@@ -1017,7 +1118,7 @@ class GUI(QMainWindow, form_class):
             logging.error(f'체결정보 갱신 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_fx전시_전략정의(self):
-        """전략설정 위젯에 표시"""
+        """실행전략 위젯에 표시"""
         try:
             if not gm.strategy_row: return
             for key, widget_name in dc.const.WIDGET_MAP.items():
@@ -1051,7 +1152,7 @@ class GUI(QMainWindow, form_class):
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
             self.lbl2.setText('연결됨' if gm.connected else '끊어짐')
             self.lbl2.setStyleSheet("color: green;" if gm.connected else "color: red;")
-            self.lbl4.setText(gm.dmy.frq_answer('admin', 'com_market_status'))
+            #self.lbl4.setText(gm.dmy.frq_answer('admin', 'com_market_status'))
 
             # 큐 메시지 처리
             while not gm.qwork['msg'].empty():

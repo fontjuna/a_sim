@@ -1247,7 +1247,7 @@ class BaseModel:
         self.shared_qes = shared_qes
         self.args = args
         self.kwargs = kwargs
-        self.instance = self.cls(*self.args, **self.kwargs)
+        self.instance = None #self.cls(*self.args, **self.kwargs)
         self.my_qes = shared_qes[name]
         self.running = False
         self.timeout = 15
@@ -1273,7 +1273,7 @@ class BaseModel:
         self.running = True
         if hasattr(self.kwargs, 'timeout'):
             self.timeout = self.kwargs.get('timeout')
-        #self.instance = self.cls(*self.args, **self.kwargs)
+        self.instance = self.cls(*self.args, **self.kwargs)
         self.instance.order = self.order
         self.instance.answer = self.answer
         self.instance.frq_order = self.frq_order

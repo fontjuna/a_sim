@@ -410,7 +410,7 @@ class OnReceiveRealConditionSim(QThread):
             'cond_name': self.cond_name,
             'cond_index': int(self.cond_index),
          }
-         self.order('admin', 'on_fx실시간_조건검색', **data)
+         self.order('stg', 'on_fx실시간_조건검색', **data)
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -1017,7 +1017,7 @@ class APIServer:
             'cond_index': cond_index
         }
         logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
-        self.order('admin', 'on_fx실시간_조건검색', **data)
+        self.order('stg', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
         # sim_no = 0일 때만 사용 (실제 API 서버)
@@ -1036,7 +1036,7 @@ class APIServer:
                     self.frq_order('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.frq_order('admin', 'on_fx실시간_장운영감시', **job)
-                logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
+                #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
@@ -1054,8 +1054,8 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            if gubun == '0': self.order('admin', 'odr_recieve_chegyeol_data', dictFID)
-            elif gubun == '1': self.order('admin', 'odr_recieve_balance_data', dictFID)
+            if gubun == '0': self.order('odr', 'odr_recieve_chegyeol_data', dictFID)
+            elif gubun == '1': self.order('odr', 'odr_recieve_balance_data', dictFID)
             #logging.debug(f"ChejanData: API 서버에서 보냄 {gubun} {dictFID['종목코드']} {dictFID['종목명']}")
 
         except Exception as e:
@@ -1071,7 +1071,7 @@ class APIServer:
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                self.order('admin', 'odr_recieve_balance_data', dictFID)
+                self.order('odr', 'odr_recieve_balance_data', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1109,7 +1109,7 @@ class APIServer:
 
                     portfolio.process_order(dictFID)
 
-                self.order('admin', 'odr_recieve_chegyeol_data', dictFID)
+                self.order('odr', 'odr_recieve_chegyeol_data', dictFID)
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------
