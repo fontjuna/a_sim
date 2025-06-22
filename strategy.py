@@ -81,16 +81,16 @@ class Strategy:
         """매수 조건 충족 여부를 확인하는 메소드"""
         name = gm.dict종목정보.get(code, next='종목명')
 
-        #"""
         if self.매수스크립트적용:
             if cht_dt.is_code_registered(code):
                 try:
                     result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
+                    if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
                     if self.매수스크립트AND and not result.get('result', False): return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
                     logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
                 except Exception as e:
                     logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
-        #"""
+
         if not gm.config.sim_on:
             status_market = self.com_market_status()
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
@@ -208,15 +208,16 @@ class Strategy:
             if self.매도지정가:
                 send_data['price'] = hoga(현재가, self.매도호가)
                 send_data['msg'] = '매도지정'
-            #"""
+
             if self.매도스크립트적용:
                 if cht_dt.is_code_registered(code):
                     result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
-                    if self.매도스크립트OR and result.get('result', True): 
+                    if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
+                    if self.매도스크립트OR and result.get('result', False): 
                         logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
                         send_data['msg'] = '전략매도'
                         return True, send_data, f"전략매도: {code} {종목명}"
-            #"""
+
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
                 if self.매도스크립트적용 and self.매도스크립트AND and not result.get('result', False): return False, {}, f"매도스크립트 조건 불충족: {code} {종목명}"
                 send_data['msg'] = '검색매도'
@@ -376,7 +377,7 @@ class Strategy:
 
     def cleanup(self):
         try:
-            self.stg_fx실행_전략마무리()
+            self.stg_fx실행_매매종료()
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()
@@ -392,7 +393,7 @@ class Strategy:
                 logging.warning(f'전략 실행 실패 - 전략명칭={self.전략명칭} {msg}')
                 return
             
-            self.stg_fx실행_전략매매시작()
+            self.stg_fx실행_매매시작()
 
             gm.counter.set_strategy(self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
@@ -402,7 +403,7 @@ class Strategy:
         except Exception as e:
             logging.error(f'전략 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def stg_fx실행_전략매매시작(self):
+    def stg_fx실행_매매시작(self):
         try:
             def run_trade(cond_index, cond_name, trade_type):
                 condition = f'{int(cond_index):03d} : {cond_name.strip()}'
@@ -426,7 +427,7 @@ class Strategy:
         except Exception as e:
             logging.error(f'전략 매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def stg_fx실행_전략마무리(self, buy_stop=True, sell_stop=True):
+    def stg_fx실행_매매종료(self, buy_stop=True, sell_stop=True):
         try:
             if not (gm.매수문자열 or  gm.매도문자열): return
             if self.end_timer:
@@ -438,13 +439,8 @@ class Strategy:
 
             self.stg_fx중지_전략매매(buy_stop, sell_stop)
 
-            if buy_stop:
-                gm.매수문자열 = ""
-            if sell_stop:
-                gm.매도문자열 = ""
-
-            if buy_stop and not sell_stop:
-                gm.toast.toast(f'매수전략 {gm.매수문자열}이 종료되었습니다.')
+            if buy_stop: gm.매수문자열 = ""
+            if sell_stop: gm.매도문자열 = ""
 
         except Exception as e:
             logging.error(f'전략 마무리 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -627,7 +623,7 @@ class Strategy:
                 else:
                     end_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.stop_time}", '%Y-%m-%d %H:%M')
                     remain_secs = max(0, (end_time - now).total_seconds())
-                    threading.Timer(remain_secs, lambda: self.stg_fx실행_전략마무리(sell_stop=self.매도도같이적용)).start()
+                    threading.Timer(remain_secs, lambda: self.stg_fx실행_매매종료(sell_stop=self.매도도같이적용)).start()
                 if current < self.start_time:
                     start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.start_time}", '%Y-%m-%d %H:%M')
                     delay_secs = max(0, (start_time - now).total_seconds())

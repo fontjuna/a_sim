@@ -377,7 +377,7 @@ class GUI(QMainWindow, form_class):
         self.gui_strategy_stop(question=False)
         self.gui_strategy_reload()
         self.gui_strategy_start(question=False)
-
+    
     def gui_strategy_start(self, question=True):
         if question:
             response = QMessageBox.question(None, '전략매매 실행', '전략매매를 실행하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
@@ -395,7 +395,7 @@ class GUI(QMainWindow, form_class):
             self.set_strategy_toggle(run=True)
         else:
             logging.debug('전략매매 시작 취소')
-
+            
     def gui_strategy_stop(self, question=True):
         response = True
         if question:

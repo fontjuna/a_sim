@@ -1797,7 +1797,7 @@ class ScriptManager:
             kwargs = {}
         
         # 종목코드 가져오기 (없으면 기본값)
-        code = kwargs.get('code')  # 기본값 삼성전자
+        code = kwargs.get('code') 
         if code is None:
             result_dict['error'] = f"종목코드가 지정되지 않았습니다."
             return result_dict
@@ -2064,7 +2064,12 @@ def {script_name}(**user_kwargs):
         try:
             import inspect
             frame = inspect.currentframe().f_back
-            context_kwargs = frame.f_locals.get('kwargs', {})
+            context_kwargs = {}
+            while frame:
+                if frame.f_code.co_name == 'execute_script':
+                    context_kwargs = frame.f_locals.get('kwargs', {})
+                    break
+                frame = frame.f_back
         except:
             context_kwargs = {}
         
