@@ -560,6 +560,10 @@ class APIServer:
 
         self.counter = 0 # 테스트용
 
+    def api_start(self):
+        logging.info(f"{self.__class__.__name__} 시작 중...")
+        self.running = True
+        
     def api_stop(self):
         logging.info(f"APIServer 종료 시작 (sim_no={self.sim_no}) {self.__class__.__name__} 중지 중...")
         self.running = False     
@@ -571,10 +575,6 @@ class APIServer:
         self.connected = False
         logging.info("APIServer 종료 완료")
 
-    def api_start(self):
-        logging.info(f"{self.__class__.__name__} 시작 중...")
-        self.running = True
-        
     def get_status(self):
         """상태 확인"""
         return {
@@ -612,7 +612,7 @@ class APIServer:
                 logging.debug(f'len={len(selected_codes)} codes={selected_codes}')
             else:
                 logging.warning('GetCodeListByMarket 결과 없음 *************')
-                raise
+                raise Exception('GetCodeListByMarket("NXT") 결과 없음')
 
             sim.ticker = {}
             for code in selected_codes:
@@ -1140,12 +1140,9 @@ class APIServer:
                     8: ETF, 9: 하이일드펀드, 10: 코스닥, 30: K-OTC, 50: 코넥스(KONEX)
         :return: 종목코드 리스트 예: ["000020", "000040", ...]
         """
-        if self.sim_no == 1:
-            return list(sim.ticker.keys())
-        else:
-            data = self.ocx.dynamicCall("GetCodeListByMarket(QString)", market)
-            tokens = data.split(';')[:-1]
-            return tokens
+        data = self.ocx.dynamicCall("GetCodeListByMarket(QString)", market)
+        tokens = data.split(';')[:-1]
+        return tokens
         
     # 기타 함수 ----------------------------------------------------------------------------------------------------
     def GetCommDataEx(self, trcode, rqname):

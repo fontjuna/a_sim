@@ -566,7 +566,6 @@ class Strategy:
                 gm.set조건감시.remove(code)
                 logging.debug(f'실시간 감시 해지: {gm.set조건감시}')
 
-
         except Exception as e:
             logging.error(f'{kind}조건 이탈 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
