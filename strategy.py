@@ -163,7 +163,8 @@ class Strategy:
         is_ok, send_data, reason = self.is_buy(code, rqname, price) # rqname : 전략
         if is_ok:
             logging.info(f'매수결정: {reason}\nsend_data={send_data}')
-            self.order('admin', 'com_SendOrder', **send_data)
+            #self.order('admin', 'com_SendOrder', **send_data)
+            gm.list주문목록.put(send_data)
         else:
             logging.info(f'매수안함: {reason} send_data={send_data}')
             key = f'{code}_매수'
@@ -305,9 +306,11 @@ class Strategy:
             if isinstance(send_data, list):
                 logging.debug(f'** 복수 매도 주문목록 **: {send_data}')
                 for data in send_data:
-                    self.order('admin', 'com_SendOrder', **data)
+                    #self.order('admin', 'com_SendOrder', **data)
+                    gm.list주문목록.put(data)
             else:
-                self.order('admin', 'com_SendOrder', **send_data)
+                #self.order('admin', 'com_SendOrder', **send_data)
+                gm.list주문목록.put(send_data)
         else:
             key = f'{row["종목번호"]}_매도'
             if gm.주문목록.in_key(key):
@@ -332,7 +335,8 @@ class Strategy:
                 'ordno': order_no
             }
             logging.debug(f'주문취소: {order_no} {send_data}')
-            self.order('admin', 'com_SendOrder', **send_data)
+            #self.order('admin', 'com_SendOrder', **send_data)
+            gm.list주문목록.put(send_data)
         except Exception as e:
             logging.error(f'주문취소 오류: {type(e).__name__} - {e}', exc_info=True)
 

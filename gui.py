@@ -54,6 +54,10 @@ class GUI(QMainWindow, form_class):
             self.dtMonitor.setCalendarPopup(True)
             self.dtMonitor.setDate(today)
 
+            self.dtSimDate.setMaximumDate(today)
+            self.dtSimDate.setCalendarPopup(True)
+            self.dtSimDate.setDate(today)
+
             self.tblScript.setColumnCount(3)
             self.tblScript.setHorizontalHeaderLabels(['이름', '스크립트', '변수'])
             self.btnScriptSave.setEnabled(False)
@@ -66,6 +70,11 @@ class GUI(QMainWindow, form_class):
 
             # 폼 초기화 시
             self.txtScript.setAcceptRichText(False)  # 서식 있는 텍스트 거부            
+
+            if gm.config.sim_no == 0: self.rbReal.setChecked(True)
+            elif gm.config.sim_no == 1: self.rbSim1.setChecked(True)
+            elif gm.config.sim_no == 2: self.rbSim2.setChecked(True)
+            elif gm.config.sim_no == 3: self.rbSim3.setChecked(True)
 
             statusBar = QStatusBar()
             self.setStatusBar(statusBar)
@@ -110,16 +119,35 @@ class GUI(QMainWindow, form_class):
             self.btnLoadConclusion.clicked.connect(self.gui_conclusion_load)            # 체결목록 로드
             self.btnLoadMonitor.clicked.connect(self.gui_monitor_load)                  # 당일 매매 목록 로드
             self.btnChartLoad.clicked.connect(self.gui_chart_load)                      # 차트 로드
-            
+
+            self.btnSimStart.clicked.connect(lambda: self.gui_strategy_restart(sim=True))                   # 시뮬레이션 재시작
+
             self.rbInfo.toggled.connect(lambda: self.gui_log_level_set('INFO', self.rbInfo.isChecked()))
             self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
 
             # 수동 주문 / 주문 취소
             self.btnTrOrder.clicked.connect(self.gui_tr_order)                          # 매매 주문 
             self.btnTrCancel.clicked.connect(self.gui_tr_cancel)                        # 매매 취소 
-            self.leTrCode.editingFinished.connect(self.gui_tr_code_changed)             # 종목코드 변경
+            self.leTrCode.editingFinished.connect(lambda: self.gui_tr_code_changed(kind='tr'))             # 종목코드 변경
             self.tblBalanceHeld.cellClicked.connect(self.gui_balance_held_select)       # 잔고목록 선택
             self.tblReceiptList.cellClicked.connect(self.gui_receipt_list_select)       # 주문목록 선택
+
+            # 시뮬레이션 실행일자 데이타 가져오기
+            self.btnSimReadDay.clicked.connect(self.gui_sim_read_day)
+
+            # 시뮬레이션 차트데이타
+            self.btnSimAddDay.clicked.connect(self.gui_sim_add_day)
+            self.btnSimDelDay.clicked.connect(self.gui_sim_del_day)
+            self.btnSimClearDay.clicked.connect(self.gui_sim_clear_day)
+            self.leSimCodeDay.editingFinished.connect(lambda: self.gui_tr_code_changed(kind='day'))             # 종목코드 변경
+            self.tblSimDaily.clicked.connect(lambda x: self.gui_sim_daily_select(x.row()))  
+
+            # 시뮬레이션 수동데이타
+            self.btnSimAddMan.clicked.connect(self.gui_sim_add_manual)
+            self.btnSimDelMan.clicked.connect(self.gui_sim_del_manual)
+            self.btnSimClearMan.clicked.connect(self.gui_sim_clear_manual)
+            self.leSimCode.editingFinished.connect(lambda: self.gui_tr_code_changed(kind='man'))             # 종목코드 변경
+            self.tblSimManual.clicked.connect(lambda x: self.gui_sim_manual_select(x.row()))  # 수동데이타 선택
 
             # 스크립트
             self.tblScript.clicked.connect(lambda x: self.gui_script_select(x.row()))  # 스크립트 선택
@@ -373,30 +401,33 @@ class GUI(QMainWindow, form_class):
         gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
         self.btnChartLoad.setEnabled(True)
 
-    def gui_strategy_restart(self):
-        self.gui_strategy_stop(question=False)
+    def gui_strategy_restart(self, sim=False):
+        self.gui_strategy_stop(question=False, sim=sim)
         self.gui_strategy_reload()
-        self.gui_strategy_start(question=False)
+        self.gui_strategy_start(question=False, sim=sim)
     
-    def gui_strategy_start(self, question=True):
+    def gui_strategy_start(self, question=True, sim=False):
         if question:
             response = QMessageBox.question(None, '전략매매 실행', '전략매매를 실행하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
         else:
             response = True
             
         if response:
+            if sim: gm.config.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
+            gm.config.sim_on = gm.config.sim_no > 0
+            gm.dmy.order('api', 'api_init', sim_no=gm.config.sim_no)
             gm.stg = ThreadModel('stg', Strategy, gm.shared_qes)
             gm.stg.start()
-            gm.stg_run = True
-            if not any([gm.매수문자열, gm.매도문자열]):
+            if gm.매수문자열 + gm.매도문자열 == '':
                 gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
                 return
+            gm.stg_run = True
             gm.toast.toast('전략매매를 실행했습니다.', duration=3000)
             self.set_strategy_toggle(run=True)
         else:
             logging.debug('전략매매 시작 취소')
             
-    def gui_strategy_stop(self, question=True):
+    def gui_strategy_stop(self, question=True, sim=False):
         response = True
         if question:
             response = QMessageBox.question(None, '전략매매 중지', '전략매매를 중지하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
@@ -404,6 +435,7 @@ class GUI(QMainWindow, form_class):
             gm.stg_run = False
             gm.stg.stop()
             gm.stg = None
+            gm.dmy.order('api', 'thread_cleanup')
             self.set_strategy_toggle(run=False)
             gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
         else:
@@ -463,14 +495,16 @@ class GUI(QMainWindow, form_class):
             self.leTrCancelKey.setText(row['키'])
 
     # 수동 주문 ---------------------------------------------------------------------------------------------
-    def gui_tr_code_changed(self):
-        code = self.leTrCode.text()
+    def gui_tr_code_changed(self, kind='tr'):
+        code = self.leTrCode.text() if kind == 'tr' else self.leSimCodeDay.text() if kind == 'day' else self.leSimCode.text() if kind == 'man' else None
         if code:
-            self.leTrName.setText(gm.dmy.answer('api', 'GetMasterCodeName', code))
+            name = gm.dmy.answer('api', 'GetMasterCodeName', code)
+            if kind == 'tr': self.leTrName.setText(name)
+            elif kind == 'day': self.leSimNameDay.setText(name)
+            elif kind == 'man': self.leSimName.setText(name)
             
     def gui_tr_order(self):
         kind = '매수' if self.rbTrBuy.isChecked() else '매도'
-        전략번호 = 0
         code = self.leTrCode.text()
         price = self.spbTrPrice.value()
         qty = self.spbTrQty.value()
@@ -1148,6 +1182,106 @@ class GUI(QMainWindow, form_class):
 
         except Exception as e:
             logging.error(f'주문설정 표시 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    # 시뮬레이션 데이타 ---------------------------------------------------------------------------------------------
+    def gui_sim_read_day(self):
+        pass
+
+    def gui_sim_add_day(self):
+        code = self.leSimCodeDay.text()
+        if code:
+            name = gm.dmy.answer('api', 'GetMasterCodeName', code)
+            if name:
+                self.leSimNameDay.setText(name)
+        if name:
+            gm.당일종목.set(key='종목코드', data={'종목코드':code, '종목명':name})
+            gm.당일종목.update_table_widget(self.tblSimDaily)
+
+    def gui_sim_del_day(self):
+        try:
+            code = self.leSimCodeDay.text()
+            name = self.leSimNameDay.text()
+            if not name:
+                QMessageBox.warning(self, '알림', '삭제할 종목을 확인 하세요.')
+                return
+            
+            if not gm.당일종목.in_key(code):
+                QMessageBox.warning(self, '알림', f'{code} {name} 종목이 존재하지 않습니다.')
+                return
+
+            reply = QMessageBox.question(self, '삭제 확인',
+                                        f'{code} {name} 종목을 삭제하시겠습니까?',
+                                        QMessageBox.Yes | QMessageBox.No,
+                                        QMessageBox.No)
+
+            if reply == QMessageBox.Yes:
+                # 설정 삭제
+                result = gm.당일종목.delete(key=code)
+                if result:
+                    gm.당일종목.update_table_widget(self.tblSimDaily)
+                    self.gui_sim_clear_day()
+
+        except Exception as e:
+            logging.error(f'당일종목 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_sim_clear_day(self):
+        self.leSimCodeDay.setText('')
+        self.leSimNameDay.setText('')
+
+    def gui_sim_daily_select(self, row_index):
+        if row_index >= 0:
+            data = gm.당일종목.get(row_index)
+            if data:
+                self.leSimCodeDay.setText(data['종목코드'])
+                self.leSimNameDay.setText(data['종목명'])
+
+    def gui_sim_add_manual(self):
+        code = self.leSimCode.text()
+        if code:
+            name = gm.dmy.answer('api', 'GetMasterCodeName', code)
+            if name:
+                self.leSimName.setText(name)
+        if name:
+            gm.수동종목.set(data={'종목코드':code, '종목명':name}, key='종목코드')
+            gm.수동종목.update_table_widget(self.tblSimManual)
+
+    def gui_sim_del_manual(self):
+        try:
+            code = self.leSimCode.text()
+            name = self.leSimName.text()
+            if not name:
+                QMessageBox.warning(self, '알림', '삭제할 종목을 확인 하세요.')
+                return
+            
+            if not gm.수동종목.in_key(code):
+                QMessageBox.warning(self, '알림', f'{code} {name} 종목이 존재하지 않습니다.')
+                return
+
+            reply = QMessageBox.question(self, '삭제 확인',
+                                        f'{code} {name} 종목을 삭제하시겠습니까?',
+                                        QMessageBox.Yes | QMessageBox.No,
+                                        QMessageBox.No)
+
+            if reply == QMessageBox.Yes:
+                # 설정 삭제
+                result = gm.수동종목.delete(key=code)
+                if result:
+                    gm.수동종목.update_table_widget(self.tblSimManual)
+                    self.gui_sim_clear_manual()
+
+        except Exception as e:
+            logging.error(f'수동종목 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_sim_clear_manual(self):
+        self.leSimCode.setText('')
+        self.leSimName.setText('')
+
+    def gui_sim_manual_select(self, row_index):
+        if row_index >= 0:
+            data = gm.수동종목.get(row_index)
+            if data:
+                self.leSimCode.setText(data['종목코드'])
+                self.leSimName.setText(data['종목명'])
 
     # 상태 표시 -------------------------------------------------------------------------------------
     def gui_update_status(self, data=None):

@@ -1,7 +1,9 @@
 from gui import GUI
-from admin import Admin, OrderManager, ProxyAdmin, OrderCommander
-from public import init_logger, dc, gm, Work
-from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData
+from admin import Admin
+from worker import SimpleManager
+from public import init_logger, dc, gm
+from classes import Toast, set_tables
+from chart import ChartUpdater, DummyWorker
 from dbm_server import DBMServer
 from api_server import APIServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
@@ -11,8 +13,6 @@ import logging
 import time
 import sys
 from datetime import datetime
-from chart import ChartUpdater, DummyClass
-from strategy import Strategy
 
 init_logger()
 
@@ -76,19 +76,19 @@ class Main:
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
-            gm.main = self
             gm.toast = Toast()
-            gm.dmy = MainModel('dmy', DummyClass, gm.shared_qes)
+            gm.main = Main()
+            gm.dmy = SimpleManager('dmy', DummyWorker, 'thread')
             gm.dmy.start()
-            gm.admin = MainModel('admin', Admin, gm.shared_qes)
+            gm.admin = SimpleManager('admin', Admin, None)
             gm.admin.start()
-            gm.api = ProcessModel('api', APIServer, gm.shared_qes)
+            gm.api = SimpleManager('api', APIServer, None)
             gm.api.start()
-            gm.dmy.order('api', 'api_init', gm.config.sim_no)
-            gm.dmy.order('api', 'CommConnect', False)
-            gm.dbm = ProcessModel('dbm', DBMServer, gm.shared_qes)
+            gm.api.order('api', 'api_init', gm.config.sim_no)
+            gm.api.order('api', 'CommConnect', False)
+            gm.dbm = SimpleManager('dbm', DBMServer, 'process')
             gm.dbm.start()
-            gm.ctu = ThreadModel('ctu', ChartUpdater, gm.shared_qes)
+            gm.ctu = SimpleManager('ctu', ChartUpdater, 'thread')
             gm.ctu.start()
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -100,15 +100,14 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    connected = gm.dmy.answer('api', 'api_connected')
+                    connected = gm.api.answer('api', 'api_connected')
                     if connected: break
                     logging.debug(f"로그인 대기 중: {connected}")
                     time.sleep(0.5)
-
-            gm.dmy.order('admin', 'init')
-            while not gm.admin_init: time.sleep(0.1)
-            
+            gm.api.order('api', 'set_tickers')
+            gm.admin.order('admin', 'init')
             logging.debug('prepare : admin 초기화 완료')
+
             if gm.config.gui_on: gm.gui.init()
             logging.debug('prepare : gui 초기화 완료')
 
@@ -116,27 +115,13 @@ class Main:
             logging.error(str(e), exc_info=e)
             exit(1)
 
-    def trade_start(self):
-        logging.debug('trade_start')
-        gm.odr = ThreadModel('odr', OrderManager, gm.shared_qes)
-        gm.odc = ThreadModel('odc', OrderCommander, gm.shared_qes)
-        gm.stg = ThreadModel('stg', Strategy, gm.shared_qes)
-        gm.prx = ThreadModel('prx', ProxyAdmin, gm.shared_qes)
-        gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
-        gm.prx.start()
-        gm.odr.start()
-        gm.odc.start()
-        gm.stg.start()
-        gm.config.ready = True
-        gm.dmy.order('ctu', 'latch_off')
-        gm.ctu.order('dmy', 'latch_off')
-
     def run(self):
         if gm.config.gui_on: 
             self.splash.close()
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
+            gm.admin.order('admin', 'trade_start')
             return self.app.exec_() if gm.config.gui_on else self.console_run()
 
     def console_run(self):
@@ -159,17 +144,38 @@ class Main:
         self.set_proc()
         self.prepare()
         self.show()
-        self.trade_start()
         self.run()
 
     def cleanup(self):
         try:
             if hasattr(gm, 'admin') and gm.admin:
-                gm.dmy.order('admin', 'cdn_fx중지_전략매매')
+                gm.admin.cdn_fx중지_전략매매()
                 
-            shutdown_list = ['ctu', 'api', 'dbm']
-            for name in shutdown_list:
-                gm.shared_qes[name].request.put(QData(sender=name, method='stop'))
+            from worker import ComponentRegistry
+            all_components = ComponentRegistry._components.copy()
+            
+            # 종료 순서 정의 (중요: 의존성 역순)
+            shutdown_order = ['stg', 'dmy', 'ctu', 'api', 'dbm', 'admin']
+            
+            # 순서대로 종료
+            for name in shutdown_order:
+                if component := all_components.get(name):
+                    try:
+                        if hasattr(component, 'stop'):          
+                            component.stop()
+                        logging.info(f"[Main] {name.upper()} 종료")
+                    except Exception as e:
+                        logging.error(f"[Main] {name.upper()} 종료 오류: {e}")
+            
+            # 혹시 누락된 컴포넌트들 처리
+            for name, component in all_components.items():
+                if name not in shutdown_order:
+                    try:
+                        if hasattr(component, 'stop'):
+                            component.stop()
+                        logging.info(f"[Main] {name.upper()} (추가) 종료")
+                    except Exception as e:
+                        logging.error(f"[Main] {name.upper()} (추가) 종료 오류: {e}")
             
             # 프로세스 강제 종료
             self._force_exit()
@@ -203,14 +209,14 @@ if __name__ == "__main__":
         logging.info(f"{'#'*10} LIBERANIMO logiacl intelligence enhanced robo aotonomic investment management operations START {'#'*50}")
         main = Main()
         exit_code = main.main()
-        logging.info(f"{'#'*10} System Shutdown {'#'*10}")
+        logging.info(f"{'#'*10} System Shutdown {'#'*100}")
 
     except Exception as e:
         logging.error(str(e), exc_info=e)
         exit_code = 1
     finally:
         if not main.cleanup_flag: main.cleanup()
-        logging.info(f"{'#'*10} LIBERANIMO End {'#'*50}")
+        logging.info(f"{'#'*10} LIBERANIMO End {'#'*10}")
         # 로깅 종료는 가장 마지막에 수행
         logging.shutdown()
         sys.exit(exit_code)

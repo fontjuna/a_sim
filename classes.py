@@ -1230,6 +1230,7 @@ class QData:
     answer : bool = False
     args : tuple = field(default_factory=tuple)
     kwargs : dict = field(default_factory=dict)
+    callback : str = None
 
 class SharedQueue:
     def __init__(self):
@@ -1264,11 +1265,14 @@ class BaseModel:
                 elif queue_type == 'stream':
                     self.shared_qes[q_data.sender].payback.put(result)
             else:
-                getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
+                result = getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
+                if q_data.callback:
+                    callback_data = QData(sender=self.name, method=q_data.callback, answer=False, args=(result,))
+                    if queue_type == 'request':
+                        self.shared_qes[q_data.sender].request.put(callback_data)
+                    elif queue_type == 'stream':
+                        self.shared_qes[q_data.sender].stream.put(callback_data)
             
-            # 처리 통계 업데이트
-            #self.process_stats[queue_type] += 1
-
     def run(self):
         self.running = True
         if hasattr(self.kwargs, 'timeout'):

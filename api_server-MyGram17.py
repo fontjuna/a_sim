@@ -18,32 +18,42 @@ toast = None #Toast()
 ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
 req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
 def com_request_time_check(kind='order', cond_text = None):
+    start_time = time.time()
+    #logging.debug(f'com_request_time_check: Start')
     if kind == 'order':
         wait_time = ord.check_interval()
     elif kind == 'request':
         wait_time = max(req.check_interval(), req.check_condition_interval(cond_text) if cond_text else 0)
+
+    #logging.debug(f'대기시간: {wait_time} ms kind={kind} cond_text={cond_text}')
     if wait_time > 1666: # 1.666초 이내 주문 제한
         msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
             if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
         #toast.toast(msg, duration=dc.td.TOAST_TIME)
         logging.warning(msg)
         return False
+    
     elif wait_time > 1000:
         msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
         #toast.toast(msg, duration=wait_time)
         time.sleep((wait_time-10)/1000) 
         wait_time = 0
         logging.info(msg)
+
     elif wait_time > 0:
         msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
         #toast.toast(msg, duration=wait_time)
         logging.info(msg)
+
     time.sleep((wait_time+100)/1000) 
+
     if kind == 'order':
         ord.update_request_times()
     elif kind == 'request':
         if cond_text: req.update_condition_time(cond_text)
         else: req.update_request_times()
+
+    #logging.debug(f'com_request_time_check:Start ~ End: {time.time() - start_time} ms')
     return True
 
 real_thread = {}
@@ -400,7 +410,7 @@ class OnReceiveRealConditionSim(QThread):
             'cond_name': self.cond_name,
             'cond_index': int(self.cond_index),
          }
-         self.order('prx', 'on_fx실시간_조건검색', **data)
+         self.order('admin', 'on_fx실시간_조건검색', **data)
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -458,7 +468,7 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            self.frq_order('prx', 'on_fx실시간_주식체결', **job)
+            self.frq_order('admin', 'on_fx실시간_주식체결', **job)
 
             if self._stop_event.wait(timeout=0.2/len(sim.ticker)):
                return
@@ -516,7 +526,7 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               self.frq_order('prx', 'on_fx실시간_주식체결', **job)
+               self.frq_order('admin', 'on_fx실시간_주식체결', **job)
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -537,7 +547,7 @@ class OnReceiveRealDataSim3(QThread):
       self._stop_event.set()
 
 class APIServer:
-    app = QApplication(sys.argv)
+    #app = QApplication(sys.argv)
     def __init__(self):
         self.name = 'api'
         self.sim_no = 0
@@ -561,19 +571,52 @@ class APIServer:
         self.counter = 0 # 테스트용
 
     def api_stop(self):
-        logging.info(f"APIServer 종료 시작 (sim_no={self.sim_no}) {self.__class__.__name__} 중지 중...")
+        """APIServer 종료 시 실행되는 메서드"""
+        logging.info(f"APIServer 종료 시작 (sim_no={self.sim_no})")
+        print(f"{self.__class__.__name__} 중지 중...")
         self.running = False     
    
         # 시뮬레이션 모드에서만 추가 정리 필요
         if self.sim_no > 0:
-            self.thread_cleanup()
+            # 실시간 데이터 스레드 정리
+            global real_thread
+            for screen in list(real_thread.keys()):
+                if real_thread[screen]:
+                    try:
+                        logging.debug(f"실시간 데이터 스레드 정리: {screen}")
+                        real_thread[screen].stop()
+                        real_thread[screen].wait(1000)  # 최대 1초 대기
+                        del real_thread[screen]
+                    except Exception as e:
+                        logging.error(f"실시간 스레드 정리 오류: {e}")
+            
+            # 조건검색 스레드 정리
+            global cond_thread
+            for screen in list(cond_thread.keys()):
+                if cond_thread[screen]:
+                    try:
+                        logging.debug(f"조건검색 스레드 정리: {screen}")
+                        cond_thread[screen].stop()
+                        cond_thread[screen].wait(1000)  # 최대 1초 대기
+                        del cond_thread[screen]
+                    except Exception as e:
+                        logging.error(f"조건검색 스레드 정리 오류: {e}")
+        try:
+            pythoncom.CoUninitialize()
+        except Exception as e:
+            logging.error(f"CoUninitialize 오류: {e}")
         # 연결 상태 변경
         self.connected = False
         logging.info("APIServer 종료 완료")
 
+        return {"status": "stopped"}
+
     def api_start(self):
-        logging.info(f"{self.__class__.__name__} 시작 중...")
+        """컴포넌트 시작"""
+        print(f"{self.__class__.__name__} 시작 중...")
         self.running = True
+        # 시작 관련 코드
+        return {"status": "started"}
         
     def get_status(self):
         """상태 확인"""
@@ -585,21 +628,41 @@ class APIServer:
     
     def api_init(self, sim_no=0):
         try:
+            #global toast
+            #toast = Toast()
             import os
             pid = os.getpid()
+            #logging.debug(f'{self.name} api_init start (sim_no={sim_no}, pid={pid})')
             self.sim_no = sim_no
             
-            if self.sim_no != 1 and self.ocx is None:
+            if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용
+                # ActiveX 컨트롤 생성
                 logging.debug(f"ActiveX 컨트롤 생성 시작: KHOPENAPI.KHOpenAPICtrl.1")
                 self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+                #logging.debug(f"ActiveX 컨트롤 생성 완료: {self.ocx}")
+                
+                # logging.debug(f"시그널 슬롯 연결 시작")
                 self._set_signal_slots()
+                # logging.debug(f"시그널 슬롯 연결 완료")
+                
                 logging.debug(f'{self.name} api_init success: pid={pid} (Sim mode {self.sim_no}) ocx={self.ocx}')
             
-            if sim_no != 0: self.set_tickers()
+            # self.set_tickers()
         except Exception as e:
             logging.error(f"API 초기화 오류: {type(e).__name__} - {e}", exc_info=True)
 
     def set_tickers(self):
+        """종목 정보 설정 및 시뮬레이션 모드 변경"""
+        if self.sim_no is not None:
+            self.sim_no = self.sim_no
+            logging.info(f"시뮬레이션 모드 변경: {self.sim_no}")
+            
+            # 기존 쓰레드 정리
+            for screen in list(real_thread.keys()):
+                if real_thread[screen]:
+                    real_thread[screen].stop()
+                    del real_thread[screen]
+        
         if self.sim_no == 0:  # 실제 API 서버는 별도 처리 필요 없음
             pass
         elif self.sim_no == 1:  # 키움서버 없이 가상 데이터 사용
@@ -633,34 +696,25 @@ class APIServer:
         # 이 함수는 외부에서 구현 예정
         return []
     
+    def get_var(self, var_name, default=None):
+        return getattr(self, var_name, default)
+
+    def set_var(self, var_name, value):
+        setattr(self, var_name, value)
+        return True
+
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
         logging.debug(f'API 로그 레벨 설정: {level}')
 
-    def thread_cleanup(self):
-        # 실시간 데이터 스레드 정리
-        global real_thread
-        for screen in list(real_thread.keys()):
-            if real_thread[screen]:
-                try:
-                    logging.debug(f"실시간 데이터 스레드 정리: {screen}")
-                    real_thread[screen].stop()
-                    real_thread[screen].wait(1000)  # 최대 1초 대기
-                    del real_thread[screen]
-                except Exception as e:
-                    logging.error(f"실시간 스레드 정리 오류: {e}")
-        
-        # 조건검색 스레드 정리
-        global cond_thread
-        for screen in list(cond_thread.keys()):
-            if cond_thread[screen]:
-                try:
-                    logging.debug(f"조건검색 스레드 정리: {screen}")
-                    cond_thread[screen].stop()
-                    cond_thread[screen].wait(1000)  # 최대 1초 대기
-                    del cond_thread[screen]
-                except Exception as e:
-                    logging.error(f"조건검색 스레드 정리 오류: {e}")
+    def waiting_in_loop(self, wait_boolean, failed_msg, timeout=10):
+        start_time = time.time()
+        while not wait_boolean:
+            pythoncom.PumpWaitingMessages()
+            if time.time() - start_time > timeout:
+                logging.warning(f"Timeout while waiting for {failed_msg}")
+                return False
+        return True
 
     # 추가 메서드 --------------------------------------------------------------------------------------------------
     def api_connected(self):
@@ -759,16 +813,15 @@ class APIServer:
     def SendConditionStop(self, screen, cond_name, cond_index):
         global cond_thread
         #logging.debug(f'전략 중지: screen={screen}, cond_name={cond_name}, cond_index={cond_index} {"*"*50}')
-        if self.sim_no == 0:  # 실제 API 서버
+        if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
             self.ocx.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, cond_index)
-        else:
-            # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 종료
-            if screen in cond_thread and cond_thread[screen]:
-                cond_thread[screen].stop()
-                cond_thread[screen] = None
-                logging.debug(f'삭제전: {cond_thread}')
-                del cond_thread[screen]
-                logging.debug(f'삭제후: {cond_thread}')
+        
+        # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 종료
+        if screen in cond_thread and cond_thread[screen]:
+            cond_thread[screen].stop()
+            logging.debug(f'삭제전: {cond_thread}')
+            del cond_thread[screen]
+            logging.debug(f'삭제후: {cond_thread}')
         return 0
 
     def SetInputValue(self, id, value):
@@ -856,7 +909,16 @@ class APIServer:
         cond_text = f'{cond_index:03d} : {cond_name.strip()}'
         if not com_request_time_check(kind='request', cond_text=cond_text): return [], False
 
-        if self.sim_no == 0:  # 실제 API 서버
+        if self.sim_no > 0:  # (sim_no=1, 2, 3)
+            global cond_thread
+            # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 시작
+            self.tr_condition_loaded = True
+            self.tr_condition_list = []
+            cond_thread[screen] = OnReceiveRealConditionSim(cond_name, cond_index, self)
+            cond_thread[screen].start()
+            logging.debug(f'추가후: {cond_thread}')
+            return self.tr_condition_list
+        else:        
             try:
                 data = False
                 if block is True:
@@ -880,15 +942,6 @@ class APIServer:
             except Exception as e:
                 logging.error(f"SendCondition 오류: {type(e).__name__} - {e}")
                 return False
-        else:
-            global cond_thread
-            # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 시작
-            self.tr_condition_loaded = True
-            self.tr_condition_list = []
-            cond_thread[screen] = OnReceiveRealConditionSim(cond_name, cond_index, self)
-            cond_thread[screen].start()
-            logging.debug(f'추가후: {cond_thread}')
-            return self.tr_condition_list
         
     # 응답 메서드 --------------------------------------------------------------------------------------------------
     def OnEventConnect(self, code):
@@ -919,7 +972,7 @@ class APIServer:
                 'screen': screen,
                 'rqname': rqname,
                 }
-                self.order('prx', 'on_fx수신_주문결과TR', **result)
+                self.order('admin', 'on_fx수신_주문결과TR', **result)
 
             except Exception as e:
                 logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -963,8 +1016,8 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
-        self.order('prx', 'on_fx실시간_조건검색', **data)
+        #logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
+        self.order('admin', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
         # sim_no = 0일 때만 사용 (실제 API 서버)
@@ -980,9 +1033,9 @@ class APIServer:
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    self.frq_order('prx', 'on_fx실시간_주식체결', **job)
+                    self.frq_order('admin', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
-                    self.frq_order('prx', 'on_fx실시간_장운영감시', **job)
+                    self.frq_order('admin', 'on_fx실시간_장운영감시', **job)
                 #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
@@ -1001,8 +1054,8 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            if gubun == '0': self.order('odr', 'odr_recieve_chegyeol_data', dictFID)
-            elif gubun == '1': self.order('odr', 'odr_recieve_balance_data', dictFID)
+            if gubun == '0': self.order('admin', 'odr_recieve_chegyeol_data', dictFID)
+            elif gubun == '1': self.order('admin', 'odr_recieve_balance_data', dictFID)
             #logging.debug(f"ChejanData: API 서버에서 보냄 {gubun} {dictFID['종목코드']} {dictFID['종목명']}")
 
         except Exception as e:
@@ -1018,7 +1071,7 @@ class APIServer:
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                self.order('odr', 'odr_recieve_balance_data', dictFID)
+                self.order('admin', 'odr_recieve_balance_data', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1056,7 +1109,7 @@ class APIServer:
 
                     portfolio.process_order(dictFID)
 
-                self.order('odr', 'odr_recieve_chegyeol_data', dictFID)
+                self.order('admin', 'odr_recieve_chegyeol_data', dictFID)
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------

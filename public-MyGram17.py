@@ -127,7 +127,6 @@ class QData:
     answer : bool = False
     args : tuple = field(default_factory=tuple)
     kwargs : dict = field(default_factory=dict)
-    callback : str = None
 
 class SharedQueue:
     def __init__(self):
@@ -890,21 +889,17 @@ class GlobalConfig:     # 환경변수 정의
 @dataclass
 class GlobalMemory:      # 글로벌 메모리 정의
     connected = False
-
     main = None
     admin = None
-    prx = None
     gui = None
     api = None
     dbm = None
-    odr = None # 주문 결과 처리
-    odc = None # 주문 명령 처리
     stg = None
+    dmy = None # 더미 매니저
     ctu = None
     scm = None # 스크립트 매니저
     ipc = None # 프로세스 매니저
     trd = None # 쓰레드 매니저
-    dmy = None # 더미 매니저
 
     toast = None
     json_config = dc.log_config
@@ -922,11 +917,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
         'api': SharedQueue(),
         'dbm': SharedQueue(),
         'ctu': SharedQueue(),
-        'stg': SharedQueue(),
-        'dmy': SharedQueue(),
-        'odr': SharedQueue(),
-        'prx': SharedQueue(),
-        'odc': SharedQueue(),
+        'scm': SharedQueue(),
     }
 
     tbl = TableColumns()
@@ -964,12 +955,9 @@ class GlobalMemory:      # 글로벌 메모리 정의
     set조건감시 = set() 
     dict종목정보 = None # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
     dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
-    list주문목록 = None
     수수료율 = 0.0
     세금율 = 0.0
     holdings = {}
-    admin_init = False
-    stg_run = True
     
 gm = GlobalMemory()
 

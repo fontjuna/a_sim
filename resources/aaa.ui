@@ -5258,7 +5258,7 @@
       <widget class="QRadioButton" name="rbReal">
        <property name="geometry">
         <rect>
-         <x>130</x>
+         <x>20</x>
          <y>30</y>
          <width>91</width>
          <height>16</height>
@@ -5271,23 +5271,10 @@
         <bool>true</bool>
        </property>
       </widget>
-      <widget class="QPushButton" name="btnSimStop">
-       <property name="geometry">
-        <rect>
-         <x>10</x>
-         <y>20</y>
-         <width>91</width>
-         <height>31</height>
-        </rect>
-       </property>
-       <property name="text">
-        <string>매매중지</string>
-       </property>
-      </widget>
       <widget class="QRadioButton" name="rbSim1">
        <property name="geometry">
         <rect>
-         <x>220</x>
+         <x>110</x>
          <y>30</y>
          <width>81</width>
          <height>16</height>
@@ -5300,7 +5287,7 @@
       <widget class="QRadioButton" name="rbSim2">
        <property name="geometry">
         <rect>
-         <x>320</x>
+         <x>210</x>
          <y>30</y>
          <width>81</width>
          <height>16</height>
@@ -5313,7 +5300,7 @@
       <widget class="QRadioButton" name="rbSim3">
        <property name="geometry">
         <rect>
-         <x>420</x>
+         <x>310</x>
          <y>30</y>
          <width>81</width>
          <height>16</height>
@@ -5326,7 +5313,7 @@
       <widget class="QPushButton" name="btnSimStart">
        <property name="geometry">
         <rect>
-         <x>520</x>
+         <x>510</x>
          <y>20</y>
          <width>91</width>
          <height>31</height>
@@ -5341,7 +5328,7 @@
         <rect>
          <x>10</x>
          <y>60</y>
-         <width>591</width>
+         <width>521</width>
          <height>20</height>
         </rect>
        </property>
@@ -5371,7 +5358,7 @@
          <x>0</x>
          <y>70</y>
          <width>311</width>
-         <height>451</height>
+         <height>581</height>
         </rect>
        </property>
        <property name="title">
@@ -5491,7 +5478,7 @@
          <x>310</x>
          <y>70</y>
          <width>311</width>
-         <height>451</height>
+         <height>581</height>
         </rect>
        </property>
        <property name="title">
@@ -5595,10 +5582,10 @@
       <widget class="QPushButton" name="btnSimChartLoad">
        <property name="geometry">
         <rect>
-         <x>10</x>
-         <y>530</y>
-         <width>291</width>
-         <height>31</height>
+         <x>180</x>
+         <y>30</y>
+         <width>121</width>
+         <height>21</height>
         </rect>
        </property>
        <property name="text">
@@ -5644,7 +5631,7 @@
         </rect>
        </property>
        <property name="title">
-        <string>모의실행에 적용</string>
+        <string>모의실행에 적용 할 종목</string>
        </property>
        <widget class="QCheckBox" name="chkManual">
         <property name="geometry">
@@ -5669,7 +5656,10 @@
          </rect>
         </property>
         <property name="text">
-         <string>당일매매</string>
+         <string>실행일자</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
         </property>
        </widget>
       </widget>
