@@ -1,6 +1,6 @@
 from gui import GUI
-from admin import Admin, OrderManager, ProxyAdmin, OrderCommander, DummyClass, ChartSetter, ChartUpdater
-from strategy import EvalStrategy
+from admin import Admin
+from threads import ProxyAdmin, OrderManager
 from public import init_logger, dc, gm, Work
 from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData
 from dbm_server import DBMServer
@@ -12,7 +12,6 @@ import logging
 import time
 import sys
 from datetime import datetime
-from strategy import Strategy
 
 init_logger()
 
@@ -71,27 +70,22 @@ class Main:
     def show(self):
         if not gm.config.gui_on: return
         gm.gui.gui_show()
+        #gm.gui.init()
         time.sleep(0.1)
 
     def set_proc(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
-            gm.main = self
             gm.toast = Toast()
-            gm.dmy = MainModel('dmy', DummyClass, gm.shared_qes)
-            gm.dmy.start()
-            gm.admin = MainModel('admin', Admin, gm.shared_qes)
-            gm.admin.start()
+            gm.main = self
+            gm.admin = Admin()
+            gm.prx = ThreadModel('prx', ProxyAdmin, gm.shared_qes)
             gm.api = ProcessModel('api', APIServer, gm.shared_qes)
             gm.api.start()
-            gm.dmy.order('api', 'api_init', gm.config.sim_no)
-            gm.dmy.order('api', 'CommConnect', False)
+            gm.prx.order('api', 'api_init', gm.config.sim_no)
+            gm.prx.order('api', 'CommConnect', False)
             gm.dbm = ProcessModel('dbm', DBMServer, gm.shared_qes)
             gm.dbm.start()
-            gm.ctu = ThreadModel('ctu', ChartUpdater, gm.shared_qes)
-            gm.ctu.start()
-            gm.cts = ThreadModel('cts', ChartSetter, gm.shared_qes)
-            gm.cts.start()
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -102,12 +96,12 @@ class Main:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     # api_connected는 여기 외에 사용 금지
-                    connected = gm.dmy.answer('api', 'api_connected')
+                    connected = gm.prx.answer('api', 'api_connected')
                     if connected: break
                     logging.debug(f"로그인 대기 중: {connected}")
                     time.sleep(0.5)
-            gm.dmy.order('api', 'set_tickers')
-            gm.dmy.order('admin', 'init')
+            gm.prx.order('api', 'set_tickers')
+            gm.admin.init()
             while not gm.admin_init: time.sleep(0.1)
             
             logging.debug('prepare : admin 초기화 완료')
@@ -120,20 +114,12 @@ class Main:
 
     def trade_start(self):
         logging.debug('trade_start')
-        gm.odr = ThreadModel('odr', OrderManager, gm.shared_qes)
-        gm.odc = ThreadModel('odc', OrderCommander, gm.shared_qes)
-        gm.stg = ThreadModel('stg', Strategy, gm.shared_qes)
-        gm.evl = ThreadModel('evl', EvalStrategy, gm.shared_qes)
-        gm.prx = MainModel('prx', ProxyAdmin, gm.shared_qes)
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
-        gm.prx.start()
+        gm.odr = ThreadModel('odr', OrderManager, gm.shared_qes)
         gm.odr.start()
-        gm.odc.start()
-        gm.stg.start()
+        gm.prx.start()
+        gm.admin.stg_start()
         gm.config.ready = True
-        gm.dmy.order('cts', 'latch_off')
-        gm.dmy.order('ctu', 'latch_off')
-        gm.dmy.order('odc', 'latch_off')
 
     def run(self):
         if gm.config.gui_on: 
@@ -168,10 +154,9 @@ class Main:
 
     def cleanup(self):
         try:
-            if hasattr(gm, 'admin') and gm.admin:
-                gm.dmy.order('admin', 'cdn_fx중지_전략매매')
-                
-            shutdown_list = ['cts', 'api', 'dbm']
+            gm.admin.stg_stop()
+            gm.admin.stop_threads()
+            shutdown_list = ['odr', 'api', 'dbm', 'prx']
             for name in shutdown_list:
                 gm.shared_qes[name].request.put(QData(sender=name, method='stop'))
             

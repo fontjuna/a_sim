@@ -898,15 +898,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
     api = None
     dbm = None
     odr = None # 주문 결과 처리
-    odc = None # 주문 명령 처리
-    stg = None
-    evl = None # 전략 평가 (매매 조건 평가)
-    ctu = None
-    cts = None
     scm = None # 스크립트 매니저
-    ipc = None # 프로세스 매니저
-    trd = None # 쓰레드 매니저
-    dmy = None # 더미 매니저
 
     toast = None
     json_config = dc.log_config
@@ -927,14 +919,8 @@ class GlobalMemory:      # 글로벌 메모리 정의
         'admin': SharedQueue(),
         'api': SharedQueue(),
         'dbm': SharedQueue(),
-        'cts': SharedQueue(),
-        'ctu': SharedQueue(),
-        'stg': SharedQueue(),
-        'evl': SharedQueue(),
-        'dmy': SharedQueue(),
         'odr': SharedQueue(),
         'prx': SharedQueue(),
-        'odc': SharedQueue(),
     }
 
     tbl = TableColumns()

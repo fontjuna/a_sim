@@ -1,6 +1,4 @@
 from public import get_path, gm, dc, save_json, load_json, hoga
-from classes import ThreadModel
-from strategy import Strategy
 from PyQt5.QtWidgets import QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox, QTableWidget, QTableWidgetItem
 from PyQt5.QtGui import QIcon, QTextCursor
 from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate, Qt
@@ -238,7 +236,7 @@ class GUI(QMainWindow, form_class):
 
     # QWidget 이벤트 -------------------------------------------------------------------------------------
     def gui_account_reload(self):
-        gm.dmy.order('admin', 'get_holdings')
+        gm.admin.get_holdings()
         gm.toast.toast(f'계좌를 다시 읽어 왔습니다.', duration=1000)
         logging.debug('계좌를 다시 읽어 왔습니다.')
 
@@ -246,7 +244,7 @@ class GUI(QMainWindow, form_class):
         logging.debug('')
         if self.cbAccounts.currentText():
             gm.account = self.cbAccounts.currentText()
-            gm.dmy.order('admin', 'get_holdings')
+            gm.admin.get_holdings()
             logging.debug('계좌를 다시 읽어 왔습니다.')
         else:
             logging.warning('계좌를 선택하세요')
@@ -256,7 +254,7 @@ class GUI(QMainWindow, form_class):
         date_text = self.dtMonitor.date().toString("yyyy-MM-dd")
         try:
             gm.매매목록.delete()
-            dict_list = gm.dmy.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.prx.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
             if dict_list is not None and len(dict_list) > 0:
                 gm.매매목록.set(data=dict_list)
                 logging.info(f"매매목록 얻기 완료: data count={gm.매매목록.len()}")
@@ -281,7 +279,7 @@ class GUI(QMainWindow, form_class):
             output = gm.tbl.hd일지합산['컬럼']
             next = '0'
             screen = dc.scr.화면['일지합산']
-            data, remain = gm.dmy.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+            data, remain = gm.prx.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
             if data:
                 for i, item in enumerate(data):
                     item.update({'순번':i})
@@ -298,7 +296,7 @@ class GUI(QMainWindow, form_class):
             screen = dc.scr.화면['일지목록']
             next = '0'
             while True:
-                data, remain = gm.dmy.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+                data, remain = gm.prx.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
                 logging.debug(f'일지목록 얻기: data count={len(data)}, remain={remain}')
                 dict_list.extend(data)
                 if not remain: break
@@ -327,7 +325,7 @@ class GUI(QMainWindow, form_class):
             output = gm.tbl.hd예수금['컬럼']
             next = '0'
             screen = dc.scr.화면['예수금']
-            data, remain = gm.dmy.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+            data, remain = gm.prx.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
             if data:
                 for i, item in enumerate(data):
                     item.update({'순번':i})
@@ -348,7 +346,7 @@ class GUI(QMainWindow, form_class):
         date_text = self.dtConclusion.date().toString("yyyyMMdd")
         try:
             gm.체결목록.delete()
-            dict_list = gm.dmy.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.prx.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
             if dict_list is not None and len(dict_list) > 0:
                 gm.체결목록.set(data=dict_list)
                 손익금액, 매수금액 = gm.체결목록.sum(column=['손익금액', '매수금액'], filter={'매도수량': ('==', '@매수수량')})
@@ -382,13 +380,13 @@ class GUI(QMainWindow, form_class):
             if min_check: params = (date_text, cycle, tick, code,)
             else: params = (date_text, cycle,)
             selected_sql = dc.ddb.MIN_SELECT_DATE if min_check else dc.ddb.DAY_SELECT_DATE
-            dict_list = gm.dmy.answer('dbm', 'execute_query', sql=selected_sql, db='chart', params=params)
+            dict_list = gm.prx.answer('dbm', 'execute_query', sql=selected_sql, db='chart', params=params)
             if dict_list:
                 if isinstance(dict_list, list) and len(dict_list) > 0:
                     if min_check:
                         dict_list = [{ **item, '일자': item['체결시간'][:8], '시간': item['체결시간'][8:], } for item in dict_list]
                     else:
-                        dict_list = [{ **item, '일자': item['일자'], '시간': '', '종목명': gm.dmy.answer('api', 'GetMasterCodeName', item['종목코드']), } for item in dict_list]
+                        dict_list = [{ **item, '일자': item['일자'], '시간': '', '종목명': gm.prx.answer('api', 'GetMasterCodeName', item['종목코드']), } for item in dict_list]
 
                 gm.차트자료.set(data=dict_list)
                 logging.info(f"차트자료 얻기 완료: data count={gm.차트자료.len()}")
@@ -416,14 +414,12 @@ class GUI(QMainWindow, form_class):
         if response:
             if sim: gm.config.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
             gm.config.sim_on = gm.config.sim_no > 0
-            gm.dmy.order('api', 'api_init', sim_no=gm.config.sim_no)
-            gm.dmy.order('api', 'set_tickers')
-            gm.stg = ThreadModel('stg', Strategy, gm.shared_qes)
-            gm.stg.start()
-            if gm.매수문자열 + gm.매도문자열 == '':
+            gm.prx.order('api', 'api_init', sim_no=gm.config.sim_no)
+            gm.prx.order('api', 'set_tickers')
+            gm.admin.stg_start()
+            if not all([gm.매수문자열, gm.매도문자열]):
                 gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
                 return
-            gm.stg_run = True
             gm.toast.toast('전략매매를 실행했습니다.', duration=3000)
             self.set_strategy_toggle(run=True)
         else:
@@ -434,10 +430,8 @@ class GUI(QMainWindow, form_class):
         if question:
             response = QMessageBox.question(None, '전략매매 중지', '전략매매를 중지하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
         if response:
-            gm.stg_run = False
-            gm.stg.stop()
-            gm.stg = None
-            gm.dmy.order('api', 'thread_cleanup')
+            gm.admin.stg_stop()
+            gm.prx.order('api', 'thread_cleanup')
             self.set_strategy_toggle(run=False)
             gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
         else:
@@ -448,7 +442,7 @@ class GUI(QMainWindow, form_class):
 
     def gui_strategy_reload(self):
         logging.debug('get_conditions: 요청_서버전략')
-        gm.dmy.order('admin', 'get_conditions')
+        gm.admin.get_conditions()
         self.gui_fx채움_조건콤보()
         gm.toast.toast('매매전략을 다시 읽어 왔습니다.', duration=3000)
 
@@ -500,7 +494,7 @@ class GUI(QMainWindow, form_class):
     def gui_tr_code_changed(self, kind='tr'):
         code = self.leTrCode.text() if kind == 'tr' else self.leSimCodeDay.text() if kind == 'day' else self.leSimCode.text() if kind == 'man' else None
         if code:
-            name = gm.dmy.answer('api', 'GetMasterCodeName', code)
+            name = gm.prx.answer('api', 'GetMasterCodeName', code)
             if kind == 'tr': self.leTrName.setText(name)
             elif kind == 'day': self.leSimNameDay.setText(name)
             elif kind == 'man': self.leSimName.setText(name)
@@ -553,7 +547,7 @@ class GUI(QMainWindow, form_class):
             'ordno': ''
         }
         if kind == '매수':
-            gm.dmy.order('api', 'SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
+            gm.prx.order('api', 'SetRealReg', dc.scr.화면['실시간감시'], code, '10', '1')
         else:
             if row['주문가능수량'] == 0:
                 QMessageBox.warning(self, '알림', '주문가능수량이 없습니다.')
@@ -565,7 +559,7 @@ class GUI(QMainWindow, form_class):
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 
         # 주문 전송
-        #gm.dmy.order('admin', 'com_SendOrder', **send_data)
+        #gm.prx.order('admin', 'com_SendOrder', **send_data)
         gm.list주문목록.put(send_data)
 
     def gui_tr_cancel(self):
@@ -596,7 +590,7 @@ class GUI(QMainWindow, form_class):
         }
 
         # 주문 전송
-        #gm.dmy.order('admin', 'com_SendOrder', **send_data)
+        #gm.prx.order('admin', 'com_SendOrder', **send_data)
         gm.list주문목록.put(send_data)
         
     # 스크립트 표시 ---------------------------------------------------------------------------------------------
@@ -815,7 +809,7 @@ class GUI(QMainWindow, form_class):
                 '전략명칭': 전략명칭,
             }
 
-            gm.dmy.order('admin', 'json_save_define_sets')
+            gm.admin.json_save_define_sets()
             gm.toast.toast(f'전략00 전략명칭={전략명칭} 저장 완료', duration=4000)
 
         except Exception as e:
@@ -846,7 +840,7 @@ class GUI(QMainWindow, form_class):
 
     def gui_strategy_load(self):
         logging.debug('메세지 발행: cdn Work(json_load_strategy_defines, {})')
-        gm.dmy.order('admin', 'json_load_define_sets')
+        gm.admin.json_load_define_sets()
         self.gui_fx전시_전략정의()
 
     def gui_strategy_save(self):
@@ -898,7 +892,7 @@ class GUI(QMainWindow, form_class):
 
             dict설정['남은횟수'] = dict설정['체결횟수']
             gm.전략정의.set(key=name, data=dict설정)
-            gm.dmy.order('admin', 'json_save_strategy_sets')
+            gm.admin.json_save_strategy_sets()
             self.gui_fx채움_전략정의()
             #logging.debug(f'전략정의 {gm.전략정의.get()}')
             gm.toast.toast(f'주문설정 "{name}"을 저장 했습니다.', duration=4000)
@@ -935,8 +929,8 @@ class GUI(QMainWindow, form_class):
                     if gm.실행전략['전략명칭'] == name:
                         gm.실행전략['전략명칭'] = ''
                         self.gui_tabs_clear()
-                    gm.dmy.order('admin', 'json_save_strategy_sets')
-                    gm.dmy.order('admin', 'json_save_define_sets')
+                    gm.admin.json_save_strategy_sets()
+                    gm.admin.json_save_define_sets()
 
                 else: msg = '설정이 삭제되지 않았습니다.'
                 self.gui_fx채움_전략정의()
@@ -1194,7 +1188,7 @@ class GUI(QMainWindow, form_class):
     def gui_sim_add_day(self):
         code = self.leSimCodeDay.text()
         if code:
-            name = gm.dmy.answer('api', 'GetMasterCodeName', code)
+            name = gm.prx.answer('api', 'GetMasterCodeName', code)
             if name:
                 self.leSimNameDay.setText(name)
         if name:
@@ -1242,7 +1236,7 @@ class GUI(QMainWindow, form_class):
     def gui_sim_add_manual(self):
         code = self.leSimCode.text()
         if code:
-            name = gm.dmy.answer('api', 'GetMasterCodeName', code)
+            name = gm.prx.answer('api', 'GetMasterCodeName', code)
             if name:
                 self.leSimName.setText(name)
         if name:
@@ -1296,7 +1290,7 @@ class GUI(QMainWindow, form_class):
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
             self.lbl2.setText('연결됨' if gm.connected else '끊어짐')
             self.lbl2.setStyleSheet("color: green;" if gm.connected else "color: red;")
-            #self.lbl4.setText(gm.dmy.frq_answer('admin', 'com_market_status'))
+            #self.lbl4.setText(gm.prx.frq_answer('admin', 'com_market_status'))
 
             # 큐 메시지 처리
             while not gm.qwork['msg'].empty():

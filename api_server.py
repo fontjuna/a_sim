@@ -780,7 +780,7 @@ class APIServer:
         logging.debug(f'CommConnect: block={block}')
         if self.sim_no == 1:  
             self.connected = True
-            self.order('dmy', 'set_connected', self.connected) # OnEventConnect를 안 거치므로 여기서 처리
+            self.order('prx', 'set_connected', self.connected) # OnEventConnect를 안 거치므로 여기서 처리
         else:
             self.ocx.dynamicCall("CommConnect()")
             if block:
@@ -893,7 +893,7 @@ class APIServer:
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
-        self.order('dmy', 'set_connected', self.connected)
+        self.order('prx', 'set_connected', self.connected)
         logging.debug(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
