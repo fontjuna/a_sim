@@ -11,15 +11,16 @@ import logging
 import os
 
 class ThreadSafeList:
-    def __init__(self):
+    def __init__(self, name='thread_safe_list'):
+        self.name = name
         self.list = []
         self.lock = threading.Lock()
         self.not_empty = threading.Condition(self.lock) # self.lock으로 wait, notify 를 관리
 
     def put(self, item):
         with self.lock:
-            if isinstance(item, dict):
-                logging.debug('put', len(self.list))
+            #if isinstance(item, dict):
+            #    logging.debug(f'{self.name} put: len={len(self.list)}')
             self.list.append(item)
             self.not_empty.notify() # 대기중인 스레드에게 알림
 
@@ -28,8 +29,8 @@ class ThreadSafeList:
         with self.lock:
             if self.empty():
                 self.not_empty.wait() # 대기
-            if isinstance(self.list[0], dict):
-                logging.debug('get', len(self.list))
+            #if isinstance(self.list[0], dict):
+            #    logging.debug(f'{self.name} get: len={len(self.list)}')
             return self.list.pop(0)
 
     def remove(self, item):

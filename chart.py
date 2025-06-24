@@ -863,10 +863,9 @@ class ChartData:
         result.sort(key=lambda x: x['일자'], reverse=True)
         return result
 
-cht_dt = ChartData()
-
 class ChartManager:
     def __init__(self, code, cycle='mi', tick=3):
+        self.cht_dt = ChartData()
         self.cycle = cycle  # 'mo', 'wk', 'dy', 'mi' 중 하나
         self.tick = tick    # 분봉일 경우 주기
         self._data_cache = {}  # 종목별 데이터 캐시 {code: data}
@@ -881,7 +880,7 @@ class ChartManager:
     
     def _load_chart_data(self, code: str) -> list:
         """차트 데이터 로드 및 변환"""
-        data = cht_dt.get_chart_data(code, self.cycle, self.tick)
+        data = self.cht_dt.get_chart_data(code, self.cycle, self.tick)
         
         # 데이터 변환 (API 형식 -> 내부 형식)
         result = []
@@ -2734,194 +2733,6 @@ def enhance_script_manager(script_manager, cache_dir=dc.fp.cache_path):
         logging.error(f"ScriptManager 확장 오류: {e}", exc_info=True)
         return False
     
-class ChartUpdater:
-    def __init__(self):
-        self.name = 'ctu'
-        self.running = False
-        self.done_code = set()
-        self.todo_code = {}
-        self.cht_updater = {}
-        self.latch_on = True
-        self.lock = None
-
-    def initialize(self):
-        self.running = True
-        self.latch_on = True
-        self.lock = threading.Lock()
-
-    def latch_off(self):
-        self.latch_on = False
-
-    def get_first_chart_data(self, code, cycle, tick=1, times=1):
-        """차트 데이터 조회"""
-        try:
-            rqname = f'{dc.scr.차트종류[cycle]}차트'
-            trcode = dc.scr.차트TR[cycle]
-            screen = dc.scr.화면[rqname]
-            date = datetime.now().strftime('%Y%m%d')
-            dict_list = []
-            
-            if cycle in ['mi', 'tk']:
-                if tick == None:
-                    tick = '1'
-                elif isinstance(tick, int):
-                    tick = str(tick)
-                input = {'종목코드':code, '틱범위': tick, '수정주가구분': "1"}
-                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
-            else:
-                if cycle == 'dy':
-                    input = {'종목코드':code, '기준일자': date, '수정주가구분': "1"}
-                else:
-                    input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': "1"}
-                output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
-
-            dict_list = self._fetch_chart_data(rqname, trcode, input, output, screen, times)
-            
-            if not dict_list:
-                logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}')
-                return dict_list
-            
-            logging.debug(f'{rqname}: code:{code}, cycle:{cycle}, tick:{tick}, count:{len(dict_list)} {dict_list[:1]}')
-            
-            # 데이터 변환
-            dict_list = self._convert_chart_data(dict_list, code, cycle)
-            
-            if cycle in ['dy', 'mi']:
-                cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
-                self.order('dbm', 'upsert_chart', dict_list, cycle, tick)
-                self._mark_done(code, cycle)
-            
-            return dict_list
-        
-        except Exception as e:
-            logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
-            return []
-
-    def _fetch_chart_data(self, rqname, trcode, input, output, screen, times):
-        """차트 데이터 fetch"""
-        next = '0'
-        dict_list = []
-        
-        while True:
-            result = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen)
-            if result is None:
-                break
-            
-            data, remain = result
-            if data is None or len(data) == 0: 
-                break
-                
-            dict_list.extend(data)
-            times -= 1
-            if not remain or times <= 0: 
-                break
-            next = '2'
-        
-        return dict_list
-
-    def _convert_chart_data(self, dict_list, code, cycle):
-        """차트 데이터 변환"""
-        if cycle in ['mi', 'tk']:
-            return [{
-                '종목코드': code,
-                '체결시간': item['체결시간'] if item['체결시간'] else datetime.now().strftime('%Y%m%d%H%M%S'),
-                '시가': abs(int(item['시가'])) if item['시가'] else 0,
-                '고가': abs(int(item['고가'])) if item['고가'] else 0,
-                '저가': abs(int(item['저가'])) if item['저가'] else 0,
-                '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
-                '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
-                '거래대금': 0,
-            } for item in dict_list]
-        else:
-            return [{
-                '종목코드': code,
-                '일자': item['일자'] if item['일자'] else datetime.now().strftime('%Y%m%d'),
-                '시가': abs(int(item['시가'])) if item['시가'] else 0,
-                '고가': abs(int(item['고가'])) if item['고가'] else 0,
-                '저가': abs(int(item['저가'])) if item['저가'] else 0,
-                '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
-                '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
-                '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
-            } for item in dict_list]
-
-    def run_main_work(self):
-        if self.latch_on: return
-        self.latch_on = True
-        self.request_chart_data()
-        self.latch_on = False
-
-    def request_chart_data(self):
-        if not self.todo_code: return
-        with self.lock:
-            code, status = list(self.todo_code.items())[0]
-        
-        logging.debug(f"get_first_chart_data 요청: {code}")
-        if not status['mi']: 
-            self.get_first_chart_data(code, cycle='mi', tick=1)
-            #self._mark_done(code, 'mi')
-            return
-        
-        if not status['dy']: 
-            self.get_first_chart_data(code, cycle='dy')
-            #self._mark_done(code, 'dy')
-
-    def _mark_done(self, code, cycle):
-        with self.lock:
-            if code in self.todo_code:
-                self.todo_code[code][cycle] = True
-                if all(self.todo_code[code].values()):
-                    self.done_code.add(code)
-                    del self.todo_code[code]
-
-    def register_code(self, code):
-        if not code: return False
-        with self.lock:
-            if not code or code in self.done_code or code in self.todo_code:
-                return False
-            
-            logging.debug(f'차트관리 종목코드 등록: {code}')
-            self.todo_code[code] = {'mi': False, 'dy': False}
-            return True
-
-    def is_done(self, code):
-        return code in self.done_code
-
-class DummyClass:
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.cht_updater = {}
-        self.latch_on = True
-
-    def latch_off(self):
-        self.latch_on = False
-
-    def run_main_work(self):
-        if self.latch_on: return
-        self.latch_on = True
-        self.chart_data_updater()
-        self.latch_on = False
-
-    def register_chart_data(self, job):
-        code = job['code']
-        dictFID = job['dictFID']
-        if cht_dt.is_code_registered(code):
-            with self.lock: 
-                self.cht_updater[code] = dictFID
-
-    def chart_data_updater(self):
-        with self.lock:
-            cht_updater_items = list(self.cht_updater.items())
-        for code, job in cht_updater_items:
-            cht_dt.update_chart(
-                code, 
-                abs(int(job['현재가'])) if job['현재가'] else 0,
-                abs(int(job['누적거래량'])) if job['누적거래량'] else 0,
-                abs(int(job['누적거래대금'])) if job['누적거래대금'] else 0,
-                job['체결시간']
-            )
-            with self.lock: 
-                del self.cht_updater[code]
-
 # 예제 실행
 if __name__ == '__main__':
     mi3 = ChartManager('005930', 'mi', 3)

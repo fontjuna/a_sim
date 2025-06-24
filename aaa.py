@@ -1,5 +1,6 @@
 from gui import GUI
-from admin import Admin, OrderManager, ProxyAdmin, OrderCommander
+from admin import Admin, OrderManager, ProxyAdmin, OrderCommander, DummyClass, ChartSetter, ChartUpdater
+from strategy import EvalStrategy
 from public import init_logger, dc, gm, Work
 from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData
 from dbm_server import DBMServer
@@ -11,7 +12,6 @@ import logging
 import time
 import sys
 from datetime import datetime
-from chart import ChartUpdater, DummyClass
 from strategy import Strategy
 
 init_logger()
@@ -90,6 +90,8 @@ class Main:
             gm.dbm.start()
             gm.ctu = ThreadModel('ctu', ChartUpdater, gm.shared_qes)
             gm.ctu.start()
+            gm.cts = ThreadModel('cts', ChartSetter, gm.shared_qes)
+            gm.cts.start()
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
@@ -104,7 +106,7 @@ class Main:
                     if connected: break
                     logging.debug(f"로그인 대기 중: {connected}")
                     time.sleep(0.5)
-
+            gm.dmy.order('api', 'set_tickers')
             gm.dmy.order('admin', 'init')
             while not gm.admin_init: time.sleep(0.1)
             
@@ -121,15 +123,17 @@ class Main:
         gm.odr = ThreadModel('odr', OrderManager, gm.shared_qes)
         gm.odc = ThreadModel('odc', OrderCommander, gm.shared_qes)
         gm.stg = ThreadModel('stg', Strategy, gm.shared_qes)
-        gm.prx = ThreadModel('prx', ProxyAdmin, gm.shared_qes)
+        gm.evl = ThreadModel('evl', EvalStrategy, gm.shared_qes)
+        gm.prx = MainModel('prx', ProxyAdmin, gm.shared_qes)
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
         gm.prx.start()
         gm.odr.start()
         gm.odc.start()
         gm.stg.start()
         gm.config.ready = True
+        gm.dmy.order('cts', 'latch_off')
         gm.dmy.order('ctu', 'latch_off')
-        gm.ctu.order('dmy', 'latch_off')
+        gm.dmy.order('odc', 'latch_off')
 
     def run(self):
         if gm.config.gui_on: 
@@ -167,7 +171,7 @@ class Main:
             if hasattr(gm, 'admin') and gm.admin:
                 gm.dmy.order('admin', 'cdn_fx중지_전략매매')
                 
-            shutdown_list = ['ctu', 'api', 'dbm']
+            shutdown_list = ['cts', 'api', 'dbm']
             for name in shutdown_list:
                 gm.shared_qes[name].request.put(QData(sender=name, method='stop'))
             

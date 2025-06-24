@@ -383,11 +383,12 @@ class GUI(QMainWindow, form_class):
             else: params = (date_text, cycle,)
             selected_sql = dc.ddb.MIN_SELECT_DATE if min_check else dc.ddb.DAY_SELECT_DATE
             dict_list = gm.dmy.answer('dbm', 'execute_query', sql=selected_sql, db='chart', params=params)
-            if dict_list is not None and len(dict_list) > 0:
-                if min_check:
-                    dict_list = [{ **item, '일자': item['체결시간'][:8], '시간': item['체결시간'][8:], } for item in dict_list]
-                else:
-                    dict_list = [{ **item, '일자': item['일자'], '시간': '', '종목명': gm.dmy.answer('api', 'GetMasterCodeName', item['종목코드']), } for item in dict_list]
+            if dict_list:
+                if isinstance(dict_list, list) and len(dict_list) > 0:
+                    if min_check:
+                        dict_list = [{ **item, '일자': item['체결시간'][:8], '시간': item['체결시간'][8:], } for item in dict_list]
+                    else:
+                        dict_list = [{ **item, '일자': item['일자'], '시간': '', '종목명': gm.dmy.answer('api', 'GetMasterCodeName', item['종목코드']), } for item in dict_list]
 
                 gm.차트자료.set(data=dict_list)
                 logging.info(f"차트자료 얻기 완료: data count={gm.차트자료.len()}")
@@ -416,6 +417,7 @@ class GUI(QMainWindow, form_class):
             if sim: gm.config.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
             gm.config.sim_on = gm.config.sim_no > 0
             gm.dmy.order('api', 'api_init', sim_no=gm.config.sim_no)
+            gm.dmy.order('api', 'set_tickers')
             gm.stg = ThreadModel('stg', Strategy, gm.shared_qes)
             gm.stg.start()
             if gm.매수문자열 + gm.매도문자열 == '':
@@ -563,7 +565,8 @@ class GUI(QMainWindow, form_class):
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 
         # 주문 전송
-        gm.dmy.order('admin', 'com_SendOrder', **send_data)
+        #gm.dmy.order('admin', 'com_SendOrder', **send_data)
+        gm.list주문목록.put(send_data)
 
     def gui_tr_cancel(self):
         key = self.leTrCancelKey.text()
@@ -593,7 +596,8 @@ class GUI(QMainWindow, form_class):
         }
 
         # 주문 전송
-        gm.dmy.order('admin', 'com_SendOrder', **send_data)
+        #gm.dmy.order('admin', 'com_SendOrder', **send_data)
+        gm.list주문목록.put(send_data)
         
     # 스크립트 표시 ---------------------------------------------------------------------------------------------
     def gui_script_show(self):

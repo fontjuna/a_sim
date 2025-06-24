@@ -29,23 +29,6 @@ class Admin:
         gm.admin_init = True
 
     # 준비 작업 -------------------------------------------------------------------------------------------
-    def set_connected(self, connected):
-        gm.connected = connected
-
-    def set_globals(self):
-        gm.counter = CounterTicker()
-        gm.list주문목록 = ThreadSafeList()
-        gm.dict종목정보 = ThreadSafeDict()
-        gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
-        gm.scm = ScriptManager()
-        try:
-            result = enhance_script_manager(gm.scm)
-            logging.debug(f'스크립트 확장 결과={result}')
-        except Exception as e:
-            logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
-        gm.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
-        self.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
-
     def get_login_info(self):
         accounts = self.answer('api', 'GetLoginInfo', 'ACCNO')
         logging.debug(f'GetLoginInfo Accounts: {accounts}')
@@ -56,6 +39,20 @@ class Admin:
         gm.수수료율 = dc.const.fee_sim if gm.config.server == '1' else dc.const.fee_real # 모의투자 0.35%, 실전투자 0.15% 매수, 매도 각각
         gm.세금율 = dc.const.tax_rate # 코스피 거래세 0.03 + 농어촌 특별세 0.12%, 코스닥 거래세 0.15 매도시적용
         logging.debug(f"서버:{gm.config.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.config.account}")
+
+    def set_globals(self):
+        gm.counter = CounterTicker()
+        gm.list주문목록 = ThreadSafeList('주문목록')
+        gm.list검사목록 = ThreadSafeList('검사목록')
+        gm.dict종목정보 = ThreadSafeDict()
+        gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
+        gm.scm = ScriptManager()
+        try:
+            result = enhance_script_manager(gm.scm)
+            logging.debug(f'스크립트 확장 결과={result}')
+        except Exception as e:
+            logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
+        self.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
 
     def get_conditions(self):
         try:
@@ -186,7 +183,6 @@ class Admin:
             logging.error(f'실시간 주식체결 오류: {type(e).__name__} - {e}', exc_info=True)
 
     # 조회 및 처리  -------------------------------------------------------------------------------------------
-    
     def pri_fx얻기_잔고합산(self):
         try:
             gm.잔고합산.delete()
@@ -284,7 +280,7 @@ class Admin:
 
                     data[item['종목번호']] = item['종목명']
 
-                    self.order('ctu', 'register_code', item['종목번호'])
+                    self.order('cts', 'register_code', item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.counter.set_batch(data)
 
@@ -294,7 +290,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            self.order('ctu', 'register_code', '005930')
+            self.order('cts', 'register_code', '005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -377,7 +373,8 @@ class Admin:
         gm.주문목록.set(key=key, data=data)
         gm.잔고목록.set(key=code, data={'주문가능수량': 0})
         row.update({'rqname': '신규매도', 'account': gm.config.account})
-        self.order('stg', 'order_sell', row)
+        #self.order('stg', 'order_sell', row)
+        gm.list검사목록.put({'sell': {'row': row}})
 
     def pri_fx등록_종목감시(self):
         try:
@@ -404,7 +401,6 @@ class ProxyAdmin:
     def __init__(self):
         self.latch_on = True
 
-    # 중계 메소드 --------------------------------------------------------------------------------------------------------
     def on_fx실시간_장운영감시(self, code, rtype, dictFID): # 장 운영 상황 감시
         self.order('admin', 'on_fx실시간_장운영감시', code, rtype, dictFID)
 
@@ -415,7 +411,6 @@ class ProxyAdmin:
         self.order('stg', 'on_fx실시간_조건검색', code, type, cond_name, cond_index)
 
     def on_fx실시간_주식체결(self, code, rtype, dictFID): # 실시간 시세 감시, 시장 체결데이타 분석 재료, 종목의 누적 거래향
-        self.order('admin', 'on_fx실시간_주식체결', code, rtype, dictFID)
         if not gm.config.ready: return
 
         현재가 = abs(int(dictFID['현재가']))
@@ -425,20 +420,26 @@ class ProxyAdmin:
             if data:
                 gm.주문목록.set(key=f'{code}_{data["kind"]}', data={'상태': '요청'})
                 if data['kind'] == '매수':
-                    self.order('stg', 'order_buy', code, '신규매수', 현재가)
+                    #self.order('stg', 'order_buy', code, '신규매수', 현재가)
+                    gm.list검사목록.put({'buy': {'code': code, 'rqname': '신규매수', 'price': 현재가}})
                 elif data['kind'] == '매도':
                     row = gm.잔고목록.get(key=code)
                     row['현재가'] = 현재가
-                    self.order('stg', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
+                    #self.order('stg', 'order_sell', row, True) # 조건검색에서 온 것이기 때문에 True
+                    gm.list검사목록.put({'sell': {'row': row, 'sell_condition': True}})
                 gm.dict주문대기종목.remove(code)
 
             job = {'code': code, 'dictFID': dictFID}
-            self.order('dmy', 'register_chart_data', job)
-
+            self.order('ctu', 'register_chart_data', job)
+        self.order('admin', 'on_fx실시간_주식체결', code, rtype, dictFID)
 
 class OrderCommander:
     def __init__(self):
         self.latch_on = True
+        self.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
+
+    def latch_off(self):
+        self.latch_on = False
 
     def run_main_work(self):
         if self.latch_on: return
@@ -452,7 +453,7 @@ class OrderCommander:
         self.com_SendOrder(**order)
 
     def com_order_time_check(self):
-        wait_time = gm.ord.check_interval()
+        wait_time = self.ord.check_interval()
         if wait_time > 1666: # 1.666초 이내 주문 제한
             msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초'
             gm.toast.toast(msg, duration=dc.td.TOAST_TIME)
@@ -471,7 +472,7 @@ class OrderCommander:
             logging.info(msg)
 
         time.sleep((wait_time+100)/1000) 
-        gm.ord.update_request_times()
+        self.ord.update_request_times()
         return True
 
     def com_SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno, msg=None):
@@ -483,7 +484,7 @@ class OrderCommander:
         주문유형 = dc.fid.주문유형FID[ordtype]
         kind = msg if msg else 주문유형
         job = {"구분": kind, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
-        self.send_status_msg('주문내용', job)
+        self.order('admin', 'send_status_msg', '주문내용', job)
 
         rqname = f'{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
         key = f'{code}_{주문유형.lstrip("신규")}'
@@ -550,11 +551,8 @@ class OrderManager:
             dictFID['주문가격'] = 주문가격
             dictFID['미체결수량'] = 미체결수량
             dictFID['체결시간'] = dictFID.get('주문/체결시간', '')
-            #logging.debug(f'체결잔고 : 주문상태={주문상태} order_no={order_no} ' +
-            #                f'\n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
 
             self.dbm_trade_upsert(dictFID)
-            #self.order('admin', 'dbm_trade_upsert', dictFID)
 
             if '접수' in 주문상태:
                 self.odr_redeipt_data(dictFID)
@@ -713,7 +711,6 @@ class OrderManager:
                     gm.잔고목록.set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량, '주문가능수량': 주문가능수량, '현재가': 현재가})
             dictFID['주문상태'] = '잔고'
             self.dbm_trade_upsert(dictFID)
-            #self.order('admin', 'dbm_trade_upsert', dictFID)
             msg = f"잔고변경 : {code} {dictFID['종목명']} 보유수량:{보유수량}주 매입단가:{매입단가}원 매입금액:{보유수량 * 매입단가}원 주문가능수량:{주문가능수량}주"
             logging.info(msg)
             logging.debug(f'잔고 dictFID:\n{tabulate(pd.DataFrame([dictFID]), headers="keys", showindex=True, numalign="right")}')
@@ -739,6 +736,204 @@ class OrderManager:
                 self.order('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_name, st_buy)
         except Exception as e:
             logging.error(f"dbm_trade_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
+
+class DummyClass:
+    def __init__(self):
+        self.name = 'dmy'
+
+    def set_connected(self, connected):
+        gm.connected = connected
+
+class ChartUpdater:
+    def __init__(self):
+        self.name = 'ctu'
+        self.lock = threading.Lock()
+        self.cht_updater = {}
+        self.latch_on = True
+        self.cht_dt = ChartData()
+
+    def latch_off(self):
+        self.latch_on = False
+
+    def run_main_work(self):
+        if self.latch_on: return
+        self.latch_on = True
+        self.chart_data_updater()
+        self.latch_on = False
+
+    def register_chart_data(self, job):
+        code = job['code']
+        dictFID = job['dictFID']
+        if self.cht_dt.is_code_registered(code):
+            with self.lock: 
+                self.cht_updater[code] = dictFID
+
+    def chart_data_updater(self):
+        with self.lock:
+            cht_updater_items = list(self.cht_updater.items())
+        for code, job in cht_updater_items:
+            self.cht_dt.update_chart(
+                code, 
+                abs(int(job['현재가'])) if job['현재가'] else 0,
+                abs(int(job['누적거래량'])) if job['누적거래량'] else 0,
+                abs(int(job['누적거래대금'])) if job['누적거래대금'] else 0,
+                job['체결시간']
+            )
+            with self.lock: 
+                del self.cht_updater[code]
+
+class ChartSetter:
+    def __init__(self):
+        self.name = 'cts'
+        self.running = False
+        self.done_code = set()
+        self.todo_code = {}
+        self.cht_updater = {}
+        self.latch_on = True
+        self.lock = None
+        self.cht_dt = ChartData()
+
+    def initialize(self):
+        self.running = True
+        self.latch_on = True
+        self.lock = threading.Lock()
+
+    def latch_off(self):
+        self.latch_on = False
+
+    def get_first_chart_data(self, code, cycle, tick=1, times=1):
+        """차트 데이터 조회"""
+        try:
+            rqname = f'{dc.scr.차트종류[cycle]}차트'
+            trcode = dc.scr.차트TR[cycle]
+            screen = dc.scr.화면[rqname]
+            date = datetime.now().strftime('%Y%m%d')
+            dict_list = []
+            
+            if cycle in ['mi', 'tk']:
+                if tick == None:
+                    tick = '1'
+                elif isinstance(tick, int):
+                    tick = str(tick)
+                input = {'종목코드':code, '틱범위': tick, '수정주가구분': "1"}
+                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
+            else:
+                if cycle == 'dy':
+                    input = {'종목코드':code, '기준일자': date, '수정주가구분': "1"}
+                else:
+                    input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': "1"}
+                output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
+
+            dict_list = self._fetch_chart_data(rqname, trcode, input, output, screen, times)
+            
+            if not dict_list:
+                logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}')
+                return dict_list
+            
+            logging.debug(f'{rqname}: code:{code}, cycle:{cycle}, tick:{tick}, count:{len(dict_list)} {dict_list[:1]}')
+            
+            # 데이터 변환
+            dict_list = self._convert_chart_data(dict_list, code, cycle)
+            
+            if cycle in ['dy', 'mi']:
+                self.cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
+                self.order('dbm', 'upsert_chart', dict_list, cycle, tick)
+                self._mark_done(code, cycle)
+            
+            return dict_list
+        
+        except Exception as e:
+            logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            return []
+
+    def _fetch_chart_data(self, rqname, trcode, input, output, screen, times):
+        """차트 데이터 fetch"""
+        next = '0'
+        dict_list = []
+        
+        while True:
+            result = self.answer('api', 'api_request', rqname, trcode, input, output, next=next, screen=screen)
+            if result is None:
+                break
+            
+            data, remain = result
+            if data is None or len(data) == 0: 
+                break
+                
+            dict_list.extend(data)
+            times -= 1
+            if not remain or times <= 0: 
+                break
+            next = '2'
+        
+        return dict_list
+
+    def _convert_chart_data(self, dict_list, code, cycle):
+        """차트 데이터 변환"""
+        if cycle in ['mi', 'tk']:
+            return [{
+                '종목코드': code,
+                '체결시간': item['체결시간'] if item['체결시간'] else datetime.now().strftime('%Y%m%d%H%M%S'),
+                '시가': abs(int(item['시가'])) if item['시가'] else 0,
+                '고가': abs(int(item['고가'])) if item['고가'] else 0,
+                '저가': abs(int(item['저가'])) if item['저가'] else 0,
+                '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
+                '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
+                '거래대금': 0,
+            } for item in dict_list]
+        else:
+            return [{
+                '종목코드': code,
+                '일자': item['일자'] if item['일자'] else datetime.now().strftime('%Y%m%d'),
+                '시가': abs(int(item['시가'])) if item['시가'] else 0,
+                '고가': abs(int(item['고가'])) if item['고가'] else 0,
+                '저가': abs(int(item['저가'])) if item['저가'] else 0,
+                '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
+                '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
+                '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
+            } for item in dict_list]
+
+    def run_main_work(self):
+        if self.latch_on: return
+        self.latch_on = True
+        self.request_chart_data()
+        self.latch_on = False
+
+    def request_chart_data(self):
+        if not self.todo_code: return
+        with self.lock:
+            code, status = list(self.todo_code.items())[0]
+        
+        logging.debug(f"get_first_chart_data 요청: {code}")
+        if not status['mi']: 
+            self.get_first_chart_data(code, cycle='mi', tick=1)
+            #self._mark_done(code, 'mi')
+            return
+        
+        if not status['dy']: 
+            self.get_first_chart_data(code, cycle='dy')
+            #self._mark_done(code, 'dy')
+
+    def _mark_done(self, code, cycle):
+        with self.lock:
+            if code in self.todo_code:
+                self.todo_code[code][cycle] = True
+                if all(self.todo_code[code].values()):
+                    self.done_code.add(code)
+                    del self.todo_code[code]
+
+    def register_code(self, code):
+        if not code: return False
+        with self.lock:
+            if not code or code in self.done_code or code in self.todo_code:
+                return False
+            
+            logging.debug(f'차트관리 종목코드 등록: {code}')
+            self.todo_code[code] = {'mi': False, 'dy': False}
+            return True
+
+    def is_done(self, code):
+        return code in self.done_code
 
 
 

@@ -1,5 +1,4 @@
 from public import dc, get_path, profile_operation
-from chart import cht_dt
 from datetime import datetime, timedelta
 import logging
 import sqlite3

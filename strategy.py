@@ -1,88 +1,55 @@
 from public import Work, dc, gm, hoga, profile_operation, load_json
-from chart import cht_dt
+from chart import ChartData
 from datetime import datetime
 import threading
 import logging
 import time
 
-class Strategy:
+class EvalStrategy:
     def __init__(self):
-        self.전략정의 = dc.const.DEFAULT_STRATEGY_SETS
-        self.buy_cond_index = 0
-        self.buy_cond_name = ''
-        self.sell_cond_index = 0
-        self.sell_cond_name = ''
-        self.loss_cut_timer = None
+        self.name = 'evl'
+        self.전략정의 = None
         self.clear_timer = None
         self.start_time = '09:00' # 매수시간 시작
         self.stop_time = '15:18'  # 매수시간 종료
         self.end_timer = None
         self.start_timer = None
-
-        #self.init()
-
-    def init(self):
-        for key, value in self.전략정의.items():
-            setattr(self, key, value)
-        self.set_index_name()
-        self._move_to_dict()
-        return self
-
-    def set_index_name(self) -> None:
-        if self.매수전략:
-            self.buy_cond_index = int(self.매수전략.split(' : ')[0])
-            self.buy_cond_name = self.매수전략.split(' : ')[1]
-        if self.매도전략:
-            self.sell_cond_index = int(self.매도전략.split(' : ')[0])
-            self.sell_cond_name = self.매도전략.split(' : ')[1]
+        self.latch_on = False
+        self.cht_dt = ChartData()
 
     def set_dict(self, new_dict: dict) -> None:
         """딕셔너리 업데이트 및 인스턴스 변수 동기화"""
         try:
-            self.전략정의.update(new_dict)
-            self._move_to_var(new_dict)
-            self.set_index_name()
-            # self.set_timer()
+            self.전략정의 = new_dict
+            for key, value in self.전략정의.items():
+                setattr(self, key, value)
         except Exception as e:
             logging.error(f'딕셔너리 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def get_dict(self) -> dict:
-        """현재 설정된 딕셔너리 반환"""
-        try:
-            self._move_to_dict()  # dict 업데이트 후 반환
-            return self.전략정의
-        except Exception as e:
-            logging.error(f'딕셔너리 조회 오류: {type(e).__name__} - {e}', exc_info=True)
-            return {}
+    def latch_off(self):
+        self.latch_on = False
 
-    def _move_to_var(self, input_dict: dict) -> None:
-        """딕셔너리의 값을 인스턴스 변수로 설정"""
-        try:
-            for key, value in input_dict.items():
-                if hasattr(self, key):
-                    setattr(self, key, value)
-                else:
-                    logging.warning(f'알 수 없는 키 무시됨: {key}')
-        except Exception as e:
-            logging.error(f'변수 변환 오류: { type(e).__name__} - {e}', exc_info=True)
+    def run_main_work(self):
+        if self.latch_on: return
+        self.latch_on = True
+        self.eval_order()
+        self.latch_on = False
 
-    def _move_to_dict(self) -> None:
-        """인스턴스 변수를 딕셔너리로 변환"""
-        try:
-            # self.전략정의에 정의된 인스턴스 변수들만 딕셔너리에 포함
-            for key in self.전략정의.keys():
-                if hasattr(self, key):
-                    self.전략정의[key] = getattr(self, key)
-        except Exception as e:
-            logging.error(f'딕셔너리 변환 오류: {type(e).__name__} - {e}', exc_info=True)
+    def eval_order(self):
+        order = gm.list검사목록.get()
+        if 'buy' in order:
+            self.order_buy(**order['buy'])
+        elif 'sell' in order:
+            self.order_sell(**order['sell'])
+        elif 'cancel' in order:
+            self.order_cancel(**order['cancel'])
 
-    @profile_operation
     def is_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         """매수 조건 충족 여부를 확인하는 메소드"""
         name = gm.dict종목정보.get(code, next='종목명')
 
         if self.매수스크립트적용:
-            if cht_dt.is_code_registered(code):
+            if self.cht_dt.is_code_registered(code):
                 try:
                     result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
                     if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
@@ -173,7 +140,6 @@ class Strategy:
 
         return is_ok, send_data, reason
 
-    @profile_operation
     def is_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
         try:
             if not gm.config.sim_on:
@@ -211,7 +177,7 @@ class Strategy:
                 send_data['msg'] = '매도지정'
 
             if self.매도스크립트적용:
-                if cht_dt.is_code_registered(code):
+                if self.cht_dt.is_code_registered(code):
                     result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
                     if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
                     if self.매도스크립트OR and result.get('result', False): 
@@ -264,7 +230,6 @@ class Strategy:
 
                     return True, send_data, f"당일청산: 청산시간={self.청산시간}, {code} {종목명}"
 
-            # 손실제한 확인
             if self.손실제한:
                 send_data['msg'] = '손실제한'
                 if 수익률 + self.손실제한율 <= 0:
@@ -281,7 +246,6 @@ class Strategy:
                     send_data['msg'] = '이익실현'
                     return True, send_data, f"이익실현: 이익실현율={self.이익실현율} 수익률={수익률}  {code} {종목명}"
 
-            # 감시적용 확인
             if self.감시적용:
                 if row.get('감시', 0):  # 감시 시작점 설정
                     최고가 = row.get('최고가', 0)
@@ -364,6 +328,76 @@ class Strategy:
         elif time < 180000: return dc.ms.시간외단일가
         else: return dc.ms.장종료
 
+class Strategy:
+    def __init__(self):
+        self.전략정의 = dc.const.DEFAULT_STRATEGY_SETS
+        self.buy_cond_index = 0
+        self.buy_cond_name = ''
+        self.sell_cond_index = 0
+        self.sell_cond_name = ''
+        self.clear_timer = None
+        self.start_time = '09:00' # 매수시간 시작
+        self.stop_time = '15:18'  # 매수시간 종료
+        self.end_timer = None
+        self.start_timer = None
+        self.ready = False
+        self.cht_dt = ChartData()
+
+    def init(self):
+        for key, value in self.전략정의.items():
+            setattr(self, key, value)
+        self.set_index_name()
+        self._move_to_dict()
+        return self
+
+    def set_index_name(self) -> None:
+        if self.매수전략:
+            self.buy_cond_index = int(self.매수전략.split(' : ')[0])
+            self.buy_cond_name = self.매수전략.split(' : ')[1]
+        if self.매도전략:
+            self.sell_cond_index = int(self.매도전략.split(' : ')[0])
+            self.sell_cond_name = self.매도전략.split(' : ')[1]
+
+    def set_dict(self, new_dict: dict) -> None:
+        """딕셔너리 업데이트 및 인스턴스 변수 동기화"""
+        try:
+            self.전략정의.update(new_dict)
+            self._move_to_var(new_dict)
+            self.set_index_name()
+            # self.set_timer()
+        except Exception as e:
+            logging.error(f'딕셔너리 설정 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def get_dict(self) -> dict:
+        """현재 설정된 딕셔너리 반환"""
+        try:
+            self._move_to_dict()  # dict 업데이트 후 반환
+            return self.전략정의
+        except Exception as e:
+            logging.error(f'딕셔너리 조회 오류: {type(e).__name__} - {e}', exc_info=True)
+            return {}
+
+    def _move_to_var(self, input_dict: dict) -> None:
+        """딕셔너리의 값을 인스턴스 변수로 설정"""
+        try:
+            for key, value in input_dict.items():
+                if hasattr(self, key):
+                    setattr(self, key, value)
+                else:
+                    logging.warning(f'알 수 없는 키 무시됨: {key}')
+        except Exception as e:
+            logging.error(f'변수 변환 오류: { type(e).__name__} - {e}', exc_info=True)
+
+    def _move_to_dict(self) -> None:
+        """인스턴스 변수를 딕셔너리로 변환"""
+        try:
+            # self.전략정의에 정의된 인스턴스 변수들만 딕셔너리에 포함
+            for key in self.전략정의.keys():
+                if hasattr(self, key):
+                    self.전략정의[key] = getattr(self, key)
+        except Exception as e:
+            logging.error(f'딕셔너리 변환 오류: {type(e).__name__} - {e}', exc_info=True)
+
     def initialize(self):
         try:
             gm.매수문자열 = "" 
@@ -391,12 +425,15 @@ class Strategy:
 
     def stg_fx실행_전략매매(self):
         try:
-            #logging.debug(f'전략 초기화 시작: {self.전략명칭}')
             msg = self.stg_fx체크_전략매매()
             if msg: 
                 logging.warning(f'전략 실행 실패 - 전략명칭={self.전략명칭} {msg}')
                 return
             
+            gm.evl.start()
+            self.order('evl', 'set_dict', self.전략정의)
+            self.order('evl', 'latch_off')
+            self.ready = True
             self.stg_fx실행_매매시작()
 
             gm.counter.set_strategy(self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
@@ -442,7 +479,8 @@ class Strategy:
                 self.start_timer = None
 
             self.stg_fx중지_전략매매(buy_stop, sell_stop)
-
+            gm.evl.stop()
+            self.ready = False
             if buy_stop: gm.매수문자열 = ""
             if sell_stop: gm.매도문자열 = ""
 
@@ -506,7 +544,7 @@ class Strategy:
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'종목명': 종목명})
                     self.order('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                    if not gm.잔고목록.in_key(code): self.order('ctu', 'register_code', code)
+                    if not gm.잔고목록.in_key(code): self.order('cts', 'register_code', code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
@@ -523,7 +561,7 @@ class Strategy:
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'종목명': 종목명})
                     self.order('admin', 'send_status_msg', '주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                    self.order('ctu', 'register_code', code)
+                    self.order('cts', 'register_code', code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
@@ -537,10 +575,12 @@ class Strategy:
             if kind == '매수' and self.매수시장가:
                 price = int((gm.dict종목정보.get(code, '현재가') or gm.dict종목정보.get(code, '전일가')) * 1.3)
                 logging.debug(f'매수 시장가: {code} {종목명} {price}')
-                self.order_buy(code, '신규매수', price)
+                #self.order_buy(code, '신규매수', price)
+                gm.list검사목록.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price}})
             elif kind == '매도' and self.매도시장가:
                 row = gm.잔고목록.get(key=code)
-                self.order_sell(row, True)
+                #self.order_sell(row, True)
+                gm.list검사목록.put({'sell': {'row': row, 'sell_condition': True}})
             else:
                 gm.dict주문대기종목.set(key=code, value={'kind': kind})
   
@@ -637,6 +677,7 @@ class Strategy:
 
     def on_fx실시간_조건검색(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
         if not gm.config.ready: return
+        if not self.ready: return
         # if not gm.config.sim_on: logging.debug(f'실시간 조건검색 처리: API로 부터 받음')
         if not gm.config.sim_on and time.time() < 90000: return
         try:

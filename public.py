@@ -900,7 +900,9 @@ class GlobalMemory:      # 글로벌 메모리 정의
     odr = None # 주문 결과 처리
     odc = None # 주문 명령 처리
     stg = None
+    evl = None # 전략 평가 (매매 조건 평가)
     ctu = None
+    cts = None
     scm = None # 스크립트 매니저
     ipc = None # 프로세스 매니저
     trd = None # 쓰레드 매니저
@@ -914,6 +916,10 @@ class GlobalMemory:      # 글로벌 메모리 정의
     list전략콤보 = []
     list전략튜플 = []
     list스크립트 = []
+    list주문목록 = None     # ThreadSafeList()
+    list검사목록 = None     # ThreadSafeList()
+    dict종목정보 = None     # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
+    dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
 
     qwork = {} #QDict().qdict
     qanswer = {} #QDict().qanswer
@@ -921,8 +927,10 @@ class GlobalMemory:      # 글로벌 메모리 정의
         'admin': SharedQueue(),
         'api': SharedQueue(),
         'dbm': SharedQueue(),
+        'cts': SharedQueue(),
         'ctu': SharedQueue(),
         'stg': SharedQueue(),
+        'evl': SharedQueue(),
         'dmy': SharedQueue(),
         'odr': SharedQueue(),
         'prx': SharedQueue(),
@@ -962,9 +970,6 @@ class GlobalMemory:      # 글로벌 메모리 정의
     매도문자열 = ''
     set종목감시 = set()
     set조건감시 = set() 
-    dict종목정보 = None # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
-    dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
-    list주문목록 = None
     수수료율 = 0.0
     세금율 = 0.0
     holdings = {}
@@ -1005,7 +1010,7 @@ def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):
             handler.close()
 
 
-# 사용 예시
+# init_logger 사용 예시
 if __name__ == "__main__":
     init_logger()
     logging.debug("This is an info message.")
