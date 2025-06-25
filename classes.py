@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal    
 from multiprocessing import Process
 from multiprocessing.queues import Empty
+import pythoncom
 import queue
 import threading
 import copy
@@ -20,18 +21,13 @@ class ThreadSafeList:
 
     def put(self, item):
         with self.lock:
-            #if isinstance(item, dict):
-            #    logging.debug(f'{self.name} put: len={len(self.list)}')
             self.list.append(item)
             self.not_empty.notify() # 대기중인 스레드에게 알림
 
     def get(self):
-        # 리스트가 비어있으면 여기에서 대기
         with self.lock:
             if self.empty():
                 self.not_empty.wait() # 대기
-            #if isinstance(self.list[0], dict):
-            #    logging.debug(f'{self.name} get: len={len(self.list)}')
             return self.list.pop(0)
 
     def remove(self, item):
@@ -1256,8 +1252,8 @@ class BaseModel:
         self.timeout = 15
         
     def process_q_data(self, q_data, queue_type='request'):
-        if not isinstance(q_data, QData):
-            return None
+        if not isinstance(q_data, QData): return None
+        if q_data.method == 'stop': self.stop()
         if hasattr(self.instance, q_data.method):
             if q_data.answer:
                 result = getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
@@ -1325,15 +1321,14 @@ class BaseModel:
                 logging.debug(f"{self.name}: run() 에러 - {e}", exc_info=True)
                 pass
 
+        if hasattr(self.instance, 'cleanup'):
+            self.instance.cleanup()
+
     def run(self):
         self._common_run_logic()
 
     def stop(self):
         self.running = False
-        if hasattr(self.instance, 'cleanup'):
-            self.instance.cleanup()
-        if hasattr(self, 'wait'):
-            self.wait()
 
     def order(self, target, method, *args, **kwargs):
         """응답이 필요없는 명령 (answer=False)"""
@@ -1415,13 +1410,6 @@ class QMainModel(BaseModel, QThread):
         """QThread용 sleep"""
         self.msleep(5)
 
-    def stop(self):
-        self.running = False
-        if hasattr(self.instance, 'cleanup'):
-            self.instance.cleanup()
-        self.quit()
-        self.wait()
-
 class ThreadModel(BaseModel, threading.Thread):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         threading.Thread.__init__(self)
@@ -1439,13 +1427,6 @@ class KiwoomModel(BaseModel, Process):
 
     def _run_loop_iteration(self):
         """Kiwoom 전용 ActiveX 이벤트 처리"""
-        import pythoncom
-        pythoncom.PumpWaitingMessages()
-
-    def stop(self):
-        self.running = False
-        if hasattr(self.instance, 'cleanup'):
-            self.instance.cleanup()
-        if hasattr(self, 'wait'):
-            self.wait()
+        if self.running:    
+            pythoncom.PumpWaitingMessages()
 

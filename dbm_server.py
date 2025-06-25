@@ -12,34 +12,35 @@ from collections import defaultdict
 class DBMServer:
     def __init__(self):
         self.name = 'dbm'
-        self.running = False
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
-        self.latch_on = True
         self.thread_local = None
         
     def initialize(self):
-        self.running = True
-        self.latch_on = True
         self.thread_local = threading.local()
         self.init_dbm()
 
-    def latch_off(self):
-        self.latch_on = False
-
     def cleanup(self):
         try:
-            print(f"{self.__class__.__name__} 중지 중...")
-            self.running = False
-            
-            # 연결 정리
-            if hasattr(self.thread_local, 'chart'):
-                self.thread_local.chart.close()
-            if hasattr(self.thread_local, 'db'):
-                self.thread_local.db.close()
-                
+            logging.info(f"{self.__class__.__name__} 중지 중...")
+
+            # 연결 정리 및 안전 종료
+            for db_type in ['chart', 'db']:
+                if hasattr(self.thread_local, db_type):
+                    conn = getattr(self.thread_local, db_type)
+                    try:
+                        conn.commit()
+                    except Exception as e:
+                        logging.warning(f"{db_type} 커밋 실패, 롤백 시도: {e}")
+                        try:
+                            conn.rollback()
+                        except Exception as e2:
+                            logging.error(f"{db_type} 롤백 실패: {e2}")
+                    finally:
+                        conn.close()
+
             self.thread_local = None
-            
+
         except Exception as e:
             logging.error(f"Error in cleanup: {e}", exc_info=True)
 

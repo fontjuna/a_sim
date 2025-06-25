@@ -41,11 +41,15 @@ class PriceUpdater(QThread):
 
     def stop(self):
         self.running = False
+        self.price_q.put(None)
 
     def run(self):
         self.running = True
         while self.running:
             job = self.price_q.get()
+            if job is None: 
+                self.running = False
+                break
             code = job['code']
             dictFID = job['dictFID']
             self.pri_fx처리_잔고데이터(code, dictFID)
@@ -141,16 +145,19 @@ class OrderCommander(QThread):
 
     def stop(self):
         self.running = False
+        self.order_q.put(None)
 
     def run(self):
         self.running = True
         while self.running:
             self.send_order()
-            time.sleep(0.01)
 
     def send_order(self):
         if not self.com_order_time_check(): return -308 # 5회 제한 초과
         order = self.order_q.get()
+        if order is None: 
+            self.running = False
+            return
         self.com_SendOrder(**order)
 
     def com_order_time_check(self):
@@ -209,20 +216,27 @@ class ChartUpdater(QThread):
 
     def stop(self):
         self.running = False
+        self.chart_q.put(None)
 
     def run(self):
         self.running = True
         while self.running:
             data = self.chart_q.get()
-            code = data.get('code')
-            job = data.get('dictFID')
-            self.cht_dt.update_chart(
-                code, 
-                abs(int(job['현재가'])) if job['현재가'] else 0,
-                abs(int(job['누적거래량'])) if job['누적거래량'] else 0,
-                abs(int(job['누적거래대금'])) if job['누적거래대금'] else 0,
-                job['체결시간']
-            )
+            if data is None: 
+                self.running = False
+                break
+            self.update_chart(data)
+
+    def update_chart(self, data):
+        code = data.get('code')
+        job = data.get('dictFID')
+        self.cht_dt.update_chart(
+            code, 
+            abs(int(job['현재가'])) if job['현재가'] else 0,
+            abs(int(job['누적거래량'])) if job['누적거래량'] else 0,
+            abs(int(job['누적거래대금'])) if job['누적거래대금'] else 0,
+            job['체결시간']
+        )
 
 class ChartSetter(QThread):
     def __init__(self, prx, todo_q):
@@ -235,11 +249,15 @@ class ChartSetter(QThread):
 
     def stop(self):
         self.running = False
+        self.todo_q.put(None)
 
     def run(self):
         self.running = True
         while self.running:
             code = self.todo_q.get()
+            if code is None: 
+                self.running = False
+                break
             self.request_chart_data(code)
 
     def request_chart_data(self, code):
@@ -362,15 +380,24 @@ class EvalStrategy(QThread):
 
     def stop(self):
         self.running = False
+        self.eval_q.put(None)
+        if self.end_timer:
+            self.end_timer.cancel()
+            self.end_timer = None
+        if self.start_timer:
+            self.start_timer.cancel()
+            self.start_timer = None
 
     def run(self):
         self.running = True
         while self.running:
             self.eval_order()
-            time.sleep(0.01)
 
     def eval_order(self):
         order = self.eval_q.get()
+        if order is None: 
+            self.running = False
+            return
         if 'buy' in order:
             self.order_buy(**order['buy'])
         elif 'sell' in order:
@@ -523,8 +550,8 @@ class EvalStrategy(QThread):
                 send_data['msg'] = '검색매도'
                 return True, send_data,  f"검색매도: {code} {종목명}"
 
-            if gm.config.sim_on and (수익률 > 30 or 수익률 < -30):
-                return False, {}, f"시뮬레이션 비정상 수익률: {code} {종목명} 매입가={매입가} 현재가={현재가} 수익률={수익률}"
+            #if gm.config.sim_on and (수익률 > 30 or 수익률 < -30):
+            #    return False, {}, f"시뮬레이션 비정상 수익률: {code} {종목명} 매입가={매입가} 현재가={현재가} 수익률={수익률}"
 
             if self.로스컷 and self.로스컷율 != 0:
                 send_list = []

@@ -42,7 +42,6 @@ class Admin:
         logging.debug(f'GetLoginInfo Accounts: {accounts}')
         gm.list계좌콤보 = accounts
         gm.config.account = accounts[0]
-
         gm.config.server = gm.prx.answer('api', 'GetLoginInfo', 'GetServerGubun')
         gm.수수료율 = dc.const.fee_sim if gm.config.server == '1' else dc.const.fee_real # 모의투자 0.35%, 실전투자 0.15% 매수, 매도 각각
         gm.세금율 = dc.const.tax_rate # 코스피 거래세 0.03 + 농어촌 특별세 0.12%, 코스닥 거래세 0.15 매도시적용
@@ -109,7 +108,7 @@ class Admin:
     def stop_threads(self):
         gm.cts.stop()
         gm.ctu.stop()
-        gm.evl.stop()
+        #gm.evl.stop()
         gm.odc.stop()
         gm.pri.stop()
 
@@ -413,7 +412,10 @@ class Admin:
 
     def stg_stop(self):
         try:
-            self.stg_fx실행_매매종료()
+            if not (gm.매수문자열 or  gm.매도문자열): return
+            self.stg_fx중지_전략매매()
+            gm.매수문자열 = ""
+            gm.매도문자열 = ""
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()
@@ -467,26 +469,7 @@ class Admin:
         except Exception as e:
             logging.error(f'전략 매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def stg_fx실행_매매종료(self, buy_stop=True, sell_stop=True):
-        try:
-            if not (gm.매수문자열 or  gm.매도문자열): return
-            if self.end_timer:
-                self.end_timer.cancel()
-                self.end_timer = None
-            if self.start_timer:
-                self.start_timer.cancel()
-                self.start_timer = None
-
-            self.stg_fx중지_전략매매(buy_stop, sell_stop)
-            gm.evl.stop()
-            self.stg_ready = False
-            if buy_stop: gm.매수문자열 = ""
-            if sell_stop: gm.매도문자열 = ""
-
-        except Exception as e:
-            logging.error(f'전략 마무리 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def stg_fx중지_전략매매(self, buy_stop=True, sell_stop=True):
+    def stg_fx중지_전략매매(self):
         try:
             def stop_trade(trade_type):
                 condition = self.매수전략 if trade_type == '매수' else self.매도전략
@@ -498,8 +481,10 @@ class Admin:
                 else:
                     raise Exception(f'{trade_type} 조건이 없습니다.')
                 logging.info(f'{trade_type} 전략 중지 - {cond_index:03d} : {cond_name}')
-            if buy_stop and self.매수적용: stop_trade('매수')
-            if sell_stop and self.매도적용: stop_trade('매도')
+            if self.매수적용: stop_trade('매수')
+            if self.매도적용: stop_trade('매도')
+            gm.evl.stop()
+            self.stg_ready = False
 
         except Exception as e:
             logging.error(f'전략 중지 오류: {type(e).__name__} - {e}', exc_info=True)

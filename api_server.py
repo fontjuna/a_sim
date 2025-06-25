@@ -560,29 +560,13 @@ class APIServer:
 
         self.counter = 0 # 테스트용
 
-    def api_start(self):
-        logging.info(f"{self.__class__.__name__} 시작 중...")
-        self.running = True
-        
-    def api_stop(self):
-        logging.info(f"APIServer 종료 시작 (sim_no={self.sim_no}) {self.__class__.__name__} 중지 중...")
-        self.running = False     
-   
-        # 시뮬레이션 모드에서만 추가 정리 필요
+    def cleanup(self):
         if self.sim_no > 0:
             self.thread_cleanup()
         # 연결 상태 변경
         self.connected = False
         logging.info("APIServer 종료 완료")
 
-    def get_status(self):
-        """상태 확인"""
-        return {
-            "name": self.__class__.__name__,
-            "running": self.running,
-            # 추가 상태 정보
-        }
-    
     def api_init(self, sim_no=0):
         try:
             import os

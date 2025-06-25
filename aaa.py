@@ -96,10 +96,8 @@ class Main:
             if gm.config.sim_no != 1:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
-                    # api_connected는 여기 외에 사용 금지
-                    connected = gm.prx.answer('api', 'api_connected')
+                    connected = gm.prx.answer('api', 'GetConnectState') == 1
                     if connected: break
-                    logging.debug(f"로그인 대기 중: {connected}")
                     time.sleep(0.5)
             gm.prx.order('api', 'set_tickers')
             gm.admin.init()
@@ -152,20 +150,22 @@ class Main:
 
     def cleanup(self):
         try:
-            gm.admin.stg_stop()
+            gm.admin.stg_stop() 
             gm.admin.stop_threads()
-            shutdown_list = ['api', 'dbm', 'prx']
-            for name in shutdown_list:
-                gm.shared_qes[name].request.put(QData(sender=name, method='stop'))
-            
+
+            for name in ['dbm', 'api', 'prx']:
+                if name in gm.shared_qes:
+                    gm.shared_qes[name].request.put(QData(sender=name, method='stop'))
+                time.sleep(0.1)
+
             # 프로세스 강제 종료
-            self._force_exit()
+            #self._force_exit()
             
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:
             self.cleanup_flag = True
-            if hasattr(self, 'app'): self.app.quit()
+            if hasattr(self, 'app') and gm.config.gui_on: self.app.quit()
             logging.info("cleanup completed")
 
     def _force_exit(self):
@@ -176,7 +176,7 @@ class Main:
         
         try:
             # 1초 후 강제 종료
-            time.sleep(1)
+            time.sleep()
             logging.info(f"[Main] 프로세스 강제 종료")
             os.kill(os.getpid(), signal.SIGTERM)
         except:
