@@ -1370,8 +1370,7 @@ class MainModel(BaseModel):
     
     def start(self):
         """별도 쓰레드에서 run() 실행"""
-        if self.thread and self.thread.is_alive():
-            return
+        if self.thread and self.thread.is_alive(): return
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
@@ -1380,6 +1379,52 @@ class MainModel(BaseModel):
         self.running = False
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1)
+
+class QThreadModel(BaseModel, QThread):
+    def __init__(self, name, cls, shared_qes, *args, **kwargs):
+        QThread.__init__(self)
+        BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
+        import queue
+        self.emit_q = queue.Queue()  # (signal, args) 형태로 사용
+
+    def run(self):
+        self.running = True
+        if hasattr(self.kwargs, 'timeout'):
+            self.timeout = self.kwargs.get('timeout')
+        self.instance = self.cls(*self.args, **self.kwargs)
+        self.instance.order = self.order
+        self.instance.answer = self.answer
+        self.instance.frq_order = self.frq_order
+        self.instance.frq_answer = self.frq_answer
+        if hasattr(self.instance, 'initialize'):
+            self.instance.initialize()
+        while self.running:
+            try:
+                # 기존 BaseModel과 동일한 큐 처리
+                if not self.my_qes.request.empty():
+                    q_data = self.my_qes.request.get()
+                    self.process_q_data(q_data, 'request')
+                if not self.shared_qes[self.name].stream.empty():
+                    q_data = self.shared_qes[self.name].stream.get()
+                    self.process_q_data(q_data, 'stream')
+                if hasattr(self.instance, 'run_main_work'):
+                    self.instance.run_main_work()
+                # emit_q 처리 (Qt 시그널 emit)
+                while not self.emit_q.empty():
+                    signal, args = self.emit_q.get()
+                    signal.emit(*args)
+                self.msleep(10)  # QThread: msleep 사용
+            except Exception as e:
+                import logging
+                logging.debug(f"{self.name}: QThreadModel run() 에러 - {e}", exc_info=True)
+                pass
+
+    def stop(self):
+        self.running = False
+        if hasattr(self.instance, 'cleanup'):
+            self.instance.cleanup()
+        self.quit()
+        self.wait()
 
 class ThreadModel(BaseModel, threading.Thread):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):

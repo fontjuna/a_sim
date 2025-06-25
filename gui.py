@@ -559,8 +559,7 @@ class GUI(QMainWindow, form_class):
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 
         # 주문 전송
-        #gm.prx.order('admin', 'com_SendOrder', **send_data)
-        gm.list주문목록.put(send_data)
+        gm.admin.order_q.put(send_data)
 
     def gui_tr_cancel(self):
         key = self.leTrCancelKey.text()
@@ -590,8 +589,7 @@ class GUI(QMainWindow, form_class):
         }
 
         # 주문 전송
-        #gm.prx.order('admin', 'com_SendOrder', **send_data)
-        gm.list주문목록.put(send_data)
+        gm.admin.order_q.put(send_data)
         
     # 스크립트 표시 ---------------------------------------------------------------------------------------------
     def gui_script_show(self):

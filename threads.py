@@ -1,4 +1,4 @@
-from PyQt5.QtCore import QThread
+from PyQt5.QtCore import QThread, pyqtSignal
 from classes import TimeLimiter
 from public import gm, dc, Work,load_json, save_json, hoga
 from tabulate import tabulate
@@ -49,29 +49,28 @@ class ProxyAdmin():
 
     def on_fx실시간_주식체결(self, code, rtype, dictFID):
         if not gm.config.ready: return
-
-        현재가 = abs(int(dictFID['현재가']))
-        updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
-        if updated:
-            data = gm.dict주문대기종목.get(code, None)
-            if data:
-                gm.주문목록.set(key=f'{code}_{data["kind"]}', data={'상태': '요청'})
-                if data['kind'] == '매수':
-                    gm.admin.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': 현재가}})
-                elif data['kind'] == '매도':
-                    row = gm.잔고목록.get(key=code)
-                    row['현재가'] = 현재가
-                    gm.admin.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
-                gm.dict주문대기종목.remove(code)
-
-            job = {'code': code, 'dictFID': dictFID}
-            gm.admin.chart_q.put(job) # ChartUpdater
         try:
+            현재가 = abs(int(dictFID['현재가']))
+            updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
+            if updated:
+                data = gm.dict주문대기종목.get(code, None)
+                if data:
+                    gm.주문목록.set(key=f'{code}_{data["kind"]}', data={'상태': '요청'})
+                    if data['kind'] == '매수':
+                        gm.admin.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': 현재가}})
+                    elif data['kind'] == '매도':
+                        row = gm.잔고목록.get(key=code)
+                        row['현재가'] = 현재가
+                        gm.admin.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
+                    gm.dict주문대기종목.remove(code)
+
+                job = {'code': code, 'dictFID': dictFID}
+                gm.admin.chart_q.put(job) # ChartUpdater
             if gm.잔고목록.in_key(code):
                 job = {'code': code, 'dictFID': dictFID}
                 gm.admin.price_q.put(job) # PriceUpdater
         except Exception as e:
-            logging.error(f'실시간 주식체결 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.error(f'실시간 주식체결 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
 class PriceUpdater(QThread):
     def __init__(self, prx, price_q):
@@ -628,8 +627,8 @@ class EvalStrategy(QThread):
         self.clear_timer = None
         self.start_time = '09:00' # 매수시간 시작
         self.stop_time = '15:18'  # 매수시간 종료
-        self.end_timer = None
         self.start_timer = None
+        self.end_timer = None
         self.running = False
         self.cht_dt = ChartData()
 

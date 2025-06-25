@@ -15,11 +15,10 @@ class Admin:
     def __init__(self):
         self.name = 'admin'
         self.price_q = ThreadSafeList()
-        self.setter_q = ThreadSafeList()
         self.eval_q = ThreadSafeList()
         self.order_q = ThreadSafeList()
+        self.setter_q = ThreadSafeList()
         self.chart_q = ThreadSafeList()
-        self.eval_q = ThreadSafeList()
 
         self.cts = None # ChartSetter
         self.ctu = None # ChartUpdater
@@ -56,8 +55,6 @@ class Admin:
 
     def set_globals(self):
         gm.counter = CounterTicker()
-        gm.list주문목록 = ThreadSafeList('주문목록')
-        gm.list검사목록 = ThreadSafeList('검사목록')
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
         gm.scm = ScriptManager()
@@ -107,6 +104,7 @@ class Admin:
 
     # 쓰레드 준비 -------------------------------------------------------------------------------------------
     def start_threads(self):
+        self.prx.real_condition.connect(self.run_recesive_signals)
         self.cts.start()
         self.ctu.start()
         self.evl.start()
@@ -126,6 +124,12 @@ class Admin:
         self.evl = EvalStrategy(gm.prx, self.eval_q)
         self.odc = OrderCommander(gm.prx, self.order_q)
         self.pri = PriceUpdater(gm.prx, self.price_q)
+
+    def run_recesive_signals(self, method, *args, **kwargs):
+        if hasattr(self, method):
+            getattr(self, method)(*args, **kwargs)
+        else:
+            logging.error(f'실시간 신호 처리 오류: method={method}')
 
     # 공용 함수 -------------------------------------------------------------------------------------------
     def send_status_msg(self, order, args):

@@ -5579,19 +5579,6 @@
         </property>
        </widget>
       </widget>
-      <widget class="QPushButton" name="btnSimChartLoad">
-       <property name="geometry">
-        <rect>
-         <x>180</x>
-         <y>30</y>
-         <width>121</width>
-         <height>21</height>
-        </rect>
-       </property>
-       <property name="text">
-        <string>차트데이타가져오기</string>
-       </property>
-      </widget>
       <widget class="QDateEdit" name="dtSimDate">
        <property name="geometry">
         <rect>
@@ -5631,7 +5618,7 @@
         </rect>
        </property>
        <property name="title">
-        <string>모의실행에 적용 할 종목</string>
+        <string>모의실행3 에 적용 할 종목</string>
        </property>
        <widget class="QCheckBox" name="chkManual">
         <property name="geometry">
