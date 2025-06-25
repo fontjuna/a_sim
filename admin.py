@@ -99,7 +99,7 @@ class Admin:
 
     # 쓰레드 준비 -------------------------------------------------------------------------------------------
     def start_threads(self):
-        gm.prx.admin_signal.connect(self.run_recesive_signals)
+        gm.prx.receive_signal.connect(self.run_recesive_signals)
         gm.cts.start()
         gm.ctu.start()
         gm.evl.start()
@@ -123,10 +123,8 @@ class Admin:
     def run_recesive_signals(self, data):
         if hasattr(self, data.method):
             getattr(self, data.method)(*data.args, **data.kwargs)
-        elif data.method == 'send_status_msg':
-            self.send_status_msg(*data.args, **data.kwargs)
         else:
-            logging.error(f'실시간 신호 처리 오류: method={data.method}')
+            logging.error(f'시그널 처리 오류: method={data.method}')
 
     # 공용 함수 -------------------------------------------------------------------------------------------
     def send_status_msg(self, order, args):

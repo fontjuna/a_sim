@@ -2,7 +2,7 @@ from gui import GUI
 from admin import Admin
 from threads import ProxyAdmin
 from public import init_logger, dc, gm, Work
-from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData, QAdminModel, KiwoomModel
+from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData, QMainModel, KiwoomModel
 from dbm_server import DBMServer
 from api_server import APIServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
@@ -79,7 +79,7 @@ class Main:
             gm.toast = Toast()
             gm.main = self
             gm.admin = Admin()
-            gm.prx = QAdminModel('prx', ProxyAdmin, gm.shared_qes)
+            gm.prx = QMainModel('prx', ProxyAdmin, gm.shared_qes)
             gm.prx.start()
             gm.api = KiwoomModel('api', APIServer, gm.shared_qes)
             gm.api.start()

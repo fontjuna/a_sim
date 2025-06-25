@@ -1273,9 +1273,9 @@ class BaseModel:
                         self.shared_qes[q_data.sender].request.put(callback_data)
                     elif queue_type == 'stream':
                         self.shared_qes[q_data.sender].stream.put(callback_data)
-            
-    def run(self):
-        self.running = True
+
+    def _initialize_instance(self):
+        """인스턴스 초기화 공통 로직"""
         if hasattr(self.kwargs, 'timeout'):
             self.timeout = self.kwargs.get('timeout')
         self.instance = self.cls(*self.args, **self.kwargs)
@@ -1285,30 +1285,48 @@ class BaseModel:
         self.instance.frq_answer = self.frq_answer
         if hasattr(self.instance, 'initialize'):
             self.instance.initialize()
+
+    def _process_queues(self):
+        """큐 처리 공통 로직"""
+        # 어떤 곳에서든 올 수 있는 request 처리
+        if not self.my_qes.request.empty():
+            q_data = self.my_qes.request.get()
+            self.process_q_data(q_data, 'request')
+            
+        # 어떤 곳에서든 올 수 있는 stream 처리 (고빈도 가능)
+        if not self.shared_qes[self.name].stream.empty():
+            q_data = self.shared_qes[self.name].stream.get()
+            self.process_q_data(q_data, 'stream')
+            
+        if hasattr(self.instance, 'run_main_work'):
+            self.instance.run_main_work()
+
+    def _run_loop_iteration(self):
+        """각 모델별 특수 처리를 위한 메서드 (오버라이드 가능)"""
+        pass
+
+    def _sleep(self):
+        """각 모델별 sleep 구현 (오버라이드 가능)"""
+        time.sleep(0.005)
+
+    def _common_run_logic(self):
+        """공통 run 로직"""
+        self.running = True
+        self._initialize_instance()
+        
         while self.running:
             try:
-                # 어떤 곳에서든 올 수 있는 request 처리
-                if not self.my_qes.request.empty():
-                    q_data = self.my_qes.request.get()
-                    self.process_q_data(q_data, 'request')
-                    #logging.debug(f"{self.name}: request 처리됨 - {q_data.method}")
-                
-                # 어떤 곳에서든 올 수 있는 stream 처리 (고빈도 가능)
-                if not self.shared_qes[self.name].stream.empty():
-                    q_data = self.shared_qes[self.name].stream.get()
-                    self.process_q_data(q_data, 'stream')
-                    #logging.debug(f"{self.name}: stream 처리됨 - {q_data.method}")
-                
-                if hasattr(self.instance, 'run_main_work'):
-                    self.instance.run_main_work()
-
-                time.sleep(0.005)
+                self._process_queues()
+                self._run_loop_iteration()  # 각 모델별 특수 처리
+                self._sleep()
             except (EOFError, ConnectionError, BrokenPipeError):
-                # 프로세스 종료 시 발생할 수 있는 예외들
                 break
             except Exception as e:
                 logging.debug(f"{self.name}: run() 에러 - {e}", exc_info=True)
                 pass
+
+    def run(self):
+        self._common_run_logic()
 
     def stop(self):
         self.running = False
@@ -1317,11 +1335,6 @@ class BaseModel:
         if hasattr(self, 'wait'):
             self.wait()
 
-    def get_stats(self):
-        """처리 통계 반환"""
-        return f"{self.name}: request={self.process_stats['request']}, stream={self.process_stats['stream']}"
-
-    # 인터페이스 메서드들
     def order(self, target, method, *args, **kwargs):
         """응답이 필요없는 명령 (answer=False)"""
         q_data = QData(sender=self.name, method=method, answer=False, args=args, kwargs=kwargs)
@@ -1380,45 +1393,27 @@ class MainModel(BaseModel):
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1)
 
-class QAdminModel(BaseModel, QThread):
-    admin_signal = pyqtSignal(object)
+class QMainModel(BaseModel, QThread):
+    receive_signal = pyqtSignal(object)
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         QThread.__init__(self)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
         self.emit_q = queue.Queue()  # (signal, args) 형태로 사용
 
-    def run(self):
-        self.running = True
-        if hasattr(self.kwargs, 'timeout'):
-            self.timeout = self.kwargs.get('timeout')
-        self.instance = self.cls(*self.args, **self.kwargs)
+    def _initialize_instance(self):
+        """QMainModel 전용 인스턴스 초기화"""
+        super()._initialize_instance()
         self.instance.emit_q = self.emit_q
-        self.instance.order = self.order
-        self.instance.answer = self.answer
-        self.instance.frq_order = self.frq_order
-        self.instance.frq_answer = self.frq_answer
-        if hasattr(self.instance, 'initialize'):
-            self.instance.initialize()
-        while self.running:
-            try:
-                # 기존 BaseModel과 동일한 큐 처리
-                if not self.my_qes.request.empty():
-                    q_data = self.my_qes.request.get()
-                    self.process_q_data(q_data, 'request')
-                if not self.shared_qes[self.name].stream.empty():
-                    q_data = self.shared_qes[self.name].stream.get()
-                    self.process_q_data(q_data, 'stream')
-                if hasattr(self.instance, 'run_main_work'):
-                    self.instance.run_main_work()
-                # emit_q 처리 (Qt 시그널 emit)
-                while not self.emit_q.empty():
-                    data = self.emit_q.get()
-                    self.admin_signal.emit(data)
-                self.msleep(10)  # QThread: msleep 사용
-            except Exception as e:
-                import logging
-                logging.debug(f"{self.name}: QThreadModel run() 에러 - {e}", exc_info=True)
-                pass
+
+    def _run_loop_iteration(self):
+        """QMainModel 전용 emit_q 처리"""
+        while not self.emit_q.empty():
+            data = self.emit_q.get()
+            self.receive_signal.emit(data)
+
+    def _sleep(self):
+        """QThread용 sleep"""
+        self.msleep(5)
 
     def stop(self):
         self.running = False
@@ -1442,39 +1437,10 @@ class KiwoomModel(BaseModel, Process):
         Process.__init__(self, name=name)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
 
-    def run(self):
+    def _run_loop_iteration(self):
+        """Kiwoom 전용 ActiveX 이벤트 처리"""
         import pythoncom
-        import time
-        self.running = True
-        if hasattr(self.kwargs, 'timeout'):
-            self.timeout = self.kwargs.get('timeout')
-        self.instance = self.cls(*self.args, **self.kwargs)
-        self.instance.order = self.order
-        self.instance.answer = self.answer
-        self.instance.frq_order = self.frq_order
-        self.instance.frq_answer = self.frq_answer
-        if hasattr(self.instance, 'initialize'):
-            self.instance.initialize()
-        while self.running:
-            try:
-                # 기존 BaseModel과 동일한 큐 처리
-                if not self.my_qes.request.empty():
-                    q_data = self.my_qes.request.get()
-                    self.process_q_data(q_data, 'request')
-                if not self.shared_qes[self.name].stream.empty():
-                    q_data = self.shared_qes[self.name].stream.get()
-                    self.process_q_data(q_data, 'stream')
-                if hasattr(self.instance, 'run_main_work'):
-                    self.instance.run_main_work()
-                # ActiveX 이벤트 처리
-                pythoncom.PumpWaitingMessages()
-                time.sleep(0.005)
-            except (EOFError, ConnectionError, BrokenPipeError):
-                break
-            except Exception as e:
-                import logging
-                logging.debug(f"{self.name}: KiwoomModel run() 에러 - {e}", exc_info=True)
-                pass
+        pythoncom.PumpWaitingMessages()
 
     def stop(self):
         self.running = False
