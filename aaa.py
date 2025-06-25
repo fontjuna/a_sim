@@ -1,8 +1,8 @@
 from gui import GUI
 from admin import Admin
-from threads import ProxyAdmin, OrderManager
+from threads import ProxyAdmin
 from public import init_logger, dc, gm, Work
-from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData
+from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData, QAdminModel, KiwoomModel
 from dbm_server import DBMServer
 from api_server import APIServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
@@ -79,8 +79,9 @@ class Main:
             gm.toast = Toast()
             gm.main = self
             gm.admin = Admin()
-            gm.prx = ThreadModel('prx', ProxyAdmin, gm.shared_qes)
-            gm.api = ProcessModel('api', APIServer, gm.shared_qes)
+            gm.prx = QAdminModel('prx', ProxyAdmin, gm.shared_qes)
+            gm.prx.start()
+            gm.api = KiwoomModel('api', APIServer, gm.shared_qes)
             gm.api.start()
             gm.prx.order('api', 'api_init', gm.config.sim_no)
             gm.prx.order('api', 'CommConnect', False)
@@ -115,9 +116,6 @@ class Main:
     def trade_start(self):
         logging.debug('trade_start')
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
-        gm.odr = ThreadModel('odr', OrderManager, gm.shared_qes)
-        gm.odr.start()
-        gm.prx.start()
         gm.admin.stg_start()
         gm.config.ready = True
 
@@ -156,7 +154,7 @@ class Main:
         try:
             gm.admin.stg_stop()
             gm.admin.stop_threads()
-            shutdown_list = ['odr', 'api', 'dbm', 'prx']
+            shutdown_list = ['api', 'dbm', 'prx']
             for name in shutdown_list:
                 gm.shared_qes[name].request.put(QData(sender=name, method='stop'))
             

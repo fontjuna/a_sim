@@ -962,7 +962,7 @@ class APIServer:
             'cond_name': cond_name,
             'cond_index': cond_index
         }
-        logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
+        #logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
         self.order('prx', 'on_fx실시간_조건검색', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
@@ -1000,9 +1000,9 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            if gubun == '0': self.order('odr', 'odr_recieve_chegyeol_data', dictFID)
-            elif gubun == '1': self.order('odr', 'odr_recieve_balance_data', dictFID)
-            #logging.debug(f"ChejanData: API 서버에서 보냄 {gubun} {dictFID['종목코드']} {dictFID['종목명']}")
+            self.order('prx', 'on_fx실시간_주문체결', gubun, dictFID)
+            #if gubun == '0': self.order('odr', 'odr_recieve_chegyeol_data', dictFID)
+            #elif gubun == '1': self.order('odr', 'odr_recieve_balance_data', dictFID)
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1017,7 +1017,8 @@ class APIServer:
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                self.order('odr', 'odr_recieve_balance_data', dictFID)
+                #self.order('odr', 'odr_recieve_balance_data', dictFID)
+                self.order('prx', 'on_fx실시간_주문체결', '1', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1055,7 +1056,8 @@ class APIServer:
 
                     portfolio.process_order(dictFID)
 
-                self.order('odr', 'odr_recieve_chegyeol_data', dictFID)
+                #self.order('odr', 'odr_recieve_chegyeol_data', dictFID)
+                self.order('prx', 'on_fx실시간_주문체결', '0', dictFID)
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------

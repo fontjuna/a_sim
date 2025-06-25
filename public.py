@@ -121,6 +121,13 @@ class Work:
     job: dict = field(default_factory={})              # 수신자가 실행할 함수에 전달할 데이터
 
 @dataclass
+class QWork:
+    method: str
+    args: tuple = field(default_factory=tuple)
+    kwargs: dict = field(default_factory=dict)
+    callback: str = None
+
+@dataclass
 class QData:
     sender : str = None
     method : str = None
@@ -895,8 +902,13 @@ class GlobalMemory:      # 글로벌 메모리 정의
     admin = None
     prx = None
     gui = None
+    pri = None # PriceUpdater
     api = None
     dbm = None
+    cts = None
+    ctu = None
+    evl = None
+    odc = None
     odr = None # 주문 결과 처리
     scm = None # 스크립트 매니저
 
