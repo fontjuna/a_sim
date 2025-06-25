@@ -365,8 +365,6 @@ class EvalStrategy(QThread):
         self.clear_timer = None
         self.start_time = '09:00' # 매수시간 시작
         self.stop_time = '15:18'  # 매수시간 종료
-        self.start_timer = None
-        self.end_timer = None
         self.running = False
         self.cht_dt = ChartData()
 
@@ -375,18 +373,13 @@ class EvalStrategy(QThread):
         try:
             for key, value in new_dict.items():
                 setattr(self, key, value)
+            self.set_timer()
         except Exception as e:
             logging.error(f'딕셔너리 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def stop(self):
         self.running = False
         self.eval_q.put(None)
-        if self.end_timer:
-            self.end_timer.cancel()
-            self.end_timer = None
-        if self.start_timer:
-            self.start_timer.cancel()
-            self.start_timer = None
 
     def run(self):
         self.running = True
@@ -670,22 +663,8 @@ class EvalStrategy(QThread):
             row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 0, '매수가': 0, '수익률(%)': 0 }
             start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.청산시간}", '%Y-%m-%d %H:%M')
             delay_secs = max(0, (start_time - now).total_seconds())
-            threading.Timer(delay_secs, lambda: self.order_sell(row)).start()
-
-        if not gm.config.sim_on:
-            now = datetime.now()
-            current = now.strftime('%H:%M')
-            if "15:30" > current > self.stop_time:
-                msg = f'전략 종료시간 지났습니다. {self.stop_time} {current}'
-                return msg
-            else:
-                end_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.stop_time}", '%Y-%m-%d %H:%M')
-                remain_secs = max(0, (end_time - now).total_seconds())
-                threading.Timer(remain_secs, lambda: self.stg_fx실행_매매종료(sell_stop=self.매도도같이적용)).start()
-            if current < self.start_time:
-                start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.start_time}", '%Y-%m-%d %H:%M')
-                delay_secs = max(0, (start_time - now).total_seconds())
-                threading.Timer(delay_secs, lambda: gm.toast.toast(f'전략을 시작합니다. {self.start_time} {current}')).start()
+            self.clear_timer = threading.Timer(delay_secs, lambda: self.order_sell(row))
+            self.clear_timer.start()
 
     def com_market_status(self):
         now = datetime.now()
