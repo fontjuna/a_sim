@@ -22,9 +22,6 @@ class DBMServer:
 
     def cleanup(self):
         try:
-            logging.info(f"{self.__class__.__name__} 중지 중...")
-
-            # 연결 정리 및 안전 종료
             for db_type in ['chart', 'db']:
                 if hasattr(self.thread_local, db_type):
                     conn = getattr(self.thread_local, db_type)
@@ -40,6 +37,7 @@ class DBMServer:
                         conn.close()
 
             self.thread_local = None
+            logging.info(f"DBMServer 종료")
 
         except Exception as e:
             logging.error(f"Error in cleanup: {e}", exc_info=True)

@@ -565,7 +565,7 @@ class APIServer:
             self.thread_cleanup()
         # 연결 상태 변경
         self.connected = False
-        logging.info("APIServer 종료 완료")
+        logging.info("APIServer 종료")
 
     def api_init(self, sim_no=0):
         try:
@@ -646,24 +646,6 @@ class APIServer:
                     logging.error(f"조건검색 스레드 정리 오류: {e}")
 
     # 추가 메서드 --------------------------------------------------------------------------------------------------
-    def api_connected(self):
-        if self.sim_no == 1: return True
-        else: 
-            start_time = time.time()
-            while not self.connected:
-                pythoncom.PumpWaitingMessages()
-                if time.time() - start_time > 15:
-                    logging.warning(f"Timeout while waiting for API 연결")
-                    return False
-            logging.debug(f"API 연결 완료: {self.connected}")
-            return self.connected
-
-    def GetConnectState(self):
-        if self.sim_no != 1:
-            return self.ocx.dynamicCall("GetConnectState()")
-        else:
-            return 1
-
     #@profile_operation        
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         #logging.debug(f'api_request: rqname={rqname}, trcode={trcode}, input={input}, next={next}, screen={screen}, form={form}, timeout={timeout}')
@@ -770,6 +752,12 @@ class APIServer:
             if block:
                 while not self.connected:
                     pythoncom.PumpWaitingMessages()
+
+    def GetConnectState(self):
+        if self.sim_no != 1:
+            return self.ocx.dynamicCall("GetConnectState()")
+        else:
+            return 1
 
     def GetConditionLoad(self, block=True):
         if self.sim_no == 1:  

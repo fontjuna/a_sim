@@ -912,6 +912,12 @@ class GlobalMemory:      # 글로벌 메모리 정의
     odr = None # 주문 결과 처리
     scm = None # 스크립트 매니저
 
+    price_q = None    # ThreadSafeList()
+    eval_q = None # ThreadSafeList()
+    order_q = None # ThreadSafeList()
+    setter_q = None # ThreadSafeList()
+    chart_q = None # ThreadSafeList()
+    
     toast = None
     json_config = dc.log_config
     config = GlobalConfig()
@@ -1006,7 +1012,6 @@ def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):
     for handler in logger.handlers:
         if hasattr(handler, "close"):
             handler.close()
-
 
 # init_logger 사용 예시
 if __name__ == "__main__":

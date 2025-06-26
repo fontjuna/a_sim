@@ -1292,7 +1292,7 @@ class GUI(QMainWindow, form_class):
             # 큐 메시지 처리
             while not gm.qwork['msg'].empty():
                 data = gm.qwork['msg'].get()
-                if data.order == '주문내용':
+                if data.order in ['주문내용', '체결내용']:
                     self.gui_fx게시_주문내용(data.job['msg'])
                 elif data.order == '검색내용':
                     self.gui_fx게시_검색내용(data.job['msg'])

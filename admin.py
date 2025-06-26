@@ -15,11 +15,10 @@ class Admin:
     def __init__(self):
         self.name = 'admin'
         self.stg_ready = False
-        self.price_q = ThreadSafeList()
-        self.eval_q = ThreadSafeList()
-        self.order_q = ThreadSafeList()
-        self.setter_q = ThreadSafeList()
-        self.chart_q = ThreadSafeList()
+        self.start_timer = None
+        self.end_timer = None
+        self.start_time = '09:00' # 매수시간 시작
+        self.stop_time = '15:18'  # 매수시간 종료
 
     def init(self):
         logging.debug(f'{self.name} init')
@@ -48,6 +47,11 @@ class Admin:
         logging.debug(f"서버:{gm.config.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.config.account}")
 
     def set_globals(self):
+        gm.price_q = ThreadSafeList('price_q')
+        gm.eval_q = ThreadSafeList('eval_q')
+        gm.order_q = ThreadSafeList('order_q')
+        gm.setter_q = ThreadSafeList('setter_q')
+        gm.chart_q = ThreadSafeList('chart_q')
         gm.counter = CounterTicker()
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
@@ -113,11 +117,11 @@ class Admin:
         gm.pri.stop()
 
     def set_threads(self):
-        gm.cts = ChartSetter(gm.prx, self.setter_q)
-        gm.ctu = ChartUpdater(gm.prx, self.chart_q)
-        gm.evl = EvalStrategy(gm.prx, self.eval_q)
-        gm.odc = OrderCommander(gm.prx, self.order_q)
-        gm.pri = PriceUpdater(gm.prx, self.price_q)
+        gm.cts = ChartSetter(gm.prx, gm.setter_q)
+        gm.ctu = ChartUpdater(gm.prx, gm.chart_q)
+        gm.evl = EvalStrategy(gm.prx, gm.eval_q)
+        gm.odc = OrderCommander(gm.prx, gm.order_q)
+        gm.pri = PriceUpdater(gm.prx, gm.price_q)
 
     def run_recesive_signals(self, data):
         if hasattr(self, data.method):
@@ -130,7 +134,11 @@ class Admin:
         if order=='주문내용':
             msg = f"{args['구분']} : {args['종목코드']} {args['종목명']}"
             if '주문수량' in args:
-                msg += f" 주문수량:{args['주문수량']}주 / 주문가격:{args.get('주문가격', 0)}원 주문번호:{args.get('주문번호', '')}"
+                msg += f" 주문수량:{args['주문수량']}주 - 주문가:{args.get('주문가격', 0)}원 / 주문번호:{args.get('주문번호', '')}"
+            job = {'msg': msg}
+        elif order=='체결내용':
+            msg = f"{args['구분']} : {args['종목코드']} {args['종목명']}"
+            msg += f" 체결수량:{args['체결수량']}주 - 체결가:{args.get('체결가', 0)}원 / 주문번호:{args.get('주문번호', '')}"
             job = {'msg': msg}
         elif order=='검색내용':
             job = {'msg': args}
@@ -235,18 +243,18 @@ class Admin:
                 if data:
                     gm.주문목록.set(key=f'{code}_{data["kind"]}', data={'상태': '요청'})
                     if data['kind'] == '매수':
-                        self.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': 현재가}})
+                        gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': 현재가}})
                     elif data['kind'] == '매도':
                         row = gm.잔고목록.get(key=code)
                         row['현재가'] = 현재가
-                        self.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
+                        gm.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
                     gm.dict주문대기종목.remove(code)
 
                 job = {'code': code, 'dictFID': dictFID}
-                self.chart_q.put(job) # ChartUpdater
+                gm.chart_q.put(job) # ChartUpdater
             if gm.잔고목록.in_key(code):
                 job = {'code': code, 'dictFID': dictFID}
-                self.price_q.put(job) # PriceUpdater
+                gm.price_q.put(job) # PriceUpdater
         except Exception as e:
             logging.error(f'실시간 주식체결 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -356,7 +364,7 @@ class Admin:
 
                     data[item['종목번호']] = item['종목명']
 
-                    self.setter_q.put(item['종목번호'])
+                    gm.setter_q.put(item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.counter.set_batch(data)
 
@@ -366,7 +374,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
-            self.setter_q.put('005930')
+            gm.setter_q.put('005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
 
@@ -402,10 +410,8 @@ class Admin:
             self.json_load_strategy_sets() # 전략 정의 리스트 로드
             _, gm.실행전략 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS) # 실행 전략 로드
             gm.설정전략 = gm.전략정의.get(key=gm.실행전략['전략명칭']) # 실행 전략 설정 정보
-            for key, value in gm.설정전략.items():
-                setattr(self, key, value)
+            for key, value in gm.설정전략.items(): setattr(self, key, value)
             logging.debug(f'전략명칭={gm.실행전략["전략명칭"]}')
-
             self.stg_fx실행_전략매매()
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -471,6 +477,13 @@ class Admin:
 
     def stg_fx중지_전략매매(self):
         try:
+            if self.start_timer:
+                self.start_timer.cancel()
+                self.start_timer = None
+            if self.end_timer:
+                self.end_timer.cancel()
+                self.end_timer = None
+
             def stop_trade(trade_type):
                 condition = self.매수전략 if trade_type == '매수' else self.매도전략
                 cond_name = condition.split(' : ')[1]
@@ -532,7 +545,7 @@ class Admin:
                     gm.매도조건목록.set(key=code, data={'종목명': 종목명})
                     self.send_status_msg('주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
                     if not gm.잔고목록.in_key(code): 
-                        self.setter_q.put(code)
+                        gm.setter_q.put(code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
@@ -549,7 +562,7 @@ class Admin:
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'종목명': 종목명})
                     self.send_status_msg('주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
-                    self.setter_q.put(code)
+                    gm.setter_q.put(code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
@@ -563,10 +576,10 @@ class Admin:
             if kind == '매수' and self.매수시장가:
                 price = int((gm.dict종목정보.get(code, '현재가') or gm.dict종목정보.get(code, '전일가')) * 1.3)
                 logging.debug(f'매수 시장가: {code} {종목명} {price}')
-                self.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price}})
+                gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price}})
             elif kind == '매도' and self.매도시장가:
                 row = gm.잔고목록.get(key=code)
-                self.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
+                gm.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
             else:
                 gm.dict주문대기종목.set(key=code, value={'kind': kind})
   
@@ -643,6 +656,23 @@ class Admin:
                 self.start_time = self.시작시간.strip()
                 self.stop_time = self.종료시간.strip()
 
+            if not gm.config.sim_on: # 시뮬레이션 모드 아니면 시간 체크
+                now = datetime.now()
+                current = now.strftime('%H:%M')
+                if "15:30" > current > self.stop_time:
+                    msg = f'전략 종료시간 지났습니다. {self.stop_time} {current}'
+                    return msg
+                else:
+                    end_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.stop_time}", '%Y-%m-%d %H:%M')
+                    remain_secs = max(0, (end_time - now).total_seconds())
+                    self.end_timeer = threading.Timer(remain_secs, lambda: self.stg_stop())
+                    self.end_timeer.start()
+                if current < self.start_time:
+                    start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.start_time}", '%Y-%m-%d %H:%M')
+                    delay_secs = max(0, (start_time - now).total_seconds())
+                    self.start_timeer = threading.Timer(delay_secs, lambda: gm.toast.toast(f'전략을 시작합니다. {self.start_time} {current}'))
+                    self.start_timeer.start()
+
         except Exception as e:
             logging.error(f'전략매매 체크 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -661,7 +691,7 @@ class Admin:
             data={'키': f'{key}', '구분': kind, '상태': '취소요청', '종목코드': code, '종목명': name}
             gm.주문목록.set(key=key, data=data)
             #self.order('stg', 'order_cancel', kind, order_no, code)
-            self.eval_q.put({'cancel': {'code': code, 'rqname': '주문취소'}})
+            gm.eval_q.put({'cancel': {'code': code, 'rqname': '주문취소'}})
 
             logging.info(f'{kind}\n주문 타임아웃: {code} {name} 주문번호={order_no} 주문수량={주문수량} 미체결수량={미체결수량}')
 
@@ -793,8 +823,8 @@ class Admin:
             전략명칭 = gm.실행전략['전략명칭']
             전략정의 = gm.설정전략
             매매시간 = datetime.now().strftime('%H:%M:%S')
-            단위체결량 = int(dictFID.setdefault('단위체결량', 0) or 0)
-            단위체결가 = int(dictFID.setdefault('단위체결가', 0) or 0)
+            단위체결량 = int(dictFID.get('단위체결량', 0) or 0)
+            단위체결가 = int(dictFID.get('단위체결가', 0) or 0)
         except Exception as e:
             logging.error(f"주문 체결 오류: {kind} {type(e).__name__} - {e}", exc_info=True)
 
@@ -822,11 +852,10 @@ class Admin:
                     '주문수량': dictFID.get('주문수량', 0), '주문가격': dictFID.get('주문가격', 0), '주문번호': order_no}
             if kind == '매수':
                 buy_conclution()
-                msg.update({'매수수량': 단위체결량, '매수가': 단위체결가, '매수금액': 단위체결가 * 단위체결량})
-            elif kind == '매도':
-                msg.update({'매도수량': 단위체결량, '매도가': 단위체결가, '매도금액': 단위체결가 * 단위체결량})
 
-            self.send_status_msg('주문내용', msg)
+            msg.update({'체결수량': 단위체결량, '체결가': 단위체결가, '체결금액': 단위체결가 * 단위체결량})
+
+            self.send_status_msg('체결내용', msg)
             logging.info(msg)
 
             if remain_qty == 0:
@@ -854,7 +883,7 @@ class Admin:
                 if gm.잔고목록.in_key(code):
                     gm.잔고목록.set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량, '주문가능수량': 주문가능수량, '현재가': 현재가})
             dictFID['주문상태'] = '잔고'
-            self.dbm_trade_upsert(dictFID)
+            #self.dbm_trade_upsert(dictFID)
             msg = f"잔고변경 : {code} {dictFID['종목명']} 보유수량:{보유수량}주 매입단가:{매입단가}원 매입금액:{보유수량 * 매입단가}원 주문가능수량:{주문가능수량}주"
             logging.info(msg)
             logging.debug(f'잔고 dictFID:\n{tabulate(pd.DataFrame([dictFID]), headers="keys", showindex=True, numalign="right")}')

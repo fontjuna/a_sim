@@ -133,7 +133,7 @@ class PriceUpdater(QThread):
         gm.주문목록.set(key=key, data=data)
         gm.잔고목록.set(key=code, data={'주문가능수량': 0})
         row.update({'rqname': '신규매도', 'account': gm.config.account})
-        gm.admin.eval_q.put({'sell': {'row': row}})
+        gm.eval_q.put({'sell': {'row': row}})
 
 class OrderCommander(QThread):
     def __init__(self, prx, order_q):
@@ -484,7 +484,7 @@ class EvalStrategy(QThread):
         is_ok, send_data, reason = self.is_buy(code, rqname, price) # rqname : 전략
         if is_ok:
             logging.info(f'매수결정: {reason}\nsend_data={send_data}')
-            gm.admin.order_q.put(send_data)
+            gm.order_q.put(send_data)
         else:
             logging.info(f'매수안함: {reason} send_data={send_data}')
             key = f'{code}_매수'
@@ -573,7 +573,6 @@ class EvalStrategy(QThread):
                     send_list = []
                     rows = gm.잔고목록.get()
                     if self.청산시장가:
-
                         send_list = [{**send_data, 'code': code, 'price': 0, 'quantity': row['보유수량'], 'msg': '청산시장'} for row in rows]
                     else:
                         send_list = [{**send_data, 'code': code, 'price': hoga(현재가, self.청산호가), 'quantity': row['보유수량'], 'hoga': '01', 'msg': '청산지정'} for row in rows]
@@ -623,9 +622,9 @@ class EvalStrategy(QThread):
             if isinstance(send_data, list):
                 logging.debug(f'** 복수 매도 주문목록 **: {send_data}')
                 for data in send_data:
-                    gm.admin.order_q.put(data)
+                    gm.order_q.put(data)
             else:
-                gm.admin.order_q.put(send_data)
+                gm.order_q.put(send_data)
         else:
             key = f'{row["종목번호"]}_매도'
             if gm.주문목록.in_key(key):
@@ -650,7 +649,7 @@ class EvalStrategy(QThread):
                 'ordno': order_no
             }
             logging.debug(f'주문취소: {order_no} {send_data}')
-            gm.admin.order_q.put(send_data)
+            gm.order_q.put(send_data)
         except Exception as e:
             logging.error(f'주문취소 오류: {type(e).__name__} - {e}', exc_info=True)
 

@@ -1215,6 +1215,21 @@ def set_tables():
     gm.당일종목 = TableManager(gm.tbl.hd당일종목)
     gm.수동종목 = TableManager(gm.tbl.hd수동종목)
 
+import shutil
+import os
+
+def get_windows_drive_free_percent():
+    """
+    현재 스크립트가 실행 중인 드라이브(C:\ 등)의 잔여 공간 비율(%)을 반환합니다.
+    Windows 전용입니다.
+    """
+    # 현재 작업 디렉터리의 드라이브 문자 추출 (예: 'C:')
+    drive = os.path.splitdrive(os.getcwd())[0] + '\\'
+
+    total, used, free = shutil.disk_usage(drive)
+    percent_free = (free / total) * 100
+    return percent_free
+
 from PyQt5.QtCore import QThread
 from multiprocessing import Process
 from dataclasses import dataclass, field
