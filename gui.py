@@ -1,4 +1,6 @@
 from public import get_path, gm, dc, save_json, load_json, hoga
+from dbm_server import db_columns
+from tables import tbl
 from PyQt5.QtWidgets import QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox, QTableWidget, QTableWidgetItem
 from PyQt5.QtGui import QIcon, QTextCursor
 from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate, Qt
@@ -253,7 +255,7 @@ class GUI(QMainWindow, form_class):
         date_text = self.dtMonitor.date().toString("yyyy-MM-dd")
         try:
             gm.매매목록.delete()
-            dict_list = gm.prx.answer('dbm', 'execute_query', sql=dc.ddb.TRD_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.prx.answer('dbm', 'execute_query', sql=db_columns.TRD_SELECT_DATE, db='db', params=(date_text,))
             if dict_list is not None and len(dict_list) > 0:
                 gm.매매목록.set(data=dict_list)
                 logging.info(f"매매목록 얻기 완료: data count={gm.매매목록.len()}")
@@ -275,7 +277,7 @@ class GUI(QMainWindow, form_class):
             input = {'계좌번호':gm.config.account, '비밀번호': '', '기준일자': date_text, '단주구분': 2, '현금신용구분': 0}
             rqname = '일지합산'
             trcode = 'opt10170'
-            output = gm.tbl.hd일지합산['컬럼']
+            output = tbl.hd일지합산['컬럼']
             next = '0'
             screen = dc.scr.화면['일지합산']
             data, remain = gm.prx.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
@@ -291,7 +293,7 @@ class GUI(QMainWindow, form_class):
             input = {'계좌번호':gm.config.account, '비밀번호': '', '기준일자': date_text, '단주구분': 2, '현금신용구분': 0} # 단주구분:2=당일매도전체. 1=당일매수에대한매도
             rqname = '일지목록'
             trcode = 'opt10170'
-            output = gm.tbl.hd일지목록['컬럼']
+            output = tbl.hd일지목록['컬럼']
             screen = dc.scr.화면['일지목록']
             next = '0'
             while True:
@@ -321,7 +323,7 @@ class GUI(QMainWindow, form_class):
             rqname = '예수금'
             trcode = 'opw00001'
             input = {'계좌번호':gm.config.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '3'}
-            output = gm.tbl.hd예수금['컬럼']
+            output = tbl.hd예수금['컬럼']
             next = '0'
             screen = dc.scr.화면['예수금']
             data, remain = gm.prx.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
@@ -345,7 +347,7 @@ class GUI(QMainWindow, form_class):
         date_text = self.dtConclusion.date().toString("yyyyMMdd")
         try:
             gm.체결목록.delete()
-            dict_list = gm.prx.answer('dbm', 'execute_query', sql=dc.ddb.CONC_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.prx.answer('dbm', 'execute_query', sql=db_columns.CONC_SELECT_DATE, db='db', params=(date_text,))
             if dict_list is not None and len(dict_list) > 0:
                 gm.체결목록.set(data=dict_list)
                 손익금액, 매수금액 = gm.체결목록.sum(column=['손익금액', '매수금액'], filter={'매도수량': ('==', '@매수수량')})
@@ -378,7 +380,7 @@ class GUI(QMainWindow, form_class):
             min_check = cycle in ('mi', 'tk')
             if min_check: params = (date_text, cycle, tick, code,)
             else: params = (date_text, cycle,)
-            selected_sql = dc.ddb.MIN_SELECT_DATE if min_check else dc.ddb.DAY_SELECT_DATE
+            selected_sql = db_columns.MIN_SELECT_DATE if min_check else db_columns.DAY_SELECT_DATE
             dict_list = gm.prx.answer('dbm', 'execute_query', sql=selected_sql, db='chart', params=params)
             if dict_list:
                 if isinstance(dict_list, list) and len(dict_list) > 0:

@@ -1,7 +1,9 @@
 from public import gm, dc, Work,load_json, save_json
-from classes import TableManager, TimeLimiter, ThreadSafeDict, CounterTicker, ThreadSafeList
+from classes import ThreadSafeDict, CounterTicker, ThreadSafeList
 from threads import OrderCommander, EvalStrategy, ChartSetter, ChartUpdater, PriceUpdater
-from chart import ChartData, ScriptManager, enhance_script_manager
+from chart import ScriptManager, enhance_script_manager
+from tables import tbl
+from dbm_server import db_columns
 from tabulate import tabulate
 from datetime import datetime
 from PyQt5.QtCore import QThread, QTimer
@@ -274,7 +276,7 @@ class Admin:
             rqname = '잔고합산'
             trcode = 'opw00018'
             input = {'계좌번호':gm.config.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '2'}
-            output = gm.tbl.hd잔고합산['컬럼']
+            output = tbl.hd잔고합산['컬럼']
             next = '0'
             screen = dc.scr.화면[rqname]
             data, remain = gm.prx.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
@@ -298,7 +300,7 @@ class Admin:
             rqname = '잔고목록'
             trcode = 'opw00018'
             input = {'계좌번호':gm.config.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '2'}
-            output = gm.tbl.hd잔고목록['컬럼']
+            output = tbl.hd잔고목록['컬럼']
             next = '0'
             screen = dc.scr.화면[rqname]
             while True:
@@ -477,9 +479,6 @@ class Admin:
 
     def stg_fx중지_전략매매(self):
         try:
-            if self.start_timer:
-                self.start_timer.cancel()
-                self.start_timer = None
             if self.end_timer:
                 self.end_timer.cancel()
                 self.end_timer = None
@@ -667,11 +666,6 @@ class Admin:
                     remain_secs = max(0, (end_time - now).total_seconds())
                     self.end_timeer = threading.Timer(remain_secs, lambda: self.stg_stop())
                     self.end_timeer.start()
-                if current < self.start_time:
-                    start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.start_time}", '%Y-%m-%d %H:%M')
-                    delay_secs = max(0, (start_time - now).total_seconds())
-                    self.start_timeer = threading.Timer(delay_secs, lambda: gm.toast.toast(f'전략을 시작합니다. {self.start_time} {current}'))
-                    self.start_timeer.start()
 
         except Exception as e:
             logging.error(f'전략매매 체크 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -892,7 +886,7 @@ class Admin:
 
     def dbm_trade_upsert(self, dictFID):
         try:
-            dict_data = {key: dictFID[key] for key in dc.ddb.TRD_COLUMN_NAMES if key in dictFID}
+            dict_data = {key: dictFID[key] for key in db_columns.TRD_COLUMN_NAMES if key in dictFID}
             gm.prx.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
 
             if dictFID['주문상태'] == '체결':

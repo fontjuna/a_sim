@@ -145,140 +145,6 @@ class SharedQueue:
         self.payback = mp.Queue()
 
 @dataclass
-class FieldsAttributes: # 데이터베이스 필드 속성
-    name: str
-    type: str
-    default: any = None
-    primary: bool = False
-    autoincrement: bool = False
-    unique: bool = False
-    not_null: bool = False
-    index: any = False
-    foreign_key: dict = None
-    check: str = None
-
-@dataclass
-class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
-    id = FieldsAttributes(name='id', type='INTEGER', primary=True, autoincrement=True)
-    거래세 = FieldsAttributes(name='거래세', type='INTEGER', not_null=True, default=0)
-    거래세율 = FieldsAttributes(name='거래세율', type='REAL', not_null=True, default=0.0)
-    계좌번호 = FieldsAttributes(name='계좌번호', type='TEXT', not_null=True, default="''")
-    구분 = FieldsAttributes(name='구분', type='TEXT', not_null=True, default="''")
-    당일매매세금 = FieldsAttributes(name='당일매매세금', type='INTEGER', not_null=True, default=0)
-    당일매매수수료 = FieldsAttributes(name='당일매매수수료', type='INTEGER', not_null=True, default=0)
-    단위체결가 = FieldsAttributes(name='단위체결가', type='INTEGER', not_null=True, default=0)
-    단위체결량 = FieldsAttributes(name='단위체결량', type='INTEGER', not_null=True, default=0)
-    매도가 = FieldsAttributes(name='매도가', type='INTEGER', not_null=True, default=0)
-    매도금액 = FieldsAttributes(name='매도금액', type='INTEGER', not_null=True, default=0)
-    매도번호 = FieldsAttributes(name='매도번호', type='TEXT', not_null=True, default="''")
-    매도수구분 = FieldsAttributes(name='매도수구분', type='TEXT', not_null=True, default="''")
-    매도수량 = FieldsAttributes(name='매도수량', type='INTEGER', not_null=True, default=0)
-    매도수수료 = FieldsAttributes(name='매도수수료', type='INTEGER', not_null=True, default=0)
-    매도시간 = FieldsAttributes(name='매도시간', type='TEXT', not_null=True, default="(strftime('%H:%M:%S', 'now', 'localtime'))")
-    매도일시 = FieldsAttributes(name='매도일시', type='TEXT', not_null=True, default="(strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime'))")
-    매도일자 = FieldsAttributes(name='매도일자', type='TEXT', not_null=True, default="(strftime('%Y%m%d', 'now', 'localtime'))")
-    매도주문번호 = FieldsAttributes(name='매도주문번호', type='TEXT', not_null=True, default="''")
-    매수가 = FieldsAttributes(name='매수가', type='INTEGER', not_null=True, default=0)
-    매수금액 = FieldsAttributes(name='매수금액', type='INTEGER', not_null=True, default=0)
-    매수번호 = FieldsAttributes(name='매수번호', type='TEXT', not_null=True, default="''")
-    매수수량 = FieldsAttributes(name='매수수량', type='INTEGER', not_null=True, default=0)
-    매수수수료 = FieldsAttributes(name='매수수수료', type='INTEGER', not_null=True, default=0)
-    매수시간 = FieldsAttributes(name='매수시간', type='TEXT', not_null=True, default="(strftime('%H:%M:%S', 'now', 'localtime'))")
-    매수일시 = FieldsAttributes(name='매수일시', type='TEXT', not_null=True, default="(strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime'))")
-    매수일자 = FieldsAttributes(name='매수일자', type='TEXT', not_null=True, default="(strftime('%Y%m%d', 'now', 'localtime'))")
-    매수전략 = FieldsAttributes(name='매수전략', type='TEXT', not_null=True, default="''")
-    매수주문번호 = FieldsAttributes(name='매수주문번호', type='TEXT', not_null=True, default="''")
-    매입단가 = FieldsAttributes(name='매입단가', type='INTEGER', not_null=True, default=0)
-    매매구분 = FieldsAttributes(name='매매구분', type='TEXT', not_null=True, default="''")
-    미체결수량 = FieldsAttributes(name='미체결수량', type='INTEGER', not_null=True, default=0)
-    보유수량 = FieldsAttributes(name='보유수량', type='INTEGER', not_null=True, default=0)
-    상태 = FieldsAttributes(name='상태', type='TEXT', not_null=True, default="'보유중'")
-    손익금액 = FieldsAttributes(name='손익금액', type='INTEGER', not_null=True, default=0)
-    손익율 = FieldsAttributes(name='손익율', type='REAL', not_null=True, default=0.0)
-    수수료율 = FieldsAttributes(name='수수료율', type='REAL', not_null=True, default=0.0)
-    요청명 = FieldsAttributes(name='요청명', type='TEXT', not_null=True, default="''")
-    원주문번호 = FieldsAttributes(name='원주문번호', type='TEXT', not_null=True, default="''")
-    전략명칭 = FieldsAttributes(name='전략명칭', type='TEXT', not_null=True, default="''")
-    제비용 = FieldsAttributes(name='제비용', type='INTEGER', not_null=True, default=0)
-    종목명 = FieldsAttributes(name='종목명', type='TEXT', not_null=True, default="''")
-    종목번호 = FieldsAttributes(name='종목번호', type='TEXT', not_null=True, default="''")
-    종목코드 = FieldsAttributes(name='종목코드', type='TEXT', not_null=True, default="''")
-    주문가격 = FieldsAttributes(name='주문가격', type='INTEGER', not_null=True, default=0)
-    주문가능수량 = FieldsAttributes(name='주문가능수량', type='INTEGER', not_null=True, default=0)
-    주문구분 = FieldsAttributes(name='주문구분', type='TEXT', not_null=True, default="''")
-    주문번호 = FieldsAttributes(name='주문번호', type='TEXT', not_null=True, default="''")
-    주문상태 = FieldsAttributes(name='주문상태', type='TEXT', not_null=True, default="''")
-    주문수량 = FieldsAttributes(name='주문수량', type='INTEGER', not_null=True, default=0)
-    주문유형 = FieldsAttributes(name='주문유형', type='TEXT', not_null=True, default="''")
-    총매입가 = FieldsAttributes(name='총매입가', type='INTEGER', not_null=True, default=0)
-    체결가 = FieldsAttributes(name='체결가', type='INTEGER', not_null=True, default=0)
-    체결누계금액 = FieldsAttributes(name='체결누계금액', type='INTEGER', not_null=True, default=0)
-    체결량 = FieldsAttributes(name='체결량', type='INTEGER', not_null=True, default=0)
-    체결번호 = FieldsAttributes(name='체결번호', type='TEXT', not_null=True, default="''")
-    체결시간 = FieldsAttributes(name='체결시간', type='TEXT', not_null=True, default="''")
-    처리일시 = FieldsAttributes(name='처리일시', type='TEXT', not_null=True, default="(strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime'))")
-    현재가 = FieldsAttributes(name='현재가', type='INTEGER', not_null=True, default=0)
-    호가구분 = FieldsAttributes(name='호가구분', type='TEXT', not_null=True, default="''")
-    화면번호 = FieldsAttributes(name='화면번호', type='TEXT', not_null=True, default="''")
-    일자 = FieldsAttributes(name='일자', type='TEXT', not_null=True, default="''")
-    시가 = FieldsAttributes(name='시가', type='INTEGER', not_null=True, default=0)
-    고가 = FieldsAttributes(name='고가', type='INTEGER', not_null=True, default=0)
-    저가 = FieldsAttributes(name='저가', type='INTEGER', not_null=True, default=0)
-    현재가 = FieldsAttributes(name='현재가', type='INTEGER', not_null=True, default=0)
-    거래량 = FieldsAttributes(name='거래량', type='INTEGER', not_null=True, default=0)
-    거래대금 = FieldsAttributes(name='거래대금', type='INTEGER', not_null=True, default=0)
-    주기 = FieldsAttributes(name='주기', type='TEXT', not_null=True, default="''")
-    틱 = FieldsAttributes(name='틱', type='INTEGER', not_null=True, default=1)
-
-class DataBaseColumns:  # 데이터베이스 테이블 정의
-    fd = DataBaseFields()
-
-    TRD_TABLE_NAME = 'trades'
-    TRD_SELECT_COLUMNS = "substr(처리일시, 12, 8) AS 처리시간, 주문구분, 주문상태, 종목코드, 종목명, 주문수량, 주문가격, 미체결수량,\
-          체결량, 체결가, 체결누계금액, 매매구분, 주문번호, 원주문번호, 전략명칭, 처리일시"
-    TRD_SELECT_DATE = f"SELECT substr(처리일시, 12, 12) AS 처리시간, * FROM {TRD_TABLE_NAME} WHERE DATE(처리일시) = ? ORDER BY 처리일시 ASC"
-    TRD_COLUMNS = [fd.id, fd.전략명칭, fd.주문구분, fd.주문상태, fd.주문번호, fd.종목코드, fd.종목명, fd.현재가, fd.주문수량, fd.주문가격, \
-                    fd.미체결수량, fd.매매구분, fd.체결량, fd.체결가, fd.체결누계금액, fd.체결번호, fd.체결시간, fd.단위체결가, fd.단위체결량, fd.당일매매수수료, \
-                        fd.당일매매세금, fd.원주문번호, fd.처리일시]
-    TRD_COLUMN_NAMES = [col.name for col in TRD_COLUMNS]
-    TRD_INDEXES = {
-        'idx_ordno': f"CREATE INDEX IF NOT EXISTS idx_ordno ON {TRD_TABLE_NAME}(주문번호)",
-        'idx_strategy': f"CREATE INDEX IF NOT EXISTS idx_strategy ON {TRD_TABLE_NAME}(전략명칭, 종목코드)",
-        'idx_kind_code': f"CREATE INDEX IF NOT EXISTS idx_kind_code ON {TRD_TABLE_NAME}(주문구분, 종목코드)"
-    }
-
-    CONC_TABLE_NAME = 'conclusion'
-    CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND 매도수량 > 0 ORDER BY 매수일자, 매수시간 ASC"
-    CONC_COLUMNS = [fd.id, fd.종목번호, fd.종목명, fd.손익금액, fd.손익율, fd.매수일자, fd.매수시간,\
-                    fd.매수수량, fd.매수가, fd.매수금액, fd.매수번호, fd.매도일자, fd.매도시간, fd.매도수량,\
-                    fd.매도가, fd.매도금액, fd.매도번호, fd.제비용, fd.매수전략, fd.전략명칭]
-    CONC_COLUMN_NAMES = [col.name for col in CONC_COLUMNS]
-    CONC_INDEXES = {
-        'idx_buyorder': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_buyorder ON {CONC_TABLE_NAME}(매수일자, 매수번호)",
-        'idx_sellorder': f"CREATE INDEX IF NOT EXISTS idx_sellorder ON {CONC_TABLE_NAME}(매도일자, 매도번호)"
-    }
-    
-    MIN_TABLE_NAME = 'minute_n_tick'
-    MIN_SELECT_SAMPLE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 체결시간 DESC LIMIT 1"
-    MIN_SELECT_DATE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
-    MIN_COLUMNS = [fd.id, fd.종목코드, fd.체결시간, fd.시가, fd.고가, fd.저가, fd.현재가, fd.거래량, fd.거래대금, fd.주기, fd.틱]
-    MIN_COLUMN_NAMES = [col.name for col in MIN_COLUMNS]
-    MIN_INDEXES = {
-        'idx_cycle_tick_code_time': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_tick_code_time ON {MIN_TABLE_NAME}(주기, 틱, 종목코드, 체결시간)",
-        'idx_time_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_time_cycle_tick_code ON {MIN_TABLE_NAME}(체결시간, 주기, 틱, 종목코드)",
-    }
-
-    DAY_TABLE_NAME = 'day_week_month'
-    DAY_SELECT_SAMPLE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 일자 DESC LIMIT 1"
-    DAY_SELECT_DATE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 일자 = ? AND 주기 = ?"
-    DAY_COLUMNS = [fd.id, fd.종목코드, fd.일자, fd.시가, fd.고가, fd.저가, fd.현재가, fd.거래량, fd.거래대금, fd.주기, fd.틱]
-    DAY_COLUMN_NAMES = [col.name for col in DAY_COLUMNS]
-    DAY_INDEXES = {
-        'idx_cycle_tick_code_date': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_tick_code_date ON {DAY_TABLE_NAME}(주기, 틱, 종목코드, 일자)",
-        'idx_date_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_date_cycle_tick_code ON {DAY_TABLE_NAME}(일자, 주기, 틱, 종목코드)",
-    }
-
-@dataclass
 class FIDs:             # 실시간 조회 필드 아이디
     거래구분: dict = field(default_factory=lambda: {
         '지정가': '00',
@@ -697,7 +563,6 @@ class DefineConstants:  # 글로벌 상수 정의
     scr = ScreenNumber()
     fp = FilePath()
     ms = MarketStatus()
-    ddb = DataBaseColumns()
     sim = SimTicker()
     ticks = {
         '틱봉': ['30'],
@@ -736,153 +601,6 @@ class DefineConstants:  # 글로벌 상수 정의
 dc = DefineConstants()
 
 ## Define Clobal memory *************************************************************************
-class TableColumns:     # 테이블 데이타 컬럼 정의
-    hd잔고합산 = {
-        '키': '순번',
-        '정수': ['순번','총매입금액', '총평가금액', '추정예탁자산', '총평가손익금액'],
-        '실수': ['총수익률(%)'],
-    }
-    hd잔고합산.update({
-        '컬럼': hd잔고합산['정수'] + hd잔고합산['실수'] # l2잔고합산
-    })
-
-    hd잔고목록 = {
-        '키': '종목번호',
-        '정수': ["보유수량", "매입가", "매입금액", "현재가", "평가금액", "평가손익", '전일대비', \
-                        '누적거래량', '거래량', '주문가능수량', '최고가', '감시', '보존', '상태', '매수수량', '매수가', '매수금액'],
-        '실수': ["수익률(%)", "등락율", '이익보존율', '감시시작율'],
-        '컬럼': ["종목번호", "종목명", "보유수량", "매입가", "매입금액", "현재가", "평가금액", "평가손익", "수익률(%)"],
-        '추가': ['주문가능수량', '전일대비', "등락율", '누적거래량', '거래량', '최고가', '매수수량', '매수가', '매수금액',\
-                        '보존', '이익보존율', '감시', '감시시작율', '상태', '매수전략', '전략명칭', '매수일자', '매수시간', '매수번호'], # 상태: 0-일반, 1-매수, 2-매도
-    }
-    hd잔고목록.update({
-        '헤더': hd잔고목록['컬럼'] + ["매수일자", "매수시간", '등락율', '전일대비', '누적거래량'],
-        '확장': hd잔고목록['컬럼'] + hd잔고목록['추가'],
-    })
-
-    hd조건목록 = {
-        '키': '종목코드',
-        '정수': ['현재가', '누적거래량', '시가', '고가', '저가', '주문수량', '체결량', '미체결수량'],
-        '실수': ['등락율'],
-        '추가': ['전송번호', '주문번호', '주문유형', '전략명칭', '주문수량', '체결량', '미체결수량', '원주문번호'],
-    }
-    hd조건목록.update({
-        '컬럼': ['종목코드', '종목명'] + hd조건목록['실수'] + hd조건목록['정수'][:1],
-    })
-    hd조건목록.update({
-        '확장': hd조건목록['컬럼'] + hd조건목록['추가'],
-        '헤더': ['종목코드', '종목명' ],
-    })
-
-    hd손익목록 = {
-        '키': '매수시간',
-        '정수': ['매수수량', '매수금액', '매도수량', '매도금액', '제비용', '손익금액'],
-        '실수': ['손익율'],
-    }
-    hd손익목록.update({
-        '컬럼': ['매수시간', '종목코드', '종목명'] + hd손익목록['정수'] + ['손익율', '전략명칭']
-    })
-
-    hd매매목록 = {
-        '키': '처리시간',
-        '정수': ['현재가', '주문수량', '주문가격', '미체결수량', '체결량', '체결가', '체결누계금액'],
-        '실수': [],
-        '컬럼': [ '처리시간', '주문구분', '주문상태', '종목코드', '종목명', '주문수량', '주문가격', '미체결수량', '체결량', '체결가', '체결누계금액',\
-                '매매구분', '주문번호', '원주문번호', '전략명칭']
-    }
-
-    hd접수목록 = hd조건목록.copy()
-    hd접수목록.update({'키': '주문번호'})
-
-    hd주문목록 = {
-        '키': '키', # 종목코드_구분 : 005930_매수
-        '정수': ['주문수량', '주문가격', '미체결수량'],
-        '실수': [],
-        '컬럼': ['키', '구분', '상태', '종목코드', '종목명', '주문번호', '주문수량', '주문가격', '미체결수량', '요청명', '비고'],
-        '헤더': ['구분', '상태', '종목코드', '종목명', '주문수량', '주문가격', '미체결수량', '비고'],
-    }
-
-    hd예수금 = {
-        '키': '순번',
-        '정수': ['순번', 'd+1추정예수금', 'd+1매도매수정산금', 'd+1미수변제소요금', 'd+1출금가능금액',\
-                      'd+2추정예수금', 'd+2매도매수정산금', 'd+2미수변제소요금', 'd+2출금가능금액',\
-                      '예수금', '주식증거금현금', '미수확보금', '권리대용금',\
-                      '20%종목주문가능금액', '30%종목주문가능금액', '40%종목주문가능금액', '100%종목주문가능금액',\
-                      '주문가능금액', '출금가능금액', '현금미수금'],
-        '실수': [],
-    }
-    hd예수금.update({
-        '컬럼': hd예수금['정수'],
-    })
-
-    hd일지합산 = {
-        '키': '순번',
-        '정수': ['순번', '총매수금액', '총매도금액', '총수수료_세금', '총정산금액', '총손익금액'],
-        '실수': ['총수익률'],
-    }
-    hd일지합산.update({
-        '컬럼': hd일지합산['정수'] + hd일지합산['실수'],
-    })
-
-    hd일지목록 = {
-        '키': '종목코드',
-        '정수': ['매수금액','매도금액', '손익금액', '매수수량', '매수평균가', '매도수량',  '매도평균가', '수수료_제세금'],
-        '실수': ['수익률'],
-    }
-    hd일지목록.update({
-        '컬럼': ['종목코드', '종목명'] + hd일지목록['정수'][:3] + hd일지목록['실수'] + hd일지목록['정수'][3:],
-    })
-
-    hd체결목록 = {
-        '키': '매수번호',
-        '정수': ['매수수량', '매수가', '매수금액', '매도수량', '매도가', '매도금액', '손익금액', '제비용'],
-        '실수': ['손익율'],
-        '컬럼': ['매수일자', '매수시간', '종목번호', '종목명', '손익금액', '손익율', '매수수량', '매수금액', '매도수량', '매도금액', \
-                        '매수가', '매도가', '제비용', '매도일자', '매도시간', '매수번호', '매도번호', '매수전략', '전략명칭'],
-    }
-
-    hd전략정의 = {
-            '키': '전략명칭',
-            '정수': ['체결횟수', '종목제한', '보유제한', '청산호가', '매수지연초', '매도지연초', '매수호가', '투자금액', '매도호가', '남은횟수'],
-            '실수': ['예수금율', '이익실현율', '이익보존율', '감시시작율','스탑주문율', '손실제한율'],
-            '컬럼': dc.const.WIDGET_MAP.keys(), # 컬럼명
-            '헤더': ['전략명칭', '투자금액', '매수적용', '매수전략', '매도적용', '매도전략', '이익실현율', '이익보존율', '손실제한율', '감시적용', '감시시작율', '스탑주문율'],
-        }
-
-    hd차트자료 = {
-        '키': ['종목코드', '일자', '시간'],
-        '키중복': False,
-        '정수': ['시가', '고가', '저가', '현재가', '거래량', '거래대금'],
-        '실수': [],
-        '컬럼': ['종목코드', '종목명', '일자', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
-        '헤더': [
-            ['종목코드', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
-            ['종목코드', '종목명', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
-        ]
-    }
-
-    hd스크립트 = {
-        '키': '스크립트명',
-        '정수': [],
-        '실수': [],
-        '컬럼': ['스크립트명', '타입', '스크립트', '변수', '설명'],
-    }
-    hd스크립트변수 = {
-        '키': '변수명',
-        '정수': [],
-        '실수': ['값'],
-        '컬럼': ['변수명', '값'],
-    }
-
-    hd당일종목 = {
-        '키': '종목코드',
-        '정수': [],
-        '실수': [],
-        '컬럼': ['종목코드', '종목명', '확인', '비고'],
-    }
-
-    hd수동종목 = hd당일종목.copy()
-
 @dataclass
 class GlobalConfig:     # 환경변수 정의
     sim_on = True
@@ -941,26 +659,26 @@ class GlobalMemory:      # 글로벌 메모리 정의
         'prx': SharedQueue(),
     }
 
-    tbl = TableColumns()
-    잔고합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고합산))
-    잔고목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd잔고목록))
-    매수조건목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
-    매도조건목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd조건목록))
-    예수금 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd예수금))
-    일지합산 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd일지합산))
-    일지목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd일지목록))
-    체결목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd체결목록))
-    손익목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd손익목록))
-    매매목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd매매목록))
-    전략정의 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd전략정의))
-    주문목록 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd주문목록))
-    스크립트 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd스크립트))
-    스크립트변수 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd스크립트변수))
-    차트자료 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd차트자료))
-    당일종목 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd당일종목))
-    수동종목 = None # TableManager = field(default_factory=TableManager(gm.tbl.hd수동종목))
+    잔고합산 = None # TableManager
+    잔고목록 = None # TableManager
+    매수조건목록 = None # TableManager
+    매도조건목록 = None # TableManager
+    예수금 = None # TableManager
+    일지합산 = None # TableManager
+    일지목록 = None # TableManager
+    체결목록 = None # TableManager
+    손익목록 = None # TableManager
+    매매목록 = None # TableManager
+    전략정의 = None # TableManager
+    주문목록 = None # TableManager
+    스크립트 = None # TableManager
+    스크립트변수 = None # TableManager
+    차트자료 = None # TableManager
+    당일종목 = None # TableManager
+    수동종목 = None # TableManager
     l2잔고합산_copy = None
     l2손익합산 = 0
+    
     # 서버 호출 제한 체크
     req = None # 요청 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (CommRqData + CommKwRqData + SendCondition 포함) - 1 초마다 리셋 됨
     ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨

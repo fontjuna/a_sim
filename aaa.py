@@ -2,7 +2,8 @@ from gui import GUI
 from admin import Admin
 from threads import ProxyAdmin
 from public import init_logger, dc, gm, Work
-from classes import Toast, set_tables, MainModel, ThreadModel, ProcessModel, QData, QMainModel, KiwoomModel
+from classes import Toast, ProcessModel, QData, QMainModel, KiwoomModel
+from tables import set_tables
 from dbm_server import DBMServer
 from api_server import APIServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
