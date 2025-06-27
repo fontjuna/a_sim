@@ -42,11 +42,11 @@ class Admin:
         accounts = gm.prx.answer('api', 'GetLoginInfo', 'ACCNO')
         logging.debug(f'GetLoginInfo Accounts: {accounts}')
         gm.list계좌콤보 = accounts
-        gm.config.account = accounts[0]
-        gm.config.server = gm.prx.answer('api', 'GetLoginInfo', 'GetServerGubun')
-        gm.수수료율 = dc.const.fee_sim if gm.config.server == '1' else dc.const.fee_real # 모의투자 0.35%, 실전투자 0.15% 매수, 매도 각각
+        gm.account = accounts[0]
+        gm.server = gm.prx.answer('api', 'GetLoginInfo', 'GetServerGubun')
+        gm.수수료율 = dc.const.fee_sim if gm.server == '1' else dc.const.fee_real # 모의투자 0.35%, 실전투자 0.15% 매수, 매도 각각
         gm.세금율 = dc.const.tax_rate # 코스피 거래세 0.03 + 농어촌 특별세 0.12%, 코스닥 거래세 0.15 매도시적용
-        logging.debug(f"서버:{gm.config.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.config.account}")
+        logging.debug(f"서버:{gm.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.account}")
 
     def set_globals(self):
         gm.price_q = ThreadSafeList('price_q')
@@ -147,7 +147,7 @@ class Admin:
         elif order=='상태바':
             job = {'msg': args}
 
-        if gm.config.gui_on:
+        if gm.gui_on:
             gm.qwork['msg'].put(Work(order=order, job=job))
 
     # json 파일 사용 메소드 -----------------------------------------------------------------------------------------
@@ -208,15 +208,15 @@ class Admin:
             logging.debug(f'{rtype} {code} : {fid215}, {fid20}, {fid214} {msg}')
 
     def on_fx수신_주문결과TR(self, code, name, order_no, screen, rqname):
-        if not gm.config.ready: return
+        if not gm.ready: return
         if gm.주문목록.in_column('요청명', rqname):
             if not order_no:
                 logging.debug(f'주문 실패로 주문목록 삭제 : {rqname}')
                 gm.주문목록.delete(filter={'요청명': rqname})
 
     def on_fx실시간_조건검색(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
-        if not gm.config.ready: return
-        if not gm.config.sim_on and time.time() < 90000: return
+        if not gm.ready: return
+        if not gm.sim_on and time.time() < 90000: return
         try:
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
             if condition == gm.매수문자열:
@@ -236,7 +236,7 @@ class Admin:
             logging.error(f"쓰레드 찾기오류 {code} {type} {cond_name} {cond_index}: {type(e).__name__} - {e}", exc_info=True)
 
     def on_fx실시간_주식체결(self, code, rtype, dictFID):
-        if not gm.config.ready: return
+        if not gm.ready: return
         try:
             현재가 = abs(int(dictFID['현재가']))
             updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
@@ -261,7 +261,7 @@ class Admin:
             logging.error(f'실시간 주식체결 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def on_fx실시간_주문체결(self, gubun, dictFID):
-        if not gm.config.ready: return
+        if not gm.ready: return
         logging.debug(f'실시간 주문체결: {gubun} {dictFID}')
         if gubun == '0':
             self.odr_recieve_chegyeol_data(dictFID)
@@ -275,7 +275,7 @@ class Admin:
             dict_list = []
             rqname = '잔고합산'
             trcode = 'opw00018'
-            input = {'계좌번호':gm.config.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '2'}
+            input = {'계좌번호':gm.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '2'}
             output = tbl.hd잔고합산['컬럼']
             next = '0'
             screen = dc.scr.화면[rqname]
@@ -299,7 +299,7 @@ class Admin:
             dict_list = []
             rqname = '잔고목록'
             trcode = 'opw00018'
-            input = {'계좌번호':gm.config.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '2'}
+            input = {'계좌번호':gm.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '2'}
             output = tbl.hd잔고목록['컬럼']
             next = '0'
             screen = dc.scr.화면[rqname]
@@ -445,7 +445,7 @@ class Admin:
 
             gm.counter.set_strategy(self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
-            if gm.config.gui_on: 
+            if gm.gui_on: 
                 gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
 
         except Exception as e:
@@ -591,7 +591,7 @@ class Admin:
             if kind == '매도':
                 if gm.매도조건목록.in_key(code):
                     logging.info(f'{kind}이탈 : {self.전략명칭} {code} {name}')
-                    success = gm.매도조건목록.delete(key=code)
+                    #success = gm.매도조건목록.delete(key=code)
                 return
 
             if gm.매수조건목록.in_key(code):
@@ -655,7 +655,7 @@ class Admin:
                 self.start_time = self.시작시간.strip()
                 self.stop_time = self.종료시간.strip()
 
-            if not gm.config.sim_on: # 시뮬레이션 모드 아니면 시간 체크
+            if not gm.sim_on: # 시뮬레이션 모드 아니면 시간 체크
                 now = datetime.now()
                 current = now.strftime('%H:%M')
                 if "15:30" > current > self.stop_time:
@@ -859,7 +859,7 @@ class Admin:
             logging.error(f"주문 체결 오류: {kind} {type(e).__name__} - {e}", exc_info=True)
 
     def odr_recieve_balance_data(self, dictFID):
-        if not gm.config.ready: return
+        if not gm.ready: return
         try:
             현재가 = abs(int(dictFID.get('현재가', 0) or 0))
             보유수량 = int(dictFID.get('보유수량', 0) or 0)

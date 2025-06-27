@@ -23,31 +23,54 @@ def hoga(current_price, position=0):
         elif price < 500000: return 500
         else: return 1000
 
-    # 현재 가격이 호가 단위에 맞지 않으면 가까운 호가 단위로 조정
-    hoga_unit = get_hoga_unit(current_price)
-    remainder = current_price % hoga_unit
-    
-    if remainder != 0:
-        # 가까운 호가 단위로 조정
-        if remainder >= hoga_unit / 2:
-            current_price = current_price + (hoga_unit - remainder)  # 올림
-        else:
-            current_price = current_price - remainder  # 내림
+    def adjust_to_hoga_unit(price, round_up=None):
+        hoga_unit = get_hoga_unit(price)
+        remainder = price % hoga_unit
+        if remainder != 0:
+            if round_up is True:
+                return price + (hoga_unit - remainder)
+            elif round_up is False:
+                return price - remainder
+            else:  # 반올림
+                if remainder >= hoga_unit / 2:
+                    return price + (hoga_unit - remainder)
+                else:
+                    return price - remainder
+        return price
+
+    # 상한가/하한가 계산
+    upper_limit = adjust_to_hoga_unit(current_price * 1.3, round_up=False)
+    lower_limit = adjust_to_hoga_unit(current_price * 0.7, round_up=True)
+
+    # 상한가/하한가 처리
+    if position == 99:
+        return int(upper_limit)
+    elif position == -99:
+        return int(lower_limit)
+
+    # 현재 가격을 호가 단위에 맞게 조정
+    adjusted_price = adjust_to_hoga_unit(current_price)
     
     if position == 0:
-        return current_price
+        return adjusted_price
 
     # 호가 단위에 맞게 조정된 가격에 position 적용
-    hoga_unit = get_hoga_unit(current_price)
-    new_price = current_price + (hoga_unit * position)
+    hoga_unit = get_hoga_unit(adjusted_price)
+    new_price = adjusted_price + (hoga_unit * position)
+
+    # 상한가/하한가 범위 제한
+    if new_price > upper_limit:
+        new_price = upper_limit
+    elif new_price < lower_limit:
+        new_price = lower_limit
 
     # 호가 단위가 변경되는 경계값 처리
     new_hoga_unit = get_hoga_unit(new_price)
     if new_hoga_unit != hoga_unit:
         if position > 0:
-            return new_price - (new_price % new_hoga_unit)
+            new_price = new_price - (new_price % new_hoga_unit)
         elif position < 0:
-            return new_price + (new_hoga_unit - (new_price % new_hoga_unit)) if new_price % new_hoga_unit != 0 else new_price
+            new_price = new_price + (new_hoga_unit - (new_price % new_hoga_unit)) if new_price % new_hoga_unit != 0 else new_price
 
     return new_price
 
@@ -137,16 +160,14 @@ class QData:
     callback : str = None
 
 class SharedQueue:
-    def __init__(self):
-        import multiprocessing as mp
-        self.request = mp.Queue()
-        self.result = mp.Queue()
-        self.stream = mp.Queue()
-        self.payback = mp.Queue()
+    import multiprocessing as mp
+    request = mp.Queue()
+    result = mp.Queue()
+    stream = mp.Queue()
+    payback = mp.Queue()
 
-@dataclass
 class FIDs:             # 실시간 조회 필드 아이디
-    거래구분: dict = field(default_factory=lambda: {
+    거래구분 = {
         '지정가': '00',
         '시장가': '03',
         '조건부지정가': '05',
@@ -161,36 +182,36 @@ class FIDs:             # 실시간 조회 필드 아이디
         '장전시간외종가': '61',
         '시간외단일가매매': '62',
         '장후시간외종가': '81',
-    })  
+    }
 
-    주문유형: dict = field(default_factory=lambda: {
+    주문유형 = {
         '신규매수': 1,
         '신규매도': 2,
         '매수취소': 3,
         '매도취소': 4,
         '매수정정': 5,
         '매도정정': 6,
-    })
+    }
 
-    주문유형FID: dict = field(default_factory=lambda: {
+    주문유형FID = {
         1: '신규매수',
         2: '신규매도',
         3: '매수취소',
         4: '매도취소',
         5: '매수정정',
         6: '매도정정'
-    })
+    }
 
-    주문구분list: list = field(default_factory=lambda: [
+    주문구분list = [
         '매수',
         '매도',
         '매수취소',
         '매도취소',
         '매수정정',
         '매도정정'
-    ])
+    ]
 
-    주식체결: dict = field(default_factory=lambda: {
+    주식체결 = {
         '체결시간': 20,
         '현재가': 10,  # 체결가
         '전일대비': 11,
@@ -203,28 +224,13 @@ class FIDs:             # 실시간 조회 필드 아이디
         '시가': 16,
         '고가': 17,
         '저가': 18,
-        # '전일대비기호': 25,
-        # '전일거래량대비': 26,
-        # '거래대금증감': 29,
-        # '전일거래량대비': 30,
-        # '거래회전율': 31,
-        # '거래비용': 32,
-        # '체결강도': 228,
-        # '시가총액(억)': 311,
-        # '장구분': 290,
-        # 'KO접근도': 691,
-        # '상한가발생시간': 567,
-        # '하한가발생시간': 568,
-        # '전일 동시간 거래량 비율': 851,
-    })
-
-    장시작시간: dict = field(default_factory=lambda: {
+    }
+    장시작시간 = {
         '장운영구분': 215,
         '체결시간': 20,  # (HHMMSS) 현재시간
         '장시작예상잔여시간': 214,
-    })
-
-    주문체결: dict = field(default_factory=lambda: {
+    }
+    주문체결 = {
         '계좌번호': 9201,
         '주문번호': 9203,
         # '관리자사번': 9205,
@@ -256,16 +262,16 @@ class FIDs:             # 실시간 조회 필드 아이디
         # '터미널번호': 921,
         # '신용구분(실시간 체결용)': 922,
         # '대출일(실시간 체결용)': 923,
-    })
+    }
 
-    매도수구분: dict = field(default_factory=lambda: {
+    매도수구분 = {
         '1': '매도',
         '2': '매수',
         '매도': '1',
         '매수': '2'
-    })
+    }
 
-    잔고: dict = field(default_factory=lambda: {
+    잔고 = {
         '계좌번호': 9201,
         '종목코드': 9001,
         '종목명': 302,
@@ -282,19 +288,17 @@ class FIDs:             # 실시간 조회 필드 아이디
         '(최우선)매수호가': 28,
         '기준가': 307,
         '손익율': 8019,
-    })
+    }
 
-@dataclass
 class TimeDefinition:   # 시간 정의
-    WAIT_SEC: int = 10
-    RUN_INTERVAL: int = 0.01
-    TODAY: str = field(default_factory=lambda: datetime.now().strftime('%Y-%m-%d'))
-    ToDay: str = field(default_factory=lambda: datetime.now().strftime('%Y%m%d'))
-    TOAST_TIME: int = 5000  # 밀리초
+    WAIT_SEC = 10
+    RUN_INTERVAL = 0.01
+    TODAY = datetime.now().strftime('%Y-%m-%d')
+    ToDay = datetime.now().strftime('%Y%m%d')
+    TOAST_TIME = 5000  # 밀리초
 
-@dataclass
 class ScreenNumber:     # 화면번호
-    화면: dict = field(default_factory=lambda: {
+    화면 = {
         '잔고합산': '1020', '잔고목록': '1030', '손익합산': '1040', '손익목록': '1050', '일지합산': '1060', '일지목록': '1070', '예수금': '1080',
         '검색00': '3300', '검색01': '3301', '검색02': '3302', '검색03': '3303', '검색04': '3304',  # 마지막 자리 전략번호
         '검색05': '3305', '검색06': '3306', '검색07': '3307', '검색08': '3308', '검색09': '3309',  # 마지막 자리 전략번호
@@ -304,22 +308,21 @@ class ScreenNumber:     # 화면번호
         '수동매수': '8811', '수동매도': '8812', '수취매수': '9911', '수취매도': '9912',
         '실시간감시': '5100', '조건감시': '5200', '실시간조회': '5900', '장시작시간': '5910',
         '틱봉차트': '9110', '분봉차트': '9120', '일봉차트': '9130', '주봉차트': '9140', '월봉차트': '9150', '년봉차트': '9160',
-    })
+    }
     # 화면번호 xx11 매수, xx12 매도 수정금지 및 사용 금지 - OnReceiveTrData() 처리
     # 화면번호 4xxxx 수정금지 screen.startswith('4') = '신규매수'   - OnReceiveTrData() 처리
-    화면번호: dict = field(default_factory=lambda: {
+    화면번호 = {
         '8811': '신규매수', '8812': '신규매도', '5511': '매수취소', '5512': '매도취소', '6611': '매수정정', '6612': '매도정정', '7711': '수동매수', '7712': '수동매도'
-    })
-    차트종류: dict = field(default_factory=lambda: {
+    }
+    차트종류 = {
         'mo': '월봉', 'wk': '주봉', 'dy': '일봉', 'mi': '분봉', 'tk': '틱봉',
         '틱봉': 'tk', '분봉': 'mi', '일봉': 'dy', '주봉': 'wk', '월봉': 'mo'
-    })
-    차트TR: dict = field(default_factory=lambda: {
+    }
+    차트TR = {
         'mo': 'OPT10083', 'wk': 'OPT10082', 'dy': 'OPT10081', 'mi': 'OPT10080', 'tk': 'OPT10079',
         '월봉차트': 'OPT10083', '주봉차트': 'OPT10082', '일봉차트': 'OPT10081', '분봉차트': 'OPT10080', '틱봉차트': 'OPT10079',
-    })
+    }
 
-@dataclass
 class MarketStatus:     # 장 상태
     장종료 = '장 종료'
     장전시간외종가 = '장전 시간외 종가'
@@ -370,7 +373,6 @@ class FilePath:         # 파일 경로
     image_file = os.path.join(get_path(IMAGE_PATH), "Liberanimo_only.png")
     cache_path = os.path.join(get_path(CACHE_PATH))
 
-@dataclass
 class Constants:        # 상수 정의
     tax_rate = 0.0015
     fee_real = 0.0015
@@ -517,7 +519,6 @@ class Constants:        # 상수 정의
     list전일가대비 = ['현재가', '시가', '고가', '저가', '등락율']
     list양음가대비 = ['평가손익', '수익률(%)', '전일대비', '손익율', '당일매도손익', '손익금액', '수익률']
 
-@dataclass
 class SimTicker:
     ticker = {
         "000100": { "종목명": "유한양행", "전일가": 131600 },
@@ -555,7 +556,7 @@ class SimTicker:
         "314930": { "종목명": "바이오다인", "전일가": 15580 },
     }
 
-@dataclass
+## Define Global Constants **********************************************************************
 class DefineConstants:  # 글로벌 상수 정의
     const = Constants()
     fid = FIDs()
@@ -600,9 +601,9 @@ class DefineConstants:  # 글로벌 상수 정의
     }
 dc = DefineConstants()
 
-## Define Clobal memory *************************************************************************
-@dataclass
-class GlobalConfig:     # 환경변수 정의
+## Define Global memory *************************************************************************
+class GlobalMemory:      # 글로벌 메모리 정의
+    connected = False
     sim_on = True
     sim_no = 0
     gui_on = False
@@ -610,11 +611,6 @@ class GlobalConfig:     # 환경변수 정의
     log_level = logging.DEBUG
     server = '1'
     account = ''
-    ready = False
-
-@dataclass
-class GlobalMemory:      # 글로벌 메모리 정의
-    connected = False
 
     main = None
     admin = None
@@ -638,7 +634,6 @@ class GlobalMemory:      # 글로벌 메모리 정의
     
     toast = None
     json_config = dc.log_config
-    config = GlobalConfig()
 
     list계좌콤보 = []
     list전략콤보 = []
@@ -649,13 +644,11 @@ class GlobalMemory:      # 글로벌 메모리 정의
     dict종목정보 = None     # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
     dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
 
-    qwork = {} #QDict().qdict
-    qanswer = {} #QDict().qanswer
+    qwork = {} # {'gui': Queue(), 'msg': Queue()}
+    
     shared_qes = {
-        'admin': SharedQueue(),
         'api': SharedQueue(),
         'dbm': SharedQueue(),
-        'odr': SharedQueue(),
         'prx': SharedQueue(),
     }
 
@@ -697,7 +690,6 @@ class GlobalMemory:      # 글로벌 메모리 정의
     holdings = {}
     admin_init = False
     stg_run = True
-    
 gm = GlobalMemory()
 
 def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):

@@ -71,10 +71,10 @@ class GUI(QMainWindow, form_class):
             # 폼 초기화 시
             self.txtScript.setAcceptRichText(False)  # 서식 있는 텍스트 거부            
 
-            if gm.config.sim_no == 0: self.rbReal.setChecked(True)
-            elif gm.config.sim_no == 1: self.rbSim1.setChecked(True)
-            elif gm.config.sim_no == 2: self.rbSim2.setChecked(True)
-            elif gm.config.sim_no == 3: self.rbSim3.setChecked(True)
+            if gm.sim_no == 0: self.rbReal.setChecked(True)
+            elif gm.sim_no == 1: self.rbSim1.setChecked(True)
+            elif gm.sim_no == 2: self.rbSim2.setChecked(True)
+            elif gm.sim_no == 3: self.rbSim3.setChecked(True)
 
             statusBar = QStatusBar()
             self.setStatusBar(statusBar)
@@ -184,7 +184,7 @@ class GUI(QMainWindow, form_class):
         if reply == QMessageBox.Yes:
             logging.debug(f'{self.name} stopping...')
             event.accept()
-            gm.config.ready = False
+            gm.ready = False
             self.refresh_data_timer.stop()
             gm.main.cleanup()
         else:
@@ -198,7 +198,7 @@ class GUI(QMainWindow, form_class):
         self.gui_fx채움_전략정의()
         self.gui_fx전시_전략정의()
         self.set_widget_events()
-        if gm.config.log_level == logging.DEBUG:
+        if gm.log_level == logging.DEBUG:
             self.rbDebug.setChecked(True)
             self.rbInfo.setChecked(False)
         else:
@@ -274,7 +274,7 @@ class GUI(QMainWindow, form_class):
             gm.일지합산.delete()
             gm.일지목록.delete()
             data = []
-            input = {'계좌번호':gm.config.account, '비밀번호': '', '기준일자': date_text, '단주구분': 2, '현금신용구분': 0}
+            input = {'계좌번호':gm.account, '비밀번호': '', '기준일자': date_text, '단주구분': 2, '현금신용구분': 0}
             rqname = '일지합산'
             trcode = 'opt10170'
             output = tbl.hd일지합산['컬럼']
@@ -290,7 +290,7 @@ class GUI(QMainWindow, form_class):
                 logging.warning(f'매매일지 합산 얻기 실패: date:{date_text}, data:{data}')
 
             dict_list = []
-            input = {'계좌번호':gm.config.account, '비밀번호': '', '기준일자': date_text, '단주구분': 2, '현금신용구분': 0} # 단주구분:2=당일매도전체. 1=당일매수에대한매도
+            input = {'계좌번호':gm.account, '비밀번호': '', '기준일자': date_text, '단주구분': 2, '현금신용구분': 0} # 단주구분:2=당일매도전체. 1=당일매수에대한매도
             rqname = '일지목록'
             trcode = 'opt10170'
             output = tbl.hd일지목록['컬럼']
@@ -322,7 +322,7 @@ class GUI(QMainWindow, form_class):
             dict_list = []
             rqname = '예수금'
             trcode = 'opw00001'
-            input = {'계좌번호':gm.config.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '3'}
+            input = {'계좌번호':gm.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '3'}
             output = tbl.hd예수금['컬럼']
             next = '0'
             screen = dc.scr.화면['예수금']
@@ -413,9 +413,9 @@ class GUI(QMainWindow, form_class):
             response = True
             
         if response:
-            if sim: gm.config.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
-            gm.config.sim_on = gm.config.sim_no > 0
-            gm.prx.order('api', 'api_init', sim_no=gm.config.sim_no)
+            if sim: gm.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
+            gm.sim_on = gm.sim_no > 0
+            gm.prx.order('api', 'api_init', sim_no=gm.sim_no)
             gm.prx.order('api', 'set_tickers')
             gm.admin.stg_start()
             if not all([gm.매수문자열, gm.매도문자열]):
@@ -539,7 +539,7 @@ class GUI(QMainWindow, form_class):
         send_data = {
             'rqname': rqname,
             'screen': dc.scr.화면[rqname],
-            'accno': gm.config.account,
+            'accno': gm.account,
             'ordtype': 1 if self.rbTrBuy.isChecked() else 2,
             'code': code,
             'quantity': qty,
@@ -560,7 +560,7 @@ class GUI(QMainWindow, form_class):
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 
         # 주문 전송
-        gm.admin.order_q.put(send_data)
+        gm.order_q.put(send_data)
 
     def gui_tr_cancel(self):
         key = self.leTrCancelKey.text()
@@ -580,7 +580,7 @@ class GUI(QMainWindow, form_class):
         send_data = {
             'rqname': rqname,
             'screen': dc.scr.화면[rqname],
-            'accno': gm.config.account,
+            'accno': gm.account,
             'ordtype': 3 if kind == '매수' else 4,
             'code': code,
             'quantity': 0,
@@ -590,7 +590,7 @@ class GUI(QMainWindow, form_class):
         }
 
         # 주문 전송
-        gm.admin.order_q.put(send_data)
+        gm.order_q.put(send_data)
         
     # 스크립트 표시 ---------------------------------------------------------------------------------------------
     def gui_script_show(self):

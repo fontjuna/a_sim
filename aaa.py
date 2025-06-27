@@ -31,17 +31,17 @@ class Main:
     def init(self):
         self.app = QApplication(sys.argv)
         args = [arg.lower() for arg in sys.argv]
-        gm.config.gui_on = 'off' not in args
-        gm.config.sim_no = 1 if 'sim1' in args else 2 if 'sim2' in args else 3 if 'sim3' in args else 0
-        if 'sim' in args and gm.config.sim_no == 0: gm.config.sim_no = 1
-        gm.config.sim_on = gm.config.sim_no > 0
-        logging.info(f"### {'GUI' if gm.config.gui_on else 'CONSOLE'} Mode 로 시작 합니다. ###")
-        logging.info(f"### {f'시뮬레이션 {gm.config.sim_no}번' if gm.config.sim_on else '실제 API'} 모드로 시작 합니다. ###")
+        gm.gui_on = 'off' not in args
+        gm.sim_no = 1 if 'sim1' in args else 2 if 'sim2' in args else 3 if 'sim3' in args else 0
+        if 'sim' in args and gm.sim_no == 0: gm.sim_no = 1
+        gm.sim_on = gm.sim_no > 0
+        logging.info(f"### {'GUI' if gm.gui_on else 'CONSOLE'} Mode 로 시작 합니다. ###")
+        logging.info(f"### {f'시뮬레이션 {gm.sim_no}번' if gm.sim_on else '실제 API'} 모드로 시작 합니다. ###")
 
     def show_splash(self):
-        if not gm.config.gui_on: return
+        if not gm.gui_on: return
         gm.gui = GUI()
-        if datetime.now() < datetime(2025, 6, 30):
+        if datetime.now() < datetime(2025, 8, 1):
             splash_pix = QPixmap(dc.fp.image_file)
             screen_width = 800
             screen_height = 400
@@ -69,7 +69,7 @@ class Main:
         set_tables()
 
     def show(self):
-        if not gm.config.gui_on: return
+        if not gm.gui_on: return
         gm.gui.gui_show()
         #gm.gui.init()
         time.sleep(0.1)
@@ -84,7 +84,7 @@ class Main:
             gm.prx.start()
             gm.api = KiwoomModel('api', APIServer, gm.shared_qes)
             gm.api.start()
-            gm.prx.order('api', 'api_init', gm.config.sim_no)
+            gm.prx.order('api', 'api_init', gm.sim_no)
             gm.prx.order('api', 'CommConnect', False)
             gm.dbm = ProcessModel('dbm', DBMServer, gm.shared_qes)
             gm.dbm.start()
@@ -94,7 +94,7 @@ class Main:
 
     def prepare(self):
         try:
-            if gm.config.sim_no != 1:
+            if gm.sim_no != 1:
                 logging.debug('prepare : 로그인 대기 시작')
                 while True:
                     connected = gm.prx.answer('api', 'GetConnectState') == 1
@@ -105,7 +105,7 @@ class Main:
             while not gm.admin_init: time.sleep(0.1)
             
             logging.debug('prepare : admin 초기화 완료')
-            if gm.config.gui_on: gm.gui.init()
+            if gm.gui_on: gm.gui.init()
             logging.debug('prepare : gui 초기화 완료')
 
         except Exception as e:
@@ -116,15 +116,15 @@ class Main:
         logging.debug('trade_start')
         gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
         gm.admin.stg_start()
-        gm.config.ready = True
+        gm.ready = True
 
     def run(self):
-        if gm.config.gui_on: 
+        if gm.gui_on: 
             self.splash.close()
         if self.time_over:
             QTimer.singleShot(15000, self.cleanup)
         else:   
-            return self.app.exec_() if gm.config.gui_on else self.console_run()
+            return self.app.exec_() if gm.gui_on else self.console_run()
 
     def console_run(self):
         while True:
@@ -166,7 +166,7 @@ class Main:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:
             self.cleanup_flag = True
-            if hasattr(self, 'app') and gm.config.gui_on: self.app.quit()
+            if hasattr(self, 'app') and gm.gui_on: self.app.quit()
             logging.info("cleanup completed")
 
     def _force_exit(self):

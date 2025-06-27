@@ -16,6 +16,9 @@ class ProxyAdmin():
     def set_connected(self, connected):
         gm.connected = connected
 
+    def proxy_method(self, qwork):
+        self.emit_q.put(qwork) # qwork = QWork()
+
     def on_fx실시간_장운영감시(self, code, rtype, dictFID): # 장 운영 상황 감시
         self.emit_q.put(QWork(method='on_fx실시간_장운영감시', args=(code, rtype, dictFID,)))
 
@@ -132,7 +135,7 @@ class PriceUpdater(QThread):
         if gm.주문목록.in_key(key): return
         gm.주문목록.set(key=key, data=data)
         gm.잔고목록.set(key=code, data={'주문가능수량': 0})
-        row.update({'rqname': '신규매도', 'account': gm.config.account})
+        row.update({'rqname': '신규매도', 'account': gm.account})
         gm.eval_q.put({'sell': {'row': row}})
 
 class OrderCommander(QThread):
@@ -412,7 +415,7 @@ class EvalStrategy(QThread):
                 except Exception as e:
                     logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
 
-        if not gm.config.sim_on:
+        if not gm.sim_on:
             status_market = self.com_market_status()
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
@@ -428,7 +431,7 @@ class EvalStrategy(QThread):
             return False, {}, f"보유 종목수 제한 {code} {name} \
             보유종목={gm.잔고목록.len()}종목/보유제한={self.보유제한} 종목 초과" # 전략별 보유로 계산
 
-        if not gm.config.sim_on:
+        if not gm.sim_on:
             now = datetime.now().time()
             if self.운영시간:
                 start_time = datetime.strptime('09:00', '%H:%M').time()
@@ -446,7 +449,7 @@ class EvalStrategy(QThread):
             send_data = {
                 'rqname': rqname,
                 'screen': dc.scr.화면['신규매수'],
-                'accno': gm.config.account,
+                'accno': gm.account,
                 'ordtype': 1,  # 매수
                 'code': code,
                 'quantity': 0,
@@ -495,7 +498,7 @@ class EvalStrategy(QThread):
 
     def is_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
         try:
-            if not gm.config.sim_on:
+            if not gm.sim_on:
                 status_market = self.com_market_status()
                 if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
@@ -515,7 +518,7 @@ class EvalStrategy(QThread):
             send_data = {
                 'rqname': rqname,
                 'screen': dc.scr.화면['신규매도'],
-                'accno': gm.config.account,
+                'accno': gm.account,
                 'ordtype': 2,  # 매도
                 'code': code,
                 'quantity': row.get('보유수량', 0), #row.get('주문가능수량', row.get('보유수량', 0)),
@@ -543,7 +546,7 @@ class EvalStrategy(QThread):
                 send_data['msg'] = '검색매도'
                 return True, send_data,  f"검색매도: {code} {종목명}"
 
-            #if gm.config.sim_on and (수익률 > 30 or 수익률 < -30):
+            #if gm.sim_on and (수익률 > 30 or 수익률 < -30):
             #    return False, {}, f"시뮬레이션 비정상 수익률: {code} {종목명} 매입가={매입가} 현재가={현재가} 수익률={수익률}"
 
             if self.로스컷 and self.로스컷율 != 0:
@@ -568,7 +571,7 @@ class EvalStrategy(QThread):
 
                 return True, send_data, f"로스컷 : {code} {종목명}"
 
-            if not gm.config.sim_on:
+            if not gm.sim_on:
                 if self.당일청산 and datetime.now().strftime('%H:%M') >= self.청산시간:
                     send_list = []
                     rows = gm.잔고목록.get()
@@ -640,7 +643,7 @@ class EvalStrategy(QThread):
             send_data = {
                 'rqname': rqname,
                 'screen': dc.scr.화면[rqname],
-                'accno': gm.config.account,
+                'accno': gm.account,
                 'ordtype': 3 if rqname == '매수취소' else 4,
                 'code': code,
                 'quantity': 0,
