@@ -1,4 +1,4 @@
-from public import gm, dc, Work,load_json, save_json
+from public import gm, dc, Work, hoga, load_json, save_json
 from classes import ThreadSafeDict, CounterTicker, ThreadSafeList
 from threads import OrderCommander, EvalStrategy, ChartSetter, ChartUpdater, PriceUpdater
 from chart import ScriptManager, enhance_script_manager
@@ -17,6 +17,7 @@ class Admin:
     def __init__(self):
         self.name = 'admin'
         self.stg_ready = False
+        self.cancel_timer = None
         self.start_timer = None
         self.end_timer = None
         self.start_time = '09:00' # 매수시간 시작
@@ -35,6 +36,11 @@ class Admin:
         # 쓰레드 준비
         self.set_threads()
         self.start_threads()
+        gm.admin_init = True
+    
+    def restart(self):
+        self.set_real_remove_all()
+        self.get_holdings()
         gm.admin_init = True
 
     # 준비 작업 -------------------------------------------------------------------------------------------
@@ -96,7 +102,7 @@ class Admin:
 
     def get_holdings(self):
         logging.info('* get_holdings *')
-        gm.dict잔고종목감시 = {}
+        gm.set종목감시 = set()
         gm.prx.order('api', 'SetRealRemove', dc.scr.화면['실시간감시'], 'ALL')
         self.pri_fx얻기_잔고합산()
         self.pri_fx얻기_잔고목록()
@@ -573,7 +579,7 @@ class Admin:
             gm.주문목록.set(key=key, data=data) # 아래 보다 먼저 실행 해야 함
 
             if kind == '매수' and self.매수시장가:
-                price = int((gm.dict종목정보.get(code, '현재가') or gm.dict종목정보.get(code, '전일가')) * 1.3)
+                price = int((gm.dict종목정보.get(code, '현재가') or hoga(gm.dict종목정보.get(code, '전일가'), 99)))
                 logging.debug(f'매수 시장가: {code} {종목명} {price}')
                 gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price}})
             elif kind == '매도' and self.매도시장가:
@@ -664,13 +670,14 @@ class Admin:
                 else:
                     end_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.stop_time}", '%Y-%m-%d %H:%M')
                     remain_secs = max(0, (end_time - now).total_seconds())
-                    self.end_timeer = threading.Timer(remain_secs, lambda: self.stg_stop())
-                    self.end_timeer.start()
+                    self.end_timer = threading.Timer(remain_secs, lambda: self.stg_stop())
+                    self.end_timer.daemon = True
+                    self.end_timer.start()
 
         except Exception as e:
             logging.error(f'전략매매 체크 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def odr_timeout(self, idx, kind, origin_row, dictFID):
+    def odr_timeout(self, kind, origin_row, dictFID):
         if gm.주문목록.len() == 0: return
         try:
             code = origin_row['종목코드']
@@ -785,8 +792,8 @@ class Admin:
                         if gm.설정전략['매도취소']: sec = gm.설정전략['매도지연초']
 
                     if sec > 0:
-                        #QTimer.singleShot(int(sec * 1000), lambda kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(kind, origin_row, dictFID))
-                        threading.Timer(int(sec * 1000), lambda kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(kind, origin_row, dictFID)).start()
+                        QTimer.singleShot(int(sec * 1000), lambda kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(kind, origin_row, dictFID))
+                        #threading.Timer(int(sec * 1000), lambda kind=kind, origin_row=row, dictFID=dictFID: self.odr_timeout(kind, origin_row, dictFID)).start()
             except Exception as e:
                 logging.debug(f'전략 처리 오류: {row}')
                 logging.error(f"전략 처리 오류: {type(e).__name__} - {e}", exc_info=True)
@@ -826,7 +833,7 @@ class Admin:
             try:
                 data = {'종목번호': code, '종목명': name, '보유수량': qty, '매입가': price, '매입금액': amount, '주문가능수량': qty, \
                             '매수전략': 전략정의['매수전략'], '전략명칭': 전략정의['전략명칭'], '감시시작율': 전략정의['감시시작율'], '이익보존율': 전략정의['이익보존율'],\
-                            '감시': 0, '보존': 0, '매수일자': dc.td.ToDay, '매수시간': 매매시간, '매수번호': order_no, '매수수량': qty, '매수가': price, '매수금액': amount}
+                            '감시': 0, '보존': 0, '매수일자': dc.ToDay, '매수시간': 매매시간, '매수번호': order_no, '매수수량': qty, '매수가': price, '매수금액': amount}
                 if not gm.잔고목록.in_key(code):
                     gm.holdings[code] = data
                     save_json(dc.fp.holdings_file, gm.holdings)
@@ -886,7 +893,7 @@ class Admin:
 
     def dbm_trade_upsert(self, dictFID):
         try:
-            dict_data = {key: dictFID[key] for key in db_columns.TRD_COLUMN_NAMES if key in dictFID}
+            dict_data = {key: dictFID[key] for key in db_columns.TRD_COLUMNS if key in dictFID}
             gm.prx.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
 
             if dictFID['주문상태'] == '체결':

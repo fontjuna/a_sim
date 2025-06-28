@@ -25,7 +25,7 @@ def com_request_time_check(kind='order', cond_text = None):
     if wait_time > 1666: # 1.666초 이내 주문 제한
         msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
             if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
-        #toast.toast(msg, duration=dc.td.TOAST_TIME)
+        #toast.toast(msg, duration=dc.TOAST_TIME)
         logging.warning(msg)
         return False
     elif wait_time > 1000:
@@ -537,10 +537,10 @@ class OnReceiveRealDataSim3(QThread):
       self._stop_event.set()
 
 class APIServer:
-    app = QApplication(sys.argv)
     def __init__(self):
         self.name = 'api'
         self.sim_no = 0
+        self.app = None
         self.ocx = None
         self.connected = False
 
@@ -563,7 +563,6 @@ class APIServer:
     def cleanup(self):
         if self.sim_no > 0:
             self.thread_cleanup()
-        # 연결 상태 변경
         self.connected = False
         logging.info("APIServer 종료")
 
@@ -572,12 +571,15 @@ class APIServer:
             import os
             pid = os.getpid()
             self.sim_no = sim_no
+
+            if self.app is None:
+                self.app = QApplication(sys.argv)
             
             if self.sim_no != 1 and self.ocx is None:
                 logging.debug(f"ActiveX 컨트롤 생성 시작: KHOPENAPI.KHOpenAPICtrl.1")
                 self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
                 self._set_signal_slots()
-                logging.debug(f'{self.name} api_init success: pid={pid} (Sim mode {self.sim_no}) ocx={self.ocx}')
+            logging.debug(f'api_init completed: pid={pid} (Sim mode {self.sim_no}) ocx={self.ocx}')
             
         except Exception as e:
             logging.error(f"API 초기화 오류: {type(e).__name__} - {e}", exc_info=True)
@@ -626,7 +628,7 @@ class APIServer:
         for screen in list(real_thread.keys()):
             if real_thread[screen]:
                 try:
-                    logging.debug(f"실시간 데이터 스레드 정리: {screen}")
+                    logging.debug(f"API 실시간 데이터 스레드 정리: {screen}")
                     real_thread[screen].stop()
                     real_thread[screen].wait(1000)  # 최대 1초 대기
                     del real_thread[screen]
@@ -638,7 +640,7 @@ class APIServer:
         for screen in list(cond_thread.keys()):
             if cond_thread[screen]:
                 try:
-                    logging.debug(f"조건검색 스레드 정리: {screen}")
+                    logging.debug(f"API 조건검색 스레드 정리: {screen}")
                     cond_thread[screen].stop()
                     cond_thread[screen].wait(1000)  # 최대 1초 대기
                     del cond_thread[screen]

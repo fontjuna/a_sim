@@ -176,7 +176,7 @@ class Toast(QWidget):
 class CounterTicker:
     DEFAULT_STRATEGY_LIMIT = 1000   # 전략 자체 기본 제한
     DEFAULT_TICKER_LIMIT = 10       # 종목 기본 제한
-    DEFAULT_DATA = { "date": dc.td.ToDay, "data": {} } # data = { code: { name: "", limit: 0, count: 0 }, ... } 
+    DEFAULT_DATA = { "date": dc.ToDay, "data": {} } # data = { code: { name: "", limit: 0, count: 0 }, ... } 
    
     def __init__(self, file_name="counter_data.json"):
         data_path = get_path('db')
@@ -192,11 +192,11 @@ class CounterTicker:
             if success:
                 saved_date = loaded_data.get("date", "")
                 self.data = loaded_data.get("data", {})
-                if saved_date != dc.td.ToDay: self.data = {}
+                if saved_date != dc.ToDay: self.data = {}
     
     def save_data(self):
         with self.lock:
-            save_obj = { "date": dc.td.ToDay, "data": self.data }
+            save_obj = { "date": dc.ToDay, "data": self.data }
             success, _ = save_json(self.file_path, save_obj)
             return success
     
@@ -575,3 +575,8 @@ class KiwoomModel(BaseModel, Process):
         if self.running:    
             pythoncom.PumpWaitingMessages()
 
+    def run(self):
+        try:
+            self._common_run_logic()
+        finally:
+            pythoncom.CoUninitialize()

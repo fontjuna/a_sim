@@ -12,6 +12,10 @@ import time
 class ProxyAdmin():
     def __init__(self):
         self.name = 'prx'
+        self.daemon = True
+
+    def initialize(self):
+        logging.debug('prx_init completed')
 
     def set_connected(self, connected):
         gm.connected = connected
@@ -38,6 +42,7 @@ class ProxyAdmin():
 class PriceUpdater(QThread):
     def __init__(self, prx, price_q):
         super().__init__()
+        self.daemon = True
         self.prx = prx
         self.price_q = price_q
         self.running = True
@@ -141,6 +146,7 @@ class PriceUpdater(QThread):
 class OrderCommander(QThread):
     def __init__(self, prx, order_q):
         super().__init__()
+        self.daemon = True
         self.prx = prx
         self.order_q = order_q
         self.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
@@ -167,7 +173,7 @@ class OrderCommander(QThread):
         wait_time = self.ord.check_interval()
         if wait_time > 1666: # 1.666초 이내 주문 제한
             msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초'
-            gm.toast.toast(msg, duration=dc.td.TOAST_TIME)
+            gm.toast.toast(msg, duration=dc.TOAST_TIME)
             logging.warning(msg)
             return False
        
@@ -211,6 +217,7 @@ class OrderCommander(QThread):
 class ChartUpdater(QThread):
     def __init__(self, prx, chart_q):
         super().__init__()
+        self.daemon = True
         self.name = 'ctu'
         self.prx = prx
         self.chart_q = chart_q
@@ -244,6 +251,7 @@ class ChartUpdater(QThread):
 class ChartSetter(QThread):
     def __init__(self, prx, todo_q):
         super().__init__()
+        self.daemon = True
         self.name = 'cts'
         self.prx = prx
         self.todo_q = todo_q
@@ -362,6 +370,7 @@ class ChartSetter(QThread):
 class EvalStrategy(QThread):
     def __init__(self, prx, eval_q):
         super().__init__()
+        self.daemon = True
         self.name = 'evl'
         self.prx = prx
         self.eval_q = eval_q
@@ -382,6 +391,9 @@ class EvalStrategy(QThread):
 
     def stop(self):
         self.running = False
+        if self.clear_timer:
+            self.clear_timer.cancel()
+            self.clear_timer = None
         self.eval_q.put(None)
 
     def run(self):
@@ -666,6 +678,7 @@ class EvalStrategy(QThread):
             start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.청산시간}", '%Y-%m-%d %H:%M')
             delay_secs = max(0, (start_time - now).total_seconds())
             self.clear_timer = threading.Timer(delay_secs, lambda: self.order_sell(row))
+            self.clear_timer.daemon = True
             self.clear_timer.start()
 
     def com_market_status(self):

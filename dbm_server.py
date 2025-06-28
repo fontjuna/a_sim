@@ -100,13 +100,11 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     f = DataBaseFields()
 
     TRD_TABLE_NAME = 'trades'
-    TRD_SELECT_COLUMNS = "substr(처리일시, 12, 8) AS 처리시간, 주문구분, 주문상태, 종목코드, 종목명, 주문수량, 주문가격, 미체결수량,\
-          체결량, 체결가, 체결누계금액, 매매구분, 주문번호, 원주문번호, 전략명칭, 처리일시"
     TRD_SELECT_DATE = f"SELECT substr(처리일시, 12, 12) AS 처리시간, * FROM {TRD_TABLE_NAME} WHERE DATE(처리일시) = ? ORDER BY 처리일시 ASC"
-    TRD_COLUMNS = [f.id, f.전략명칭, f.주문구분, f.주문상태, f.주문번호, f.종목코드, f.종목명, f.현재가, f.주문수량, f.주문가격, \
+    TRD_FIELDS = [f.id, f.전략명칭, f.주문구분, f.주문상태, f.주문번호, f.종목코드, f.종목명, f.현재가, f.주문수량, f.주문가격, \
                     f.미체결수량, f.매매구분, f.체결량, f.체결가, f.체결누계금액, f.체결번호, f.체결시간, f.단위체결가, f.단위체결량, f.당일매매수수료, \
                         f.당일매매세금, f.원주문번호, f.처리일시]
-    TRD_COLUMN_NAMES = [col.name for col in TRD_COLUMNS]
+    TRD_COLUMNS = [col.name for col in TRD_FIELDS]
     TRD_INDEXES = {
         'idx_ordno': f"CREATE INDEX IF NOT EXISTS idx_ordno ON {TRD_TABLE_NAME}(주문번호)",
         'idx_strategy': f"CREATE INDEX IF NOT EXISTS idx_strategy ON {TRD_TABLE_NAME}(전략명칭, 종목코드)",
@@ -115,10 +113,10 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
 
     CONC_TABLE_NAME = 'conclusion'
     CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND 매도수량 > 0 ORDER BY 매수일자, 매수시간 ASC"
-    CONC_COLUMNS = [f.id, f.종목번호, f.종목명, f.손익금액, f.손익율, f.매수일자, f.매수시간,\
+    CONC_FIELDS = [f.id, f.종목번호, f.종목명, f.손익금액, f.손익율, f.매수일자, f.매수시간,\
                     f.매수수량, f.매수가, f.매수금액, f.매수번호, f.매도일자, f.매도시간, f.매도수량,\
                     f.매도가, f.매도금액, f.매도번호, f.제비용, f.매수전략, f.전략명칭]
-    CONC_COLUMN_NAMES = [col.name for col in CONC_COLUMNS]
+    CONC_COLUMNS = [col.name for col in CONC_FIELDS]
     CONC_INDEXES = {
         'idx_buyorder': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_buyorder ON {CONC_TABLE_NAME}(매수일자, 매수번호)",
         'idx_sellorder': f"CREATE INDEX IF NOT EXISTS idx_sellorder ON {CONC_TABLE_NAME}(매도일자, 매도번호)"
@@ -127,8 +125,8 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     MIN_TABLE_NAME = 'minute_n_tick'
     MIN_SELECT_SAMPLE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 체결시간 DESC LIMIT 1"
     MIN_SELECT_DATE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
-    MIN_COLUMNS = [f.id, f.종목코드, f.체결시간, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱]
-    MIN_COLUMN_NAMES = [col.name for col in MIN_COLUMNS]
+    MIN_FIELDS = [f.id, f.종목코드, f.체결시간, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱]
+    MIN_COLUMNS = [col.name for col in MIN_FIELDS]
     MIN_INDEXES = {
         'idx_cycle_tick_code_time': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_tick_code_time ON {MIN_TABLE_NAME}(주기, 틱, 종목코드, 체결시간)",
         'idx_time_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_time_cycle_tick_code ON {MIN_TABLE_NAME}(체결시간, 주기, 틱, 종목코드)",
@@ -137,8 +135,8 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     DAY_TABLE_NAME = 'day_week_month'
     DAY_SELECT_SAMPLE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 일자 DESC LIMIT 1"
     DAY_SELECT_DATE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 일자 = ? AND 주기 = ?"
-    DAY_COLUMNS = [f.id, f.종목코드, f.일자, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱]
-    DAY_COLUMN_NAMES = [col.name for col in DAY_COLUMNS]
+    DAY_FIELDS = [f.id, f.종목코드, f.일자, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱]
+    DAY_COLUMNS = [col.name for col in DAY_FIELDS]
     DAY_INDEXES = {
         'idx_cycle_tick_code_date': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_tick_code_date ON {DAY_TABLE_NAME}(주기, 틱, 종목코드, 일자)",
         'idx_date_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_date_cycle_tick_code ON {DAY_TABLE_NAME}(일자, 주기, 틱, 종목코드)",
@@ -208,20 +206,19 @@ class DBMServer:
 
     def init_dbm(self):
         """DB 초기화"""
-        logging.debug('dbm_init_db')
 
         # 통합 디비
         db_conn = self.get_connection('db')
         db_cursor = db_conn.cursor()
         
         # trades 테이블
-        sql = self.create_table_sql(db_columns.TRD_TABLE_NAME, db_columns.TRD_COLUMNS)
+        sql = self.create_table_sql(db_columns.TRD_TABLE_NAME, db_columns.TRD_FIELDS)
         db_cursor.execute(sql)
         for index in db_columns.TRD_INDEXES.values():
             db_cursor.execute(index)
 
         # Conclusion Table
-        sql = self.create_table_sql(db_columns.CONC_TABLE_NAME, db_columns.CONC_COLUMNS)
+        sql = self.create_table_sql(db_columns.CONC_TABLE_NAME, db_columns.CONC_FIELDS)
         db_cursor.execute(sql)
         for index in db_columns.CONC_INDEXES.values():
             db_cursor.execute(index)
@@ -233,18 +230,20 @@ class DBMServer:
         chart_cursor = chart_conn.cursor()
         
         # 차트 테이블 (틱, 분)
-        sql = self.create_table_sql(db_columns.MIN_TABLE_NAME, db_columns.MIN_COLUMNS)
+        sql = self.create_table_sql(db_columns.MIN_TABLE_NAME, db_columns.MIN_FIELDS)
         chart_cursor.execute(sql)
         for index in db_columns.MIN_INDEXES.values():
             chart_cursor.execute(index)
 
         # 차트 테이블 (일, 주, 월)
-        sql = self.create_table_sql(db_columns.DAY_TABLE_NAME, db_columns.DAY_COLUMNS)
+        sql = self.create_table_sql(db_columns.DAY_TABLE_NAME, db_columns.DAY_FIELDS)
         chart_cursor.execute(sql)
         for index in db_columns.DAY_INDEXES.values():
             chart_cursor.execute(index)
 
         chart_conn.commit()
+        
+        logging.debug('dbm_init completed')
 
     def create_table_sql(self, table_name, fields, pk_columns=None):
         """테이블 생성 SQL문 생성"""

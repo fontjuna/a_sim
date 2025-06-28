@@ -1,7 +1,7 @@
 from gui import GUI
 from admin import Admin
 from threads import ProxyAdmin
-from public import init_logger, dc, gm, Work
+from public import init_logger, dc, gm, Work, SharedQueue
 from classes import Toast, ProcessModel, QData, QMainModel, KiwoomModel
 from tables import set_tables
 from dbm_server import DBMServer
@@ -13,6 +13,7 @@ import logging
 import time
 import sys
 from datetime import datetime
+import threading
 
 init_logger()
 
@@ -65,8 +66,11 @@ class Main:
             self.splash.show() # showFullScreen()  # 화면 전체로 표시
             self.time_over = True
 
-    def set_tables(self):
+    def set_before(self):
         set_tables()
+        #gm.shared_qes['api'] = SharedQueue()
+        #gm.shared_qes['dbm'] = SharedQueue()
+        #gm.shared_qes['prx'] = SharedQueue()
 
     def show(self):
         if not gm.gui_on: return
@@ -99,6 +103,7 @@ class Main:
                 while True:
                     connected = gm.prx.answer('api', 'GetConnectState') == 1
                     if connected: break
+                    #logging.debug('prepare : 로그인 대기 중')
                     time.sleep(0.5)
             gm.prx.order('api', 'set_tickers')
             gm.admin.init()
@@ -142,7 +147,7 @@ class Main:
     def main(self):
         self.init()
         self.show_splash()
-        self.set_tables()
+        self.set_before()
         self.set_proc()
         self.prepare()
         self.show()
@@ -154,11 +159,21 @@ class Main:
             gm.admin.stg_stop() 
             gm.admin.stop_threads()
 
-            for name in ['dbm', 'api', 'prx']:
+            components = ['dbm', 'api', 'prx']
+            for name in components:
                 if name in gm.shared_qes:
                     gm.shared_qes[name].request.put(QData(sender=name, method='stop'))
                 time.sleep(0.1)
 
+            for name in components:
+                if name in gm.shared_qes:
+                    while not gm.shared_qes[name].stream.empty(): gm.shared_qes[name].stream.get_nowait()
+                    while not gm.shared_qes[name].request.empty(): gm.shared_qes[name].request.get_nowait()
+                    while not gm.shared_qes[name].result.empty(): gm.shared_qes[name].result.get_nowait()
+                    while not gm.shared_qes[name].payback.empty(): gm.shared_qes[name].payback.get_nowait()
+                time.sleep(0.1)
+
+            logging.debug(f'cleanup : {threading.enumerate()} 프로세스 종료 완료')
             # 프로세스 강제 종료
             #self._force_exit()
             

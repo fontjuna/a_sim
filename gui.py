@@ -417,6 +417,7 @@ class GUI(QMainWindow, form_class):
             gm.sim_on = gm.sim_no > 0
             gm.prx.order('api', 'api_init', sim_no=gm.sim_no)
             gm.prx.order('api', 'set_tickers')
+            gm.admin.restart()
             gm.admin.stg_start()
             if not all([gm.매수문자열, gm.매도문자열]):
                 gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)

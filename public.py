@@ -160,11 +160,12 @@ class QData:
     callback : str = None
 
 class SharedQueue:
-    import multiprocessing as mp
-    request = mp.Queue()
-    result = mp.Queue()
-    stream = mp.Queue()
-    payback = mp.Queue()
+    def __init__(self):
+        import multiprocessing as mp
+        self.request = mp.Queue()
+        self.result = mp.Queue()
+        self.stream = mp.Queue()
+        self.payback = mp.Queue()
 
 class FIDs:             # 실시간 조회 필드 아이디
     거래구분 = {
@@ -289,13 +290,6 @@ class FIDs:             # 실시간 조회 필드 아이디
         '기준가': 307,
         '손익율': 8019,
     }
-
-class TimeDefinition:   # 시간 정의
-    WAIT_SEC = 10
-    RUN_INTERVAL = 0.01
-    TODAY = datetime.now().strftime('%Y-%m-%d')
-    ToDay = datetime.now().strftime('%Y%m%d')
-    TOAST_TIME = 5000  # 밀리초
 
 class ScreenNumber:     # 화면번호
     화면 = {
@@ -558,138 +552,143 @@ class SimTicker:
 
 ## Define Global Constants **********************************************************************
 class DefineConstants:  # 글로벌 상수 정의
-    const = Constants()
-    fid = FIDs()
-    td = TimeDefinition()
-    scr = ScreenNumber()
-    fp = FilePath()
-    ms = MarketStatus()
-    sim = SimTicker()
-    ticks = {
-        '틱봉': ['30'],
-        '분봉': ['1'],
-        '일봉': [],
-        '주봉': [],
-        '월봉': [],
-    }
-    log_config = {
-        'version': 1,
-        'formatters': {
-            'detailed': {
-                'format': '%(asctime)s.%(msecs)03d-%(levelname)s-[%(filename)s(%(lineno)d) / %(funcName)s] %(message)s',
-                'datefmt': '%Y-%m-%d %H:%M:%S'
-            }
-        },
-        'handlers': {
-            'console': {
-                'class': 'logging.StreamHandler',
-                'formatter': 'detailed'
-            },
-            'file': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': "log_message",
-                'formatter': 'detailed',
-                'maxBytes': 1024 * 1024 * 1,
-                'backupCount': 9,
-                'encoding': 'utf-8'
-            }
-        },
-        'root': {
-            'handlers': ['console', 'file'],
-            'level': 'DEBUG'
+    def __init__(self):
+        self.WAIT_SEC = 10
+        self.RUN_INTERVAL = 0.01
+        self.TODAY = datetime.now().strftime('%Y-%m-%d')
+        self.ToDay = datetime.now().strftime('%Y%m%d')
+        self.TOAST_TIME = 5000  # 밀리초
+
+        self.const = Constants()
+        self.fid = FIDs()
+        self.scr = ScreenNumber()
+        self.fp = FilePath()
+        self.ms = MarketStatus()
+        self.sim = SimTicker()
+        self.ticks = {
+            '틱봉': ['30'],
+            '분봉': ['1'],
+            '일봉': [],
+            '주봉': [],
+            '월봉': [],
         }
-    }
+        self.log_config = {
+            'version': 1,
+            'formatters': {
+                'detailed': {
+                    'format': '%(asctime)s.%(msecs)03d-%(levelname)s-[%(filename)s(%(lineno)d) / %(funcName)s] %(message)s',
+                    'datefmt': '%Y-%m-%d %H:%M:%S'
+                }
+            },
+            'handlers': {
+                'console': {
+                    'class': 'logging.StreamHandler',
+                    'formatter': 'detailed'
+                },
+                'file': {
+                    'class': 'logging.handlers.RotatingFileHandler',
+                    'filename': "log_message",
+                    'formatter': 'detailed',
+                    'maxBytes': 1024 * 1024 * 1,
+                    'backupCount': 9,
+                    'encoding': 'utf-8'
+                }
+            },
+            'root': {
+                'handlers': ['console', 'file'],
+                'level': 'DEBUG'
+            }
+        }
 dc = DefineConstants()
 
 ## Define Global memory *************************************************************************
 class GlobalMemory:      # 글로벌 메모리 정의
-    connected = False
-    sim_on = True
-    sim_no = 0
-    gui_on = False
-    ready = False
-    log_level = logging.DEBUG
-    server = '1'
-    account = ''
+    def __init__(self):
+        self.connected = False
+        self.sim_on = True
+        self.sim_no = 0
+        self.gui_on = False
+        self.ready = False
+        self.log_level = logging.DEBUG
+        self.server = '1'
+        self.account = ''
 
-    main = None
-    admin = None
-    prx = None
-    gui = None
-    pri = None # PriceUpdater
-    api = None
-    dbm = None
-    cts = None
-    ctu = None
-    evl = None
-    odc = None
-    odr = None # 주문 결과 처리
-    scm = None # 스크립트 매니저
+        self.main = None
+        self.admin = None
+        self.prx = None
+        self.gui = None
+        self.pri = None # PriceUpdater
+        self.api = None
+        self.dbm = None
+        self.cts = None
+        self.ctu = None
+        self.evl = None
+        self.odc = None
+        self.odr = None # 주문 결과 처리
+        self.scm = None # 스크립트 매니저
 
-    price_q = None    # ThreadSafeList()
-    eval_q = None # ThreadSafeList()
-    order_q = None # ThreadSafeList()
-    setter_q = None # ThreadSafeList()
-    chart_q = None # ThreadSafeList()
+        self.price_q = None    # ThreadSafeList()
+        self.eval_q = None # ThreadSafeList()
+        self.order_q = None # ThreadSafeList()
+        self.setter_q = None # ThreadSafeList()
+        self.chart_q = None # ThreadSafeList()
+        
+        self.toast = None
+        self.json_config = dc.log_config
+
+        self.list계좌콤보 = []
+        self.list전략콤보 = []
+        self.list전략튜플 = []
+        self.list스크립트 = []
+        self.dict종목정보 = None     # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
+        self.dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
+
+        self.qwork = {} # {'gui': Queue(), 'msg': Queue()}
     
-    toast = None
-    json_config = dc.log_config
+        self.shared_qes = {
+            'api': SharedQueue(),
+            'dbm': SharedQueue(),
+            'prx': SharedQueue(),
+        }
 
-    list계좌콤보 = []
-    list전략콤보 = []
-    list전략튜플 = []
-    list스크립트 = []
-    list주문목록 = None     # ThreadSafeList()
-    list검사목록 = None     # ThreadSafeList()
-    dict종목정보 = None     # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
-    dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
-
-    qwork = {} # {'gui': Queue(), 'msg': Queue()}
+        self.잔고합산 = None # TableManager
+        self.잔고목록 = None # TableManager
+        self.매수조건목록 = None # TableManager
+        self.매도조건목록 = None # TableManager
+        self.예수금 = None # TableManager
+        self.일지합산 = None # TableManager
+        self.일지목록 = None # TableManager
+        self.체결목록 = None # TableManager
+        self.손익목록 = None # TableManager
+        self.매매목록 = None # TableManager
+        self.전략정의 = None # TableManager
+        self.주문목록 = None # TableManager
+        self.스크립트 = None # TableManager
+        self.스크립트변수 = None # TableManager
+        self.차트자료 = None # TableManager
+        self.당일종목 = None # TableManager
+        self.수동종목 = None # TableManager
+        self.l2잔고합산_copy = None
+        self.l2손익합산 = 0
     
-    shared_qes = {
-        'api': SharedQueue(),
-        'dbm': SharedQueue(),
-        'prx': SharedQueue(),
-    }
-
-    잔고합산 = None # TableManager
-    잔고목록 = None # TableManager
-    매수조건목록 = None # TableManager
-    매도조건목록 = None # TableManager
-    예수금 = None # TableManager
-    일지합산 = None # TableManager
-    일지목록 = None # TableManager
-    체결목록 = None # TableManager
-    손익목록 = None # TableManager
-    매매목록 = None # TableManager
-    전략정의 = None # TableManager
-    주문목록 = None # TableManager
-    스크립트 = None # TableManager
-    스크립트변수 = None # TableManager
-    차트자료 = None # TableManager
-    당일종목 = None # TableManager
-    수동종목 = None # TableManager
-    l2잔고합산_copy = None
-    l2손익합산 = 0
+        # 서버 호출 제한 체크
+        self.req = None # 요청 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (CommRqData + CommKwRqData + SendCondition 포함) - 1 초마다 리셋 됨
+        self.ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨
+        self.counter = None # 카운터 전략별, 종목별 매수 횟수 제한
     
-    # 서버 호출 제한 체크
-    req = None # 요청 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (CommRqData + CommKwRqData + SendCondition 포함) - 1 초마다 리셋 됨
-    ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨
-    counter = None # 카운터 전략별, 종목별 매수 횟수 제한
-    
-    strategy_row = None
-    basic_strategy = None
-    실행전략 = None # json
-    설정전략 = None # json
-    매수문자열 = ''
-    매도문자열 = ''
-    set종목감시 = set()
-    set조건감시 = set() 
-    수수료율 = 0.0
-    세금율 = 0.0
-    holdings = {}
-    admin_init = False
-    stg_run = True
+        self.strategy_row = None
+        self.basic_strategy = None
+        self.실행전략 = None # json
+        self.설정전략 = None # json
+        self.매수문자열 = ''
+        self.매도문자열 = ''
+        self.set종목감시 = set()
+        self.set조건감시 = set() 
+        self.수수료율 = 0.0
+        self.세금율 = 0.0
+        self.holdings = {}
+        self.admin_init = False
+        self.stg_run = True
 gm = GlobalMemory()
 
 def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):
