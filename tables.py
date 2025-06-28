@@ -26,17 +26,10 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
 
     hd조건목록 = {
         '키': '종목코드',
-        '정수': ['현재가', '누적거래량', '시가', '고가', '저가', '주문수량', '체결량', '미체결수량'],
-        '실수': ['등락율'],
-        '추가': ['전송번호', '주문번호', '주문유형', '전략명칭', '주문수량', '체결량', '미체결수량', '원주문번호'],
+        '정수': [],
+        '실수': [],
+        '컬럼': ['이탈', '종목코드', '종목명'],
     }
-    hd조건목록.update({
-        '컬럼': ['종목코드', '종목명'] + hd조건목록['실수'] + hd조건목록['정수'][:1],
-    })
-    hd조건목록.update({
-        '확장': hd조건목록['컬럼'] + hd조건목록['추가'],
-        '헤더': ['종목코드', '종목명' ],
-    })
 
     hd손익목록 = {
         '키': '매수시간',
@@ -46,17 +39,6 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
     hd손익목록.update({
         '컬럼': ['매수시간', '종목코드', '종목명'] + hd손익목록['정수'] + ['손익율', '전략명칭']
     })
-
-    hd매매목록 = {
-        '키': '처리시간',
-        '정수': ['현재가', '주문수량', '주문가격', '미체결수량', '체결량', '체결가', '체결누계금액'],
-        '실수': [],
-        '컬럼': [ '처리시간', '주문구분', '주문상태', '종목코드', '종목명', '주문수량', '주문가격', '미체결수량', '체결량', '체결가', '체결누계금액',\
-                '매매구분', '주문번호', '원주문번호', '전략명칭']
-    }
-
-    hd접수목록 = hd조건목록.copy()
-    hd접수목록.update({'키': '주문번호'})
 
     hd주문목록 = {
         '키': '키', # 종목코드_구분 : 005930_매수
@@ -714,11 +696,11 @@ class TableManager:
                             # 중복 키 비허용 모드: 키 삭제
                             self.data_dict.pop(key_val, None)
                 
-                if item in self.data:
-                    self.data.remove(item)
-                
-                if items_to_delete:
-                    self._resize = True
+                    if item in self.data:
+                        self.data.remove(item)
+                    
+                    if items_to_delete:
+                        self._resize = True
                 
                 return bool(items_to_delete)
             
@@ -1006,7 +988,6 @@ def set_tables():
     gm.매수조건목록 = TableManager(tbl.hd조건목록)
     gm.매도조건목록 = TableManager(tbl.hd조건목록)
     gm.손익목록 = TableManager(tbl.hd손익목록)
-    gm.매매목록 = TableManager(tbl.hd매매목록)
     gm.예수금 = TableManager(tbl.hd예수금)
     gm.일지합산 = TableManager(tbl.hd일지합산)
     gm.일지목록 = TableManager(tbl.hd일지목록)

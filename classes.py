@@ -30,6 +30,14 @@ class ThreadSafeList:
                 self.not_empty.wait() # 대기
             return self.list.pop(0)
 
+    def length(self):
+        with self.lock:
+            return len(self.list)
+
+    def clear(self):
+        with self.lock:
+            self.list.clear()
+
     def remove(self, item):
         with self.lock:
             if item in self.list:
@@ -448,7 +456,7 @@ class BaseModel:
 
     def _sleep(self):
         """각 모델별 sleep 구현 (오버라이드 가능)"""
-        time.sleep(0.005)
+        time.sleep(dc.INTERVAL_NORMAL)
 
     def _common_run_logic(self):
         """공통 run 로직"""
@@ -553,7 +561,7 @@ class QMainModel(BaseModel, QThread):
 
     def _sleep(self):
         """QThread용 sleep"""
-        self.msleep(5)
+        QThread.msleep(5) # 0.005 seconds
 
 class ThreadModel(BaseModel, threading.Thread):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
@@ -580,3 +588,4 @@ class KiwoomModel(BaseModel, Process):
             self._common_run_logic()
         finally:
             pythoncom.CoUninitialize()
+

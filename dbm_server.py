@@ -122,6 +122,14 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
         'idx_sellorder': f"CREATE INDEX IF NOT EXISTS idx_sellorder ON {CONC_TABLE_NAME}(매도일자, 매도번호)"
     }
     
+    SIM_TABLE_NAME = 'sim_tickers'
+    SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 일자 DESC LIMIT 1"
+    SIM_FIELDS = [f.id, f.일자, f.종목코드, f.종목명, f.매수전략, f.전략명칭]
+    SIM_COLUMNS = [col.name for col in SIM_FIELDS]
+    SIM_INDEXES = {
+        'idx_code': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_code ON {SIM_TABLE_NAME}(종목코드)"
+    }
+    
     MIN_TABLE_NAME = 'minute_n_tick'
     MIN_SELECT_SAMPLE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 체결시간 DESC LIMIT 1"
     MIN_SELECT_DATE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
@@ -147,13 +155,15 @@ db_columns = DataBaseColumns()
 class DBMServer:
     def __init__(self):
         self.name = 'dbm'
+        self.daemon = True
+        self.sim_no = 0
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
         self.thread_local = None
         
     def initialize(self):
         self.thread_local = threading.local()
-        self.init_dbm()
+        self.db_initialize()
 
     def cleanup(self):
         try:
@@ -176,10 +186,6 @@ class DBMServer:
 
         except Exception as e:
             logging.error(f"Error in cleanup: {e}", exc_info=True)
-
-    def set_log_level(self, level):
-        logging.getLogger().setLevel(level)
-        logging.debug(f'DBM 로그 레벨 설정: {level}')
 
     def set_rate(self, fee_rate, tax_rate):
         """요율 설정 (락 프리)"""
@@ -204,7 +210,15 @@ class DBMServer:
         conn = self.get_connection(db_type)
         return conn.cursor()
 
-    def init_dbm(self):
+    def dbm_init(self, sim_no, log_level=logging.DEBUG):
+        self.sim_no = sim_no
+        self.set_log_level(log_level)
+
+    def set_log_level(self, level):
+        logging.getLogger().setLevel(level)
+        logging.info(f'DBM 로그 레벨 설정: {level}')
+
+    def db_initialize(self):
         """DB 초기화"""
 
         # 통합 디비
@@ -221,6 +235,12 @@ class DBMServer:
         sql = self.create_table_sql(db_columns.CONC_TABLE_NAME, db_columns.CONC_FIELDS)
         db_cursor.execute(sql)
         for index in db_columns.CONC_INDEXES.values():
+            db_cursor.execute(index)
+
+        # 시뮬레이션 할 종목 테이블(실제 매수된 종목)
+        sql = self.create_table_sql(db_columns.SIM_TABLE_NAME, db_columns.SIM_FIELDS)
+        db_cursor.execute(sql)
+        for index in db_columns.SIM_INDEXES.values():
             db_cursor.execute(index)
 
         db_conn.commit()
@@ -241,8 +261,14 @@ class DBMServer:
         for index in db_columns.DAY_INDEXES.values():
             chart_cursor.execute(index)
 
+        # 시뮬레이션 종목 테이블(매수검색된 종목)
+        sql = self.create_table_sql(db_columns.SIM_TABLE_NAME, db_columns.SIM_FIELDS)
+        chart_cursor.execute(sql)
+        for index in db_columns.SIM_INDEXES.values():
+            chart_cursor.execute(index)
+
         chart_conn.commit()
-        
+
         logging.debug('dbm_init completed')
 
     def create_table_sql(self, table_name, fields, pk_columns=None):
@@ -340,6 +366,7 @@ class DBMServer:
         """체결 정보 저장 및 손익 계산"""
         table = db_columns.CONC_TABLE_NAME
         record = None
+        sim_record = None
         dt = datetime.now().strftime("%Y%m%d")
         tm = datetime.now().strftime("%H%M%S")
 
@@ -360,6 +387,7 @@ class DBMServer:
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
                     record = new_record()
+                    sim_record = {'종목코드': code, '종목명': name, '매수전략': st_buy, '전략명칭': st_name}
             
             elif kind == '매도':
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
@@ -404,6 +432,10 @@ class DBMServer:
                     })
             
             self.table_upsert('db', table, record)
+            if sim_record and self.sim_no==0:
+                self.table_upsert('db', db_columns.SIM_TABLE_NAME, sim_record)
+                sim_record = None
+
             return True
             
         except Exception as e:

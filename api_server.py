@@ -381,7 +381,6 @@ class OnReceiveRealConditionSim(QThread):
       self.current_stocks = set()
       self.api = api
       self.order = api.order
-      self._stop_event = threading.Event()
 
    def run(self):
       while self.is_running:
@@ -409,11 +408,11 @@ class OnReceiveRealConditionSim(QThread):
                self.current_stocks.remove(code)
 
          interval = random.uniform(0.3, 3)
-         if self._stop_event.wait(timeout=interval): break
+         if self.is_running:
+            time.sleep(interval)
 
    def stop(self):
       self.is_running = False
-      self._stop_event.set()
 
 class OnReceiveRealDataSim1And2(QThread):
    """시뮬레이션 1, 2번용 실시간 데이터 쓰레드"""
@@ -421,7 +420,6 @@ class OnReceiveRealDataSim1And2(QThread):
       super().__init__()
       self.daemon = True
       self.is_running = True
-      self._stop_event = threading.Event()
       self.api = api
       self.frq_order = api.frq_order
 
@@ -460,12 +458,10 @@ class OnReceiveRealDataSim1And2(QThread):
             }
             self.frq_order('prx', 'on_fx실시간_주식체결', **job)
 
-            if self._stop_event.wait(timeout=0.2/len(sim.ticker)):
-               return
+            time.sleep(0.2/len(sim.ticker))
 
    def stop(self):
       self.is_running = False
-      self._stop_event.set()
 
 class OnReceiveRealDataSim3(QThread):
    """시뮬레이션 3번용 실시간 데이터 쓰레드"""
@@ -473,7 +469,6 @@ class OnReceiveRealDataSim3(QThread):
       super().__init__()
       self.daemon = True
       self.is_running = True
-      self._stop_event = threading.Event()
       self.api = api
       self.frq_order = api.frq_order
 
@@ -522,19 +517,16 @@ class OnReceiveRealDataSim3(QThread):
          delay = sim.get_next_data_delay()
          if delay is None:
             # 모든 데이터를 처리한 경우
-            if self._stop_event.wait(timeout=1):  # 1초마다 체크
-               break
+            time.sleep(1)
          elif delay > 0:
             # 다음 데이터까지 지연
-            if self._stop_event.wait(timeout=delay):
-               break
+            time.sleep(delay)
          else:
             # 같은 시간대 데이터는 즉시 처리
             continue
 
    def stop(self):
       self.is_running = False
-      self._stop_event.set()
 
 class APIServer:
     def __init__(self):
@@ -566,12 +558,13 @@ class APIServer:
         self.connected = False
         logging.info("APIServer 종료")
 
-    def api_init(self, sim_no=0):
+    def api_init(self, sim_no=0, log_level=logging.DEBUG):
         try:
             import os
             pid = os.getpid()
             self.sim_no = sim_no
-
+            self.set_log_level(log_level)
+            
             if self.app is None:
                 self.app = QApplication(sys.argv)
             
@@ -620,7 +613,7 @@ class APIServer:
     
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
-        logging.debug(f'API 로그 레벨 설정: {level}')
+        logging.info(f'API 로그 레벨 설정: {level}')
 
     def thread_cleanup(self):
         # 실시간 데이터 스레드 정리
@@ -628,9 +621,13 @@ class APIServer:
         for screen in list(real_thread.keys()):
             if real_thread[screen]:
                 try:
-                    logging.debug(f"API 실시간 데이터 스레드 정리: {screen}")
                     real_thread[screen].stop()
-                    real_thread[screen].wait(1000)  # 최대 1초 대기
+                    real_thread[screen].quit()
+                    finish = real_thread[screen].wait(5000)  # 최대 1초 대기
+                    if not finish:
+                        logging.error(f"API 실시간 스레드 정리 오류: {screen}")
+                    else:
+                        logging.debug(f"API 실시간 데이터 스레드 정리: {screen}")
                     del real_thread[screen]
                 except Exception as e:
                     logging.error(f"실시간 스레드 정리 오류: {e}")
@@ -640,9 +637,13 @@ class APIServer:
         for screen in list(cond_thread.keys()):
             if cond_thread[screen]:
                 try:
-                    logging.debug(f"API 조건검색 스레드 정리: {screen}")
                     cond_thread[screen].stop()
-                    cond_thread[screen].wait(1000)  # 최대 1초 대기
+                    cond_thread[screen].quit()
+                    finish = cond_thread[screen].wait(5000)  # 최대 1초 대기
+                    if not finish:
+                        logging.error(f"API 조건검색 스레드 정리 오류: {screen}")
+                    else:
+                        logging.debug(f"API 조건검색 스레드 정리: {screen}")
                     del cond_thread[screen]
                 except Exception as e:
                     logging.error(f"조건검색 스레드 정리 오류: {e}")
@@ -706,6 +707,24 @@ class APIServer:
             if screen in real_thread and real_thread[screen]:
                 real_thread[screen].stop()
 
+    def SetRealReg(self, screen, code_list, fid_list, opt_type):
+        if self.sim_no == 0:  # 실제 API 서버
+            ret = self.ocx.dynamicCall("SetRealReg(QString, QString, QString, QString)", screen, code_list, fid_list, opt_type)
+            #logging.debug(f'SetRealReg{"**성공**" if ret==0 else "**실패**"}: screen={screen}, code_list={code_list}, fid_list={fid_list}, opt_type={opt_type}')
+            return ret
+        else:  # 시뮬레이션 모드
+            global real_thread
+            if screen not in real_thread:
+                if self.sim_no in [1, 2]:  # sim_no=1,2일 때
+                    thread = OnReceiveRealDataSim1And2(self)
+                else:  # sim_no=3일 때
+                    thread = OnReceiveRealDataSim3(self)
+                real_thread[screen] = thread
+                thread.start()
+            codes = code_list.split(';')[:-1]
+            real_tickers.update(codes)
+            return 0
+
     def SetRealRemove(self, screen, del_code):
         logging.debug(f'screen={screen}, del_code={del_code}')
         if self.sim_no == 0:  # 실제 API 서버
@@ -723,6 +742,48 @@ class APIServer:
                     real_thread[screen].stop()
                     del real_thread[screen]
                
+    def SetInputValue(self, id, value):
+        if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
+            self.ocx.dynamicCall("SetInputValue(QString, QString)", id, value)
+
+    def SendCondition(self, screen, cond_name, cond_index, search, block=True, timeout=15):
+        cond_text = f'{cond_index:03d} : {cond_name.strip()}'
+        if not com_request_time_check(kind='request', cond_text=cond_text): return [], False
+
+        if self.sim_no == 0:  # 실제 API 서버
+            try:
+                data = False
+                if block is True:
+                    self.tr_condition_loaded = False
+
+                success = self.ocx.dynamicCall("SendCondition(QString, QString, int, int)", screen, cond_name, cond_index, search)
+                logging.debug(f'전략 요청: screen={screen}, name={cond_name}, index={cond_index}, search={search}, 결과={"성공" if success else "실패"}')
+
+                if not success:
+                    return False
+                
+                if block is True:
+                    start_time = time.time()
+                    while not self.tr_condition_loaded:
+                        pythoncom.PumpWaitingMessages()
+                        if time.time() - start_time > timeout:
+                            logging.warning(f'조건 검색 시간 초과: {screen} {cond_name} {cond_index} {search}')
+                            return False
+                    data = self.tr_condition_list
+                return data
+            except Exception as e:
+                logging.error(f"SendCondition 오류: {type(e).__name__} - {e}")
+                return False
+        else:
+            global cond_thread
+            # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 시작
+            self.tr_condition_loaded = True
+            self.tr_condition_list = []
+            cond_thread[screen] = OnReceiveRealConditionSim(cond_name, cond_index, self)
+            cond_thread[screen].start()
+            logging.debug(f'추가후: {cond_thread}')
+            return self.tr_condition_list
+        
     def SendConditionStop(self, screen, cond_name, cond_index):
         global cond_thread
         #logging.debug(f'전략 중지: screen={screen}, cond_name={cond_name}, cond_index={cond_index} {"*"*50}')
@@ -732,15 +793,16 @@ class APIServer:
             # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 종료
             if screen in cond_thread and cond_thread[screen]:
                 cond_thread[screen].stop()
-                cond_thread[screen] = None
+                cond_thread[screen].quit()
+                finish = cond_thread[screen].wait(5000)  # 최대 1초 대기
+                if not finish:
+                    logging.error(f"API 조건검색 스레드 정리 오류: {screen}")
+                else:
+                    logging.debug(f"API 조건검색 스레드 정리: {screen}")
                 logging.debug(f'삭제전: {cond_thread}')
                 del cond_thread[screen]
                 logging.debug(f'삭제후: {cond_thread}')
         return 0
-
-    def SetInputValue(self, id, value):
-        if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
-            self.ocx.dynamicCall("SetInputValue(QString, QString)", id, value)
 
     # 요청 메서드(일회성 콜백 발생 ) ---------------------------------------------------------------------------------
     @profile_operation
@@ -806,63 +868,6 @@ class APIServer:
             return ret
         return 0
 
-    # 요청 메서드(실시간 콜백 발생 ) ---------------------------------------------------------------------------------
-    def SetRealReg(self, screen, code_list, fid_list, opt_type):
-        if self.sim_no == 0:  # 실제 API 서버
-            ret = self.ocx.dynamicCall("SetRealReg(QString, QString, QString, QString)", screen, code_list, fid_list, opt_type)
-            #logging.debug(f'SetRealReg{"**성공**" if ret==0 else "**실패**"}: screen={screen}, code_list={code_list}, fid_list={fid_list}, opt_type={opt_type}')
-            return ret
-        else:  # 시뮬레이션 모드
-            global real_thread
-            if screen not in real_thread:
-                if self.sim_no in [1, 2]:  # sim_no=1,2일 때
-                    thread = OnReceiveRealDataSim1And2(self)
-                else:  # sim_no=3일 때
-                    thread = OnReceiveRealDataSim3(self)
-                real_thread[screen] = thread
-                thread.start()
-            codes = code_list.split(';')[:-1]
-            real_tickers.update(codes)
-            return 0
-
-    def SendCondition(self, screen, cond_name, cond_index, search, block=True, timeout=15):
-        cond_text = f'{cond_index:03d} : {cond_name.strip()}'
-        if not com_request_time_check(kind='request', cond_text=cond_text): return [], False
-
-        if self.sim_no == 0:  # 실제 API 서버
-            try:
-                data = False
-                if block is True:
-                    self.tr_condition_loaded = False
-
-                success = self.ocx.dynamicCall("SendCondition(QString, QString, int, int)", screen, cond_name, cond_index, search)
-                logging.debug(f'전략 요청: screen={screen}, name={cond_name}, index={cond_index}, search={search}, 결과={"성공" if success else "실패"}')
-
-                if not success:
-                    return False
-                
-                if block is True:
-                    start_time = time.time()
-                    while not self.tr_condition_loaded:
-                        pythoncom.PumpWaitingMessages()
-                        if time.time() - start_time > timeout:
-                            logging.warning(f'조건 검색 시간 초과: {screen} {cond_name} {cond_index} {search}')
-                            return False
-                    data = self.tr_condition_list
-                return data
-            except Exception as e:
-                logging.error(f"SendCondition 오류: {type(e).__name__} - {e}")
-                return False
-        else:
-            global cond_thread
-            # 모든 모드 공통 - 시뮬레이션용 조건검색 쓰레드 시작
-            self.tr_condition_loaded = True
-            self.tr_condition_list = []
-            cond_thread[screen] = OnReceiveRealConditionSim(cond_name, cond_index, self)
-            cond_thread[screen].start()
-            logging.debug(f'추가후: {cond_thread}')
-            return self.tr_condition_list
-        
     # 응답 메서드 --------------------------------------------------------------------------------------------------
     def OnEventConnect(self, code):
         logging.debug(f'OnEventConnect: code={code}')

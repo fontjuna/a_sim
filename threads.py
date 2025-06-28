@@ -1,11 +1,8 @@
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import QThread, QTimer
 from classes import TimeLimiter
-from public import gm, dc, Work, QWork,load_json, save_json, hoga
-from tabulate import tabulate
+from public import gm, dc, QWork, save_json, hoga
 from chart import ChartData
 from datetime import datetime
-import pandas as pd
-import threading
 import logging
 import time
 
@@ -62,6 +59,9 @@ class PriceUpdater(QThread):
             dictFID = job['dictFID']
             self.pri_fx처리_잔고데이터(code, dictFID)
             self.pri_fx검사_매도요건(code)
+            q_len = self.price_q.length()
+            if q_len > 5:
+                logging.warning(f'price_q 대기 큐 len={q_len}')
 
     def pri_fx처리_잔고데이터(self, code, dictFID):
         try:
@@ -231,10 +231,24 @@ class ChartUpdater(QThread):
     def run(self):
         self.running = True
         while self.running:
-            data = self.chart_q.get()
-            if data is None: 
-                self.running = False
-                break
+            batch = []
+            start_time = time.time()
+            while time.time() - start_time < 0.2:
+                data = self.chart_q.get()
+                if data is None: 
+                    self.running = False
+                    return
+                batch.append(data)
+                if self.chart_q.empty():
+                    break
+            if batch:
+                self.update_batch(batch)
+            q_len = self.chart_q.length()
+            if q_len > 10:
+                logging.warning(f'chart_q 대기 큐 len={q_len}')
+
+    def update_batch(self, batch):
+        for data in batch:
             self.update_chart(data)
 
     def update_chart(self, data):
@@ -392,7 +406,8 @@ class EvalStrategy(QThread):
     def stop(self):
         self.running = False
         if self.clear_timer:
-            self.clear_timer.cancel()
+            self.clear_timer.stop()
+            self.clear_timer.deleteLater()
             self.clear_timer = None
         self.eval_q.put(None)
 
@@ -673,13 +688,17 @@ class EvalStrategy(QThread):
         current = now.strftime('%H:%M')
         if self.당일청산:
             if self.clear_timer is not None:
+                self.clear_timer.stop()
+                self.clear_timer.deleteLater()
                 self.clear_timer = None
             row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 0, '매수가': 0, '수익률(%)': 0 }
             start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.청산시간}", '%Y-%m-%d %H:%M')
-            delay_secs = max(0, (start_time - now).total_seconds())
-            self.clear_timer = threading.Timer(delay_secs, lambda: self.order_sell(row))
-            self.clear_timer.daemon = True
-            self.clear_timer.start()
+            delay_msec = max(0, (start_time - now).total_seconds() * 1000)
+            self.clear_timer = QTimer()
+            self.clear_timer.setSingleShot(True)
+            self.clear_timer.setInterval(delay_msec)
+            self.clear_timer.timeout.connect(lambda: self.order_sell(row))
+            self.clear_timer.start(delay_msec)
 
     def com_market_status(self):
         now = datetime.now()

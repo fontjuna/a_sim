@@ -71,6 +71,10 @@ class GUI(QMainWindow, form_class):
             # 폼 초기화 시
             self.txtScript.setAcceptRichText(False)  # 서식 있는 텍스트 거부            
 
+            # 조건목록 그룹박스 체크
+            gm.gbx_buy_checked = self.gbxBuyCheck.isChecked()
+            gm.gbx_sell_checked = self.gbxSellCheck.isChecked()
+
             if gm.sim_no == 0: self.rbReal.setChecked(True)
             elif gm.sim_no == 1: self.rbSim1.setChecked(True)
             elif gm.sim_no == 2: self.rbSim2.setChecked(True)
@@ -132,6 +136,10 @@ class GUI(QMainWindow, form_class):
             self.tblBalanceHeld.cellClicked.connect(self.gui_balance_held_select)       # 잔고목록 선택
             self.tblReceiptList.cellClicked.connect(self.gui_receipt_list_select)       # 주문목록 선택
 
+            #그룹박스 체크
+            self.gbxBuyCheck.toggled.connect(lambda: self.gui_gbx_check(self.gbxBuyCheck.isChecked(), 'buy'))
+            self.gbxSellCheck.toggled.connect(lambda: self.gui_gbx_check(self.gbxSellCheck.isChecked(), 'sell'))
+
             # 시뮬레이션 실행일자 데이타 가져오기
             self.btnSimReadDay.clicked.connect(self.gui_sim_read_day)
 
@@ -182,10 +190,10 @@ class GUI(QMainWindow, form_class):
     def closeEvent(self, event):
         reply = QMessageBox.question(self, '종료 확인', '종료하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
-            logging.debug(f'{self.name} stopping...')
             event.accept()
             gm.ready = False
             self.refresh_data_timer.stop()
+            logging.debug(f'GUI 종료')
             gm.main.cleanup()
         else:
             event.ignore()
@@ -205,7 +213,7 @@ class GUI(QMainWindow, form_class):
             self.rbInfo.setChecked(True)
             self.rbDebug.setChecked(False)
 
-        self.refresh_data_timer.start(100)
+        self.refresh_data_timer.start(dc.INTERVAL_GUI)
 
         success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
         logging.getLogger().setLevel(gm.json_config['root']['level'])
@@ -454,15 +462,33 @@ class GUI(QMainWindow, form_class):
             self.cbChartTick.addItems(dc.ticks.get(item,[]))
 
     def gui_log_level_set(self, key, value):
-        if key == 'DEBUG' and value == True:
-            level = logging.DEBUG
-        else:
-            level = logging.INFO
-        gm.json_config['root']['level'] = level
-        logging.getLogger().setLevel(level)
-        save_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), gm.json_config)
+        if value:
+            if key == 'DEBUG':
+                level = logging.DEBUG
+            else:
+                level = logging.INFO
+            
+            gm.json_config['root']['level'] = level
+            logging.getLogger().setLevel(level)
+            gm.prx.order('api', 'set_log_level', level)
+            gm.prx.order('dbm', 'set_log_level', level)
+            save_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), gm.json_config)
 
-        logging.info(f'로깅 설정 변경: {key} = {value}')
+            logging.info(f'로깅 설정 변경: {key} = {value}')
+
+    def gui_gbx_check(self, value, kind):
+        if kind == 'buy':
+            gm.gbx_buy_checked = value
+            if value:
+                gm.매수조건목록.delete(filter={'이탈': '⊙'})
+            else:
+                self.tblConditionBuy.setEnabled(True)
+        else:
+            gm.gbx_sell_checked = value
+            if value:
+                gm.매도조건목록.delete(filter={'이탈': '⊙'})
+            else:
+                self.tblConditionSell.setEnabled(True)
 
     def gui_balance_held_select(self, row_index, col_index):
         code = self.tblBalanceHeld.item(row_index, 0).text()
@@ -1078,8 +1104,8 @@ class GUI(QMainWindow, form_class):
             if gm.주문목록:
                 gm.주문목록.update_table_widget(self.tblReceiptList)    
             else:
-                self.tblReceiptList.setColumnCount(len(dc.const.hd접수목록['헤더']))
-                self.tblReceiptList.setHeaderLabels(dc.const.hd접수목록['헤더'])
+                self.tblReceiptList.setColumnCount(len(dc.const.hd주문목록['헤더']))
+                self.tblReceiptList.setHeaderLabels(dc.const.hd주문목록['헤더'])
 
         except Exception as e:
             logging.error(f'목록테이블 갱신 오류: {type(e).__name__} - {e}', exc_info=True)

@@ -14,6 +14,7 @@ import time
 import sys
 from datetime import datetime
 import threading
+import inspect
 
 init_logger()
 
@@ -68,9 +69,6 @@ class Main:
 
     def set_before(self):
         set_tables()
-        #gm.shared_qes['api'] = SharedQueue()
-        #gm.shared_qes['dbm'] = SharedQueue()
-        #gm.shared_qes['prx'] = SharedQueue()
 
     def show(self):
         if not gm.gui_on: return
@@ -108,7 +106,6 @@ class Main:
             gm.prx.order('api', 'set_tickers')
             gm.admin.init()
             while not gm.admin_init: time.sleep(0.1)
-            
             logging.debug('prepare : admin 초기화 완료')
             if gm.gui_on: gm.gui.init()
             logging.debug('prepare : gui 초기화 완료')
@@ -158,6 +155,14 @@ class Main:
         try:
             gm.admin.stg_stop() 
             gm.admin.stop_threads()
+            
+            for name in ['cts', 'ctu', 'evl', 'odc', 'pri']:
+                obj = getattr(gm, name, None)
+                if obj is not None:
+                    try:
+                        obj.wait(2000)  # QThread 종료 대기 (2초)
+                    except Exception as e:
+                        logging.debug(f'{name} 종료 대기 실패: {e}')
 
             components = ['dbm', 'api', 'prx']
             for name in components:
@@ -165,17 +170,53 @@ class Main:
                     gm.shared_qes[name].request.put(QData(sender=name, method='stop'))
                 time.sleep(0.1)
 
+            if hasattr(gm, 'dbm') and gm.dbm is not None: gm.dbm.join(timeout=2)
+            if hasattr(gm, 'api') and gm.api is not None: gm.api.join(timeout=2)
+            if hasattr(gm, 'prx') and gm.prx is not None: 
+                gm.prx.quit()
+                gm.prx.wait(2000)
+
             for name in components:
                 if name in gm.shared_qes:
-                    while not gm.shared_qes[name].stream.empty(): gm.shared_qes[name].stream.get_nowait()
-                    while not gm.shared_qes[name].request.empty(): gm.shared_qes[name].request.get_nowait()
-                    while not gm.shared_qes[name].result.empty(): gm.shared_qes[name].result.get_nowait()
-                    while not gm.shared_qes[name].payback.empty(): gm.shared_qes[name].payback.get_nowait()
-                time.sleep(0.1)
+                    for q in [gm.shared_qes[name].stream, gm.shared_qes[name].request, gm.shared_qes[name].result, gm.shared_qes[name].payback]:
+                        try:
+                            q.close()
+                            q.join_thread()
+                        except:
+                            logging.debug(f'큐 닫기/종료 실패 : {name}')
 
-            logging.debug(f'cleanup : {threading.enumerate()} 프로세스 종료 완료')
+            logging.debug(f'cleanup : {threading.enumerate()}')
+            logging.debug('==== [Thread/Timer 상태 상세 출력] ====')
+            # 1. 모든 파이썬 Thread
+            for t in threading.enumerate():
+                logging.debug(f'Thread: {repr(t)} is_alive={t.is_alive()}')
+            # 2. 주요 QThread/Timer 객체 상태
+            qthread_objs = []
+            try:
+                qthread_objs += [getattr(gm, name, None) for name in ['cts','ctu','evl','odc','pri','prx','api','dbm']]
+                qthread_objs += [getattr(gm.admin, name, None) for name in ['cancel_timer','start_timer','end_timer']]
+            except Exception as e:
+                logging.debug(f'QThread/Timer 객체 수집 오류: {e}')
+            for obj in qthread_objs:
+                if obj is None: continue
+                try:
+                    info = f'{repr(obj)}'
+                    if hasattr(obj, 'isRunning'):
+                        info += f' isRunning={obj.isRunning()}'
+                    if hasattr(obj, 'isFinished'):
+                        info += f' isFinished={obj.isFinished()}'
+                    if hasattr(obj, 'isActive'):
+                        info += f' isActive={obj.isActive()}'
+                    if hasattr(obj, 'is_alive'):
+                        info += f' is_alive={obj.is_alive()}'
+                    if hasattr(obj, 'timerId'):
+                        info += f' timerId={obj.timerId()}'
+                    logging.debug(info)
+                except Exception as e:
+                    logging.debug(f'QThread/Timer 상태 출력 오류: {e}')
+            logging.debug('==== [Thread/Timer 상태 상세 출력 끝] ====')
             # 프로세스 강제 종료
-            #self._force_exit()
+            self._force_exit()
             
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
@@ -192,7 +233,7 @@ class Main:
         
         try:
             # 1초 후 강제 종료
-            time.sleep()
+            time.sleep(1)
             logging.info(f"[Main] 프로세스 강제 종료")
             os.kill(os.getpid(), signal.SIGTERM)
         except:

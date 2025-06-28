@@ -70,6 +70,8 @@ class Admin:
         except Exception as e:
             logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
         gm.prx.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
+        gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
+        gm.prx.order('api', 'set_log_level', gm.log_level)
 
     def get_conditions(self):
         try:
@@ -119,10 +121,19 @@ class Admin:
 
     def stop_threads(self):
         gm.cts.stop()
+        gm.cts.quit()
+        gm.cts.wait(2000)
         gm.ctu.stop()
-        #gm.evl.stop()
+        gm.ctu.quit()
+        gm.ctu.wait(2000)
+        gm.evl.stop()
+        gm.evl.quit()
+        gm.evl.wait(2000)
         gm.odc.stop()
+        gm.odc.quit()
+        gm.odc.wait(2000)
         gm.pri.stop()
+        gm.pri.wait(2000)
 
     def set_threads(self):
         gm.cts = ChartSetter(gm.prx, gm.setter_q)
@@ -485,8 +496,9 @@ class Admin:
 
     def stg_fx중지_전략매매(self):
         try:
-            if self.end_timer:
-                self.end_timer.cancel()
+            if self.end_timer is not None:
+                self.end_timer.stop()
+                self.end_timer.deleteLater()
                 self.end_timer = None
 
             def stop_trade(trade_type):
@@ -502,6 +514,8 @@ class Admin:
             if self.매수적용: stop_trade('매수')
             if self.매도적용: stop_trade('매도')
             gm.evl.stop()
+            gm.evl.quit()
+            gm.evl.wait(2000)
             self.stg_ready = False
 
         except Exception as e:
@@ -597,12 +611,18 @@ class Admin:
             if kind == '매도':
                 if gm.매도조건목록.in_key(code):
                     logging.info(f'{kind}이탈 : {self.전략명칭} {code} {name}')
-                    #success = gm.매도조건목록.delete(key=code)
+                    if gm.gbx_sell_checked:
+                        success = gm.매도조건목록.delete(key=code)
+                    else:
+                        gm.매도조건목록.set(key=code, data={'이탈': ' ⊙'})
                 return
 
             if gm.매수조건목록.in_key(code):
                 logging.info(f'{kind}이탈 : {self.전략명칭} {code} {name}')
-                success = gm.매수조건목록.delete(key=code)
+                if gm.gbx_buy_checked:
+                    success = gm.매수조건목록.delete(key=code)
+                else:
+                    gm.매수조건목록.set(key=code, data={'이탈': ' ⊙'})
 
             # 실시간 감시 해지하지 않는다.
             if len(gm.set조건감시) > 90 and code in gm.set조건감시:
@@ -670,8 +690,13 @@ class Admin:
                 else:
                     end_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.stop_time}", '%Y-%m-%d %H:%M')
                     remain_secs = max(0, (end_time - now).total_seconds())
-                    self.end_timer = threading.Timer(remain_secs, lambda: self.stg_stop())
-                    self.end_timer.daemon = True
+                    if self.end_timer is not None:
+                        self.end_timer.stop()
+                        self.end_timer.deleteLater()
+                    self.end_timer = QTimer()
+                    self.end_timer.setSingleShot(True)
+                    self.end_timer.setInterval(int(remain_secs*1000))
+                    self.end_timer.timeout.connect(lambda: self.stg_stop())
                     self.end_timer.start()
 
         except Exception as e:

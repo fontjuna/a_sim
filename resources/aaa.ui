@@ -2187,7 +2187,7 @@
      <attribute name="title">
       <string>전략설정</string>
      </attribute>
-     <widget class="QGroupBox" name="groupBox_16">
+     <widget class="QGroupBox" name="gbxBuyCheck">
       <property name="geometry">
        <rect>
         <x>0</x>
@@ -2197,7 +2197,10 @@
        </rect>
       </property>
       <property name="title">
-       <string>매수검색종목</string>
+       <string>매수검색종목(체크:자동삭제)</string>
+      </property>
+      <property name="checkable">
+       <bool>true</bool>
       </property>
       <widget class="QTableWidget" name="tblConditionBuy">
        <property name="geometry">
@@ -2377,7 +2380,7 @@
        </property>
       </widget>
      </widget>
-     <widget class="QGroupBox" name="groupBox_24">
+     <widget class="QGroupBox" name="gbxSellCheck">
       <property name="geometry">
        <rect>
         <x>320</x>
@@ -2387,7 +2390,10 @@
        </rect>
       </property>
       <property name="title">
-       <string>매도검색종목</string>
+       <string>매도검색종목(체크:자동삭제)</string>
+      </property>
+      <property name="checkable">
+       <bool>true</bool>
       </property>
       <widget class="QTableWidget" name="tblConditionSell">
        <property name="geometry">
@@ -3531,7 +3537,7 @@
         </rect>
        </property>
        <property name="currentIndex">
-        <number>3</number>
+        <number>1</number>
        </property>
        <widget class="QWidget" name="tab_8">
         <attribute name="title">

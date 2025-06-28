@@ -554,7 +554,10 @@ class SimTicker:
 class DefineConstants:  # 글로벌 상수 정의
     def __init__(self):
         self.WAIT_SEC = 10
-        self.RUN_INTERVAL = 0.01
+        self.INTERVAL_NORMAL = 0.01
+        self.INTERVAL_FAST = 0.005
+        self.INTERVAL_SLOW = 0.05
+        self.INTERVAL_GUI = 200 #milliseconds
         self.TODAY = datetime.now().strftime('%Y-%m-%d')
         self.ToDay = datetime.now().strftime('%Y%m%d')
         self.TOAST_TIME = 5000  # 밀리초
@@ -660,7 +663,6 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.일지목록 = None # TableManager
         self.체결목록 = None # TableManager
         self.손익목록 = None # TableManager
-        self.매매목록 = None # TableManager
         self.전략정의 = None # TableManager
         self.주문목록 = None # TableManager
         self.스크립트 = None # TableManager
@@ -670,7 +672,11 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.수동종목 = None # TableManager
         self.l2잔고합산_copy = None
         self.l2손익합산 = 0
-    
+
+        # 조건목록 그룹박스 체크상태
+        self.gbx_buy_checked = False
+        self.gbx_sell_checked = False
+            
         # 서버 호출 제한 체크
         self.req = None # 요청 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (CommRqData + CommKwRqData + SendCondition 포함) - 1 초마다 리셋 됨
         self.ord = None # 주문 카운터# TimeLimiter(sec=5, min=100, hour=1000) # 1초당 5회 제한 (SendOrder + SendOrderFor) - 1 초마다 리셋 됨
