@@ -115,7 +115,6 @@ class Admin:
         gm.prx.receive_signal.connect(self.run_recesive_signals)
         gm.cts.start()
         gm.ctu.start()
-        gm.evl.start()
         gm.odc.start()
         gm.pri.start()
 
@@ -126,9 +125,6 @@ class Admin:
         gm.ctu.stop()
         gm.ctu.quit()
         gm.ctu.wait(2000)
-        gm.evl.stop()
-        gm.evl.quit()
-        gm.evl.wait(2000)
         gm.odc.stop()
         gm.odc.quit()
         gm.odc.wait(2000)
@@ -138,7 +134,6 @@ class Admin:
     def set_threads(self):
         gm.cts = ChartSetter(gm.prx, gm.setter_q)
         gm.ctu = ChartUpdater(gm.prx, gm.chart_q)
-        gm.evl = EvalStrategy(gm.prx, gm.eval_q)
         gm.odc = OrderCommander(gm.prx, gm.order_q)
         gm.pri = PriceUpdater(gm.prx, gm.price_q)
 
@@ -426,6 +421,7 @@ class Admin:
         try:
             gm.매수문자열 = "" 
             gm.매도문자열 = "" 
+            gm.evl = EvalStrategy(gm.prx, gm.eval_q)
             self.json_load_strategy_sets() # 전략 정의 리스트 로드
             _, gm.실행전략 = load_json(dc.fp.define_sets_file, dc.const.DEFAULT_DEFINE_SETS) # 실행 전략 로드
             gm.설정전략 = gm.전략정의.get(key=gm.실행전략['전략명칭']) # 실행 전략 설정 정보
@@ -514,8 +510,10 @@ class Admin:
             if self.매수적용: stop_trade('매수')
             if self.매도적용: stop_trade('매도')
             gm.evl.stop()
-            gm.evl.quit()
             gm.evl.wait(2000)
+            gm.evl.deleteLater()
+            gm.evl = None
+            gm.eval_q.clear()
             self.stg_ready = False
 
         except Exception as e:

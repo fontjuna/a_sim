@@ -1,6 +1,7 @@
 from public import get_path, gm, dc, save_json, load_json, hoga
 from dbm_server import db_columns
 from tables import tbl
+from chart import ChartData
 from PyQt5.QtWidgets import QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox, QTableWidget, QTableWidgetItem
 from PyQt5.QtGui import QIcon, QTextCursor
 from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate, Qt
@@ -23,6 +24,7 @@ class GUI(QMainWindow, form_class):
         self.refresh_data_timer = QTimer()
         self.refresh_data_timer.timeout.connect(self.gui_refresh_data)
         self.script_edited = False
+        self.cht_dt = ChartData()
 
         gm.qwork['gui'] = Queue()
         gm.qwork['msg'] = Queue()
@@ -103,7 +105,6 @@ class GUI(QMainWindow, form_class):
             self.cbAccounts.currentIndexChanged.connect(self.gui_account_changed)       # 계좌 변경 선택
             self.cbCondition.currentIndexChanged.connect(self.gui_strategy_changed)     # 검색식 변경 선택
             self.btnReloadAccount.clicked.connect(self.gui_account_reload)              # 계좌 재로드
-            self.cbChartCycle.currentIndexChanged.connect(lambda idx: self.gui_chart_cycle_changed(self.cbChartCycle.itemText(idx))) # 차트 주기 변경 선택
 
             self.tblStrategy.clicked.connect(lambda x: self.gui_set_strategy(x.row()))  # 실행전략 선택
             self.btnLoadCondition.clicked.connect(self.gui_strategy_reload)             # 검색식 재로드
@@ -122,12 +123,18 @@ class GUI(QMainWindow, form_class):
             self.btnDeposit.clicked.connect(self.gui_deposit_load)                      # 예수금 로드
             self.btnLoadConclusion.clicked.connect(self.gui_conclusion_load)            # 체결목록 로드
             self.btnLoadMonitor.clicked.connect(self.gui_monitor_load)                  # 당일 매매 목록 로드
-            self.btnChartLoad.clicked.connect(self.gui_chart_load)                      # 차트 로드
 
-            self.btnSimStart.clicked.connect(lambda: self.gui_strategy_restart(sim=True))                   # 시뮬레이션 재시작
+            # 차트자료
+            self.cbChartCycle.currentIndexChanged.connect(lambda idx: self.gui_chart_cycle_changed(self.cbChartCycle.itemText(idx))) # 차트 주기 변경 선택
+            #self.btnChartLoad.clicked.connect(self.gui_chart_load)                      # 차트 로드 (db)
+            self.btnChartLoad.clicked.connect(self.gui_chart_data_load)                  # 차트 로드 (ChartData)
 
+            # 로깅 레벨
             self.rbInfo.toggled.connect(lambda: self.gui_log_level_set('INFO', self.rbInfo.isChecked()))
             self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
+
+            # 시뮬레이션 재시작
+            self.btnSimStart.clicked.connect(lambda: self.gui_strategy_restart(sim=True)) # 시뮬레이션 재시작
 
             # 수동 주문 / 주문 취소
             self.btnTrOrder.clicked.connect(self.gui_tr_order)                          # 매매 주문 
@@ -405,10 +412,42 @@ class GUI(QMainWindow, form_class):
                 logging.warning(f'차트자료 얻기 실패: date:{date_text}, dict_list:{dict_list}')
 
         except Exception as e:
-            logging.error(f'체결목록 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.error(f'차트자료 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
 
-        gm.차트자료.update_table_widget(self.tblChart, header=0 if cycle in ('mi', 'tk') else 1)
+        gm.차트자료.update_table_widget(self.tblChart, header=0 if cycle in ('mi', 'tk') else 1) # 헤더 선택 (리스트에서)
         gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
+        self.btnChartLoad.setEnabled(True)
+
+    def gui_chart_data_load(self):
+        self.btnChartLoad.setEnabled(False)
+        date_text = self.dtChartDate.date().toString("yyyyMMdd")
+        item = self.cbChartCycle.currentText()
+        cycle = dc.scr.차트종류[item]
+        tick = int(self.cbChartTick.currentText()) if item in ('분봉', '틱봉') else 1
+        code = self.cbChartCode.currentText().split()[0]
+        name = self.cbChartCode.currentText().split()[1]
+        try:
+            logging.debug(f'차트자료 얻기: date:{date_text}, code:{code}, cycle:{cycle}, tick:{tick}')
+            gm.차트자료.delete()
+            min_check = cycle in ('mi', 'tk')
+            dict_list = self.cht_dt.get_chart_data(code, cycle, tick)
+            if dict_list:
+                if isinstance(dict_list, list) and len(dict_list) > 0:
+                    if min_check:
+                        dict_list = [{ **item, '일자': item['체결시간'][:8], '시간': item['체결시간'][8:], } for item in dict_list]
+                    else:
+                        dict_list = [{ **item, '일자': item['일자'], '시간': '', '종목명': gm.prx.answer('api', 'GetMasterCodeName', item['종목코드']), } for item in dict_list]
+
+                gm.차트자료.set(data=dict_list)
+                logging.info(f"차트자료 얻기 완료: data count={gm.차트자료.len()}")
+            else:
+                logging.warning(f'차트자료 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+
+        except Exception as e:
+            logging.error(f'차트자료 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+
+        gm.차트자료.update_table_widget(self.tblChart, header=0 if cycle in ('mi', 'tk') else 2)
+        #gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
         self.btnChartLoad.setEnabled(True)
 
     def gui_strategy_restart(self, sim=False):

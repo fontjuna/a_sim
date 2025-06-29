@@ -570,7 +570,7 @@ class DefineConstants:  # 글로벌 상수 정의
         self.sim = SimTicker()
         self.ticks = {
             '틱봉': ['30'],
-            '분봉': ['1'],
+            '분봉': ['1', '3'],
             '일봉': [],
             '주봉': [],
             '월봉': [],

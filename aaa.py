@@ -193,7 +193,7 @@ class Main:
                     try:
                         if hasattr(obj, 'stop'): obj.stop()
                         close_queue(name)
-                        if hasattr(obj, 'join'): obj.join(timeout=3)
+                        if hasattr(obj, 'join'): obj.join(timeout=1)
                         if obj.is_alive():
                             #logging.debug(f'{name} Process is_alive={obj.is_alive()}')
                             obj.terminate()
@@ -233,7 +233,7 @@ class Main:
                     logging.debug(f'QThread/Timer 상태 출력 오류: {e}')
             logging.debug('==== [Thread/Timer 상태 상세 출력 끝] ====')
 
-            self._force_exit()
+            #self._force_exit()
 
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
@@ -251,7 +251,7 @@ class Main:
         try:
             # 1초 후 강제 종료
             time.sleep(3)
-            logging.info(f"[Main] 프로세스 강제 종료")
+            logging.info(f"[Main] 프로세스 종료")
             os.kill(os.getpid(), signal.SIGTERM)
         except:
             pass
