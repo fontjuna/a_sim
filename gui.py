@@ -193,6 +193,8 @@ class GUI(QMainWindow, form_class):
             event.accept()
             gm.ready = False
             self.refresh_data_timer.stop()
+            self.refresh_data_timer.deleteLater()
+            self.refresh_data_timer = None
             logging.debug(f'GUI 종료')
             gm.main.cleanup()
         else:
@@ -1213,6 +1215,7 @@ class GUI(QMainWindow, form_class):
 
     def gui_sim_add_day(self):
         code = self.leSimCodeDay.text()
+        name = self.leSimNameDay.text()
         if code:
             name = gm.prx.answer('api', 'GetMasterCodeName', code)
             if name:
@@ -1261,12 +1264,13 @@ class GUI(QMainWindow, form_class):
 
     def gui_sim_add_manual(self):
         code = self.leSimCode.text()
+        name = self.leSimName.text()
         if code:
             name = gm.prx.answer('api', 'GetMasterCodeName', code)
             if name:
                 self.leSimName.setText(name)
         if name:
-            gm.수동종목.set(data={'종목코드':code, '종목명':name}, key='종목코드')
+            gm.수동종목.set(key='종목코드', data={'종목코드':code, '종목명':name})
             gm.수동종목.update_table_widget(self.tblSimManual)
 
     def gui_sim_del_manual(self):

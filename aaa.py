@@ -156,6 +156,21 @@ class Main:
             logging.info('cleanup: 전략/스레드/프로세스 종료 시작')
             gm.admin.stg_stop() 
 
+            # 3. 큐 정리 
+            while not gm.qwork['gui'].empty(): gm.qwork['gui'].get_nowait()
+            while not gm.qwork['msg'].empty(): gm.qwork['msg'].get_nowait()
+            gm.qwork = None
+
+            def close_queue(name):
+                if name in gm.shared_qes:
+                    for q in [gm.shared_qes[name].stream, gm.shared_qes[name].request, gm.shared_qes[name].result, gm.shared_qes[name].payback]:
+                        try:
+                            q.close()
+                            q.join_thread()
+                            #logging.debug(f'{name} {q.__class__.__name__} 큐 닫기/종료.')
+                        except Exception as e:
+                            logging.debug(f'큐 닫기/종료 실패 : {name} {e}')
+
             # 1. QThread 기반 워커들 종료 (stop/quit/wait)
             qthreads = ['cts', 'ctu', 'evl', 'odc', 'pri', 'prx']
             for name in qthreads:
@@ -163,34 +178,30 @@ class Main:
                 if obj is not None:
                     try:
                         if hasattr(obj, 'stop'): obj.stop()
+                        if name == 'prx': close_queue(name)
                         if hasattr(obj, 'quit'): obj.quit()
-                        if hasattr(obj, 'wait'): obj.wait(3000)
-                        logging.debug(f'{name} QThread 종료 완료')
+                        if hasattr(obj, 'wait'): obj.wait(1000)
+                        logging.debug(f'{name} QThread 종료.')
                     except Exception as e:
                         logging.debug(f'{name} QThread 종료 실패: {e}')
 
             # 2. Process 기반 모델 종료 (stop/join)
-            processes = ['api', 'dbm']
+            processes = ['dbm', 'api']
             for name in processes:
                 obj = getattr(gm, name, None)
                 if obj is not None:
                     try:
                         if hasattr(obj, 'stop'): obj.stop()
-                        if hasattr(obj, 'join'): obj.join(timeout=10)
-                        logging.debug(f'{name} Process 종료 완료')
+                        close_queue(name)
+                        if hasattr(obj, 'join'): obj.join(timeout=3)
+                        if obj.is_alive():
+                            #logging.debug(f'{name} Process is_alive={obj.is_alive()}')
+                            obj.terminate()
+                            obj.join(timeout=1)
+
+                        logging.debug(f'{name} Process 종료.')
                     except Exception as e:
                         logging.debug(f'{name} Process 종료 실패: {e}')
-
-            # 3. 큐 정리 (프로세스 종료 후)
-            components = ['dbm', 'api', 'prx']
-            for name in components:
-                if name in gm.shared_qes:
-                    for q in [gm.shared_qes[name].stream, gm.shared_qes[name].request, gm.shared_qes[name].result, gm.shared_qes[name].payback]:
-                        try:
-                            q.close()
-                            q.join_thread()
-                        except Exception as e:
-                            logging.debug(f'큐 닫기/종료 실패 : {name} {e}')
 
             # 4. 상태 상세 출력
             logging.debug(f'cleanup : {threading.enumerate()}')
@@ -222,6 +233,8 @@ class Main:
                     logging.debug(f'QThread/Timer 상태 출력 오류: {e}')
             logging.debug('==== [Thread/Timer 상태 상세 출력 끝] ====')
 
+            self._force_exit()
+
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:
@@ -237,7 +250,7 @@ class Main:
         
         try:
             # 1초 후 강제 종료
-            time.sleep(1)
+            time.sleep(3)
             logging.info(f"[Main] 프로세스 강제 종료")
             os.kill(os.getpid(), signal.SIGTERM)
         except:

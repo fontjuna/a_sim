@@ -124,7 +124,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     
     SIM_TABLE_NAME = 'sim_tickers'
     SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 일자 DESC LIMIT 1"
-    SIM_FIELDS = [f.id, f.일자, f.종목코드, f.종목명, f.매수전략, f.전략명칭]
+    SIM_FIELDS = [f.id, f.일자, f.종목코드, f.종목명, f.전략명칭, f.매수전략]
     SIM_COLUMNS = [col.name for col in SIM_FIELDS]
     SIM_INDEXES = {
         'idx_code': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_code ON {SIM_TABLE_NAME}(종목코드)"
@@ -314,15 +314,6 @@ class DBMServer:
         except Exception as e:
             logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)
 
-    def send_result(self, result, error=None):
-        """결과 전송"""
-        order = 'dbm_query_result'
-        job = {
-            'result': result,
-            'error': error
-        }
-        self.order('admin', order, **job)
-
     def execute_query(self, sql, db='chart', params=None):
         """SQL 실행"""
         try:
@@ -346,7 +337,6 @@ class DBMServer:
         except Exception as e:
             logging.error(f"Database error: {e}", exc_info=True)
             conn.rollback()
-            self.send_result(None, e)
 
     def table_upsert(self, db, table, dict_data):
         """테이블 업서트"""

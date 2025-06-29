@@ -97,7 +97,7 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
 
     hd차트자료 = {
         '키': ['종목코드', '일자', '시간'],
-        '키중복': False,
+        '중복키': False,
         '정수': ['시가', '고가', '저가', '현재가', '거래량', '거래대금'],
         '실수': [],
         '컬럼': ['종목코드', '종목명', '일자', '시간', '시가', '고가', '저가', '현재가', '거래량', '거래대금', '비고'],
@@ -163,7 +163,7 @@ class TableManager:
     # 4. 중복 키 허용
     config = {
         '키': '종목코드',
-        '키중복': True,  # 같은 종목코드가 여러 행에 있을 수 있음
+        '중복키': True,  # 같은 종목코드가 여러 행에 있을 수 있음
         '정수': ['수량', '매수금액'],
         '실수': ['현재가', '평가손익'],
         '컬럼': ['종목코드', '종목명', '수량', '매수금액', '현재가', '평가손익']
@@ -177,9 +177,8 @@ class TableManager:
         
         Parameters:
         config (dict): 설정 정보 딕셔너리
-            - '키': 고유 키로 사용할 컬럼명 또는 컬럼명 리스트 (복합 키)
-                    None이면 키 없는 모드로 동작
-            - '키중복': True면 동일 키 값을 갖는 여러 행 허용 (기본값: False)
+            - '키': 고유 키로 사용할 컬럼명 또는 컬럼명 리스트 (복합 키), None이면 키 없는 모드로 동작
+            - '중복키': True면 동일 키 값을 갖는 여러 행 허용 (기본값: False)
             - '정수': 정수형으로 변환할 컬럼 리스트
             - '실수': 실수형으로 변환할 컬럼 리스트
             - '컬럼': 전체 컬럼 리스트
@@ -200,7 +199,7 @@ class TableManager:
             self.key_columns = [self.key_columns]
             
         # 키 중복 허용 여부
-        self.allow_duplicate_keys = config.get('키중복', False)
+        self.allow_duplicate_keys = config.get('중복키', False)
         
         self.int_columns = config.get('정수', [])
         self.float_columns = config.get('실수', [])
