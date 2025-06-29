@@ -436,7 +436,7 @@ class GUI(QMainWindow, form_class):
                     if min_check:
                         dict_list = [{ **item, '일자': item['체결시간'][:8], '시간': item['체결시간'][8:], } for item in dict_list]
                     else:
-                        dict_list = [{ **item, '일자': item['일자'], '시간': '', '종목명': gm.prx.answer('api', 'GetMasterCodeName', item['종목코드']), } for item in dict_list]
+                        dict_list = [{ **item, '일자': item['일자'], '시간': ''} for item in dict_list]
 
                 gm.차트자료.set(data=dict_list)
                 logging.info(f"차트자료 얻기 완료: data count={gm.차트자료.len()}")
