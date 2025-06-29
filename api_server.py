@@ -618,6 +618,7 @@ class APIServer:
     def thread_cleanup(self):
         # 실시간 데이터 스레드 정리
         global real_thread
+        logging.debug(f'실시간 데이터 스레드 삭제전: {real_thread}')
         for screen in list(real_thread.keys()):
             if real_thread[screen]:
                 try:
@@ -634,6 +635,7 @@ class APIServer:
         
         # 조건검색 스레드 정리
         global cond_thread
+        logging.debug(f'조건검색 스레드 삭제전: {cond_thread}')
         for screen in list(cond_thread.keys()):
             if cond_thread[screen]:
                 try:
@@ -736,11 +738,24 @@ class APIServer:
                 for s in list(real_thread.keys()):
                     if real_thread[s]:
                         real_thread[s].stop()
+                        real_thread[s].quit()
+                        finish = real_thread[s].wait(5000)  # 최대 1초 대기
+                        if not finish:
+                            logging.error(f"실시간 데이터 스레드 정리 오류: {s}")
+                        else:
+                            logging.debug(f"실시간 데이터 스레드 정리: {s}")
                         del real_thread[s]
             else:
                 if screen in real_thread and real_thread[screen]:
                     real_thread[screen].stop()
+                    real_thread[screen].quit()
+                    finish = real_thread[screen].wait(5000)  # 최대 1초 대기
+                    if not finish:
+                        logging.error(f"실시간 데이터 스레드 정리 오류: {screen}")
+                    else:
+                        logging.debug(f"실시간 데이터 스레드 정리: {screen}")
                     del real_thread[screen]
+            logging.debug(f'실시간 데이터 스레드 삭제후: {real_thread}')
                
     def SetInputValue(self, id, value):
         if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
@@ -799,9 +814,9 @@ class APIServer:
                     logging.error(f"API 조건검색 스레드 정리 오류: {screen}")
                 else:
                     logging.debug(f"API 조건검색 스레드 정리: {screen}")
-                logging.debug(f'삭제전: {cond_thread}')
+                #logging.debug(f'삭제전: {cond_thread}')
                 del cond_thread[screen]
-                logging.debug(f'삭제후: {cond_thread}')
+                logging.debug(f'조건검색 스레드 삭제후: {cond_thread}')
         return 0
 
     # 요청 메서드(일회성 콜백 발생 ) ---------------------------------------------------------------------------------

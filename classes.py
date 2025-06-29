@@ -563,15 +563,24 @@ class QMainModel(BaseModel, QThread):
         """QThread용 sleep"""
         QThread.msleep(5) # 0.005 seconds
 
+    def stop(self):
+        self.running = False
+
 class ThreadModel(BaseModel, threading.Thread):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         threading.Thread.__init__(self)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
 
+    def stop(self):
+        self.running = False
+
 class ProcessModel(BaseModel, Process):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         Process.__init__(self, name=name)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
+
+    def stop(self):
+        self.running = False
 
 class KiwoomModel(BaseModel, Process):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
@@ -587,5 +596,10 @@ class KiwoomModel(BaseModel, Process):
         try:
             self._common_run_logic()
         finally:
-            pythoncom.CoUninitialize()
+            try:
+                pythoncom.CoUninitialize()
+            except Exception as e:
+                logging.error(f"KiwoomModel stop() 오류: {e}", exc_info=True)
 
+    def stop(self):
+        self.running = False

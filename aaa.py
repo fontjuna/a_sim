@@ -153,44 +153,50 @@ class Main:
 
     def cleanup(self):
         try:
+            logging.info('cleanup: 전략/스레드/프로세스 종료 시작')
             gm.admin.stg_stop() 
-            gm.admin.stop_threads()
-            
-            for name in ['cts', 'ctu', 'evl', 'odc', 'pri']:
+
+            # 1. QThread 기반 워커들 종료 (stop/quit/wait)
+            qthreads = ['cts', 'ctu', 'evl', 'odc', 'pri', 'prx']
+            for name in qthreads:
                 obj = getattr(gm, name, None)
                 if obj is not None:
                     try:
-                        obj.wait(2000)  # QThread 종료 대기 (2초)
+                        if hasattr(obj, 'stop'): obj.stop()
+                        if hasattr(obj, 'quit'): obj.quit()
+                        if hasattr(obj, 'wait'): obj.wait(3000)
+                        logging.debug(f'{name} QThread 종료 완료')
                     except Exception as e:
-                        logging.debug(f'{name} 종료 대기 실패: {e}')
+                        logging.debug(f'{name} QThread 종료 실패: {e}')
 
+            # 2. Process 기반 모델 종료 (stop/join)
+            processes = ['api', 'dbm']
+            for name in processes:
+                obj = getattr(gm, name, None)
+                if obj is not None:
+                    try:
+                        if hasattr(obj, 'stop'): obj.stop()
+                        if hasattr(obj, 'join'): obj.join(timeout=10)
+                        logging.debug(f'{name} Process 종료 완료')
+                    except Exception as e:
+                        logging.debug(f'{name} Process 종료 실패: {e}')
+
+            # 3. 큐 정리 (프로세스 종료 후)
             components = ['dbm', 'api', 'prx']
-            for name in components:
-                if name in gm.shared_qes:
-                    gm.shared_qes[name].request.put(QData(sender=name, method='stop'))
-                time.sleep(0.1)
-
-            if hasattr(gm, 'dbm') and gm.dbm is not None: gm.dbm.join(timeout=2)
-            if hasattr(gm, 'api') and gm.api is not None: gm.api.join(timeout=2)
-            if hasattr(gm, 'prx') and gm.prx is not None: 
-                gm.prx.quit()
-                gm.prx.wait(2000)
-
             for name in components:
                 if name in gm.shared_qes:
                     for q in [gm.shared_qes[name].stream, gm.shared_qes[name].request, gm.shared_qes[name].result, gm.shared_qes[name].payback]:
                         try:
                             q.close()
                             q.join_thread()
-                        except:
-                            logging.debug(f'큐 닫기/종료 실패 : {name}')
+                        except Exception as e:
+                            logging.debug(f'큐 닫기/종료 실패 : {name} {e}')
 
+            # 4. 상태 상세 출력
             logging.debug(f'cleanup : {threading.enumerate()}')
             logging.debug('==== [Thread/Timer 상태 상세 출력] ====')
-            # 1. 모든 파이썬 Thread
             for t in threading.enumerate():
                 logging.debug(f'Thread: {repr(t)} is_alive={t.is_alive()}')
-            # 2. 주요 QThread/Timer 객체 상태
             qthread_objs = []
             try:
                 qthread_objs += [getattr(gm, name, None) for name in ['cts','ctu','evl','odc','pri','prx','api','dbm']]
@@ -215,9 +221,7 @@ class Main:
                 except Exception as e:
                     logging.debug(f'QThread/Timer 상태 출력 오류: {e}')
             logging.debug('==== [Thread/Timer 상태 상세 출력 끝] ====')
-            # 프로세스 강제 종료
-            self._force_exit()
-            
+
         except Exception as e:
             logging.error(f"Cleanup 중 에러: {str(e)}")
         finally:
