@@ -2279,11 +2279,6 @@ class ScriptManagerExtension:
         script_manager._running_scripts.add(script_key)
         
         try:
-            # 테스트 모드면 기본 종목코드 사용
-            # if check_only:
-            #     kwargs['code'] = '005930'
-            #     code = '005930'
-            
             # 스크립트 데이터 가져오기
             if script_data is None:
                 script_data = script_manager.get_script(script_name)
@@ -2330,7 +2325,7 @@ class ScriptManagerExtension:
             
             # 3. 실행 환경 준비
             try:
-                globals_dict = script_manager._prepare_execution_globals()
+                globals_dict, script_logs = script_manager._prepare_execution_globals(script_name)
                 locals_dict = {}
             except Exception as e:
                 result_dict['error'] = f"실행 환경 준비 오류: {type(e).__name__} - {e}"
@@ -2380,30 +2375,30 @@ result = execute_script({repr(combined_kwargs)})
                         if code_obj is None:
                             # 여전히 로드 실패 시 일반 컴파일 사용
                             wrapped_script = f"""
-    def execute_script(kwargs):
-        # 사용자 예약 변수들을 로컬 변수로 풀어서 직접 접근 가능하게 함
-        code = kwargs.get('code')
-        name = kwargs.get('name', '')
-        qty = kwargs.get('qty', 0)
-        price = kwargs.get('price', 0)
-        
-        # 사용자 정의 변수들도 로컬 변수로 추출
-        for key, value in kwargs.items():
-            if key not in ['code', 'name', 'qty', 'price']:
-                globals()[key] = value
-        
-        # 사용자 스크립트 실행
-        try:
-    {script_manager._indent_script(script, indent=8)}
-            return result if 'result' in locals() else None
-        except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            raise
+def execute_script(kwargs):
+    # 사용자 예약 변수들을 로컬 변수로 풀어서 직접 접근 가능하게 함
+    code = kwargs.get('code')
+    name = kwargs.get('name', '')
+    qty = kwargs.get('qty', 0)
+    price = kwargs.get('price', 0)
+    
+    # 사용자 정의 변수들도 로컬 변수로 추출
+    for key, value in kwargs.items():
+        if key not in ['code', 'name', 'qty', 'price']:
+            globals()[key] = value
+    
+    # 사용자 스크립트 실행
+    try:
+{script_manager._indent_script(script, indent=8)}
+        return result if 'result' in locals() else None
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        raise
 
-    # 스크립트 실행
-    result = execute_script({repr(combined_kwargs)})
-    """
+# 스크립트 실행
+result = execute_script({repr(combined_kwargs)})
+"""
                             code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
                 
                 # 스크립트 실행 전에 kwargs 변수 설정

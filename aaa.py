@@ -203,6 +203,19 @@ class Main:
                     except Exception as e:
                         logging.debug(f'{name} Process 종료 실패: {e}')
 
+            #self.collect_thread_info()
+            #self._force_exit()
+
+        except Exception as e:
+            logging.error(f"Cleanup 중 에러: {str(e)}")
+        finally:
+            self.cleanup_flag = True
+            if hasattr(self, 'app') and gm.gui_on: self.app.quit()
+            logging.info("cleanup completed")
+
+    def collect_thread_info(self):
+        qthread_objs = []
+        try:
             # 4. 상태 상세 출력
             logging.debug(f'cleanup : {threading.enumerate()}')
             logging.debug('==== [Thread/Timer 상태 상세 출력] ====')
@@ -214,6 +227,7 @@ class Main:
                 qthread_objs += [getattr(gm.admin, name, None) for name in ['cancel_timer','start_timer','end_timer']]
             except Exception as e:
                 logging.debug(f'QThread/Timer 객체 수집 오류: {e}')
+
             for obj in qthread_objs:
                 if obj is None: continue
                 try:
@@ -232,15 +246,8 @@ class Main:
                 except Exception as e:
                     logging.debug(f'QThread/Timer 상태 출력 오류: {e}')
             logging.debug('==== [Thread/Timer 상태 상세 출력 끝] ====')
-
-            #self._force_exit()
-
         except Exception as e:
-            logging.error(f"Cleanup 중 에러: {str(e)}")
-        finally:
-            self.cleanup_flag = True
-            if hasattr(self, 'app') and gm.gui_on: self.app.quit()
-            logging.info("cleanup completed")
+            logging.debug(f'QThread/Timer 객체 수집 오류: {e}')
 
     def _force_exit(self):
         """프로세스 강제 종료"""
