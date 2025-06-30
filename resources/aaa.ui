@@ -5169,9 +5169,9 @@
       <property name="geometry">
        <rect>
         <x>0</x>
-        <y>40</y>
+        <y>70</y>
         <width>631</width>
-        <height>721</height>
+        <height>691</height>
        </rect>
       </property>
       <property name="sizeAdjustPolicy">
@@ -5242,6 +5242,41 @@
       </property>
       <property name="text">
        <string>주기선택</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="lblSelected">
+      <property name="geometry">
+       <rect>
+        <x>100</x>
+        <y>44</y>
+        <width>521</width>
+        <height>20</height>
+       </rect>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">font-size: 9pt; font-weight: bold; font-family: &quot;나눔고딕&quot; ; color: red;</string>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::Panel</enum>
+      </property>
+      <property name="frameShadow">
+       <enum>QFrame::Sunken</enum>
+      </property>
+      <property name="text">
+       <string>선택주기</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="label_49">
+      <property name="geometry">
+       <rect>
+        <x>10</x>
+        <y>45</y>
+        <width>81</width>
+        <height>20</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>현재선택종목</string>
       </property>
      </widget>
     </widget>

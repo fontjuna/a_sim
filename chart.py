@@ -1,7 +1,6 @@
-from public import dc, gm, profile_operation
+from public import dc, gm
 from datetime import datetime
 from typing import Set, Optional, Any
-from multiprocessing import shared_memory
 import json
 import numpy as np
 import logging
@@ -11,26 +10,12 @@ import traceback
 import re
 import os
 import threading
-import copy
 import hashlib
 import marshal
 import pickle
 import importlib.util
-import msgpack
-import struct
-import multiprocessing as mp
 from datetime import timedelta
-
-from public import dc, gm, profile_operation
-from datetime import datetime, timedelta
-from typing import Set, Optional, Any
 from collections import deque
-import json
-import logging
-import time
-import threading
-import copy
-import os
 
 class ChartData:
     """
@@ -48,7 +33,6 @@ class ChartData:
         'mi15': 672,    # 15분봉: 약 7일치
         'mi30': 336,    # 30분봉: 약 7일치
         'mi60': 168,    # 60분봉: 약 7일치
-        'mi240': 42,    # 240분봉: 약 7일치
         'dy': 1000,     # 일봉: 약 3년치
         'wk': 520,      # 주봉: 약 10년치
         'mo': 120       # 월봉: 약 10년치
@@ -75,16 +59,6 @@ class ChartData:
                 # 코드별 락만 사용 (단순화)
                 self._code_locks = {}        # {code: RLock}
                 self._code_locks_lock = threading.RLock()
-                
-                # 성능 통계
-                self._performance_stats = {
-                    'get_count': 0,
-                    'set_count': 0,
-                    'update_count': 0,
-                    'total_get_time': 0.0,
-                    'total_set_time': 0.0,
-                    'total_update_time': 0.0
-                }
                 
                 self._initialized = True
                 logging.debug(f"[{datetime.now()}] ChartData initialized (memory-based) in PID: {os.getpid()}")
@@ -117,10 +91,8 @@ class ChartData:
         self._data_versions[code] = self._data_versions.get(code, 0) + 1
         self._last_update_time[code] = time.time()
     
-    @profile_operation        
     def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
         """차트 데이터 설정 (기존 인터페이스 유지)"""
-        start_time = time.time()
         
         if not data:
             return
@@ -153,18 +125,41 @@ class ChartData:
             # 버전 업데이트
             self._increment_version(code)
         
-        # 성능 통계 업데이트
-        elapsed = time.time() - start_time
-        self._performance_stats['set_count'] += 1
-        self._performance_stats['total_set_time'] += elapsed
-    
     def _set_minute_data(self, code: str, data: list):
-        """1분봉 데이터 설정"""
+        """1분봉 데이터 설정 (여러 날짜 처리, 마지막 봉에만 전봉누적값 추가)"""
         minute_deque = self._chart_data[code]['mi1']
         minute_deque.clear()
         
-        # 최신 데이터부터 deque에 추가 (역순으로 저장된 데이터 그대로 유지)
-        for candle in data:
+        # 최신 MAX_CANDLES개만 유지 (data[0]이 최신)
+        recent_data = data[:self.MAX_CANDLES['mi1']]
+        
+        if not recent_data:
+            return
+        
+        # 마지막 봉(인덱스 0)의 날짜
+        last_candle_date = recent_data[0]['체결시간'][:8]
+        
+        for i, candle_data in enumerate(recent_data):
+            candle = candle_data.copy()
+            
+            if i == 0:  # 마지막 봉(인덱스 0)에만 전봉누적값 추가
+                # 같은 날짜의 이전 봉들만 합계 (인덱스 1부터)
+                prev_volume = 0
+                prev_amount = 0
+                
+                for j in range(1, len(recent_data)):
+                    prev_candle = recent_data[j]
+                    prev_candle_date = prev_candle['체결시간'][:8]
+                    
+                    if prev_candle_date == last_candle_date:  # 같은 날짜만
+                        prev_volume += prev_candle['거래량']
+                        prev_amount += prev_candle.get('거래대금', 0)
+                    else:
+                        break  # 다른 날짜가 나오면 중단
+                
+                candle['전봉누적거래량'] = prev_volume      # 이전 봉까지의 누적 거래량 (같은 날만)
+                candle['전봉누적거래대금'] = prev_amount    # 이전 봉까지의 누적 거래대금 (같은 날만)
+            
             minute_deque.append(candle)
     
     def _set_day_data(self, code: str, data: list):
@@ -172,7 +167,9 @@ class ChartData:
         day_deque = self._chart_data[code]['dy']
         day_deque.clear()
         
-        for candle in data:
+        # 최신 MAX_CANDLES개만 유지 (data[0]이 최신)
+        recent_data = data[:self.MAX_CANDLES['dy']]
+        for candle in recent_data:
             day_deque.append(candle)
     
     def _generate_aggregated_minute_data(self, code: str, tick: int):
@@ -214,9 +211,7 @@ class ChartData:
             month_deque.append(candle)
     
     def get_chart_data(self, code: str, cycle: str, tick: int = None) -> list:
-        """차트 데이터 반환 (기존 인터페이스 유지)"""
-        start_time = time.time()
-        
+        """차트 데이터 반환 (항상 최신 데이터 보장)"""
         code_lock = self._get_code_lock(code)
         with code_lock:
             # 데이터 구조 확인
@@ -225,23 +220,26 @@ class ChartData:
             
             cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
             
-            # 기본 데이터 반환
-            if cycle_key in self._chart_data[code]:
-                result = list(self._chart_data[code][cycle_key])
-            else:
-                # 동적 집계 (1분봉에서 다른 분봉 생성)
-                if cycle == 'mi' and cycle_key != 'mi1':
-                    result = self._get_dynamic_aggregated_data(code, tick)
+            # 1분봉: 저장된 데이터 그대로 반환
+            if cycle_key == 'mi1':
+                result = list(self._chart_data[code]['mi1'])
+            
+            # 분봉: 항상 1분봉에서 동적 생성 (최신 보장)
+            elif cycle == 'mi':
+                result = self._get_dynamic_aggregated_data(code, tick)
+            
+            # 일/주/월봉: 저장된 데이터 그대로 반환 (update_chart에서 이미 최신 업데이트됨)
+            elif cycle in ['dy', 'wk', 'mo']:
+                if cycle_key in self._chart_data[code]:
+                    result = list(self._chart_data[code][cycle_key])
                 else:
                     result = []
-        
-        # 성능 통계 업데이트
-        elapsed = time.time() - start_time
-        self._performance_stats['get_count'] += 1
-        self._performance_stats['total_get_time'] += elapsed
+            
+            else:
+                result = []
         
         return result
-    
+
     def _get_dynamic_aggregated_data(self, code: str, tick: int) -> list:
         """동적으로 집계 데이터 생성 (캐시되지 않은 분봉)"""
         minute_data = list(self._chart_data[code]['mi1'])
@@ -252,7 +250,6 @@ class ChartData:
     
     def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
         """실시간 차트 업데이트 (기존 인터페이스 유지)"""
-        start_time = time.time()
         
         code_lock = self._get_code_lock(code)
         with code_lock:
@@ -263,10 +260,6 @@ class ChartData:
             # 1분봉 업데이트
             self._update_minute_chart(code, price, volume, amount, datetime_str)
             
-            # 3분봉 업데이트 (있는 경우에만)
-            if self._chart_data[code]['mi3']:
-                self._update_aggregated_chart(code, price, volume, amount, datetime_str, 3)
-            
             # 일봉 업데이트 (있는 경우에만)
             if self._chart_data[code]['dy']:
                 self._update_day_chart(code, price, volume, amount, datetime_str)
@@ -275,53 +268,90 @@ class ChartData:
             # 버전 업데이트
             self._increment_version(code)
         
-        # 성능 통계 업데이트
-        elapsed = time.time() - start_time
-        self._performance_stats['update_count'] += 1
-        self._performance_stats['total_update_time'] += elapsed
-    
     def _update_minute_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """1분봉 업데이트 (최적화)"""
+        """1분봉 업데이트 (전봉누적값 활용한 간단한 계산)"""
         base_time = datetime_str[:12] + '00'
         minute_deque = self._chart_data[code]['mi1']
         
         # 데이터가 없는 경우
         if not minute_deque:
             new_candle = self._create_candle(code, base_time, price, price, price, price, volume, amount)
+            new_candle['전봉누적거래량'] = 0  # 첫봉은 0
+            new_candle['전봉누적거래대금'] = 0
             minute_deque.appendleft(new_candle)
             return
         
-        # 최신 봉 (가장 왼쪽) 확인
+        # 최신 봉 (인덱스 0) 확인
         latest_candle = minute_deque[0]
         latest_time = latest_candle['체결시간']
         
         if latest_time == base_time:
             # 같은 봉 업데이트
-            self._update_candle(latest_candle, price, None, volume, amount)
+            actual_volume = volume - latest_candle['전봉누적거래량']
+            actual_amount = amount - latest_candle['전봉누적거래대금']
+            self._update_candle(latest_candle, price, None, actual_volume, actual_amount)
         else:
-            # 새로운 봉 추가
-            new_candle = self._create_candle(code, base_time, price, price, price, price, volume, amount)
+            # 새봉 생성
+            # 1. 현재봉 복사
+            new_candle = latest_candle.copy()
+            
+            # 2. 이전누적값 = 이전누적값 + 현재값
+            new_prev_cumulative_volume = latest_candle['전봉누적거래량'] + latest_candle['거래량']
+            new_prev_cumulative_amount = latest_candle['전봉누적거래대금'] + latest_candle['거래대금']
+            
+            # 3. 새시간, 시/고/저 = 현재가, 새로운 거래량/거래대금
+            actual_volume = volume - new_prev_cumulative_volume
+            actual_amount = amount - new_prev_cumulative_amount
+            
+            new_candle['체결시간'] = base_time
+            new_candle['시가'] = price
+            new_candle['고가'] = price
+            new_candle['저가'] = price
+            new_candle['현재가'] = price
+            new_candle['거래량'] = actual_volume
+            new_candle['거래대금'] = actual_amount
+            new_candle['전봉누적거래량'] = new_prev_cumulative_volume
+            new_candle['전봉누적거래대금'] = new_prev_cumulative_amount
+            
+            # 4. 인덱스 0에 추가
             minute_deque.appendleft(new_candle)
-    
-    def _update_aggregated_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str, tick: int):
-        """집계 차트 업데이트"""
-        cycle_key = f'mi{tick}'
-        tick_time = self._calculate_tick_time(datetime_str, tick)
+
+    def _calculate_candle_volume(self, code: str, current_cumulative: int, datetime_str: str) -> int:
+        """현재 봉의 실제 거래량 계산 (누적값 - 이전 봉들 합계)"""
+        minute_data = self._chart_data[code]['mi1']
+        if not minute_data:
+            return current_cumulative
         
-        agg_deque = self._chart_data[code][cycle_key]
+        current_time = datetime_str[:12] + '00'  # 09:09:00
+        previous_total = 0
         
-        if not agg_deque:
-            new_candle = self._create_candle(code, tick_time, price, price, price, price, volume, amount)
-            agg_deque.appendleft(new_candle)
-            return
+        for candle in minute_data:
+            candle_time = candle['체결시간']
+            if candle_time < current_time:  # 이전 봉들만
+                previous_total += candle['거래량']
+            else:
+                break  # 현재 봉이나 이후 봉은 제외
         
-        latest_candle = agg_deque[0]
-        if latest_candle['체결시간'] == tick_time:
-            self._update_candle(latest_candle, price, None, volume, amount)
-        else:
-            new_candle = self._create_candle(code, tick_time, price, price, price, price, volume, amount)
-            agg_deque.appendleft(new_candle)
-    
+        return max(0, current_cumulative - previous_total)
+
+    def _calculate_candle_amount(self, code: str, current_cumulative: int, datetime_str: str) -> int:
+        """현재 봉의 실제 거래대금 계산 (누적값 - 이전 봉들 합계)"""
+        minute_data = self._chart_data[code]['mi1']
+        if not minute_data:
+            return current_cumulative
+        
+        current_time = datetime_str[:12] + '00'  # 09:09:00
+        previous_total = 0
+        
+        for candle in minute_data:
+            candle_time = candle['체결시간']
+            if candle_time < current_time:  # 이전 봉들만
+                previous_total += candle.get('거래대금', 0)
+            else:
+                break  # 현재 봉이나 이후 봉은 제외
+        
+        return max(0, current_cumulative - previous_total)
+
     def _update_day_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
         """일봉 업데이트"""
         today = datetime_str[:8]
@@ -330,7 +360,7 @@ class ChartData:
         if not day_deque:
             return
         
-        latest_candle = day_deque[0]
+        latest_candle = day_deque[0]  # 인덱스 0이 최신
         if latest_candle['일자'] == today:
             self._update_candle(latest_candle, price, None, volume, amount)
         else:
@@ -344,7 +374,7 @@ class ChartData:
                 '거래량': volume,
                 '거래대금': amount
             }
-            day_deque.appendleft(new_candle)
+            day_deque.appendleft(new_candle)  # 인덱스 0에 추가
     
     def _update_week_month_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
         """주봉/월봉 업데이트"""
@@ -378,7 +408,7 @@ class ChartData:
         else:  # month
             current_period_key = date_obj.strftime('%Y%m01')
         
-        latest_candle = period_deque[0]
+        latest_candle = period_deque[0]  # 인덱스 0이 최신
         if latest_candle['일자'] == current_period_key:
             self._update_candle(latest_candle, price, None, volume, amount)
         else:
@@ -392,32 +422,11 @@ class ChartData:
                 '거래량': volume,
                 '거래대금': amount
             }
-            period_deque.appendleft(new_candle)
+            period_deque.appendleft(new_candle)  # 인덱스 0에 추가
     
     def is_code_registered(self, code: str) -> bool:
         """종목 등록 여부 확인 (메모리 기반으로 단순화)"""
         return code in self._chart_data and bool(self._chart_data[code].get('mi1'))
-    
-    def get_performance_stats(self) -> dict:
-        """성능 통계 반환"""
-        stats = self._performance_stats.copy()
-        
-        # 평균 시간 계산
-        if stats['get_count'] > 0:
-            stats['avg_get_time'] = stats['total_get_time'] / stats['get_count']
-        if stats['set_count'] > 0:
-            stats['avg_set_time'] = stats['total_set_time'] / stats['set_count']
-        if stats['update_count'] > 0:
-            stats['avg_update_time'] = stats['total_update_time'] / stats['update_count']
-        
-        return stats
-    
-    def clear_performance_stats(self):
-        """성능 통계 초기화"""
-        self._performance_stats = {
-            'get_count': 0, 'set_count': 0, 'update_count': 0,
-            'total_get_time': 0.0, 'total_set_time': 0.0, 'total_update_time': 0.0
-        }
     
     def clean_up_safe(self):
         """메모리 정리 (메모리 기반으로 단순화)"""
@@ -530,7 +539,7 @@ class ChartData:
         return result
     
     def _aggregate_day_data(self, day_data, period_type):
-        """일봉 데이터를 주봉/월봉으로 집계 (기존 로직 유지)"""
+        """일봉 데이터를 주봉/월봉으로 집계 (각 일봉 거래량 합계)"""
         if not day_data:
             return []
         
@@ -565,14 +574,15 @@ class ChartData:
                     '고가': candle['고가'],
                     '저가': candle['저가'],
                     '현재가': candle['현재가'],
-                    '거래량': candle['거래량'],
-                    '거래대금': candle.get('거래대금', 0)
+                    '거래량': candle['거래량'],           # 첫 번째 값으로 초기화
+                    '거래대금': candle.get('거래대금', 0)  # 첫 번째 값으로 초기화
                 }
             else:
                 group = grouped_data[group_key]
                 group['현재가'] = candle['현재가']
                 group['고가'] = max(group['고가'], candle['고가'])
                 group['저가'] = min(group['저가'], candle['저가'])
+                # 각 일봉의 거래량/거래대금 합계
                 group['거래량'] += candle['거래량']
                 group['거래대금'] += candle.get('거래대금', 0)
         
@@ -589,11 +599,26 @@ class ChartManager:
         self.code = code    # 종목코드 (없으면 컨텍스트에서 가져옴)
 
     def _get_data(self) -> list:
-        """현재 종목의 차트 데이터 가져오기 (캐싱)"""
-        if self.code not in self._data_cache:
-            # 데이터 가져오기
-            self._data_cache[self.code] = self._load_chart_data(self.code)
-        return self._data_cache[self.code]
+        """버전 기반 캐싱으로 최신 데이터 보장"""
+        # 현재 데이터 버전 확인
+        current_version = self.cht_dt._data_versions.get(self.code, 0)
+        cache_key = f"{self.code}_{self.cycle}_{self.tick}"
+        
+        # 캐시 버전 관리 초기화
+        if not hasattr(self, '_cache_versions'):
+            self._cache_versions = {}
+        
+        # 캐시가 유효한지 확인 (버전 체크)
+        if (cache_key in self._data_cache and 
+            self._cache_versions.get(cache_key) == current_version):
+            return self._data_cache[cache_key]
+        
+        # 캐시 무효화 후 새 데이터 로드
+        new_data = self._load_chart_data(self.code)
+        self._data_cache[cache_key] = new_data
+        self._cache_versions[cache_key] = current_version
+        
+        return new_data
     
     def _load_chart_data(self, code: str) -> list:
         """차트 데이터 로드 및 변환"""
@@ -1726,17 +1751,6 @@ result = execute_script({repr(combined_kwargs)})
                 # 차트 매니저 및 단축 변수들
                 'ChartManager': ChartManager,
                 'CM': ChartManager,
-                # 'mi1': ChartManager(code, 'mi', 1),
-                # 'mi3': ChartManager(code, 'mi', 3),
-                # 'mi5': ChartManager(code, 'mi', 5),
-                # 'mi10': ChartManager(code, 'mi', 10),
-                # 'mi15': ChartManager(code, 'mi', 15),
-                # 'mi30': ChartManager(code, 'mi', 30),
-                # 'mi60': ChartManager(code, 'mi', 60),
-                # 'mi240': ChartManager(code, 'mi', 240),
-                # 'dy': ChartManager(code, 'dy'),
-                # 'wk': ChartManager(code, 'wk'),
-                # 'mo': ChartManager(code, 'mo'),
                 
                 # 유틸리티 함수
                 'loop': self._safe_loop,

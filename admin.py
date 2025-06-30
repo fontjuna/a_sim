@@ -715,7 +715,7 @@ class Admin:
             data={'키': f'{key}', '구분': kind, '상태': '취소요청', '종목코드': code, '종목명': name}
             gm.주문목록.set(key=key, data=data)
             #self.order('stg', 'order_cancel', kind, order_no, code)
-            gm.eval_q.put({'cancel': {'code': code, 'rqname': '주문취소'}})
+            gm.eval_q.put({'cancel': {'kind': kind, 'order_no': order_no, 'code': code}})
 
             logging.info(f'{kind}\n주문 타임아웃: {code} {name} 주문번호={order_no} 주문수량={주문수량} 미체결수량={미체결수량}')
 

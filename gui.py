@@ -436,17 +436,17 @@ class GUI(QMainWindow, form_class):
                     if min_check:
                         dict_list = [{ **item, '일자': item['체결시간'][:8], '시간': item['체결시간'][8:], } for item in dict_list]
                     else:
-                        dict_list = [{ **item, '일자': item['일자'], '시간': ''} for item in dict_list]
+                        dict_list = [{ **item, '시간': '' } for item in dict_list]
 
                 gm.차트자료.set(data=dict_list)
                 logging.info(f"차트자료 얻기 완료: data count={gm.차트자료.len()}")
             else:
                 logging.warning(f'차트자료 얻기 실패: date:{date_text}, dict_list:{dict_list}')
-
+            self.lblSelected.setText(f'{tick} {item} / {code} {name}')
         except Exception as e:
             logging.error(f'차트자료 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
 
-        gm.차트자료.update_table_widget(self.tblChart, header=0 if cycle in ('mi', 'tk') else 2)
+        gm.차트자료.update_table_widget(self.tblChart, header=2)
         #gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
         self.btnChartLoad.setEnabled(True)
 

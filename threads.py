@@ -254,13 +254,15 @@ class ChartUpdater(QThread):
     def update_chart(self, data):
         code = data.get('code')
         job = data.get('dictFID')
+        
         self.cht_dt.update_chart(
             code, 
             abs(int(job['현재가'])) if job['현재가'] else 0,
             abs(int(job['누적거래량'])) if job['누적거래량'] else 0,
             abs(int(job['누적거래대금'])) if job['누적거래대금'] else 0,
-            job['체결시간']
+            dc.ToDay+job['체결시간']
         )
+        #logging.debug(f'차트 업데이트: {code} 현재가: {job["현재가"]} 체결시간: {job["체결시간"]}')
 
 class ChartSetter(QThread):
     def __init__(self, prx, todo_q):
@@ -287,7 +289,7 @@ class ChartSetter(QThread):
 
     def request_chart_data(self, code):
         logging.debug(f"get_first_chart_data 요청: {code}")
-        self.get_first_chart_data(code, cycle='mi', tick=1)
+        self.get_first_chart_data(code, cycle='mi', tick=1, times=3)
         self.get_first_chart_data(code, cycle='dy')
 
     def get_first_chart_data(self, code, cycle, tick=1, times=1):
