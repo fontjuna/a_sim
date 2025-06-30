@@ -1,9 +1,9 @@
 {
     "매도_1": {
-        "script": "#code = '347850'\nmi3 = CM(code, 'mi', 3)\nma5 = mi3.ma(mi3.c, 5)\nma10 = mi3.ma(mi3.c, 10)\ndn = ma10 > mi3.c()\n#result = mi3.c()\nresult = dn or ma5 < ma10",
+        "script": "m3 = ChartManager(code, 'mi', 3)\n\nma5 = m3.ma(m3.c, 5)\nma10 = m3.ma(m3.c, 10)\ndn = ma10 > m3.c()\n\nresult = dn or ma5 < ma10",
         "vars": {},
         "type": "bool",
-        "desc": ""
+        "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
     },
     "매수_1": {
         "script": "mi3  = CM(code, 'mi', 3)\ndy = CM(code, 'dy')\n\nma5 = mi3.indicator(mi3.ma, mi3.c, 5)\nma20 = mi3.indicator(mi3.ma, mi3.c, 20)\n\nc1 = ma5() > ma20() and mi3.c() > ma5()\nc2 = ma5(1) < ma5() and ma20(1) < ma20()\n\nresult = c1 and c2 and dy.c(0) > dy.c(1)",
@@ -40,5 +40,11 @@
         "vars": {},
         "type": "str",
         "desc": ""
+    },
+    "돌파4시간3분5억_매도": {
+        "script": "m3 = ChartManager(code, 'mi', 3)\n\nma5 = m3.ma(m3.c, 5)\nma10 = m3.ma(m3.c, 10)\ndn = ma10 > m3.c()\n\nresult = dn or ma5 < ma10",
+        "vars": {},
+        "type": "bool",
+        "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
     }
 }

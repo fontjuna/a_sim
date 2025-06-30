@@ -1589,7 +1589,7 @@ class ScriptManager:
                 return result_dict
             
             # 4. 실행 환경 준비 (로그 수집 포함)
-            globals_dict, script_logs = self._prepare_execution_globals()
+            globals_dict, script_logs = self._prepare_execution_globals(script_name)
             locals_dict = {}
             
             # 5. 스크립트 컴파일 또는 캐시에서 가져오기
@@ -1690,7 +1690,7 @@ result = execute_script({repr(combined_kwargs)})
             # 실행 시간 기록
             result_dict['exec_time'] = time.time() - start_time
             
-    def _prepare_execution_globals(self):
+    def _prepare_execution_globals(self, current_script_name):
         """실행 환경의 글로벌 변수 준비 (로그 수집 포함)"""
         try:
             # 스크립트용 로그 수집 리스트
@@ -1718,23 +1718,23 @@ result = execute_script({repr(combined_kwargs)})
             
             # 로그 수집 래퍼 함수들
             def capture_debug(msg, *args, **kwargs):
-                script_logs.append(f"DEBUG: {msg}")
+                script_logs.append(f"{current_script_name}.DEBUG: {msg}")
                 logging.debug(f"[Script] {msg}", *args, **kwargs)
             
             def capture_info(msg, *args, **kwargs):
-                script_logs.append(f"INFO: {msg}")
+                script_logs.append(f"{current_script_name}.INFO: {msg}")
                 logging.info(f"[Script] {msg}", *args, **kwargs)
             
             def capture_warning(msg, *args, **kwargs):
-                script_logs.append(f"WARNING: {msg}")
+                script_logs.append(f"{current_script_name}.WARNING: {msg}")
                 logging.warning(f"[Script] {msg}", *args, **kwargs)
             
             def capture_error(msg, *args, **kwargs):
-                script_logs.append(f"ERROR: {msg}")
+                script_logs.append(f"{current_script_name}.ERROR: {msg}")
                 logging.error(f"[Script] {msg}", *args, **kwargs)
             
             def capture_critical(msg, *args, **kwargs):
-                script_logs.append(f"CRITICAL: {msg}")
+                script_logs.append(f"{current_script_name}.CRITICAL: {msg}")
                 logging.critical(f"[Script] {msg}", *args, **kwargs)
             
             # 글로벌 환경 설정
@@ -1758,16 +1758,18 @@ result = execute_script({repr(combined_kwargs)})
                 
                 # 유틸리티 함수
                 'loop': self._safe_loop,
+
+                'run_script': self._script_caller,
             }
             
             # 모든 스크립트를 함수로 등록
             for script_name, script_data in self.scripts.items():
                 # 스크립트가 함수처럼 호출 가능하도록 래퍼 생성
                 wrapper_code = f"""
-    def {script_name}(**user_kwargs):
-        # 스크립트 호출 함수 - 결과값만 반환
-        return run_script('{script_name}', user_kwargs)
-    """
+def {script_name}(**user_kwargs):
+    # 스크립트 호출 함수 - 결과값만 반환
+    return run_script('{script_name}', user_kwargs)
+"""
                 
                 # 스크립트 래퍼 함수 컴파일 및 추가
                 try:
@@ -1786,27 +1788,29 @@ result = execute_script({repr(combined_kwargs)})
             return {'ChartManager': ChartManager}, []
                         
     def _script_caller(self, script_name, user_kwargs=None):
-        """스크립트 내에서 다른 스크립트를 호출하기 위한 함수
-        
-        Args:
-            script_name: 호출할 스크립트 이름
-            user_kwargs: 사용자가 전달한 추가 변수들
-            
-        Returns:
-            Any: 스크립트 실행 결과값 (성공 시) 또는 None (실패 시)
-        """
+        """스크립트 내에서 다른 스크립트를 호출하기 위한 함수 (로그 통합)"""
         # 컨텍스트의 기존 kwargs 가져오기 (프레임 검사)
         try:
             import inspect
             frame = inspect.currentframe().f_back
             context_kwargs = {}
+            current_script_logs = None
+            
             while frame:
                 if frame.f_code.co_name == 'execute_script':
                     context_kwargs = frame.f_locals.get('kwargs', {})
+                    # 현재 스크립트의 로그 리스트 찾기
+                    for var_name, var_value in frame.f_globals.items():
+                        if isinstance(var_value, list) and hasattr(var_value, 'append'):
+                            # script_logs 찾기
+                            if len(var_value) == 0 or (len(var_value) > 0 and isinstance(var_value[0], str) and '+' in var_value[0]):
+                                current_script_logs = var_value
+                                break
                     break
                 frame = frame.f_back
         except:
             context_kwargs = {}
+            current_script_logs = None
         
         # 새 kwargs 생성 (기존 컨텍스트 유지)
         new_kwargs = context_kwargs.copy()
@@ -1827,8 +1831,14 @@ result = execute_script({repr(combined_kwargs)})
             logging.error(f"순환 참조 감지: {script_name}")
             return None
         
-        # 스크립트 실행 - 결과값만 반환
+        # 스크립트 실행 - 결과 받기
         result = self.run_script(script_name, kwargs=new_kwargs)
+        
+        # 로그 통합 (호출된 스크립트의 로그를 현재 스크립트 로그에 추가)
+        if current_script_logs is not None and result.get('logs'):
+            current_script_logs.extend(result['logs'])
+        
+        # 결과값만 반환 (스크립트에서 사용하기 편하게)
         return result['result'] if result['success'] else None
 
     def _check_chart_data_ready(self, code):
