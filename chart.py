@@ -1470,15 +1470,7 @@ class ScriptManager:
         return name.isidentifier()
     
     def _get_script_error_location(self, tb_str, script):
-        """스크립트 에러 위치 추출
-        
-        Args:
-            tb_str: 트레이스백 문자열
-            script: 스크립트 코드
-            
-        Returns:
-            tuple: (line_num, error_line, error_msg)
-        """
+        """스크립트 에러 위치 추출하여 한 줄 에러 메시지 반환"""
         try:
             # 에러 라인 번호 찾기
             lines = tb_str.splitlines()
@@ -1489,40 +1481,26 @@ class ScriptManager:
                 if "File \"<string>\"" in line and ", line " in line:
                     match = re.search(r", line (\d+)", line)
                     if match:
-                        error_line_num = int(match.group(1))
-                elif "TypeError:" in line or "NameError:" in line or "SyntaxError:" in line:
+                        # 래퍼 함수 오프셋 제거 (try 라인까지 12라인)
+                        wrapper_offset = 12
+                        error_line_num = int(match.group(1)) - wrapper_offset
+                elif any(err_type in line for err_type in ["TypeError:", "NameError:", "SyntaxError:", "ValueError:", "AttributeError:", "IndexError:"]):
                     error_msg = line.strip()
             
-            if error_line_num:
+            if error_line_num and error_line_num > 0:
                 script_lines = script.splitlines()
-                if 1 <= error_line_num <= len(script_lines):
-                    # 실제 스크립트에서의 해당 라인
-                    error_line = script_lines[error_line_num-1]
-                    return (error_line_num, error_line, error_msg)
+                if error_line_num <= len(script_lines):
+                    error_line = script_lines[error_line_num-1].strip()
+                    return f"실행 오류 (행 {error_line_num}): {error_msg} → 수정: {error_line}"
             
-            return (None, "", error_msg)
+            return f"실행 오류: {error_msg}"
+            
         except Exception as e:
             logging.error(f"에러 위치 파악 오류: {e}")
-            return (None, "", "에러 위치 파악 실패")
+            return f"실행 오류: {error_msg}"
             
     def run_script(self, script_name: str, script_data=None, check_only=False, kwargs=None):
-        """스크립트 또는 사용자 함수 실행/검사
-        
-        Args:
-            script_name: 스크립트/함수 이름
-            script_data: 직접 제공하는 스크립트/함수 데이터 (검사용)
-            check_only: 실행하지 않고 검사만 할지 여부
-            kwargs: 스크립트/함수에 전달할 추가 변수들 (사전 형태)
-                
-        Returns:
-            dict: {
-                'success': bool,    # 성공 여부
-                'result': Any,      # 스크립트/함수 실행 결과 (성공 시)
-                'error': str,       # 오류 메시지 (실패 시)
-                'exec_time': float, # 실행 시간 (초)
-                'log': str          # 상세 로그 (실패 시)
-            }
-        """
+        """스크립트 또는 사용자 함수 실행/검사 (개선된 에러 메시지 및 로그 수집)"""
         start_time = time.time()
         # 결과 초기화
         result_dict = {
@@ -1530,7 +1508,8 @@ class ScriptManager:
             'result': None,
             'error': None,
             'exec_time': 0,
-            'log': ''
+            'log': '',
+            'logs': []  # 로그 리스트 추가
         }
         
         # kwargs 초기화 (None이면 빈 딕셔너리)
@@ -1573,44 +1552,17 @@ class ScriptManager:
             combined_kwargs = kwargs.copy()
             combined_kwargs.update(vars_dict)
             
-            # 1. 스크립트 유효성 검사
+            # 1. 스크립트 유효성 검사 (원본 스크립트로 먼저 검사)
             try:
-                # 스크립트를 감싸서 실행하기 위한 코드 생성
-                wrapped_script = f"""
-def execute_script(kwargs):
-    # 사용자 예약 변수들을 로컬 변수로 풀어서 직접 접근 가능하게 함
-    code = kwargs.get('code')
-    name = kwargs.get('name', '')
-    qty = kwargs.get('qty', 0)
-    price = kwargs.get('price', 0)
-    
-    # 사용자 정의 변수들도 로컬 변수로 추출
-    for key, value in kwargs.items():
-        if key not in ['code', 'name', 'qty', 'price']:
-            globals()[key] = value
-    
-    # 사용자 스크립트 실행
-    try:
-{self._indent_script(script, indent=8)}
-        return result if 'result' in locals() else None
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        raise  # 오류를 전파하여 감지할 수 있도록 함
-
-# 스크립트 실행
-result = execute_script({repr(combined_kwargs)})
-"""
-                # 구문 분석 검사
-                try:
-                    ast.parse(wrapped_script)
-                except SyntaxError as e:
-                    line_num = e.lineno - 12  # 래퍼 함수의 오프셋 고려
-                    if line_num < 1:
-                        line_num = 1
-                    result_dict['error'] = f"구문 오류 (행 {line_num}): {e}"
-                    return result_dict
-                        
+                ast.parse(script)  # 원본 스크립트 직접 구문 검사
+            except SyntaxError as e:
+                script_lines = script.splitlines()
+                if e.lineno <= len(script_lines):
+                    error_line = script_lines[e.lineno-1].strip()
+                    result_dict['error'] = f"구문 오류 (행 {e.lineno}): {e.msg} → 수정: {error_line}"
+                else:
+                    result_dict['error'] = f"구문 오류 (행 {e.lineno}): {e.msg}"
+                return result_dict
             except Exception as e:
                 result_dict['error'] = f"스크립트 준비 오류: {type(e).__name__} - {e}"
                 return result_dict
@@ -1636,13 +1588,40 @@ result = execute_script({repr(combined_kwargs)})
                 result_dict['error'] = f"데이터 준비 오류: {type(e).__name__} - {e}"
                 return result_dict
             
-            # 4. 실행 환경 준비
-            globals_dict = self._prepare_execution_globals()
+            # 4. 실행 환경 준비 (로그 수집 포함)
+            globals_dict, script_logs = self._prepare_execution_globals()
             locals_dict = {}
             
             # 5. 스크립트 컴파일 또는 캐시에서 가져오기
             try:
                 cache_key = f"{script_name}_{code}"
+                
+                # 래퍼 스크립트 생성
+                wrapped_script = f"""
+def execute_script(kwargs):
+    # 사용자 예약 변수들을 로컬 변수로 풀어서 직접 접근 가능하게 함
+    code = kwargs.get('code')
+    name = kwargs.get('name', '')
+    qty = kwargs.get('qty', 0)
+    price = kwargs.get('price', 0)
+    
+    # 사용자 정의 변수들도 로컬 변수로 추출
+    for key, value in kwargs.items():
+        if key not in ['code', 'name', 'qty', 'price']:
+            globals()[key] = value
+    
+    # 사용자 스크립트 실행
+    try:
+{self._indent_script(script, indent=8)}
+        return result if 'result' in locals() else None
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        raise  # 오류를 전파하여 감지할 수 있도록 함
+
+# 스크립트 실행
+result = execute_script({repr(combined_kwargs)})
+"""
                 
                 # 테스트용이면 항상 새로 컴파일
                 if check_only or script_data is not None:  
@@ -1675,30 +1654,32 @@ result = execute_script({repr(combined_kwargs)})
                 # 'result' 변수가 없는 경우 에러 처리 (check_only 모드에서만)
                 if check_only and script_result is None:
                     result_dict['error'] = "스크립트에 'result' 변수가 정의되지 않았습니다."
+                    result_dict['logs'] = script_logs
                     return result_dict
         
                 result_dict['success'] = True
                 result_dict['result'] = script_result
                 result_dict['exec_time'] = exec_time
+                result_dict['logs'] = script_logs  # 성공 시 로그 포함
                 
                 return result_dict
                     
             except Exception as e:
                 tb = traceback.format_exc()
                 
-                # 사용자 친화적인 에러 메시지 생성
-                line_num, error_line, error_msg = self._get_script_error_location(tb, script)
+                # 상세한 에러 정보 생성
+                detailed_error = self._get_script_error_location(tb, script)
                 
-                if line_num:
-                    user_error = f"실행 오류 (행 {line_num}): {error_msg}\n코드: {error_line.strip()}"
-                else:
-                    user_error = f"실행 오류: {type(e).__name__} - {e}"
+                # 에러 로그를 로그 리스트에 추가
+                script_logs.append(f"ERROR: {detailed_error}")
+                script_logs.append(f"TRACEBACK: {tb}")
                 
                 # 시스템 로깅용 상세 오류
                 logging.error(f"{script_name} 스크립트 오류: {type(e).__name__} - {e}\n{tb}")
                 
-                result_dict['log'] = tb
-                result_dict['error'] = user_error
+                result_dict['log'] = tb              # 기존 방식 유지 (호환성)
+                result_dict['error'] = detailed_error
+                result_dict['logs'] = script_logs    # 모든 로그 포함 (에러 포함)
                 return result_dict
                     
         finally:
@@ -1710,8 +1691,11 @@ result = execute_script({repr(combined_kwargs)})
             result_dict['exec_time'] = time.time() - start_time
             
     def _prepare_execution_globals(self):
-        """실행 환경의 글로벌 변수 준비"""
+        """실행 환경의 글로벌 변수 준비 (로그 수집 포함)"""
         try:
+            # 스크립트용 로그 수집 리스트
+            script_logs = []
+            
             # Python 내장 함수 제한 (허용된 것만 포함)
             restricted_builtins = {}
             builtins_dict = __builtins__ if isinstance(__builtins__, dict) else dir(__builtins__)
@@ -1732,6 +1716,26 @@ result = execute_script({repr(combined_kwargs)})
                 except ImportError:
                     logging.warning(f"모듈 로드 실패: {module_name}")
             
+            # 로그 수집 래퍼 함수들
+            def capture_debug(msg, *args, **kwargs):
+                script_logs.append(f"DEBUG: {msg}")
+                logging.debug(f"[Script] {msg}", *args, **kwargs)
+            
+            def capture_info(msg, *args, **kwargs):
+                script_logs.append(f"INFO: {msg}")
+                logging.info(f"[Script] {msg}", *args, **kwargs)
+            
+            def capture_warning(msg, *args, **kwargs):
+                script_logs.append(f"WARNING: {msg}")
+                logging.warning(f"[Script] {msg}", *args, **kwargs)
+            
+            def capture_error(msg, *args, **kwargs):
+                script_logs.append(f"ERROR: {msg}")
+                logging.error(f"[Script] {msg}", *args, **kwargs)
+            
+            def capture_critical(msg, *args, **kwargs):
+                script_logs.append(f"CRITICAL: {msg}")
+                logging.critical(f"[Script] {msg}", *args, **kwargs)
             
             # 글로벌 환경 설정
             globals_dict = {
@@ -1741,12 +1745,12 @@ result = execute_script({repr(combined_kwargs)})
                 # 허용된 모듈들
                 **modules,
                 
-                # 스크립트용 로깅 래퍼 함수들
-                'debug': lambda msg, *args, **kwargs: logging.debug(f"[Script] {msg}", *args, **kwargs),
-                'info': lambda msg, *args, **kwargs: logging.info(f"[Script] {msg}", *args, **kwargs),
-                'warning': lambda msg, *args, **kwargs: logging.warning(f"[Script] {msg}", *args, **kwargs),
-                'error': lambda msg, *args, **kwargs: logging.error(f"[Script] {msg}", *args, **kwargs),
-                'critical': lambda msg, *args, **kwargs: logging.critical(f"[Script] {msg}", *args, **kwargs),
+                # 로그 수집 함수들
+                'debug': capture_debug,
+                'info': capture_info,
+                'warning': capture_warning,
+                'error': capture_error,
+                'critical': capture_critical,
                 
                 # 차트 매니저 및 단축 변수들
                 'ChartManager': ChartManager,
@@ -1760,10 +1764,10 @@ result = execute_script({repr(combined_kwargs)})
             for script_name, script_data in self.scripts.items():
                 # 스크립트가 함수처럼 호출 가능하도록 래퍼 생성
                 wrapper_code = f"""
-def {script_name}(**user_kwargs):
-    # 스크립트 호출 함수 - 결과값만 반환
-    return run_script('{script_name}', user_kwargs)
-"""
+    def {script_name}(**user_kwargs):
+        # 스크립트 호출 함수 - 결과값만 반환
+        return run_script('{script_name}', user_kwargs)
+    """
                 
                 # 스크립트 래퍼 함수 컴파일 및 추가
                 try:
@@ -1774,11 +1778,12 @@ def {script_name}(**user_kwargs):
             # run_script 함수 추가 (스크립트 내에서 다른 스크립트 호출용)
             globals_dict['run_script'] = self._script_caller
             
-            return globals_dict
+            return globals_dict, script_logs
+            
         except Exception as e:
             logging.error(f"실행 환경 준비 오류: {e}")
             # 기본 환경 반환
-            return {'ChartManager': ChartManager}
+            return {'ChartManager': ChartManager}, []
                         
     def _script_caller(self, script_name, user_kwargs=None):
         """스크립트 내에서 다른 스크립트를 호출하기 위한 함수
