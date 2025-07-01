@@ -440,8 +440,7 @@ class EvalStrategy(QThread):
                     result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
                     if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
                     if self.매수스크립트AND and not result.get('result', False): 
-                        data = QData(sender='prx', method='send_status_msg', answer=False, args=('주문내용', {'구분': '매수탈락', '종목코드': code, '종목명': name, '메시지': result['error']}))
-                        self.prx.order('prx', 'proxy_method', data)
+                        gm.qwork['msg'].put(Work('주문내용', job={'구분': '매수탈락', '종목코드': code, '종목명': name, '메시지': result['error']}))
                         return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
                     gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                     logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
@@ -570,11 +569,10 @@ class EvalStrategy(QThread):
                     result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
                     if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
                     if self.매도스크립트OR and result.get('result', False): 
-                        data = QData(sender='prx', method='send_status_msg', answer=False, args=('주문내용', {'구분': '매도편입', '종목코드': code, '종목명': 종목명}))
-                        self.prx.order('prx', 'proxy_method', data)
                         send_data['msg'] = '전략매도'
-                        logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
+                        gm.qwork['msg'].put(Work('주문내용', job={'구분': '매도편입', '종목코드': code, '종목명': 종목명}))
                         gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
+                        logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
                         return True, send_data, f"전략매도: {code} {종목명}"
 
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도

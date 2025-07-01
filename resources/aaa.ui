@@ -4998,7 +4998,7 @@
         <widget class="QLabel" name="label_97">
          <property name="geometry">
           <rect>
-           <x>280</x>
+           <x>220</x>
            <y>150</y>
            <width>41</width>
            <height>20</height>
@@ -5033,7 +5033,7 @@
         <widget class="QLabel" name="label_96">
          <property name="geometry">
           <rect>
-           <x>140</x>
+           <x>0</x>
            <y>150</y>
            <width>41</width>
            <height>20</height>
@@ -5049,7 +5049,7 @@
         <widget class="QLineEdit" name="ledVarName">
          <property name="geometry">
           <rect>
-           <x>180</x>
+           <x>40</x>
            <y>150</y>
            <width>81</width>
            <height>20</height>
@@ -5062,9 +5062,9 @@
         <widget class="QLineEdit" name="ledVarValue">
          <property name="geometry">
           <rect>
-           <x>320</x>
+           <x>270</x>
            <y>150</y>
-           <width>81</width>
+           <width>171</width>
            <height>20</height>
           </rect>
          </property>
@@ -5088,37 +5088,37 @@
         <widget class="QComboBox" name="comboBox">
          <property name="geometry">
           <rect>
-           <x>50</x>
+           <x>160</x>
            <y>150</y>
-           <width>76</width>
+           <width>51</width>
            <height>22</height>
           </rect>
          </property>
          <item>
           <property name="text">
-           <string>정수형</string>
+           <string>정수</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>실수형</string>
+           <string>실수</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>문자열</string>
+           <string>문자</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>논리형</string>
+           <string>논리</string>
           </property>
          </item>
         </widget>
         <widget class="QLabel" name="label_98">
          <property name="geometry">
           <rect>
-           <x>10</x>
+           <x>120</x>
            <y>150</y>
            <width>41</width>
            <height>20</height>

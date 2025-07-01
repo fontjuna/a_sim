@@ -734,6 +734,7 @@ class GUI(QMainWindow, form_class):
                     gm.스크립트변수.delete()
                     gm.스크립트변수.update_table_widget(self.tblScriptVar)
                     self.ledVarName.setText('')
+                    self.cbVarType.setCurrentText('')
                     self.ledVarValue.setText('')
                     gm.scm.delete_script_compiled(name)
                     #self.txtScriptMsg.clear()
@@ -762,7 +763,7 @@ class GUI(QMainWindow, form_class):
             if result['success']:
                 QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n\n반환값={result["result"]}')
                 self.btnScriptSave.setEnabled(True)
-                self.txtScriptMsg.clear()
+                #self.txtScriptMsg.clear()
             else:
                 QMessageBox.critical(self, '에러', result['error'])
                 #self.txtScriptMsg.append(result['error'])
