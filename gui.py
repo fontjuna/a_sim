@@ -1,4 +1,4 @@
-from public import get_path, gm, dc, save_json, load_json, hoga
+from public import get_path, gm, dc, save_json, load_json, hoga, com_market_status
 from dbm_server import db_columns
 from tables import tbl
 from chart import ChartData
@@ -672,9 +672,8 @@ class GUI(QMainWindow, form_class):
             self.btnScriptSave.setEnabled(False)
             name = self.tblScript.item(row_index, 0).text()
 
-            script = gm.스크립트.get(key=name, column='스크립트')
+            script, desc = gm.스크립트.get(key=name, column=['스크립트', '설명'])
             vars = self.tblScript.item(row_index, 3)
-            desc = self.tblScript.item(row_index, 4).text()
 
             self.ledScriptName.setText(name)
             self.txtScript.setText(script)
@@ -692,6 +691,7 @@ class GUI(QMainWindow, form_class):
             gm.스크립트변수.set(data=dict_list)
             gm.스크립트변수.update_table_widget(self.tblScriptVar)
             self.script_edited = False
+
             self.ledVarName.setText('')
             self.ledVarValue.setText('')
 
@@ -736,7 +736,7 @@ class GUI(QMainWindow, form_class):
                     self.ledVarName.setText('')
                     self.ledVarValue.setText('')
                     gm.scm.delete_script_compiled(name)
-                    self.txtScriptMsg.clear()
+                    #self.txtScriptMsg.clear()
                     gm.list스크립트 = gm.스크립트.get(column='스크립트명')
                     self.gui_fx채움_스크립트콤보()
 
@@ -788,7 +788,7 @@ class GUI(QMainWindow, form_class):
                 gm.스크립트.update_table_widget(self.tblScript)
                 gm.list스크립트 = gm.스크립트.get(column='스크립트명')
                 self.gui_fx채움_스크립트콤보()
-                self.txtScriptMsg.clear()
+                #self.txtScriptMsg.clear()
                 self.script_edited = False
             else:
                 logging.error(f'스크립트 저장 오류: script_type={script_type}')
@@ -1362,7 +1362,7 @@ class GUI(QMainWindow, form_class):
             self.lbl1.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
             self.lbl2.setText('연결됨' if gm.connected else '끊어짐')
             self.lbl2.setStyleSheet("color: green;" if gm.connected else "color: red;")
-            #self.lbl4.setText(gm.prx.frq_answer('admin', 'com_market_status'))
+            self.lbl4.setText(com_market_status())
 
             # 큐 메시지 처리
             while not gm.qwork['msg'].empty():
@@ -1371,12 +1371,23 @@ class GUI(QMainWindow, form_class):
                     self.gui_fx게시_주문내용(data.job['msg'])
                 elif data.order == '검색내용':
                     self.gui_fx게시_검색내용(data.job['msg'])
+                elif data.order == '스크립트':
+                    self.gui_fx게시_스크립트(data.job['msg'])
                 elif data.order == '상태바':
                     self.lbl3.setText(data.job['msg'])
                     self.lbl3_update_time = now
 
         except Exception as e:
             logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
+
+    def gui_fx게시_스크립트(self, msgs):
+        current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        if isinstance(msgs, list):
+            for msg in msgs:
+                self.txtScriptMsg.append(f"[{current_time}] {msg}")
+        else:
+            self.txtScriptMsg.append(f"[{current_time}] {msgs}")
+        self.txtScriptMsg.moveCursor(QTextCursor.End)
 
     def gui_fx게시_주문내용(self, msg):
         current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]

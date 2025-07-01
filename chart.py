@@ -1597,31 +1597,7 @@ class ScriptManager:
                 cache_key = f"{script_name}_{code}"
                 
                 # 래퍼 스크립트 생성
-                wrapped_script = f"""
-def execute_script(kwargs):
-    # 사용자 예약 변수들을 로컬 변수로 풀어서 직접 접근 가능하게 함
-    code = kwargs.get('code')
-    name = kwargs.get('name', '')
-    qty = kwargs.get('qty', 0)
-    price = kwargs.get('price', 0)
-    
-    # 사용자 정의 변수들도 로컬 변수로 추출
-    for key, value in kwargs.items():
-        if key not in ['code', 'name', 'qty', 'price']:
-            globals()[key] = value
-    
-    # 사용자 스크립트 실행
-    try:
-{self._indent_script(script, indent=8)}
-        return result if 'result' in locals() else None
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        raise  # 오류를 전파하여 감지할 수 있도록 함
-
-# 스크립트 실행
-result = execute_script({repr(combined_kwargs)})
-"""
+                wrapped_script = ScriptManager.make_wrapped_script(script, combined_kwargs, self._indent_script)
                 
                 # 테스트용이면 항상 새로 컴파일
                 if check_only or script_data is not None:  
@@ -1719,23 +1695,23 @@ result = execute_script({repr(combined_kwargs)})
             # 로그 수집 래퍼 함수들
             def capture_debug(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.DEBUG: {msg}")
-                logging.debug(f"[Script] {msg}", *args, **kwargs)
+                #logging.debug(f"[Script] {msg}", *args, **kwargs)
             
             def capture_info(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.INFO: {msg}")
-                logging.info(f"[Script] {msg}", *args, **kwargs)
+                #logging.info(f"[Script] {msg}", *args, **kwargs)
             
             def capture_warning(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.WARNING: {msg}")
-                logging.warning(f"[Script] {msg}", *args, **kwargs)
+                #logging.warning(f"[Script] {msg}", *args, **kwargs)
             
             def capture_error(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.ERROR: {msg}")
-                logging.error(f"[Script] {msg}", *args, **kwargs)
+                #logging.error(f"[Script] {msg}", *args, **kwargs)
             
             def capture_critical(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.CRITICAL: {msg}")
-                logging.critical(f"[Script] {msg}", *args, **kwargs)
+                #logging.critical(f"[Script] {msg}", *args, **kwargs)
             
             # 글로벌 환경 설정
             globals_dict = {
@@ -1883,6 +1859,35 @@ def {script_name}(**user_kwargs):
             logging.error(f"차트 데이터 준비 오류: {e}")
             return False
 
+    @staticmethod
+    def make_wrapped_script(script, combined_kwargs, indent_func):
+        """중복되는 wrapped_script 생성 코드 헬퍼 (staticmethod)"""
+        return f"""
+def execute_script(kwargs):
+    # 사용자 예약 변수들을 로컬 변수로 풀어서 직접 접근 가능하게 함
+    code = kwargs.get('code')
+    name = kwargs.get('name', '')
+    qty = kwargs.get('qty', 0)
+    price = kwargs.get('price', 0)
+    
+    # 사용자 정의 변수들도 로컬 변수로 추출
+    for key, value in kwargs.items():
+        if key not in ['code', 'name', 'qty', 'price']:
+            globals()[key] = value
+    
+    # 사용자 스크립트 실행
+    try:
+{indent_func(script, indent=8)}
+        return result if 'result' in locals() else None
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        raise  # 오류를 전파하여 감지할 수 있도록 함
+
+# 스크립트 실행
+result = execute_script({repr(combined_kwargs)})
+"""
+
 class CompiledScriptCache:
         """컴파일된 스크립트 관리 클래스"""
         
@@ -2001,31 +2006,7 @@ class CompiledScriptCache:
                 self.dependency_map[script_name] = dependencies
                 
                 # 스크립트 컴파일 (새로운 형식으로 래핑)
-                wrapped_script = f"""
-def execute_script(kwargs):
-    # 사용자 예약 변수들을 로컬 변수로 풀어서 직접 접근 가능하게 함
-    code = kwargs.get('code')
-    name = kwargs.get('name', '')
-    qty = kwargs.get('qty', 0)
-    price = kwargs.get('price', 0)
-    
-    # 사용자 정의 변수들도 로컬 변수로 추출
-    for key, value in kwargs.items():
-        if key not in ['code', 'name', 'qty', 'price']:
-            globals()[key] = value
-    
-    # 사용자 스크립트 실행
-    try:
-{self._indent_script(script, indent=8)}
-        return result if 'result' in locals() else None
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        raise  # 오류를 전파하여 감지할 수 있도록 함
-
-# 스크립트 실행
-result = execute_script(kwargs)
-"""
+                wrapped_script = ScriptManager.make_wrapped_script(script, {}, self._indent_script)
                 code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
                 
                 # 메모리 캐시에 저장
@@ -2256,7 +2237,8 @@ class ScriptManagerExtension:
             'result': None,
             'error': None,
             'exec_time': 0,
-            'log': ''
+            'log': '',
+            'logs': []
         }
         
         # kwargs 초기화 (None이면 빈 딕셔너리)
@@ -2336,69 +2318,19 @@ class ScriptManagerExtension:
                 # 테스트 모드이거나 직접 제공된 스크립트인 경우
                 if check_only or script_data is not None:
                     # 런타임 테스트를 위해 새로 컴파일
-                    wrapped_script = f"""
-def execute_script(kwargs):
-    # 사용자 예약 변수들을 로컬 변수로 풀어서 직접 접근 가능하게 함
-    code = kwargs.get('code')
-    name = kwargs.get('name', '')
-    qty = kwargs.get('qty', 0)
-    price = kwargs.get('price', 0)
-    
-    # 사용자 정의 변수들도 로컬 변수로 추출
-    for key, value in kwargs.items():
-        if key not in ['code', 'name', 'qty', 'price']:
-            globals()[key] = value
-    
-    # 사용자 스크립트 실행
-    try:
-{script_manager._indent_script(script, indent=8)}
-        return result if 'result' in locals() else None
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        raise
-
-# 스크립트 실행
-result = execute_script({repr(combined_kwargs)})
-"""
+                    wrapped_script = ScriptManager.make_wrapped_script(script, combined_kwargs, script_manager._indent_script)
                     code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
                 else:
                     # 캐시된 컴파일 코드 사용
                     code_obj = self.script_cache.load_compiled_script(script_name)
-                    
                     # 캐시에 없으면 새로 컴파일
                     if code_obj is None:
                         script_names = set(script_manager.scripts.keys())
                         self.script_cache.compile_script(script_name, script, script_names)
                         code_obj = self.script_cache.load_compiled_script(script_name)
-                        
                         if code_obj is None:
                             # 여전히 로드 실패 시 일반 컴파일 사용
-                            wrapped_script = f"""
-def execute_script(kwargs):
-    # 사용자 예약 변수들을 로컬 변수로 풀어서 직접 접근 가능하게 함
-    code = kwargs.get('code')
-    name = kwargs.get('name', '')
-    qty = kwargs.get('qty', 0)
-    price = kwargs.get('price', 0)
-    
-    # 사용자 정의 변수들도 로컬 변수로 추출
-    for key, value in kwargs.items():
-        if key not in ['code', 'name', 'qty', 'price']:
-            globals()[key] = value
-    
-    # 사용자 스크립트 실행
-    try:
-{script_manager._indent_script(script, indent=8)}
-        return result if 'result' in locals() else None
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        raise
-
-# 스크립트 실행
-result = execute_script({repr(combined_kwargs)})
-"""
+                            wrapped_script = ScriptManager.make_wrapped_script(script, combined_kwargs, script_manager._indent_script)
                             code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
                 
                 # 스크립트 실행 전에 kwargs 변수 설정

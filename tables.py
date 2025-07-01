@@ -952,13 +952,14 @@ class TableManager:
         elif column in self.float_columns and isinstance(value, float):
             display_value = f"{value:,.2f}"
         else:
-            display_value = str(value)
+            display_value = str(value).rstrip() # 빈 줄 제거
             # "스크립트" 컬럼의 경우 마지막 줄만 표시
-            if column == '스크립트' and '\n' in display_value:
+            if column in ['스크립트', '설명'] and '\n' in display_value:
                 lines = display_value.split('\n')
                 # 마지막 줄이 비어있으면 그 전 줄을 사용
                 last_line = lines[-1] if lines[-1].strip() else lines[-2] if len(lines) > 1 else lines[0]
-                display_value = last_line if last_line.strip() else "(빈 줄)"
+                display_value = last_line[:35]
+                #display_value = last_line if last_line.strip() else "(빈 줄)"
                 
         # 기존 아이템 재사용
         existing_item = table_widget.item(row, col)

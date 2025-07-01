@@ -728,6 +728,19 @@ def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):
         if hasattr(handler, "close"):
             handler.close()
 
+def com_market_status():
+    now = datetime.now()
+    time = int(now.strftime("%H%M%S"))
+    if time < 83000: return dc.ms.장종료
+    elif time < 84000: return dc.ms.장전시간외종가
+    elif time < 90000: return dc.ms.장전동시호가
+    elif time < 152000: return dc.ms.장운영중
+    elif time < 153000: return dc.ms.장마감동시호가
+    elif time < 154000: return dc.ms.장마감
+    elif time < 160000: return dc.ms.장후시간외종가
+    elif time < 180000: return dc.ms.시간외단일가
+    else: return dc.ms.장종료
+
 # init_logger 사용 예시
 if __name__ == "__main__":
     init_logger()

@@ -1,6 +1,6 @@
 from PyQt5.QtCore import QThread, QTimer
-from classes import TimeLimiter
-from public import gm, dc, QWork, save_json, hoga
+from classes import TimeLimiter, QData
+from public import gm, dc, Work,QWork, save_json, hoga, com_market_status
 from chart import ChartData
 from datetime import datetime
 import logging
@@ -439,13 +439,17 @@ class EvalStrategy(QThread):
                 try:
                     result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
                     if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
-                    if self.매수스크립트AND and not result.get('result', False): return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
+                    if self.매수스크립트AND and not result.get('result', False): 
+                        data = QData(sender='prx', method='send_status_msg', answer=False, args=('주문내용', {'구분': '매수탈락', '종목코드': code, '종목명': name, '메시지': result['error']}))
+                        self.prx.order('prx', 'proxy_method', data)
+                        return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
+                    gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                     logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
                 except Exception as e:
                     logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
 
         if not gm.sim_on:
-            status_market = self.com_market_status()
+            status_market = com_market_status()
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
         if gm.counter.get("000000", name) >= self.체결횟수: 
@@ -528,7 +532,7 @@ class EvalStrategy(QThread):
     def is_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
         try:
             if not gm.sim_on:
-                status_market = self.com_market_status()
+                status_market = com_market_status()
                 if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
             code = row.get('종목번호', '')          # 종목번호 ='999999' 일 때 당일청산 매도
@@ -566,8 +570,11 @@ class EvalStrategy(QThread):
                     result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
                     if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
                     if self.매도스크립트OR and result.get('result', False): 
-                        logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
+                        data = QData(sender='prx', method='send_status_msg', answer=False, args=('주문내용', {'구분': '매도편입', '종목코드': code, '종목명': 종목명}))
+                        self.prx.order('prx', 'proxy_method', data)
                         send_data['msg'] = '전략매도'
+                        logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
+                        gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                         return True, send_data, f"전략매도: {code} {종목명}"
 
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
@@ -701,17 +708,4 @@ class EvalStrategy(QThread):
             self.clear_timer.setInterval(delay_msec)
             self.clear_timer.timeout.connect(lambda: self.order_sell(row))
             self.clear_timer.start(delay_msec)
-
-    def com_market_status(self):
-        now = datetime.now()
-        time = int(now.strftime("%H%M%S"))
-        if time < 83000: return dc.ms.장종료
-        elif time < 84000: return dc.ms.장전시간외종가
-        elif time < 90000: return dc.ms.장전동시호가
-        elif time < 152000: return dc.ms.장운영중
-        elif time < 153000: return dc.ms.장마감동시호가
-        elif time < 154000: return dc.ms.장마감
-        elif time < 160000: return dc.ms.장후시간외종가
-        elif time < 180000: return dc.ms.시간외단일가
-        else: return dc.ms.장종료
 

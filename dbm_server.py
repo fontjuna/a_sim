@@ -377,7 +377,7 @@ class DBMServer:
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
                     record = new_record()
-                    sim_record = {'종목코드': code, '종목명': name, '매수전략': st_buy, '전략명칭': st_name}
+                    sim_record = {'일자': dt, '종목코드': code, '종목명': name, '전략명칭': st_name, '매수전략': st_buy}
             
             elif kind == '매도':
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
@@ -422,6 +422,7 @@ class DBMServer:
                     })
             
             self.table_upsert('db', table, record)
+
             if sim_record and self.sim_no==0:
                 self.table_upsert('db', db_columns.SIM_TABLE_NAME, sim_record)
                 sim_record = None

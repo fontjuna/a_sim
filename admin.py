@@ -149,6 +149,8 @@ class Admin:
             msg = f"{args['구분']} : {args['종목코드']} {args['종목명']}"
             if '주문수량' in args:
                 msg += f" 주문수량:{args['주문수량']}주 - 주문가:{args.get('주문가격', 0)}원 / 주문번호:{args.get('주문번호', '')}"
+            if '메시지' in args:
+                msg += f" {args['메시지']}"
             job = {'msg': msg}
         elif order=='체결내용':
             msg = f"{args['구분']} : {args['종목코드']} {args['종목명']}"
@@ -560,7 +562,7 @@ class Admin:
 
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'종목명': 종목명})
-                    self.send_status_msg('주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
+                    self.send_status_msg('주문내용', {'구분': f'{kind}편입', '종목코드': code, '종목명': 종목명})
                     if not gm.잔고목록.in_key(code): 
                         gm.setter_q.put(code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
@@ -578,7 +580,7 @@ class Admin:
                 
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'종목명': 종목명})
-                    self.send_status_msg('주문내용', {'구분': f'{kind}편입', '전략명칭': self.전략명칭, '종목코드': code, '종목명': 종목명})
+                    self.send_status_msg('주문내용', {'구분': f'{kind}편입', '종목코드': code, '종목명': 종목명})
                     gm.setter_q.put(code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
