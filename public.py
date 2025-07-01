@@ -667,7 +667,6 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.주문목록 = None # TableManager
         self.매매목록 = None # TableManager
         self.스크립트 = None # TableManager
-        self.스크립트변수 = None # TableManager
         self.차트자료 = None # TableManager
         self.당일종목 = None # TableManager
         self.수동종목 = None # TableManager

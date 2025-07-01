@@ -1,49 +1,41 @@
 {
     "돌파4시간3분5억_매수": {
         "script": "\n# 전략평가 결과 전달\nresult = not 돌파4시간3분5억_매도()",
-        "vars": {},
         "type": "bool",
         "desc": ""
     },
     "돌파4시간3분5억_매도": {
         "script": "# 다른종목으로 테스트\n#code = '001530'\n\n# 차트정의\n일봉 = ChartManager(code, 'dy')\n분3 = ChartManager(code, 'mi', 3)\n\ndebug(f'code={code} 현재가={일봉.c()}')\n\n# 이동평균정의\n이평5 = 분3.indicator(분3.ma, 분3.c,  5)\n이평10 = 분3.indicator(분3.ma, 분3.c,  10)\n\n# 조건정의(결과 값이 논리값이 되도록 작성)\n상한가 = 일봉.c() >= int(일봉.c(1) * 1.3) \n급락 = 분3.o() > 분3.c() and ((분3.o() - 분3.c()) / 분3.o()) > 0.03 # 봉하나에 3% 급락\n하락전환_3분5이평 = 이평5(1) >= 이평5(2) and 이평5(2) >= 이평5(3) and 이평5() < 이평5(1)\n이평역전_3분5_10이평 = 이평10() > 이평5()\n이평아래 = 이평10() > 분3.c()\n\n# 로깅\nmsg = ''\nif 상한가: msg += '상한가'\nif 급락: msg += '급락'\nif 하락전환_3분5이평: msg += '하락전환_3분5이평'\nif 이평역전_3분5_10이평: msg+= '이평역전_3분5_10이평'\nif 이평아래: msg += '이평아래'\n\ndebug(f\"매도조건 {code} {name} : {msg}\")\n\n# 전략평가 전송\nresult = 상한가 or 하락전환_3분5이평 or 이평역전_3분5_10이평 or 이평아래 or 급락",
-        "vars": {},
         "type": "bool",
         "desc": "상한가 이거나\n3분봉 5이평이 하락전환 하거나\n3분봉 5이평이 10이평을 하회 하거나\n현재가가 10이평을 하회 하거나\n3분봉에서 3%이상 급락시 매도"
     },
     "특수주기_매도": {
         "script": "차트7분봉 = CM(code, 'mi', 7)\n\n차트7분봉_5이평 = 차트7분봉.ma(차트7분봉.c, 5)\n\nresult = 차트7분봉_5이평",
-        "vars": {},
         "type": "float",
         "desc": ""
     },
     "indicator": {
         "script": "dy = CM(code, 'dy')\nmi3 = CM(code, 'mi', 3)\n\nma20 = dy.indicator(dy.ma, dy.c, 20)\ndebug(f'0={ma20()}, 1={ma20(1)}')\n\nsma5 = mi3.indicator(mi3.ma, mi3.c, 5) # SMA 5 계산 클로저 생성 \nsma10 = mi3.indicator(mi3.ma, mi3.c, 10) \n\ncross = mi3.cross_up(sma5, sma10) # 함수처럼 사용 가능\ndebug(f'sma5={sma5()}, sma10={sma10()}, cross={cross}')\n\nresult = ma20(0)",
-        "vars": {},
         "type": "float",
         "desc": "indicator와 offset 사용"
     },
     "함수사용": {
         "script": "dy = CM(code, 'dy')\n\n# all_true 함수 사용\nall_conditions_met = dy.all_true([\n    dy.c() > dy.ma(dy.c, 20),\n    dy.v() > dy.ma(dy.v, 20),\n    dy.rsi() < 70\n])\n\n# any_true 함수 사용\nany_condition_met = dy.any_true([\n    dy.c() > dy.h(1),\n    dy.v() > dy.ma(dy.v, 20) * 2,\n    dy.rsi() < 30\n])\n\n# iif 함수 사용\nresult = dy.iif(dy.c() > dy.ma(dy.c, 20), \"상승 추세\", \"하락 추세\")\n\n",
-        "vars": {},
         "type": "str",
         "desc": "iif, 사용자 함수"
     },
     "보조지표사용": {
         "script": "cm = ChartManager(code, 'dy')\n\n# RSI (상대강도지수)\nrsi = cm.rsi()                # 기본 14일 RSI\nrsi_9 = cm.rsi(9)             # 9일 RSI\nrsi_prev = cm.rsi(14, 1)      # 1봉 이전의 14일 RSI\n\n# MACD (이동평균수렴확산지수)\nmacd, signal, hist = cm.macd()  # 기본 MACD (12, 26, 9)\nmacd2, signal2, hist2 = cm.macd(5, 35, 5)  # 커스텀 MACD\n\n# 볼린저 밴드\nupper, middle, lower = cm.bollinger_bands()  # 기본 볼린저 밴드 (20일, 2시그마)\nupper2, middle2, lower2 = cm.bollinger_bands(10, 2.5)  # 커스텀 볼린저 밴드\n\n# 스토캐스틱\nk, d = cm.stochastic()  # 기본 스토캐스틱 (14, 3)\nk2, d2 = cm.stochastic(5, 3)  # 커스텀 스토캐스틱\n\n# ATR (평균진폭)\natr = cm.atr()  # 기본 14일 ATR\natr_5 = cm.atr(5)  # 5일 ATR\n\nresult = True",
-        "vars": {},
         "type": "bool",
         "desc": "RSI, MACD, Bollinger Band, Stochastic, ATR"
     },
     "매도_1": {
-        "script": "m3 = ChartManager(code, 'mi', 3)\n\nma5 = m3.ma(m3.c, 5)\nma10 = m3.ma(m3.c, 10)\ndn = ma10 > m3.c()\n\nresult = dn or ma5 < ma10",
-        "vars": {},
+        "script": "m3 = ChartManager(code, 'mi', 3)\n\ntry:\n    ma5 = m3.ma(m3.c, short)\nexcept:\n    ma5 = m3.ma(m3.c, 5)\n\ntry:\n    ma10 = m3.ma(m3.c, long)\nexcept:\n    ma10 = m3.ma(m3.c, 10)\n\ndn = ma10 > m3.c()\n\nresult = dn or ma5 < ma10",
         "type": "bool",
         "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
     },
     "매수_1": {
         "script": "mi3  = CM(code, 'mi', 3)\ndy = CM(code, 'dy')\n\nma5 = mi3.indicator(mi3.ma, mi3.c, 5)\nma20 = mi3.indicator(mi3.ma, mi3.c, 20)\n\nc1 = ma5() > ma20() and mi3.c() > ma5()\nc2 = ma5(1) < ma5() and ma20(1) < ma20()\n\nresult = c1 and c2 and dy.c(0) > dy.c(1)",
-        "vars": {},
         "type": "bool",
         "desc": ""
     }

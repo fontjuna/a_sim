@@ -120,13 +120,7 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
         '키': '스크립트명',
         '정수': [],
         '실수': [],
-        '컬럼': ['스크립트명', '타입', '스크립트', '변수', '설명'],
-    }
-    hd스크립트변수 = {
-        '키': '변수명',
-        '정수': [],
-        '실수': [],
-        '컬럼': ['변수명', '타입', '값'],
+        '컬럼': ['스크립트명', '타입', '스크립트', '설명'],
     }
 
     hd당일종목 = {
@@ -1005,7 +999,6 @@ def set_tables():
     gm.주문목록 = TableManager(tbl.hd주문목록)
     gm.매매목록 = TableManager(tbl.hd매매목록)
     gm.스크립트 = TableManager(tbl.hd스크립트)
-    gm.스크립트변수 = TableManager(tbl.hd스크립트변수)
     gm.차트자료 = TableManager(tbl.hd차트자료)
     gm.당일종목 = TableManager(tbl.hd당일종목)
     gm.수동종목 = TableManager(tbl.hd수동종목)

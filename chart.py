@@ -1271,7 +1271,7 @@ class ScriptManager:
         """스크립트 전체 설정 및 저장
         
         Args:
-            scripts: {script_name: {script: str, vars: dict}} 형식의 스크립트 사전
+            scripts: {script_name: {script: str}} 형식의 스크립트 사전
         
         Returns:
             bool: 저장 성공 여부
@@ -1305,19 +1305,18 @@ class ScriptManager:
         elif isinstance(result, set): return 'set'
         else: return type(result).__name__
                     
-    def set_script(self, script_name: str, script: str, vars: dict = None, desc: str = '', kwargs: dict = None):
+    def set_script(self, script_name: str, script: str, desc: str = '', kwargs: dict = None):
         """단일 스크립트 설정 및 저장
         
         Args:
             script_name: 스크립트 이름
             script: 스크립트 코드
-            vars: 스크립트에서 사용할 변수 사전
             desc: 스크립트 설명
         
         Returns:
             type: False=실패, str=성공(str=result type)
         """
-        script_data = {'script': script, 'vars': vars or {}}
+        script_data = {'script': script}
         result = self.run_script(script_name, check_only=True, script_data=script_data, kwargs=kwargs)
         
         if not result['success'] or self.get_script_type(result['result']) == 'error':
@@ -1500,19 +1499,8 @@ class ScriptManager:
             return f"실행 오류: {error_msg}"
             
     def _execute_script_core(self, script_name, script_data=None, kwargs=None, 
-                           use_compiled=False, check_only=False):
-        """스크립트 실행 핵심 로직 (공통 부분)
-        
-        Args:
-            script_name: 스크립트 이름
-            script_data: 직접 제공하는 스크립트 데이터
-            kwargs: 실행 매개변수
-            use_compiled: 컴파일된 캐시 사용 여부
-            check_only: 검사만 수행 여부
-            
-        Returns:
-            dict: 실행 결과
-        """
+                        use_compiled=False, check_only=False):
+        """스크립트 실행 핵심 로직 (공통 부분)"""
         start_time = time.time()
         
         # 결과 초기화
@@ -1554,15 +1542,13 @@ class ScriptManager:
                 script_data = self.get_script(script_name)
             
             script = script_data.get('script', '')
-            vars_dict = script_data.get('vars', {}).copy()
             
             if not script:
                 result_dict['error'] = f"스크립트 없음: {script_name}"
                 return result_dict
             
-            # 사용자 지정 변수(vars) 병합
+            # vars 관련 코드 삭제 - kwargs만 사용
             combined_kwargs = kwargs.copy()
-            combined_kwargs.update(vars_dict)
             
             # 3. 구문 분석 및 보안 검증
             try:
@@ -1608,7 +1594,7 @@ class ScriptManager:
             # 6. 컴파일 방식 선택
             try:
                 code_obj = self._get_compiled_code(script_name, script, combined_kwargs, 
-                                                 use_compiled, check_only, script_data)
+                                                use_compiled, check_only, script_data)
                 if code_obj is None:
                     result_dict['error'] = f"컴파일 실패: {script_name}"
                     return result_dict
@@ -1746,23 +1732,18 @@ class ScriptManager:
             # 로그 수집 래퍼 함수들
             def capture_debug(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.DEBUG: {msg}")
-                #logging.debug(f"[Script] {msg}", *args, **kwargs)
             
             def capture_info(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.INFO: {msg}")
-                #logging.info(f"[Script] {msg}", *args, **kwargs)
             
             def capture_warning(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.WARNING: {msg}")
-                #logging.warning(f"[Script] {msg}", *args, **kwargs)
             
             def capture_error(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.ERROR: {msg}")
-                #logging.error(f"[Script] {msg}", *args, **kwargs)
             
             def capture_critical(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.CRITICAL: {msg}")
-                #logging.critical(f"[Script] {msg}", *args, **kwargs)
             
             # 글로벌 환경 설정
             globals_dict = {
@@ -1785,17 +1766,16 @@ class ScriptManager:
                 
                 # 유틸리티 함수
                 'loop': self._safe_loop,
-
                 'run_script': self._script_caller,
             }
             
-            # 모든 스크립트를 함수로 등록
+            # 모든 스크립트를 함수로 등록 (*args, **kwargs 지원)
             for script_name, script_data in self.scripts.items():
                 # 스크립트가 함수처럼 호출 가능하도록 래퍼 생성
                 wrapper_code = f"""
-def {script_name}(**user_kwargs):
+def {script_name}(*args, **kwargs):
     # 스크립트 호출 함수 - 결과값만 반환
-    return run_script('{script_name}', user_kwargs)
+    return run_script('{script_name}', args, kwargs)
 """
                 
                 # 스크립트 래퍼 함수 컴파일 및 추가
@@ -1814,8 +1794,8 @@ def {script_name}(**user_kwargs):
             # 기본 환경 반환
             return {'ChartManager': ChartManager}, []
                         
-    def _script_caller(self, script_name, user_kwargs=None):
-        """스크립트 내에서 다른 스크립트를 호출하기 위한 함수 (로그 통합)"""
+    def _script_caller(self, script_name, args=None, kwargs=None):
+        """스크립트 내에서 다른 스크립트를 호출하기 위한 함수 (직접 인자 전달 방식)"""
         # 컨텍스트의 기존 kwargs 가져오기 (프레임 검사)
         try:
             import inspect
@@ -1849,19 +1829,19 @@ def {script_name}(**user_kwargs):
             context_kwargs = {}
             current_script_logs = None
         
-        # 호출할 스크립트의 vars 가져오기 (스크립트 변수)
-        called_script_data = self.get_script(script_name)
-        called_script_vars = called_script_data.get('vars', {})
+        # 기본 kwargs에서 시작
+        new_kwargs = context_kwargs.copy()
         
-        # 병합 순서: called_script_vars(하위 기본값) -> context_kwargs(상위 전달값) -> user_kwargs(명시적)
-        new_kwargs = called_script_vars.copy()     # 하위 스크립트 기본값
-        new_kwargs.update(context_kwargs)         # 상위 스크립트 변수들이 복사되어 덮어씀
+        # args와 kwargs 처리
+        if args is None:
+            args = ()
+        if kwargs is None:
+            kwargs = {}
         
-        # 사용자가 전달한 추가 매개변수 병합 (최우선)
-        if user_kwargs:
-            new_kwargs.update(user_kwargs)
+        # kwargs만 병합 (위치 인자는 스크립트에서 직접 처리하도록)
+        new_kwargs.update(kwargs)
         
-        # 현재 실행 중인 스크립트 목록에서 순환 참조 검사
+        # 순환 참조 검사
         code = new_kwargs.get('code')
         if code is None:
             logging.error(f"{script_name} 에서 code 가 지정되지 않았습니다.")
@@ -2211,14 +2191,13 @@ class ScriptManagerExtension:
             logging.error(f"스크립트 컴파일러 초기화 오류: {e}")
             return False
     
-    def set_script_compiled(self, script_manager, script_name, script, vars=None, desc='', kwargs=None):
+    def set_script_compiled(self, script_manager, script_name, script, desc='', kwargs=None):
         """스크립트 설정 및 컴파일
         
         Args:
             script_manager: ScriptManager 인스턴스
             script_name: 스크립트 이름
             script: 스크립트 코드
-            vars: 스크립트 변수
             desc: 스크립트 설명
             kwargs: 스크립트 검사에 사용할 추가 변수 (code 포함)
             
@@ -2226,7 +2205,7 @@ class ScriptManagerExtension:
             bool or str: 성공 시 스크립트 타입, 실패 시 False
         """
         # 기존 set_script 메서드 호출
-        result = script_manager.set_script(script_name, script, vars, desc, kwargs)
+        result = script_manager.set_script(script_name, script, desc, kwargs)
         
         if result:
             # 컴파일 및 캐싱
@@ -2304,7 +2283,7 @@ def enhance_script_manager(script_manager, cache_dir=dc.fp.cache_path):
         
         # 메서드 연결
         script_manager.init_script_compiler = lambda: extension.init_script_compiler(script_manager)
-        script_manager.set_script_compiled = lambda script_name, script, vars=None, desc='', kwargs=None: extension.set_script_compiled(script_manager, script_name, script, vars, desc, kwargs)
+        script_manager.set_script_compiled = lambda script_name, script, desc='', kwargs=None: extension.set_script_compiled(script_manager, script_name, script, desc, kwargs)
         script_manager.delete_script_compiled = lambda script_name: extension.delete_script_compiled(script_manager, script_name)
         script_manager.run_script_compiled = lambda script_name, script_data=None, check_only=False, kwargs=None: extension.run_script_compiled(script_manager, script_name, script_data, check_only, kwargs)
         
@@ -2325,6 +2304,7 @@ def enhance_script_manager(script_manager, cache_dir=dc.fp.cache_path):
 if __name__ == '__main__':
     mi3 = ChartManager('005930', 'mi', 3)
 
+    print(f'{mi3.c()}')
     ma5 = mi3.indicator(mi3.ma, mi3.c, 5)
     ma20 = mi3.indicator(mi3.ma, mi3.c, 20)
 
