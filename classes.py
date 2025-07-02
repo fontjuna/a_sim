@@ -241,16 +241,22 @@ class CounterTicker:
                 self.set(code, name)
             self.save_data()
 
-    def set(self, code, name, limit=0):
+    def set(self, code, name, limit=0, count=0):
         with self.lock:
-            self.data[code] = { "name": name, "limit": limit, "count": 0 }
+            self.data[code] = { "name": name, "limit": limit, "count": count }
             self.save_data()
 
     def set_add(self, code):
-        with self.lock:
-            self.data[code]["count"] += 1
-            self.data["000000"]["count"] += 1
-            self.save_data()
+        try:
+            with self.lock:
+                self.data[code]["count"] += 1
+                self.data["000000"]["count"] += 1
+                self.save_data()
+        except KeyError:
+            name = gm.prx.answer('api', 'GetMasterCodeName', code)
+            self.set(code, name, 0, 1)
+        except Exception as e:
+            logging.error(f"CounterTicker set_add 오류: {code} {e}", exc_info=True)
     
     def get(self, code, name=""):
         with self.lock:

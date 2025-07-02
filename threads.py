@@ -440,7 +440,7 @@ class EvalStrategy(QThread):
                     result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
                     if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
                     if self.매수스크립트AND and not result.get('result', False): 
-                        gm.qwork['msg'].put(Work('주문내용', job={'msg': f'구분: 매수탈락, 종목코드: {code}, 종목명: {name}, 메시지: {result["error"]}'}))
+                        gm.qwork['msg'].put(Work('주문내용', job={'msg': f'매수탈락 : {code} {name} {result["error"]}'}))
                         return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
                     gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                     logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
@@ -570,7 +570,7 @@ class EvalStrategy(QThread):
                     if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
                     if self.매도스크립트OR and result.get('result', False): 
                         send_data['msg'] = '전략매도'
-                        gm.qwork['msg'].put(Work('주문내용', job={'msg': f'구분: 매도편입, 종목코드: {code}, 종목명: {종목명}'}))
+                        gm.qwork['msg'].put(Work('주문내용', job={'msg': f'매도편입 : {code} {종목명}'}))
                         gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                         logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
                         return True, send_data, f"전략매도: {code} {종목명}"

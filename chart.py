@@ -1268,15 +1268,9 @@ class ScriptManager:
         return self.scripts.get(script_name, {})
     
     def set_scripts(self, scripts: dict, kwargs: dict = None):
-        """스크립트 전체 설정 및 저장
-        
-        Args:
-            scripts: {script_name: {script: str}} 형식의 스크립트 사전
-        
-        Returns:
-            bool: 저장 성공 여부
         """
-        # 모든 스크립트 유효성 검사
+        # 이 메소드 사용하는 곳 없음
+
         valid_scripts = {}
         for script_name, script_data in scripts.items():
             result = self.run_script(script_name, check_only=True, script_data=script_data, kwargs=kwargs)
@@ -1290,6 +1284,7 @@ class ScriptManager:
         self.scripts = valid_scripts
         # 컴파일된 스크립트 캐시 초기화
         self._compiled_scripts = {}
+        """
         return self._save_scripts()
     
     def get_script_type(self, result):
@@ -1498,8 +1493,7 @@ class ScriptManager:
             logging.error(f"에러 위치 파악 오류: {e}")
             return f"실행 오류: {error_msg}"
             
-    def _execute_script_core(self, script_name, script_data=None, kwargs=None, 
-                        use_compiled=False, check_only=False):
+    def _execute_script_core(self, script_name, script_data=None, kwargs=None, use_compiled=False, check_only=False):
         """스크립트 실행 핵심 로직 (공통 부분)"""
         start_time = time.time()
         
@@ -1508,13 +1502,12 @@ class ScriptManager:
             'success': False,
             'result': None,
             'error': None,
+            'logs': [],
             'exec_time': 0,
-            'logs': []
         }
         
         # 1. 기본 검증
-        if kwargs is None:
-            kwargs = {}
+        if kwargs is None: kwargs = {}
         
         # 종목코드 검증
         code = kwargs.get('code')
@@ -1570,18 +1563,7 @@ class ScriptManager:
                 result_dict['error'] = f"보안 위반 코드 포함"
                 return result_dict
             
-            # 4. 차트 데이터 준비
-            try:
-                has_data = self._check_chart_data_ready(code)
-                if not has_data:
-                    self._prepare_chart_data(code)
-                    has_data = self._check_chart_data_ready(code)
-                    if not has_data:
-                        result_dict['error'] = f"차트 데이터 준비 실패: {code}"
-                        return result_dict
-            except Exception as e:
-                result_dict['error'] = f"데이터 준비 오류: {type(e).__name__} - {e}"
-                return result_dict
+            # 4. 차트 데이터 준비 확인
             
             # 5. 실행 환경 준비
             try:
@@ -1593,8 +1575,7 @@ class ScriptManager:
             
             # 6. 컴파일 방식 선택
             try:
-                code_obj = self._get_compiled_code(script_name, script, combined_kwargs, 
-                                                use_compiled, check_only, script_data)
+                code_obj = self._get_compiled_code(script_name, script, combined_kwargs, use_compiled, check_only, script_data)
                 if code_obj is None:
                     result_dict['error'] = f"컴파일 실패: {script_name}"
                     return result_dict
@@ -1606,13 +1587,14 @@ class ScriptManager:
             try:
                 # kwargs 변수 설정
                 locals_dict['kwargs'] = combined_kwargs
+                globals_dict['_current_kwargs'] = combined_kwargs
                 
                 # 코드 실행
                 exec(code_obj, globals_dict, locals_dict)
                 exec_time = time.time() - start_time
                 
                 # 실행 시간 경고
-                if exec_time > 0.05:
+                if exec_time > 0.02:
                     logging.warning(f"스크립트 실행 시간 초과 ({script_name}:{code}): {exec_time:.4f}초")
                 
                 # 실행 결과 가져오기
@@ -1656,8 +1638,7 @@ class ScriptManager:
             # 실행 시간 기록
             result_dict['exec_time'] = time.time() - start_time
     
-    def _get_compiled_code(self, script_name, script, combined_kwargs, 
-                          use_compiled, check_only, script_data):
+    def _get_compiled_code(self, script_name, script, combined_kwargs, use_compiled, check_only, script_data):
         """컴파일 방식에 따라 코드 객체 반환
         
         Args:
@@ -1744,7 +1725,15 @@ class ScriptManager:
             
             def capture_critical(msg, *args, **kwargs):
                 script_logs.append(f"{current_script_name}.CRITICAL: {msg}")
-            
+
+            def is_args(key, default_value):
+                """스크립트 내에서 인자 확인 함수"""
+                # 글로벌에서 직접 kwargs 참조 (성능 최적화)
+                if '_current_kwargs' in globals_dict:
+                    current_kwargs = globals_dict['_current_kwargs']
+                    return current_kwargs.get(key, default_value)
+                return default_value
+                        
             # 글로벌 환경 설정
             globals_dict = {
                 # Python 내장 함수들 (제한된 목록)
@@ -1767,6 +1756,10 @@ class ScriptManager:
                 # 유틸리티 함수
                 'loop': self._safe_loop,
                 'run_script': self._script_caller,
+                'is_args': is_args,
+                
+                '_script_logs': script_logs,
+                '_current_kwargs': {},
             }
             
             # 모든 스크립트를 함수로 등록 (*args, **kwargs 지원)
@@ -1861,48 +1854,6 @@ def {script_name}(*args, **kwargs):
         
         # 결과값만 반환 (스크립트에서 사용하기 편하게)
         return result['result'] if result['success'] else None
-
-    def _check_chart_data_ready(self, code):
-        """차트 데이터가 준비되었는지 확인
-        
-        Args:
-            code: 종목코드
-        
-        Returns:
-            bool: 데이터가 준비되었으면 True
-        """
-        # 실제 구현에서는 ChartData 클래스를 사용해야 함
-        # 예시 구현
-        try:
-            if not hasattr(self, '_chart_data_cache'):
-                self._chart_data_cache = {}
-            
-            return code in self._chart_data_cache and self._chart_data_cache[code].get('ready', False)
-        except Exception as e:
-            logging.error(f"차트 데이터 확인 오류: {e}")
-            return False
-    
-    def _prepare_chart_data(self, code):
-        """차트 데이터 준비
-        
-        Args:
-            code: 종목코드
-        
-        Returns:
-            bool: 준비 성공 여부
-        """
-        # 실제 구현에서는 ChartData 클래스를 사용해야 함
-        # 예시 구현
-        try:
-            if not hasattr(self, '_chart_data_cache'):
-                self._chart_data_cache = {}
-            
-            # 데이터 준비 요청 로직
-            self._chart_data_cache[code] = {'ready': True}
-            return True
-        except Exception as e:
-            logging.error(f"차트 데이터 준비 오류: {e}")
-            return False
 
     @staticmethod
     def make_wrapped_script(script, combined_kwargs, indent_func):
@@ -2264,8 +2215,7 @@ class ScriptManagerExtension:
     
     def run_script_compiled(self, script_manager, script_name, script_data=None, check_only=False, kwargs=None):
         """컴파일된 스크립트 실행 (매매용 - 단순화된 버전)"""
-        return script_manager._execute_script_core(script_name, script_data, kwargs,
-                                                 use_compiled=True, check_only=check_only)
+        return script_manager._execute_script_core(script_name, script_data, kwargs, use_compiled=True, check_only=check_only)
                             
 def enhance_script_manager(script_manager, cache_dir=dc.fp.cache_path):
     """기존 ScriptManager 클래스를 확장하여 컴파일 기능 추가

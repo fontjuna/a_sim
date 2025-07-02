@@ -803,6 +803,15 @@ class Admin:
                         pass
                     logging.debug(f'취소주문 접수: origin_no={origin_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
                 else: # 외부주문
+                    종목명 = gm.prx.answer('api', 'GetMasterCodeName', code)
+                    if not gm.dict종목정보.contains(code):
+                        전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
+                        value={'종목명': 종목명, '전일가': 전일가, '현재가': 0}
+                        gm.dict종목정보.set(code, value=value)
+
+                    if code not in gm.set조건감시:
+                        self.stg_fx등록_종목감시([code], 1)
+
                     row = {'키': key, '구분': kind, '상태': '외부접수', '종목코드': code, '종목명': name, '주문번호': order_no, '주문수량': qty, '미체결수량': remain_qty, '주문가격': price}
                     gm.주문목록.set(key=key, data=row)
                     logging.debug(f'외부주문 접수: order_no={order_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
@@ -871,7 +880,7 @@ class Admin:
                 gm.잔고목록.set(key=code, data=data)
 
             except Exception as e:
-                logging.error(f"매수 처리중 오류 발생: {code} {name} ***")
+                logging.error(f"매수 처리중 오류 발생: {code} {name} ***", exc_info=True)
 
         try:
             msg = {'구분': f'{kind}체결', '전략명칭': 전략명칭, '종목코드': code, '종목명': name,\
