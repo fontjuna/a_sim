@@ -164,7 +164,8 @@ class GUI(QMainWindow, form_class):
             self.tblScript.clicked.connect(lambda x: self.gui_script_select(x.row()))  # 스크립트 선택
             self.btnScriptNew.clicked.connect(self.gui_script_new)
             self.btnScriptDel.clicked.connect(self.gui_script_delete)
-            self.btnScriptChk.clicked.connect(self.gui_script_check)
+            self.btnScriptChk.clicked.connect(lambda: self.gui_script_check(save=False))
+            self.btnScriptSave.clicked.connect(lambda: self.gui_script_check(save=True))
             self.txtScript.textChanged.connect(lambda: setattr(self, 'script_edited', True))
 
             # 전략정의 에서 스크립트
@@ -712,7 +713,7 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'스크립트 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_script_check(self):
+    def gui_script_check(self, save=False):
         try:
             script_name = self.ledScriptName.text()
             script = self.txtScript.toPlainText()
@@ -721,18 +722,20 @@ class GUI(QMainWindow, form_class):
                 QMessageBox.information(self, '알림', '스크립트명과 스크립트를 입력하세요.')
                 return
             #result = gm.scm.run_script(script_name, check_only=True, script_data={'script': script}, kwargs={'code': '005930'})
-            result = gm.scm.set_script_compiled(script_name, script, desc, kwargs={'code': '005930'})
+            result = gm.scm.set_script_compiled(script_name, script, desc, kwargs={'code': '005930'}, save=save)
             for log in result['logs']:
                 self.txtScriptMsg.append(log)
                 self.txtScriptMsg.moveCursor(QTextCursor.End)
             if result['success']:
-                QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n컴파일 후 저장 되었습니다.\n(걸린시간={result["exec_time"]:.5f}초)\n반환값={result["result"]}')
-                gm.스크립트.set(key=script_name, data={'스크립트': script, '타입': result['type'], '설명': desc})
-                gm.스크립트.update_table_widget(self.tblScript)
-                gm.list스크립트 = gm.스크립트.get(column='스크립트명')
-                self.gui_fx채움_스크립트콤보()
-                #self.txtScriptMsg.clear()
-                self.script_edited = False
+                save_msg = ""
+                if save:
+                    save_msg = "컴파일 후 저장 되었습니다.\n"
+                    gm.스크립트.set(key=script_name, data={'스크립트': script, '타입': result['type'], '설명': desc})
+                    gm.스크립트.update_table_widget(self.tblScript)
+                    gm.list스크립트 = gm.스크립트.get(column='스크립트명')
+                    self.gui_fx채움_스크립트콤보()
+                    self.script_edited = False
+                QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n{save_msg}(걸린시간={result["exec_time"]:.5f}초)\n반환값={result["result"]}')
             else:
                 QMessageBox.critical(self, '에러', result['error'])
                 #self.txtScriptMsg.append(result['error'])

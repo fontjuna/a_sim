@@ -51,17 +51,26 @@ class PriceUpdater(QThread):
     def run(self):
         self.running = True
         while self.running:
-            job = self.price_q.get()
-            if job is None: 
-                self.running = False
-                break
-            code = job['code']
-            dictFID = job['dictFID']
-            self.pri_fx처리_잔고데이터(code, dictFID)
-            self.pri_fx검사_매도요건(code)
+            batch = {}
+            start_time = time.time()
+            while time.time() - start_time < dc.INTERVAL_SLOW: # 0.05초
+                data = self.price_q.get()
+                if data is None: 
+                    self.running = False
+                    return
+                batch.update(data)
+                if self.price_q.empty():
+                    break
+            if batch:
+                self.update_batch(batch)
             q_len = self.price_q.length()
             if q_len > 5:
                 logging.warning(f'price_q 대기 큐 len={q_len}')
+    
+    def update_batch(self, batch):
+        for code, fid in batch.items():
+            self.pri_fx처리_잔고데이터(code, fid)
+            self.pri_fx검사_매도요건(code)
 
     def pri_fx처리_잔고데이터(self, code, dictFID):
         try:
@@ -231,36 +240,33 @@ class ChartUpdater(QThread):
     def run(self):
         self.running = True
         while self.running:
-            batch = []
+            batch = {}
             start_time = time.time()
-            while time.time() - start_time < 0.2:
+            while time.time() - start_time < dc.INTERVAL_SLOW: # 0.05초
                 data = self.chart_q.get()
                 if data is None: 
                     self.running = False
                     return
-                batch.append(data)
+                batch.update(data)
                 if self.chart_q.empty():
                     break
             if batch:
                 self.update_batch(batch)
             q_len = self.chart_q.length()
-            if q_len > 10:
+            if q_len > 5:
                 logging.warning(f'chart_q 대기 큐 len={q_len}')
 
     def update_batch(self, batch):
-        for data in batch:
-            self.update_chart(data)
+        for code, fid in batch.items():
+            self.update_chart(code, fid)
 
-    def update_chart(self, data):
-        code = data.get('code')
-        job = data.get('dictFID')
-        
+    def update_chart(self, code, fid):
         self.cht_dt.update_chart(
             code, 
-            abs(int(job['현재가'])) if job['현재가'] else 0,
-            abs(int(job['누적거래량'])) if job['누적거래량'] else 0,
-            abs(int(job['누적거래대금'])) if job['누적거래대금'] else 0,
-            dc.ToDay+job['체결시간']
+            abs(int(fid['현재가'])) if fid['현재가'] else 0,
+            abs(int(fid['누적거래량'])) if fid['누적거래량'] else 0,
+            abs(int(fid['누적거래대금'])) if fid['누적거래대금'] else 0,
+            dc.ToDay+fid['체결시간']
         )
         #logging.debug(f'차트 업데이트: {code} 현재가: {job["현재가"]} 체결시간: {job["체결시간"]}')
 
@@ -574,7 +580,9 @@ class EvalStrategy(QThread):
                         logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
                         return True, send_data, f"전략매도: {code} {종목명}"
                 else:
-                    logging.error(f'스크립트 실행 에러: {result["error"]}')
+                    if result['error']: 
+                        logging.error(f'스크립트 실행 에러: {result["error"]}')
+                        gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                     pass # 스크립트 무시
 
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도

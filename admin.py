@@ -260,12 +260,10 @@ class Admin:
                         row['현재가'] = 현재가
                         gm.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
                     gm.dict주문대기종목.remove(code)
-
-                job = {'code': code, 'dictFID': dictFID}
-                gm.chart_q.put(job) # ChartUpdater
+                gm.chart_q.put({code: dictFID}) # ChartUpdater
+                
             if gm.잔고목록.in_key(code):
-                job = {'code': code, 'dictFID': dictFID}
-                gm.price_q.put(job) # PriceUpdater
+                gm.price_q.put({code: dictFID}) # PriceUpdater
         except Exception as e:
             logging.error(f'실시간 주식체결 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 

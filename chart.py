@@ -426,7 +426,7 @@ class ChartData:
     
     def is_code_registered(self, code: str) -> bool:
         """종목 등록 여부 확인 (메모리 기반으로 단순화)"""
-        return code in self._chart_data and bool(self._chart_data[code].get('mi1'))
+        return code in self._chart_data and bool(self._chart_data[code].get('mi1') and bool(self._chart_data[code].get('dy')))
     
     def clean_up_safe(self):
         """메모리 정리 (메모리 기반으로 단순화)"""
@@ -1227,10 +1227,53 @@ class ScriptManager:
         self._running_scripts = set()  # 실행 중인 스크립트 추적
         self._compiled_scripts = {}  # 컴파일된 스크립트 캐시 {script_name: code_obj}
         self.cht_dt = ChartData()  # 차트 데이터 관리자
-        
+
+        import datetime
+        self.current_program_version = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+        self._init_program_version()        
+
         # 파일에서 스크립트와 사용자 함수 로드
         self._load_scripts()
-    
+
+    def _init_program_version(self):
+        """프로그램 버전 초기화"""
+        try:
+            cache_dir = os.path.dirname(self.script_file) or "."
+            cache_dir = os.path.join(cache_dir, "cache")
+            os.makedirs(cache_dir, exist_ok=True)
+            
+            version_file = os.path.join(cache_dir, "program_version.txt")
+            with open(version_file, "w") as f:
+                f.write(self.current_program_version)
+            
+            self.cache_dir = cache_dir
+            logging.info(f"프로그램 버전 초기화: {self.current_program_version}")
+        except Exception as e:
+            logging.error(f"프로그램 버전 초기화 오류: {e}")
+            self.cache_dir = "."
+
+    def _update_script_version(self, script_name: str):
+        """스크립트 버전을 현재 프로그램 버전으로 업데이트"""
+        try:
+            version_file = os.path.join(self.cache_dir, f"{script_name}_version.txt")
+            with open(version_file, "w") as f:
+                f.write(self.current_program_version)
+        except Exception as e:
+            logging.error(f"스크립트 버전 업데이트 오류 ({script_name}): {e}")
+
+    def _is_current_version(self, script_name: str) -> bool:
+        """스크립트가 현재 버전인지 확인"""
+        try:
+            version_file = os.path.join(self.cache_dir, f"{script_name}_version.txt")
+            if os.path.exists(version_file):
+                with open(version_file) as f:
+                    script_version = f.read().strip()
+                return script_version == self.current_program_version
+            return False
+        except Exception as e:
+            logging.error(f"버전 확인 오류 ({script_name}): {e}")
+            return False
+
     def _load_scripts(self):
         """스크립트 파일에서 스크립트 로드"""
         try:
@@ -1370,8 +1413,8 @@ class ScriptManager:
             exec(code_obj, globals_dict, locals_dict)
             exec_time = time.time() - start_time
             
-            # 실행 시간 경고
-            if exec_time > 0.02:
+            # 실행 시간 경고 (기준 완화: 0.1초)
+            if exec_time > 0.1:
                 warning_msg = f"스크립트 실행 시간 초과 ({script_name}:{code}): {exec_time:.4f}초"
                 logging.warning(warning_msg)
                 script_logs.append(f'WARNING: {warning_msg}')
@@ -1476,7 +1519,7 @@ class ScriptManager:
         
         return result_dict
 
-    def set_script_compiled(self, script_name: str, script: str, desc: str = '', kwargs: dict = None):
+    def set_script_compiled(self, script_name: str, script: str, desc: str = '', kwargs: dict = None, save: bool = True):
         """스크립트 검사, 저장 및 컴파일 (통합 메서드)
         
         Args:
@@ -1484,6 +1527,7 @@ class ScriptManager:
             script: 스크립트 코드
             desc: 스크립트 설명
             kwargs: 검사에 사용할 매개변수
+            save: True=저장+컴파일, False=검사만
         
         Returns:
             dict: {'success': bool, 'result': None, 'error': str, 'type': str, 'logs': list, 'exec_time': float}
@@ -1515,6 +1559,14 @@ class ScriptManager:
         
         # 스크립트 타입 설정
         result_dict['type'] = check_result['type']
+        
+        # save=False면 검사까지만 하고 반환
+        if not save:
+            result_dict['success'] = True
+            result_dict['logs'].append(f'INFO: 스크립트 검사 완료: {script_name} (타입: {result_dict["type"]})')
+            return result_dict
+        
+        # save=True인 경우 저장 및 컴파일 진행
         
         # 스크립트 데이터 생성 및 저장
         script_data = {
@@ -1565,6 +1617,8 @@ class ScriptManager:
                 result_dict['logs'].append(f'ERROR: {error_msg}')
                 logging.error(error_msg)
         
+        self._update_script_version(script_name)
+
         # 성공
         result_dict['success'] = True
         result_dict['logs'].append(f'INFO: 스크립트 저장 완료: {script_name} (타입: {result_dict["type"]})')
@@ -1620,6 +1674,12 @@ class ScriptManager:
         self._running_scripts.add(script_key)
         
         try:
+            # 차트 데이터 준비 상태 검사
+            if not self.cht_dt.is_code_registered(code):
+                result_dict['error'] = f"차트 데이터가 준비되지 않음: {code}"
+                result_dict['logs'].append(f'ERROR: 차트 데이터가 준비되지 않음: {code}')
+                return result_dict
+
             # 컴파일된 코드 가져오기
             code_obj = self._get_compiled_code_fast(script_name)
             if code_obj is None:
@@ -1631,21 +1691,16 @@ class ScriptManager:
             globals_dict, script_logs = self._prepare_execution_globals(script_name)
             locals_dict = {}
             
-            # 컴파일된 코드 실행 (execute_script 함수만 정의됨)
+            # kwargs를 locals에 설정하고 단일 exec
+            locals_dict['kwargs'] = kwargs
             exec(code_obj, globals_dict, locals_dict)
-            
-            # execute_script 함수 호출 (실제 kwargs 전달)
-            if 'execute_script' not in locals_dict:
-                result_dict['error'] = f"컴파일된 스크립트에 execute_script 함수가 없음"
-                result_dict['logs'].append(f'ERROR: execute_script 함수 없음')
-                return result_dict
-            
-            # 실제 스크립트 실행
-            script_result = locals_dict['execute_script'](kwargs)
+
+            # 실행 결과 가져오기
+            script_result = locals_dict.get('result')
             exec_time = time.time() - start_time
             
-            # 실행 시간 경고
-            if exec_time > 0.02:
+            # 실행 시간 경고 (기준 완화: 0.1초)
+            if exec_time > 0.1:
                 warning_msg = f"컴파일된 스크립트 실행 시간 초과 ({script_name}:{code}): {exec_time:.4f}초"
                 logging.warning(warning_msg)
                 script_logs.append(f'WARNING: {warning_msg}')
@@ -1681,7 +1736,7 @@ class ScriptManager:
             result_dict['exec_time'] = time.time() - start_time
 
     def _get_compiled_code_fast(self, script_name: str):
-        """컴파일된 코드 빠른 획득 (매매용)
+        """컴파일된 코드 빠른 획득 (매매용) - 버전 관리 적용
         
         Args:
             script_name: 스크립트 이름
@@ -1689,29 +1744,52 @@ class ScriptManager:
         Returns:
             code object: 컴파일된 코드 객체 또는 None
         """
-        # 확장 기능이 있는 경우 (우선순위)
-        if hasattr(self, 'script_cache'):
-            return self.script_cache.load_compiled_script(script_name)
-        
-        # 기본 캐시 확인
         cache_key = f"{script_name}_compiled"
+        
+        # 메모리 캐시에 있으면 그냥 사용 (이미 현재 버전)
         if cache_key in self._compiled_scripts:
             return self._compiled_scripts[cache_key]
         
-        # 캐시에 없으면 즉시 컴파일
+        # 확장 기능(파일 캐시) 확인
+        if hasattr(self, 'script_cache'):
+            cached_code = self.script_cache.load_compiled_script(script_name)
+            if cached_code and self._is_current_version(script_name):
+                # 파일 캐시가 현재 버전이면 메모리로 로드
+                self._compiled_scripts[cache_key] = cached_code
+                return cached_code
+        
+        # 현재 버전이 아니거나 캐시에 없으면 새로 컴파일
+        return self._compile_new_version(script_name)
+
+    def _compile_new_version(self, script_name: str):
+        """스크립트를 새 버전으로 컴파일"""
         script_data = self.scripts.get(script_name, {})
         script = script_data.get('script', '')
         if not script:
             return None
         
         try:
-            # 컴파일용 래퍼 스크립트 생성 (동적 kwargs 지원)
+            # 컴파일용 래퍼 스크립트 생성
             wrapped_script = self.make_wrapped_script(script, {}, self._indent_script, for_compiled=True)
             code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
+            
+            # 메모리 캐시 저장
+            cache_key = f"{script_name}_compiled"
             self._compiled_scripts[cache_key] = code_obj
+            
+            # 파일 캐시 저장 (확장 기능이 있는 경우)
+            if hasattr(self, 'script_cache'):
+                script_names = set(self.scripts.keys())
+                self.script_cache.compile_script(script_name, script, script_names)
+            
+            # 현재 버전으로 기록
+            self._update_script_version(script_name)
+            
+            logging.info(f"스크립트 새 버전 컴파일 완료: {script_name}")
             return code_obj
+            
         except Exception as e:
-            logging.error(f"즉시 컴파일 오류 ({script_name}): {e}")
+            logging.error(f"새 버전 컴파일 오류 ({script_name}): {e}")
             return None
 
     def delete_script(self, script_name: str):
@@ -1726,13 +1804,22 @@ class ScriptManager:
         if script_name in self.scripts:
             del self.scripts[script_name]
             # 컴파일된 스크립트 캐시에서도 제거
-            if script_name in self._compiled_scripts:
-                del self._compiled_scripts[script_name]
+            cache_key = f"{script_name}_compiled"
+            if cache_key in self._compiled_scripts:
+                del self._compiled_scripts[cache_key]
             
             # 확장 기능이 있는 경우 컴파일 캐시도 정리
             if hasattr(self, 'script_cache'):
                 self.script_cache.invalidate_script(script_name)
-            
+
+            # 버전 파일도 삭제
+            try:
+                version_file = os.path.join(self.cache_dir, f"{script_name}_version.txt")
+                if os.path.exists(version_file):
+                    os.remove(version_file)
+            except Exception as e:
+                logging.error(f"버전 파일 삭제 오류 ({script_name}): {e}")
+
             return self._save_scripts()
         return False
     
@@ -2055,30 +2142,29 @@ def {script_name}(*args, **kwargs):
     def make_wrapped_script(script, combined_kwargs, indent_func, for_compiled=False):
         """중복되는 wrapped_script 생성 코드 헬퍼 (staticmethod)"""
         if for_compiled:
-            # 컴파일용: kwargs를 동적으로 받도록 생성
+            # 컴파일용: locals()에서 kwargs 직접 참조하여 안전한 실행
             return f"""
-def execute_script(kwargs):
-    # 사용자 예약 변수들을 로컬 변수로 풀어서 직접 접근 가능하게 함
-    code = kwargs.get('code')
-    name = kwargs.get('name', '')
-    qty = kwargs.get('qty', 0)
-    price = kwargs.get('price', 0)
+try:
+    # locals()에서 kwargs 직접 가져오기
+    _kwargs = locals().get('kwargs', {{}})
+    code = _kwargs.get('code')
+    name = _kwargs.get('name', '')
+    qty = _kwargs.get('qty', 0)
+    price = _kwargs.get('price', 0)
     
-    # 사용자 정의 변수들도 로컬 변수로 추출
-    for key, value in kwargs.items():
+    # 사용자 정의 변수들 추출
+    for key, value in _kwargs.items():
         if key not in ['code', 'name', 'qty', 'price']:
             globals()[key] = value
     
     # 사용자 스크립트 실행
-    try:
-{indent_func(script, indent=8)}
-        return result if 'result' in locals() else None
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        raise  # 오류를 전파하여 감지할 수 있도록 함
-
-# 동적으로 kwargs를 받을 수 있도록 함수만 정의
+{indent_func(script, indent=4)}
+except ZeroDivisionError:
+    debug('ZeroDivisionError 발생 - 기본값으로 처리')
+    result = False
+except Exception as e:
+    debug(f'스크립트 실행 오류: {{e}}')
+    result = None
 """
         else:
             # 일반용: kwargs를 직접 하드코딩
@@ -2106,8 +2192,8 @@ def execute_script(kwargs):
 
 # 스크립트 실행
 result = execute_script({repr(combined_kwargs)})
-"""    
-        
+"""
+                                
 class CompiledScriptCache:
         """컴파일된 스크립트 관리 클래스"""
         
