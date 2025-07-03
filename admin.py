@@ -1,7 +1,7 @@
 from public import gm, dc, Work, hoga, load_json, save_json
 from classes import ThreadSafeDict, CounterTicker, ThreadSafeList
 from threads import OrderCommander, EvalStrategy, ChartSetter, ChartUpdater, PriceUpdater
-from chart import ScriptManager, enhance_script_manager
+from chart import ScriptManager
 from tables import tbl
 from dbm_server import db_columns
 from tabulate import tabulate
@@ -64,11 +64,6 @@ class Admin:
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
         gm.scm = ScriptManager()
-        try:
-            result = enhance_script_manager(gm.scm)
-            logging.debug(f'스크립트 확장 결과={result}')
-        except Exception as e:
-            logging.error(f'스크립트 확장 오류: {type(e).__name__} - {e}', exc_info=True)
         gm.prx.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
         gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
         gm.prx.order('api', 'set_log_level', gm.log_level)

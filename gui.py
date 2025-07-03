@@ -62,7 +62,6 @@ class GUI(QMainWindow, form_class):
 
             self.tblScript.setColumnCount(3)
             self.tblScript.setHorizontalHeaderLabels(['스크립트명', '타입', '스크립트', '설명'])
-            self.btnScriptSave.setEnabled(False)
 
             self.cbChartTick.addItems(dc.ticks.get('틱봉',[]))
             self.cbChartCode.addItem('005930 삼성전자')
@@ -166,8 +165,7 @@ class GUI(QMainWindow, form_class):
             self.btnScriptNew.clicked.connect(self.gui_script_new)
             self.btnScriptDel.clicked.connect(self.gui_script_delete)
             self.btnScriptChk.clicked.connect(self.gui_script_check)
-            self.btnScriptSave.clicked.connect(self.gui_script_save)
-            self.txtScript.textChanged.connect(lambda: (setattr(self, 'script_edited', True), self.btnScriptSave.setDisabled(True)))
+            self.txtScript.textChanged.connect(lambda: setattr(self, 'script_edited', True))
 
             # 전략정의 에서 스크립트
             self.btnScriptBuy.clicked.connect(lambda: self.gui_script_get(kind='buy'))
@@ -509,7 +507,7 @@ class GUI(QMainWindow, form_class):
             gm.prx.order('dbm', 'set_log_level', level)
             save_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), gm.json_config)
 
-            logging.info(f'로깅 설정 변경: {key} = {value}')
+            logging.info(f'Main 로그 레벨 설정: {level}')
 
     def gui_gbx_check(self, value, kind):
         if kind == 'buy':
@@ -663,7 +661,6 @@ class GUI(QMainWindow, form_class):
 
     def gui_script_select(self, row_index):
         try:
-            self.btnScriptSave.setEnabled(False)
             name = self.tblScript.item(row_index, 0).text()
 
             script, desc = gm.스크립트.get(key=name, column=['스크립트', '설명'])
@@ -678,7 +675,6 @@ class GUI(QMainWindow, form_class):
             logging.error(f'스크립트 선택 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def gui_script_new(self):
-        self.btnScriptSave.setEnabled(False)
         self.ledScriptName.setText('')
         self.txtScript.setText('')
         self.txtScriptDesc.setText('')
@@ -720,22 +716,27 @@ class GUI(QMainWindow, form_class):
         try:
             script_name = self.ledScriptName.text()
             script = self.txtScript.toPlainText()
+            desc = self.txtScriptDesc.toPlainText() #
             if len(script_name) == 0 or len(script) == 0:
                 QMessageBox.information(self, '알림', '스크립트명과 스크립트를 입력하세요.')
                 return
-            result = gm.scm.run_script(script_name, check_only=True, script_data={'script': script}, kwargs={'code': '005930'})
+            #result = gm.scm.run_script(script_name, check_only=True, script_data={'script': script}, kwargs={'code': '005930'})
+            result = gm.scm.set_script_compiled(script_name, script, desc, kwargs={'code': '005930'})
             for log in result['logs']:
                 self.txtScriptMsg.append(log)
                 self.txtScriptMsg.moveCursor(QTextCursor.End)
             if result['success']:
-                QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n\n반환값={result["result"]}')
-                self.btnScriptSave.setEnabled(True)
+                QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n컴파일 후 저장 되었습니다.\n(걸린시간={result["exec_time"]:.5f}초)\n반환값={result["result"]}')
+                gm.스크립트.set(key=script_name, data={'스크립트': script, '타입': result['type'], '설명': desc})
+                gm.스크립트.update_table_widget(self.tblScript)
+                gm.list스크립트 = gm.스크립트.get(column='스크립트명')
+                self.gui_fx채움_스크립트콤보()
                 #self.txtScriptMsg.clear()
+                self.script_edited = False
             else:
                 QMessageBox.critical(self, '에러', result['error'])
                 #self.txtScriptMsg.append(result['error'])
                 #self.txtScriptMsg.moveCursor(QTextCursor.End)
-                self.btnScriptSave.setEnabled(False)
         except Exception as e:
             logging.error(f'스크립트 확인 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -757,8 +758,6 @@ class GUI(QMainWindow, form_class):
                 logging.error(f'스크립트 저장 오류: script_type={script_type}')
         except Exception as e:
             logging.error(f'스크립트 저장 오류: {type(e).__name__} - {e}', exc_info=True)
-        finally:
-            self.btnScriptSave.setEnabled(False)
     
     # 실행전략 탭 ----------------------------------------------------------------------------------------
     def gui_tabs_init(self):

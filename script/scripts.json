@@ -1,11 +1,11 @@
 {
     "돌파4시간3분5억_매수": {
-        "script": "\n# 전략평가 결과 전달\nresult = not 돌파4시간3분5억_매도()",
+        "script": "# 전략평가 결과 전달\nresult = not 돌파4시간3분5억_매도()",
         "type": "bool",
         "desc": ""
     },
     "돌파4시간3분5억_매도": {
-        "script": "# 다른종목으로 테스트\n#code = '001530'\n\n# 차트정의\n일봉 = ChartManager(code, 'dy')\n분3 = ChartManager(code, 'mi', 3)\n\ndebug(f'code={code} 현재가={일봉.c()}')\n\n# 이동평균정의\n이평5 = 분3.indicator(분3.ma, 분3.c,  5)\n이평10 = 분3.indicator(분3.ma, 분3.c,  10)\n\n# 조건정의(결과 값이 논리값이 되도록 작성)\n상한가 = 일봉.c() >= int(일봉.c(1) * 1.3) \n급락 = 분3.o() > 분3.c() and ((분3.o() - 분3.c()) / 분3.o()) > 0.03 # 봉하나에 3% 급락\n하락전환_3분5이평 = 이평5(1) >= 이평5(2) and 이평5(2) >= 이평5(3) and 이평5() < 이평5(1)\n이평역전_3분5_10이평 = 이평10() > 이평5()\n이평아래 = 이평10() > 분3.c()\n\n# 로깅\nmsg = ''\nif 상한가: msg += '상한가'\nif 급락: msg += '급락'\nif 하락전환_3분5이평: msg += '하락전환_3분5이평'\nif 이평역전_3분5_10이평: msg+= '이평역전_3분5_10이평'\nif 이평아래: msg += '이평아래'\n\ndebug(f\"매도조건 {code} {name} : {msg}\")\n\n# 전략평가 전송\nresult = 상한가 or 하락전환_3분5이평 or 이평역전_3분5_10이평 or 이평아래 or 급락",
+        "script": "# 다른종목으로 테스트\ncode = '031980'\n\n# 차트정의\n일봉 = ChartManager(code, 'dy')\n분3 = ChartManager(code, 'mi', 3)\n\ndebug(f'code={code} 현재가={일봉.c()}')\n\n# 이동평균정의\n이평5 = 분3.indicator(분3.avg, 분3.c,  5)\n이평10 = 분3.indicator(분3.avg, 분3.c,  10)\n\n# 조건정의(결과 값이 논리값이 되도록 작성)\n상한가 = 일봉.c() >= int(일봉.c(1) * 1.3) \ndebug(f'상한가:{상한가} { int(일봉.c(1) * 1.3)}')\n급락 = 분3.o() > 분3.c() and ((분3.o() - 분3.c()) / 분3.o()) > 0.03 # 봉하나에 3% 급락\n하락전환_3분5이평 = 이평5(1) >= 이평5(2) and 이평5(2) >= 이평5(3) and 이평5() < 이평5(1)\n이평역전_3분5_10이평 = 이평10() > 이평5()\n이평아래 = 이평10() > 분3.c()\n\n# 로깅\nmsg = ''\nif 상한가: msg += '상한가'\nif 급락: msg += '급락'\nif 하락전환_3분5이평: msg += '하락전환_3분5이평'\nif 이평역전_3분5_10이평: msg+= '이평역전_3분5_10이평'\nif 이평아래: msg += '이평아래'\n\ninfo(f\"매도조건 code={code} name={name} : {msg}\")\n\n# 전략평가 전송\nresult = 상한가 or 하락전환_3분5이평 or 이평역전_3분5_10이평 or 이평아래 or 급락\ninfo(f'result={result}')",
         "type": "bool",
         "desc": "상한가 이거나\n3분봉 5이평이 하락전환 하거나\n3분봉 5이평이 10이평을 하회 하거나\n현재가가 10이평을 하회 하거나\n3분봉에서 3%이상 급락시 매도"
     },
@@ -20,7 +20,7 @@
         "desc": "indicator와 offset 사용"
     },
     "함수사용": {
-        "script": "dy = CM(code, 'dy')\n\n# all_true 함수 사용\nall_conditions_met = dy.all_true([\n    dy.c() > dy.ma(dy.c, 20),\n    dy.v() > dy.ma(dy.v, 20),\n    dy.rsi() < 70\n])\n\n# any_true 함수 사용\nany_condition_met = dy.any_true([\n    dy.c() > dy.h(1),\n    dy.v() > dy.ma(dy.v, 20) * 2,\n    dy.rsi() < 30\n])\n\n# iif 함수 사용\nresult = dy.iif(dy.c() > dy.ma(dy.c, 20), \"상승 추세\", \"하락 추세\")\n\n",
+        "script": "dy = CM(code, 'dy')\n\n# all_true 함수 사용\nall_conditions_met = dy.all_true([\n    dy.c() > dy.ma(dy.c, 20),\n    dy.v() > dy.ma(dy.v, 20),\n    dy.rsi() < 70\n])\n\n# any_true 함수 사용\nany_condition_met = dy.any_true([\n    dy.c() > dy.h(1),\n    dy.v() > dy.ma(dy.v, 20) * 2,\n    dy.rsi() < 30\n])\n\n# iif 함수 사용\nresult = dy.iif(dy.c() > dy.ma(dy.c, 20), \"상승 추세\", \"하락 추세\")",
         "type": "str",
         "desc": "iif, 사용자 함수"
     },
@@ -35,8 +35,33 @@
         "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
     },
     "인자주는쪽": {
-        "script": "\nresult = 인자받는쪽(short=3, long=20)",
+        "script": "result = 인자받는쪽(short=3, long=20)",
         "type": "bool",
         "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
+    },
+    "test": {
+        "script": "dy = ChartManager(code, 'dy')\n\ndebug(f'{dy.c()}')\n\ndef current_price(a, b):\n    debug(f'{a} {b}')\n    mul = a * b\n    debug(f'{mul}')\n    return mul\n\nresult = current_price(3, 5)\ndebug(f'최종 result: {result}')",
+        "type": "int",
+        "desc": ""
+    },
+    "Class설정": {
+        "script": "class FMA:\n    def __init__(self, code, cycle='dy', tick=1, period=20):\n        self.ct = ChartManager(code, cycle, tick)\n        self.period = period\n        self.ma_values = self.ct.ma(self.ct.c, period)\n    \n    def ma(self, n=0):\n        return self.ct.ma(self.ct.c, period, n)\n\n# 초기 설정\ncycle = kwargs.get('cycle', 'dy')\ntick = kwargs.get('tick', 1)\nperiod = kwargs.get('period', 20) \n\nresult = FMA(code, cycle, tick, period)",
+        "type": "FMA",
+        "desc": "클래스를 리턴하는 스크립트"
+    },
+    "Class쓰기": {
+        "script": "mi3 = FMA(code, 'mi', 3, 5)\n\nresult = mi3.ma(0)",
+        "type": "float",
+        "desc": "클래스를 리턴하는 스크립트를 사용하는 예"
+    },
+    "FMA": {
+        "script": "class MA:\n    def __init__(self, code, cycle='dy', tick=1, period=20):\n        self.ct = ChartManager(code, cycle, tick)\n        self.period = period\n        self.ma_values = self.ct.ma(self.ct.c, period)\n    \n    def ma(self, n=0):\n        return self.ct.ma(self.ct.c, period, n)\n\n# 초기 설정\ncycle = kwargs.get('cycle', 'dy')\ntick = kwargs.get('tick', 1)\nperiod = kwargs.get('period', 20) \n\nresult = MA(code, cycle, tick, period)",
+        "type": "MA",
+        "desc": ""
+    },
+    "def_함수_사용": {
+        "script": "dy = ChartManager(code, 'dy')\n\ndebug(f'{dy.c()}')\n\ndef current_price(a, b):\n    debug(f'{a} {b}')\n    mul = a * b\n    debug(f'{mul}')\n    return mul\n\nresult = current_price(3, 5)\ndebug(f'최종 result: {result}')",
+        "type": "int",
+        "desc": ""
     }
 }

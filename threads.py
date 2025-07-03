@@ -565,18 +565,21 @@ class EvalStrategy(QThread):
                 send_data['msg'] = '매도지정'
 
             if self.매도스크립트적용:
-                if self.cht_dt.is_code_registered(code):
-                    result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
-                    if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
+                result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
+                if result['success']:
                     if self.매도스크립트OR and result.get('result', False): 
                         send_data['msg'] = '전략매도'
                         gm.qwork['msg'].put(Work('주문내용', job={'msg': f'매도편입 : {code} {종목명}'}))
                         gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                         logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
                         return True, send_data, f"전략매도: {code} {종목명}"
+                else:
+                    logging.error(f'스크립트 실행 에러: {result["error"]}')
+                    pass # 스크립트 무시
 
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
-                if self.매도스크립트적용 and self.매도스크립트AND and not result.get('result', False): return False, {}, f"매도스크립트 조건 불충족: {code} {종목명}"
+                if self.매도스크립트적용 and self.매도스크립트AND:
+                    if not result.get('success', False): return False, {}, f"매도스크립트 조건 불충족: {code} {종목명}"
                 send_data['msg'] = '검색매도'
                 return True, send_data,  f"검색매도: {code} {종목명}"
 
