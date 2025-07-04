@@ -193,11 +193,10 @@ class Main:
                     try:
                         if hasattr(obj, 'stop'): obj.stop()
                         close_queue(name)
-                        if hasattr(obj, 'join'): obj.join(timeout=1)
+                        if hasattr(obj, 'join'): obj.join(timeout=3)
                         if obj.is_alive():
-                            #logging.debug(f'{name} Process is_alive={obj.is_alive()}')
                             obj.terminate()
-                            obj.join(timeout=1)
+                            obj.join(timeout=2)
 
                         logging.debug(f'{name} Process 종료.')
                     except Exception as e:

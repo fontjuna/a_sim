@@ -13,7 +13,6 @@ import copy
 import datetime
 import sys
 
-init_logger()
 toast = None #Toast()
 ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
 req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
@@ -557,6 +556,9 @@ class APIServer:
             self.thread_cleanup()
         self.connected = False
         logging.info("APIServer 종료")
+
+    def initialize(self):
+        init_logger()
 
     def api_init(self, sim_no=0, log_level=logging.DEBUG):
         try:

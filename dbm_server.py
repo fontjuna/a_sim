@@ -1,4 +1,4 @@
-from public import dc, get_path, profile_operation
+from public import dc, get_path, profile_operation, init_logger
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 import logging
@@ -87,6 +87,7 @@ class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
     호가구분 = FieldsAttributes(name='호가구분', type='TEXT', not_null=True, default="''")
     화면번호 = FieldsAttributes(name='화면번호', type='TEXT', not_null=True, default="''")
     일자 = FieldsAttributes(name='일자', type='TEXT', not_null=True, default="''")
+    시간 = FieldsAttributes(name='시간', type='TEXT', not_null=True, default="''")
     시가 = FieldsAttributes(name='시가', type='INTEGER', not_null=True, default=0)
     고가 = FieldsAttributes(name='고가', type='INTEGER', not_null=True, default=0)
     저가 = FieldsAttributes(name='저가', type='INTEGER', not_null=True, default=0)
@@ -123,8 +124,8 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     }
     
     SIM_TABLE_NAME = 'sim_tickers'
-    SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 일자 DESC LIMIT 1"
-    SIM_FIELDS = [f.id, f.일자, f.종목코드, f.종목명, f.전략명칭, f.매수전략]
+    SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 매수일시 DESC LIMIT 1"
+    SIM_FIELDS = [f.id, f.매수일시, f.종목코드, f.종목명, f.전략명칭, f.매수전략]
     SIM_COLUMNS = [col.name for col in SIM_FIELDS]
     SIM_INDEXES = {
         'idx_code': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_code ON {SIM_TABLE_NAME}(종목코드)"
@@ -162,11 +163,19 @@ class DBMServer:
         self.thread_local = None
         
     def initialize(self):
+        init_logger()
         self.thread_local = threading.local()
         self.db_initialize()
 
     def cleanup(self):
         try:
+            db_tables = [db_columns.TRD_TABLE_NAME, db_columns.CONC_TABLE_NAME]
+            chart_tables = [db_columns.MIN_TABLE_NAME, db_columns.DAY_TABLE_NAME]
+            for table in db_tables:
+                self.cleanup_old_data(db='db', table=table)
+            for table in chart_tables:
+                self.cleanup_old_data(db='chart', table=table)
+
             for db_type in ['chart', 'db']:
                 if hasattr(self.thread_local, db_type):
                     conn = getattr(self.thread_local, db_type)
@@ -296,20 +305,20 @@ class DBMServer:
             field_definitions.append(f"PRIMARY KEY ({', '.join(pk_columns)})")
         return f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(field_definitions)});"
 
-    def cleanup_old_data(self):
+    def cleanup_old_data(self, db='db', table=db_columns.TRD_TABLE_NAME):
         """오래된 데이터 정리"""
         try:
             three_months_ago = datetime.now() - timedelta(days=90)
             date_str = three_months_ago.strftime('%Y-%m-%d')
             
-            sql = f"DELETE FROM {db_columns.MON_TABLE_NAME} WHERE DATE(처리일시) < ?"
-            self.execute_query(sql, db='db', params=(date_str,))
+            sql = f"DELETE FROM {table} WHERE DATE(처리일시) < ?"
+            self.execute_query(sql, db=db, params=(date_str,))
             
             cursor = self.get_cursor('db')
             deleted_rows = cursor.rowcount
-            logging.info(f"monitor 테이블에서 {date_str} 이전 데이터 {deleted_rows}건 삭제 완료")
+            logging.info(f"{table} 테이블에서 {date_str} 이전 데이터 {deleted_rows}건 삭제 완료")
             
-            self.execute_query("VACUUM", db='db')
+            self.execute_query("VACUUM", db=db)
             
         except Exception as e:
             logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)
@@ -436,7 +445,6 @@ class DBMServer:
     def upsert_chart(self, dict_data, cycle, tick=1):
         """차트 데이터 저장"""
         table = db_columns.MIN_TABLE_NAME if cycle in ['mi', 'tk'] else db_columns.DAY_TABLE_NAME
-        #logging.debug(f'upsert_chart: {cycle}, {tick}, len={len(dict_data)}')
         dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
         self.table_upsert('chart', table, dict_data)
 

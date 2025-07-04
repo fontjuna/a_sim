@@ -734,11 +734,24 @@ class ChartManager:
     def today(self) -> str:
         """오늘 날짜 반환"""
         return datetime.now().strftime('%Y%m%d')
-
-# 계산 함수들
-    def ma(self, n: int = 20, m: int = 0) -> float:
-        """종가 이동평균 반환"""
-        return self.avg(self.c, n, m)
+    # 계산 함수들
+    def get_ma(self, period: int = 20, count: int = 1) -> list:
+        values = [self.c(i) for i in range(count + period - 1)]
+        if len(values) < count + period - 1:
+            return []
+        ma_list = []
+        for i in range(count):
+            ma_list.append(sum(values[i:i+period]) / period)
+        return ma_list
+    
+    def ma(self, period: int = 20, before: int = 0) -> float:
+        """
+        종가 이동평균 반환
+        period: 이동평균 기간
+        before: 이전 봉
+        return: 이동평균
+        """
+        return self.avg(self.c, period, before)
     
     def avg(self, a, n: int, m: int = 0) -> float:
         """단순이동평균 계산"""
@@ -789,7 +802,7 @@ class ChartManager:
         if not values: return 0.0
         return sum(values)
 
-# 신호 함수들
+    # 신호 함수들
     def cross_down(self, a, b) -> bool:
         """a가 b를 하향돌파하는지 확인"""
         if callable(a) and callable(b):
@@ -867,7 +880,7 @@ class ChartManager:
         
         return 0.0
     
-# 수학 함수들
+    # 수학 함수들
     def min_value(self, a, b):
         """두 값 중 최소값 반환"""
         return min(a, b)
@@ -927,7 +940,7 @@ class ChartManager:
         # 함수 반환
         return callable_indicator
     
-# 보조지표 계산 함수들
+    # 보조지표 계산 함수들
     def rsi(self, period: int = 14, m: int = 0) -> float:
         """상대강도지수(RSI) 계산"""
         values = self._get_values(self.c, period + 1, m)
@@ -1036,7 +1049,7 @@ class ChartManager:
             return 0
         return sum(tr_values) / len(tr_values)
     
-# 캔들패턴 인식 함수들
+    # 캔들패턴 인식 함수들
     def is_doji(self, n: int = 0, threshold: float = 0.1) -> bool:
         """도지 캔들 확인 (시가와 종가의 차이가 매우 작은 캔들)"""
         o = self.o(n)
@@ -1105,7 +1118,7 @@ class ChartManager:
                     curr_o >= prev_c and   # 현재 시가가 이전 종가보다 높거나 같음
                     curr_c <= prev_o)      # 현재 종가가 이전 시가보다 낮거나 같음
         
-# 추세 분석 함수들
+    # 추세 분석 함수들
     def is_uptrend(self, period: int = 14, m: int = 0) -> bool:
         """상승 추세 여부 확인 (단순하게 종가가 이동평균보다 높은지 확인)"""
         current_close = self.c(m)
@@ -1563,7 +1576,7 @@ class ScriptManager:
         # save=False면 검사까지만 하고 반환
         if not save:
             result_dict['success'] = True
-            result_dict['logs'].append(f'INFO: 스크립트 검사 완료: {script_name} (타입: {result_dict["type"]})')
+            #result_dict['logs'].append(f'INFO: 스크립트 검사 완료: {script_name} (타입: {result_dict["type"]})')
             return result_dict
         
         # save=True인 경우 저장 및 컴파일 진행
@@ -1621,7 +1634,7 @@ class ScriptManager:
 
         # 성공
         result_dict['success'] = True
-        result_dict['logs'].append(f'INFO: 스크립트 저장 완료: {script_name} (타입: {result_dict["type"]})')
+        #result_dict['logs'].append(f'INFO: 스크립트 저장 완료: {script_name} (타입: {result_dict["type"]})')
         
         return result_dict
 
@@ -1994,21 +2007,9 @@ class ScriptManager:
                     logging.warning(f"모듈 로드 실패: {module_name}")
             
             # 로그 수집 래퍼 함수들
-            def capture_debug(msg, *args, **kwargs):
-                script_logs.append(f"{current_script_name}.DEBUG: {msg}")
+            def echo(msg):
+                script_logs.append(f"{current_script_name}: {msg}")
             
-            def capture_info(msg, *args, **kwargs):
-                script_logs.append(f"{current_script_name}.INFO: {msg}")
-            
-            def capture_warning(msg, *args, **kwargs):
-                script_logs.append(f"{current_script_name}.WARNING: {msg}")
-            
-            def capture_error(msg, *args, **kwargs):
-                script_logs.append(f"{current_script_name}.ERROR: {msg}")
-            
-            def capture_critical(msg, *args, **kwargs):
-                script_logs.append(f"{current_script_name}.CRITICAL: {msg}")
-
             def is_args(key, default_value):
                 """스크립트 내에서 인자 확인 함수"""
                 # 글로벌에서 직접 kwargs 참조 (성능 최적화)
@@ -2025,12 +2026,8 @@ class ScriptManager:
                 # 허용된 모듈들
                 **modules,
                 
-                # 로그 수집 함수들
-                'debug': capture_debug,
-                'info': capture_info,
-                'warning': capture_warning,
-                'error': capture_error,
-                'critical': capture_critical,
+                # 로그 수집 메아리 함수
+                'echo': echo,
                 
                 # 차트 매니저 및 단축 변수들
                 'ChartManager': ChartManager,
@@ -2069,7 +2066,7 @@ def {script_name}(*args, **kwargs):
             logging.error(f"실행 환경 준비 오류: {e}")
             # 기본 환경 반환
             return {'ChartManager': ChartManager}, []
-                        
+        
     def _script_caller(self, script_name, args=None, kwargs=None):
         """스크립트 내에서 다른 스크립트를 호출하기 위한 함수 (직접 인자 전달 방식)"""
         # 컨텍스트의 기존 kwargs 가져오기 (프레임 검사)
