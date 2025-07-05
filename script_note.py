@@ -1,5 +1,5 @@
 from aaa.chart import ChartManager
-from aaa.log import info, debug
+from aaa.log import echo, is_args
 
 code = '005930'
 name = '삼성전자'
@@ -8,47 +8,47 @@ qty = 100
 
 # =============================================================================================
 
-# 다른종목으로 테스트
-#code = '389140'
+# 지정 종목
+code = '361610'
 
-# 차트정의
-일봉 = ChartManager(code, 'dy')
-분3 = ChartManager(code, 'mi', 3)
+# 차트 매니저 생성 (3분봉)
+cm = ChartManager(code, 'mi', 3)
 
-debug(f'code={code} 현재가={일봉.c()}')
+# 이전봉수
+pre_bars = is_args('pre_bars', 65)
 
-# 이동평균정의
-이평5 = 분3.indicator(분3.avg, 분3.c,  5)
-이평10 = 분3.indicator(분3.avg, 분3.c,  10)
+# 현재봉 날짜 추출
+current_time = cm.time(1)
+echo(f'current_time={current_time}')
+if len(current_time) < 8:
+    result = -1
+else:
+    current_date = current_time[:8]  # YYYYMMDD
+    target_time = current_date + "090000"  # 9시 봉
+    
+    # 9시 봉 인덱스 찾기
+    nine_oclock_index = -1
+    data_length = len(cm._get_data())
+    
+    for i in range(data_length):
+        time_str = cm.time(i)
+        if len(time_str) >= 12 and time_str[:12] == target_time[:12]:
+            nine_oclock_index = i
+            break
+    echo(f'nine_oclock_index={nine_oclock_index}')
+    result = -1  # 기본값: 찾지 못함
+    
+    if nine_oclock_index != -1:
+        # 9시 봉부터 현재봉(0)까지 역순으로 검사
+        for check_idx in range(nine_oclock_index, -1, -1):
+            current_close = cm.c(check_idx)
+            
+            # 자신을 제외 한 이전 129봉 중 최고가 구하기
+            highest_in_pre_bars = cm.highest(cm.h, pre_bars, check_idx + 1)
+            
+            # 현재 종가가 이전 129봉 최고가보다 높으면 해당 인덱스 반환
+            if current_close > highest_in_pre_bars:
+                result = check_idx
+                break
 
-# 미리 계산
-c, c1, c_limit = 일봉.c(), 일봉.c(1), int(일봉.c(1) * 1.3)
-v1, v2, v5, v10 = 이평5(1), 이평5(2), 이평5(), 이평10()
-mo, mc, m_down_rate = 분3.o(), 분3.c(), ((분3.o() - 분3.c()) / 분3.o())
-
-# 조건정의(결과 값이 논리값이 되도록 작성)
-상한가 = c >= c_limit 
-급락 = mo > mc and m_down_rate > 0.03 # 봉하나에 3% 급락
-하락전환_3분5이평 = v2 >= v1 and v1 >= v5 and v5 < v1
-이평역전_3분5_10이평 = v10 > v5
-이평아래 = v10 > mc
-
-# 로깅
-msg = ''
-if 상한가: 
-    msg += f'상한가(전일{c1}, 현재가{c}, 상한가{c_limit})'
-elif 급락: 
-    msg += f'급락(시가:{mo}, 현재가:{mc}, 하락률:{m_down_rate})'
-elif 하락전환_3분5이평: 
-    msg += f'하락전환_3분5이평(2:{v2}, 1:{v1}, 0:{v5})'
-elif 이평역전_3분5_10이평: 
-    msg+= f'이평역전_3분5_10이평(5:{v5}, 10:{v10})'
-elif 이평아래: 
-    msg += f'이평아래(이평:{v10}, 현재가:{c})'
-
-if not msg: msg = " 없음"
-info(f"매도조건{msg} : code={code} name={name}")
-
-# 전략평가 전송
-result = 상한가 or 하락전환_3분5이평 or 이평역전_3분5_10이평 or 이평아래 or 급락
-info(f'result={result}\n')
+echo(f'result = {result}')

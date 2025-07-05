@@ -13,6 +13,7 @@ def build():
         '--add-data=../aaa/resources/aaa.ui;resources',    # --add-data=소스파일경로;대상폴더경로
         '--add-data=../aaa/resources/aaa.ico;resources',
         '--add-data=../aaa/images/*;images',               # 이미지 폴더
+        '--add-data=../aaa/script;script',                 # script 폴더 전체 포함
         '--icon=../aaa/resources/aaa.ico',                 # 아이콘 파일
         '--hidden-import=PyQt5',
         '--hidden-import=PyQt5.QtCore',

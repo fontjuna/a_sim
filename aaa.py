@@ -98,10 +98,15 @@ class Main:
         try:
             if gm.sim_no != 1:
                 logging.debug('prepare : 로그인 대기 시작')
+                start_time = time.time()
                 while True:
                     connected = gm.prx.answer('api', 'GetConnectState') == 1
                     if connected: break
-                    #logging.debug('prepare : 로그인 대기 중')
+                    if time.time() - start_time > 10:
+                        gm.sim_no = 1
+                        gm.prx.order('api', 'api_init', gm.sim_no)
+                        logging.error('prepare : 로그인 대기 시간 초과, 시뮬레이션 1 모드로 변경')
+                        break
                     time.sleep(0.5)
             gm.prx.order('api', 'set_tickers')
             gm.admin.init()
@@ -193,12 +198,13 @@ class Main:
                     try:
                         if hasattr(obj, 'stop'): obj.stop()
                         close_queue(name)
-                        if hasattr(obj, 'join'): obj.join(timeout=3)
+                        if hasattr(obj, 'join'): obj.join(timeout=2)
                         if obj.is_alive():
                             obj.terminate()
-                            obj.join(timeout=2)
-
-                        logging.debug(f'{name} Process 종료.')
+                            obj.join(timeout=1)
+                            logging.debug(f'{name} Process 강제 종료.')
+                        else:
+                            logging.debug(f'{name} Process 종료.')
                     except Exception as e:
                         logging.debug(f'{name} Process 종료 실패: {e}')
 

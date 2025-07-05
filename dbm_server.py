@@ -179,16 +179,7 @@ class DBMServer:
             for db_type in ['chart', 'db']:
                 if hasattr(self.thread_local, db_type):
                     conn = getattr(self.thread_local, db_type)
-                    try:
-                        conn.commit()
-                    except Exception as e:
-                        logging.warning(f"{db_type} 커밋 실패, 롤백 시도: {e}")
-                        try:
-                            conn.rollback()
-                        except Exception as e2:
-                            logging.error(f"{db_type} 롤백 실패: {e2}")
-                    finally:
-                        conn.close()
+                    conn.close()
 
             self.thread_local = None
             logging.info(f"DBMServer 종료")
@@ -318,7 +309,8 @@ class DBMServer:
             deleted_rows = cursor.rowcount
             logging.info(f"{table} 테이블에서 {date_str} 이전 데이터 {deleted_rows}건 삭제 완료")
             
-            self.execute_query("VACUUM", db=db)
+            # 디스크 정리는 수동으로 하는것이 좋다
+            #self.execute_query("VACUUM", db=db)
             
         except Exception as e:
             logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)

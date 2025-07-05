@@ -590,17 +590,18 @@ class APIServer:
             if codes:
                 selected_codes = random.sample(codes, 30)
                 logging.debug(f'len={len(selected_codes)} codes={selected_codes}')
+                sim.ticker = {}
+                for code in selected_codes:
+                    sim.ticker[code] = {
+                    '종목명': self.GetMasterCodeName(code),
+                    '전일가': self.GetMasterLastPrice(code),
+                    }
+                sim._initialize_data()
             else:
                 logging.warning('GetCodeListByMarket 결과 없음 *************')
-                raise Exception('GetCodeListByMarket("NXT") 결과 없음')
-
-            sim.ticker = {}
-            for code in selected_codes:
-                sim.ticker[code] = {
-                '종목명': self.GetMasterCodeName(code),
-                '전일가': self.GetMasterLastPrice(code),
-                }
-            sim._initialize_data()
+                logging.warning('시뮬레이션 모드 1로 변경 *************')
+                self.sim_no = 1
+                sim.ticker = dc.sim.ticker
         elif self.sim_no == 3:  # 키움서버 사용, 차트 데이터 이용
             sim.chart_data = self.get_simulation_data()
             sim.extract_ticker_info()
