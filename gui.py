@@ -705,7 +705,7 @@ class GUI(QMainWindow, form_class):
                     self.ledScriptName.setText('')
                     self.txtScript.setText('')
                     self.txtScriptDesc.setText('')
-                    gm.scm.delete_script_compiled(name)
+                    gm.scm.delete_script(name)
                     #self.txtScriptMsg.clear()
                     gm.list스크립트 = gm.스크립트.get(column='스크립트명')
                     self.gui_fx채움_스크립트콤보()

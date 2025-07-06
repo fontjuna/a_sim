@@ -102,7 +102,7 @@ class Main:
                 while True:
                     connected = gm.prx.answer('api', 'GetConnectState') == 1
                     if connected: break
-                    if time.time() - start_time > 10:
+                    if time.time() - start_time > 20:
                         gm.sim_no = 1
                         gm.prx.order('api', 'api_init', gm.sim_no)
                         logging.error('prepare : 로그인 대기 시간 초과, 시뮬레이션 1 모드로 변경')

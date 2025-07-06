@@ -496,13 +496,14 @@ class ChartData:
         return f"{datetime_str[:8]}{tick_start//60:02d}{tick_start%60:02d}00"
     
     def _aggregate_minute_data(self, minute_data, tick):
-        """1분봉 데이터를 특정 tick으로 집계 (기존 로직 유지)"""
+        """1분봉 데이터를 특정 tick으로 집계 (종가 수정 버전)"""
         if not minute_data:
             return []
         
         grouped_data = {}
         
-        for candle in minute_data:
+        # 역순으로 처리 (과거 → 최신 순서)
+        for candle in reversed(minute_data):
             dt_str = candle['체결시간']
             if len(dt_str) < 12:
                 continue
@@ -528,7 +529,7 @@ class ChartData:
                 }
             else:
                 group = grouped_data[group_key]
-                group['현재가'] = candle['현재가']
+                group['현재가'] = candle['현재가']  # 최신 봉의 종가로 업데이트
                 group['고가'] = max(group['고가'], candle['고가'])
                 group['저가'] = min(group['저가'], candle['저가'])
                 group['거래량'] += candle['거래량']
@@ -539,13 +540,14 @@ class ChartData:
         return result
     
     def _aggregate_day_data(self, day_data, period_type):
-        """일봉 데이터를 주봉/월봉으로 집계 (각 일봉 거래량 합계)"""
+        """일봉 데이터를 주봉/월봉으로 집계 (종가 수정 버전)"""
         if not day_data:
             return []
         
         grouped_data = {}
         
-        for candle in day_data:
+        # 역순으로 처리 (과거 → 최신 순서)
+        for candle in reversed(day_data):
             date_str = candle['일자']
             if len(date_str) != 8:
                 continue
@@ -567,22 +569,25 @@ class ChartData:
                 continue
             
             if group_key not in grouped_data:
+                # 첫 번째(가장 오래된) 일봉으로 초기화
                 grouped_data[group_key] = {
                     '종목코드': candle['종목코드'],
                     '일자': group_key,
-                    '시가': candle['시가'],
+                    '시가': candle['시가'],      # 기간 첫 일봉의 시가
                     '고가': candle['고가'],
                     '저가': candle['저가'],
-                    '현재가': candle['현재가'],
-                    '거래량': candle['거래량'],           # 첫 번째 값으로 초기화
-                    '거래대금': candle.get('거래대금', 0)  # 첫 번째 값으로 초기화
+                    '현재가': candle['현재가'],  # 첫 일봉의 종가로 시작
+                    '거래량': candle['거래량'],
+                    '거래대금': candle.get('거래대금', 0)
                 }
             else:
                 group = grouped_data[group_key]
+                # 최신 일봉의 종가로 업데이트
                 group['현재가'] = candle['현재가']
+                # 고가/저가는 최대/최소값 유지
                 group['고가'] = max(group['고가'], candle['고가'])
                 group['저가'] = min(group['저가'], candle['저가'])
-                # 각 일봉의 거래량/거래대금 합계
+                # 거래량/거래대금은 합계
                 group['거래량'] += candle['거래량']
                 group['거래대금'] += candle.get('거래대금', 0)
         
@@ -591,608 +596,272 @@ class ChartData:
         return result
     
 class ChartManager:
+    """고성능 차트 매니저 - 속도 최적화 버전"""
+    
     def __init__(self, code, cycle='mi', tick=3):
         self.cht_dt = ChartData()
-        self.cycle = cycle  # 'mo', 'wk', 'dy', 'mi' 중 하나
-        self.tick = tick    # 분봉일 경우 주기
-        self._data_cache = {}  # 종목별 데이터 캐시 {code: data}
-        self.code = code    # 종목코드 (없으면 컨텍스트에서 가져옴)
-
-    def _get_data(self) -> list:
-        """버전 기반 캐싱으로 최신 데이터 보장"""
-        # 현재 데이터 버전 확인
+        self.cycle = cycle
+        self.tick = tick
+        self.code = code
+        
+        # 성능 최적화를 위한 캐시
+        self._data_cache = None
+        self._cache_version = -1
+        self._raw_data = None  # 원본 데이터 직접 참조
+        
+    def _ensure_data_cache(self):
+        """데이터 캐시 확인 및 업데이트 (최소한의 체크)"""
         current_version = self.cht_dt._data_versions.get(self.code, 0)
-        cache_key = f"{self.code}_{self.cycle}_{self.tick}"
         
-        # 캐시 버전 관리 초기화
-        if not hasattr(self, '_cache_versions'):
-            self._cache_versions = {}
-        
-        # 캐시가 유효한지 확인 (버전 체크)
-        if (cache_key in self._data_cache and 
-            self._cache_versions.get(cache_key) == current_version):
-            return self._data_cache[cache_key]
-        
-        # 캐시 무효화 후 새 데이터 로드
-        new_data = self._load_chart_data(self.code)
-        self._data_cache[cache_key] = new_data
-        self._cache_versions[cache_key] = current_version
-        
-        return new_data
-    
-    def _load_chart_data(self, code: str) -> list:
-        """차트 데이터 로드 및 변환"""
-        data = self.cht_dt.get_chart_data(code, self.cycle, self.tick)
-        
-        # 데이터 변환 (API 형식 -> 내부 형식)
-        result = []
-        if self.cycle == 'mi':
-            for item in data:
-                result.append({
-                    'time': item['체결시간'],
-                    'open': item['시가'],
-                    'high': item['고가'],
-                    'low': item['저가'],
-                    'close': item['현재가'],
-                    'volume': item['거래량'],
-                    'amount': item.get('거래대금', 0)
-                })
-        else:
-            for item in data:
-                result.append({
-                    'date': item['일자'],
-                    'open': item['시가'],
-                    'high': item['고가'],
-                    'low': item['저가'],
-                    'close': item['현재가'],
-                    'volume': item['거래량'],
-                    'amount': item['거래대금']
-                })
-        return result
-    
-    def _get_value(self, n: int, key: str, default=0):
-        """지정된 위치(n)의 데이터 값 가져오기"""
-        data = self._get_data()
-        
-        # n이 데이터 범위를 벗어나면 기본값 반환
-        if not data or n >= len(data):
-            return default
-        
-        item = data[n]
-        
-        # 키에 따라 적절한 값 반환
-        if key == 'open':
-            return item['open']
-        elif key == 'high':
-            return item['high']
-        elif key == 'low':
-            return item['low']
-        elif key == 'close':
-            return item['close']
-        elif key == 'volume':
-            return item['volume']
-        elif key == 'amount':
-            return item.get('amount', 0)
-        elif key == 'time' and self.cycle == 'mi':
-            return item.get('time', '')
-        elif key == 'date' and self.cycle != 'mi':
-            return item.get('date', '')
-        
-        return default
-
-    def _get_values(self, func, n: int, m: int = 0) -> list:
-            """지정된 함수를 통해 n개의 값을 배열로 가져오기"""
-            values = []
-            for i in range(m, m + n):
-                if callable(func):
-                    values.append(func(i))
+        if self._cache_version != current_version or self._raw_data is None:
+            # 원본 데이터 직접 참조 (복사 없음)
+            if self.cycle == 'mi':
+                cycle_key = f'mi{self.tick}'
+                if cycle_key == 'mi1':
+                    # 1분봉은 저장된 데이터 직접 사용
+                    self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get('mi1')
                 else:
-                    # func가 함수가 아니면 그대로 사용 (상수값)
-                    values.append(func)
-            return values
-        
-    def clear_cache(self, code=None):
-        """특정 코드 또는 전체 캐시 초기화"""
-        # if code is None:
-        #     code = self._get_code()
+                    # ChartData의 집계 결과 직접 사용
+                    self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(cycle_key, [])
+            else:
+                # 일/주/월봉
+                self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(self.cycle, [])
             
-        if code in self._data_cache:
-            del self._data_cache[code]
-        else:
-            self._data_cache.clear()
+            self._cache_version = current_version
     
-    # 기본 값 반환 함수들
+
+    
+    # 고속 기본값 반환 함수들 (직접 접근)
     def c(self, n: int = 0) -> float:
-        """종가 반환"""
-        return self._get_value(n, 'close')
+        """종가 반환 - 고속 버전"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= len(self._raw_data):
+            return 0.0
+        
+        return self._raw_data[n].get('현재가', 0)
     
     def o(self, n: int = 0) -> float:
-        """시가 반환"""
-        return self._get_value(n, 'open')
+        """시가 반환 - 고속 버전"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= len(self._raw_data):
+            return 0.0
+        
+        return self._raw_data[n].get('시가', 0)
     
     def h(self, n: int = 0) -> float:
-        """고가 반환"""
-        return self._get_value(n, 'high')
+        """고가 반환 - 고속 버전"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= len(self._raw_data):
+            return 0.0
+        
+        return self._raw_data[n].get('고가', 0)
     
     def l(self, n: int = 0) -> float:
-        """저가 반환"""
-        return self._get_value(n, 'low')
+        """저가 반환 - 고속 버전"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= len(self._raw_data):
+            return 0.0
+        
+        return self._raw_data[n].get('저가', 0)
     
     def v(self, n: int = 0) -> int:
-        """거래량 반환"""
-        return int(self._get_value(n, 'volume', 0))
+        """거래량 반환 - 고속 버전"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= len(self._raw_data):
+            return 0
+        
+        return int(self._raw_data[n].get('거래량', 0))
     
     def a(self, n: int = 0) -> float:
-        """거래금액 반환"""
-        return self._get_value(n, 'amount')
+        """거래금액 반환 - 고속 버전"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= len(self._raw_data):
+            return 0.0
+        
+        return self._raw_data[n].get('거래대금', 0)
     
     def time(self, n: int = 0) -> str:
-        """시간 반환"""
-        if self.cycle != 'mi': return ''
-        return self._get_value(n, 'time', '')
+        """시간 반환 - 고속 버전"""
+        if self.cycle != 'mi':
+            return ''
+        
+        self._ensure_data_cache()
+        if not self._raw_data or n >= len(self._raw_data):
+            return ''
+        
+        return self._raw_data[n].get('체결시간', '')
     
     def today(self) -> str:
         """오늘 날짜 반환"""
         return datetime.now().strftime('%Y%m%d')
-    # 계산 함수들
-    def get_ma(self, period: int = 20, count: int = 1) -> list:
-        values = [self.c(i) for i in range(count + period - 1)]
-        if len(values) < count + period - 1:
-            return []
-        ma_list = []
-        for i in range(count):
-            ma_list.append(sum(values[i:i+period]) / period)
-        return ma_list
     
+    # 고속 계산 함수들
     def ma(self, period: int = 20, before: int = 0) -> float:
-        """
-        종가 이동평균 반환
-        period: 이동평균 기간
-        before: 이전 봉
-        return: 이동평균
-        """
-        return self.avg(self.c, period, before)
-    
-    def avg(self, a, n: int, m: int = 0) -> float:
-        """단순이동평균 계산"""
-        values = self._get_values(a, n, m)
-        if not values: return 0.0
-        return sum(values) / len(values)
-    
-    def eavg(self, a, n: int, m: int = 0) -> float:
-        """지수이동평균 계산"""
-        values = self._get_values(a, n, m)
-        if not values: return 0.0
+        """이동평균 - 고속 버전"""
+        self._ensure_data_cache()
+        if not self._raw_data or before + period > len(self._raw_data):
+            return 0.0
         
-        alpha = 2 / (n + 1)
-        result = values[0]
-        for i in range(1, len(values)):
-            result = alpha * values[i] + (1 - alpha) * result
+        total = 0.0
+        
+        for i in range(before, before + period):
+            total += self._raw_data[i].get('현재가', 0)
+        
+        return total / period
+    
+    def avg(self, value_func, n: int, m: int = 0) -> float:
+        """단순이동평균 - 고속 버전"""
+        if not callable(value_func):
+            return float(value_func)
+        
+        total = 0.0
+        for i in range(m, m + n):
+            total += value_func(i)
+        
+        return total / n if n > 0 else 0.0
+    
+    def highest(self, value_func, n: int, m: int = 0) -> float:
+        """최고값 - 고속 버전"""
+        if not callable(value_func):
+            return float(value_func)
+        
+        max_val = float('-inf')
+        for i in range(m, m + n):
+            val = value_func(i)
+            if val > max_val:
+                max_val = val
+        
+        return max_val if max_val != float('-inf') else 0.0
+    
+    def lowest(self, value_func, n: int, m: int = 0) -> float:
+        """최저값 - 고속 버전"""
+        if not callable(value_func):
+            return float(value_func)
+        
+        min_val = float('inf')
+        for i in range(m, m + n):
+            val = value_func(i)
+            if val < min_val:
+                min_val = val
+        
+        return min_val if min_val != float('inf') else 0.0
+    
+    def sum(self, value_func, n: int, m: int = 0) -> float:
+        """합계 - 고속 버전"""
+        if not callable(value_func):
+            return float(value_func) * n
+        
+        total = 0.0
+        for i in range(m, m + n):
+            total += value_func(i)
+        
+        return total
+    
+    # 원본 데이터 직접 접근 함수
+    def get_raw_data(self):
+        """원본 데이터 직접 반환 (최고 성능)"""
+        self._ensure_data_cache()
+        return self._raw_data
+    
+    def get_data_length(self) -> int:
+        """데이터 길이 반환"""
+        self._ensure_data_cache()
+        return len(self._raw_data) if self._raw_data else 0
+    
+    # 호환성을 위한 기존 함수들
+    def eavg(self, value_func, n: int, m: int = 0) -> float:
+        """지수이동평균"""
+        if not callable(value_func):
+            return float(value_func)
+        
+        if n <= 0:
+            return 0.0
+        
+        alpha = 2.0 / (n + 1)
+        result = value_func(m + n - 1)
+        
+        for i in range(m + n - 2, m - 1, -1):
+            result = alpha * value_func(i) + (1 - alpha) * result
+        
         return result
     
-    def wavg(self, a, n: int, m: int = 0) -> float:
-        """가중이동평균 계산"""
-        values = self._get_values(a, n, m)
-        if not values: return 0.0
+    def stdev(self, value_func, n: int, m: int = 0) -> float:
+        """표준편차"""
+        if not callable(value_func) or n <= 1:
+            return 0.0
         
-        weights = [i+1 for i in range(len(values))]
-        return sum(v * w for v, w in zip(values, weights)) / sum(weights)
+        # 평균 계산
+        total = 0.0
+        for i in range(m, m + n):
+            total += value_func(i)
+        mean = total / n
+        
+        # 분산 계산
+        variance = 0.0
+        for i in range(m, m + n):
+            diff = value_func(i) - mean
+            variance += diff * diff
+        variance /= n
+        
+        return variance ** 0.5
     
-    def highest(self, a, n: int, m: int = 0) -> float:
-        """가장 높은 값 계산"""
-        values = self._get_values(a, n, m)
-        if not values: return 0.0
-        return max(values)
-    
-    def lowest(self, a, n: int, m: int = 0) -> float:
-        """가장 낮은 값 계산"""
-        values = self._get_values(a, n, m)
-        if not values: return 0.0
-        return min(values)
-    
-    def stdev(self, a, n: int, m: int = 0) -> float:
-        """표준편차 계산"""
-        values = self._get_values(a, n, m)
-        if not values or len(values) < 2: return 0.0
-        return np.std(values)
-    
-    def sum(self, a, n: int, m: int = 0) -> float:
-        """합계 계산"""
-        values = self._get_values(a, n, m)
-        if not values: return 0.0
-        return sum(values)
-
     # 신호 함수들
-    def cross_down(self, a, b) -> bool:
-        """a가 b를 하향돌파하는지 확인"""
-        if callable(a) and callable(b):
-            a_prev, a_curr = a(1), a(0)
-            b_prev, b_curr = b(1), b(0)
-            return a_prev >= b_prev and a_curr < b_curr
-        return False
-    
-    def cross_up(self, a, b) -> bool:
-        """a가 b를 상향돌파하는지 확인"""
-        if callable(a) and callable(b):
-            a_prev, a_curr = a(1), a(0)
-            b_prev, b_curr = b(1), b(0)
-            return a_prev <= b_prev and a_curr > b_curr
-        return False
-    
-    def bars_since(self, condition) -> int:
-        """조건이 만족된 이후 지나간 봉 개수"""
-        count = 0
-        for i in range(len(self._get_data())):
-            if condition(i):
-                return count
-            count += 1
-        return count
-    
-    def highest_since(self, nth: int, condition, data_func) -> float:
-        """조건이 nth번째 만족된 이후 data_func의 최고값"""
-        condition_met = 0
-        highest_val = float('-inf')
+    def cross_up(self, a_func, b_func) -> bool:
+        """상향돌파"""
+        if not (callable(a_func) and callable(b_func)):
+            return False
         
-        for i in range(len(self._get_data())):
-            if condition(i):
-                condition_met += 1
-                if condition_met == nth:
-                    break
-        
-        if condition_met < nth:
-            return 0.0
-        
-        for j in range(i, -1, -1):
-            val = data_func(j)
-            highest_val = max(highest_val, val)
-        
-        return highest_val
+        a_prev, a_curr = a_func(1), a_func(0)
+        b_prev, b_curr = b_func(1), b_func(0)
+        return a_prev <= b_prev and a_curr > b_curr
     
-    def lowest_since(self, nth: int, condition, data_func) -> float:
-        """조건이 nth번째 만족된 이후 data_func의 최저값"""
-        condition_met = 0
-        lowest_val = float('inf')
+    def cross_down(self, a_func, b_func) -> bool:
+        """하향돌파"""
+        if not (callable(a_func) and callable(b_func)):
+            return False
         
-        for i in range(len(self._get_data())):
-            if condition(i):
-                condition_met += 1
-                if condition_met == nth:
-                    break
+        a_prev, a_curr = a_func(1), a_func(0)
+        b_prev, b_curr = b_func(1), b_func(0)
+        return a_prev >= b_prev and a_curr < b_curr
+    
+    # 지표 계산 함수들
+    def rsi(self, period: int = 14, m: int = 0) -> float:
+        """RSI 계산"""
+        self._ensure_data_cache()
+        if not self._raw_data or m + period + 1 > len(self._raw_data):
+            return 50.0
         
-        if condition_met < nth:
-            return 0.0
+        gains = 0.0
+        losses = 0.0
         
-        for j in range(i, -1, -1):
-            val = data_func(j)
-            lowest_val = min(lowest_val, val)
+        for i in range(m + 1, m + period + 1):
+            prev_price = self._raw_data[i].get('현재가', 0)
+            curr_price = self._raw_data[i - 1].get('현재가', 0)
+            change = curr_price - prev_price
+            
+            if change > 0:
+                gains += change
+            else:
+                losses += abs(change)
         
-        return lowest_val
-    
-    def value_when(self, nth: int, condition, data_func) -> float:
-        """조건이 nth번째 만족된 시점의 data_func 값"""
-        condition_met = 0
+        if losses == 0:
+            return 100.0
         
-        for i in range(len(self._get_data())):
-            if condition(i):
-                condition_met += 1
-                if condition_met == nth:
-                    return data_func(i)
+        avg_gain = gains / period
+        avg_loss = losses / period
+        rs = avg_gain / avg_loss
         
-        return 0.0
+        return 100 - (100 / (1 + rs))
     
-    # 수학 함수들
-    def min_value(self, a, b):
-        """두 값 중 최소값 반환"""
-        return min(a, b)
-    
-    def max_value(self, a, b):
-        """두 값 중 최대값 반환"""
-        return max(a, b)
-    
-    def pow(self, a, n):
-        """a의 n제곱 반환"""
-        return a ** n
-    
-    def sqrt(self, a):
-        """제곱근 반환"""
-        return a ** 0.5 if a >= 0 else 0
-    
-    def log(self, a, base=10):
-        """로그 값 반환"""
-        import math
-        try:
-            return math.log(a, base) if a > 0 else 0
-        except:
-            return 0
-    
-    def exp(self, a):
-        """지수 함수 값 반환"""
-        import math
-        try:
-            return math.exp(a)
-        except:
-            return 0
-    
+    # 유틸리티 함수들
     def div(self, a, b, default=0):
-        """안전한 나눗셈 (0으로 나누기 방지)"""
+        """안전한 나눗셈"""
         return a / b if b != 0 else default
     
-    # 논리 함수들
     def iif(self, condition, true_value, false_value):
-        """조건에 따른 값 선택 (조건부 삼항 연산자)"""
+        """조건부 값 선택"""
         return true_value if condition else false_value
-    
-    def all_true(self, condition_list):
-        """모든 조건이 참인지 확인"""
-        return all(condition_list)
-    
-    def any_true(self, condition_list):
-        """하나라도 조건이 참인지 확인"""
-        return any(condition_list)
-
-    # ChartManager에 추가할 메소드
-    def indicator(self, func, *args):
-        """지표 계산 결과를 함수처럼 사용 가능한 객체 반환"""
-        # 내부 함수 생성 (클로저)
-        def callable_indicator(offset=0):
-            return func(*args, offset)
-        
-        # 함수 반환
-        return callable_indicator
-    
-    # 보조지표 계산 함수들
-    def rsi(self, period: int = 14, m: int = 0) -> float:
-        """상대강도지수(RSI) 계산"""
-        values = self._get_values(self.c, period + 1, m)
-        if len(values) < period + 1:
-            return 50  # 기본값
-        
-        gains = []
-        losses = []
-        for i in range(1, len(values)):
-            change = values[i-1] - values[i]  # 이전 값 - 현재 값 (역순이므로)
-            if change > 0:
-                gains.append(change)
-                losses.append(0)
-            else:
-                gains.append(0)
-                losses.append(abs(change))
-        
-        avg_gain = sum(gains) / period
-        avg_loss = sum(losses) / period
-        
-        if avg_loss == 0:
-            return 100
-        else:
-            rs = avg_gain / avg_loss
-            return 100 - (100 / (1 + rs))
-    
-    def macd(self, fast: int = 12, slow: int = 26, signal: int = 9, m: int = 0) -> tuple:
-        """MACD(Moving Average Convergence Divergence) 계산
-        Returns: (MACD 라인, 시그널 라인, 히스토그램)
-        """
-        # 빠른 EMA
-        fast_ema = self.eavg(self.c, fast, m)
-        # 느린 EMA
-        slow_ema = self.eavg(self.c, slow, m)
-        # MACD 라인
-        macd_line = fast_ema - slow_ema
-        
-        # 시그널 라인
-        # 참고: 실제로는 MACD 값의 이력이 필요하나 단순화를 위해 현재 값만 사용
-        signal_line = self.eavg(self.c, signal, m)
-        
-        # 히스토그램
-        histogram = macd_line - signal_line
-        
-        return (macd_line, signal_line, histogram)
-    
-    def bollinger_bands(self, period: int = 20, std_dev: float = 2, m: int = 0) -> tuple:
-        """볼린저 밴드 계산
-        Returns: (상단 밴드, 중간 밴드(SMA), 하단 밴드)
-        """
-        middle_band = self.avg(self.c, period, m)
-        stdev = self.stdev(self.c, period, m)
-        
-        upper_band = middle_band + (stdev * std_dev)
-        lower_band = middle_band - (stdev * std_dev)
-        
-        return (upper_band, middle_band, lower_band)
-    
-    def stochastic(self, k_period: int = 14, d_period: int = 3, m: int = 0) -> tuple:
-        """스토캐스틱 오실레이터 계산
-        Returns: (%K, %D)
-        """
-        # 최고가, 최저가 가져오기
-        highest_high = self.highest(self.h, k_period, m)
-        lowest_low = self.lowest(self.l, k_period, m)
-        
-        # 현재 종가
-        current_close = self.c(m)
-        
-        # %K 계산
-        percent_k = 0
-        if highest_high != lowest_low:
-            percent_k = 100 * ((current_close - lowest_low) / (highest_high - lowest_low))
-        
-        # %D 계산 (간단한 이동평균 사용)
-        # 참고: 실제로는 %K 값의 이력이 필요하나 단순화를 위해 현재 값으로 대체
-        percent_d = self.avg(self.c, d_period, m)
-        
-        return (percent_k, percent_d)
-    
-    def atr(self, period: int = 14, m: int = 0) -> float:
-        """평균 실제 범위(ATR) 계산"""
-        data = self._get_data()
-        if len(data) < period + 1 + m:
-            return 0
-        
-        tr_values = []
-        for i in range(m, m + period):
-            if i + 1 >= len(data):
-                break
-                
-            # 실제 범위 계산
-            high = data[i]['high']
-            low = data[i]['low']
-            prev_close = data[i+1]['close']
             
-            tr1 = high - low
-            tr2 = abs(high - prev_close)
-            tr3 = abs(low - prev_close)
-            
-            tr = max(tr1, tr2, tr3)
-            tr_values.append(tr)
-        
-        # ATR 계산
-        if not tr_values:
-            return 0
-        return sum(tr_values) / len(tr_values)
-    
-    # 캔들패턴 인식 함수들
-    def is_doji(self, n: int = 0, threshold: float = 0.1) -> bool:
-        """도지 캔들 확인 (시가와 종가의 차이가 매우 작은 캔들)"""
-        o = self.o(n)
-        c = self.c(n)
-        h = self.h(n)
-        l = self.l(n)
-        
-        # 몸통 크기
-        body = abs(o - c)
-        # 전체 캔들 크기
-        candle_range = h - l
-        
-        if candle_range == 0:
-            return False
-            
-        # 몸통이 전체 캔들의 threshold% 이하이면 도지로 간주
-        return body / candle_range <= threshold
-    
-    def is_hammer(self, n: int = 0) -> bool:
-        """망치형 캔들 확인 (아래 꼬리가 긴 캔들)"""
-        o = self.o(n)
-        c = self.c(n)
-        h = self.h(n)
-        l = self.l(n)
-        
-        # 시가/종가 중 낮은 값
-        lower_val = min(o, c)
-        # 몸통 크기
-        body = abs(o - c)
-        # 아래 꼬리 크기
-        lower_shadow = lower_val - l
-        
-        # 전체 캔들 크기
-        candle_range = h - l
-        
-        if candle_range == 0 or body == 0:
-            return False
-            
-        # 아래 꼬리가 몸통의 2배 이상이고, 전체 캔들의 1/3 이상이면 망치형으로 간주
-        return (lower_shadow >= 2 * body) and (lower_shadow / candle_range >= 0.33)
-    
-    def is_engulfing(self, n: int = 0, bullish: bool = True) -> bool:
-        """포괄 패턴 확인 (이전 캔들을 완전히 덮는 형태)
-        bullish=True: 상승 포괄 패턴, bullish=False: 하락 포괄 패턴
-        """
-        if n + 1 >= len(self._get_data()):
-            return False
-            
-        curr_o = self.o(n)
-        curr_c = self.c(n)
-        prev_o = self.o(n + 1)
-        prev_c = self.c(n + 1)
-        
-        if bullish:
-            # 상승 포괄 패턴: 현재 캔들이 상승이고, 이전 캔들은 하락이며
-            # 현재 캔들이 이전 캔들의 시가/종가 범위를 모두 포함
-            return (curr_c > curr_o and  # 현재 캔들이 상승
-                    prev_c < prev_o and  # 이전 캔들이 하락
-                    curr_o <= prev_c and  # 현재 시가가 이전 종가보다 낮거나 같음
-                    curr_c >= prev_o)     # 현재 종가가 이전 시가보다 높거나 같음
-        else:
-            # 하락 포괄 패턴: 현재 캔들이 하락이고, 이전 캔들은 상승이며
-            # 현재 캔들이 이전 캔들의 시가/종가 범위를 모두 포함
-            return (curr_c < curr_o and   # 현재 캔들이 하락
-                    prev_c > prev_o and   # 이전 캔들이 상승
-                    curr_o >= prev_c and   # 현재 시가가 이전 종가보다 높거나 같음
-                    curr_c <= prev_o)      # 현재 종가가 이전 시가보다 낮거나 같음
-        
-    # 추세 분석 함수들
-    def is_uptrend(self, period: int = 14, m: int = 0) -> bool:
-        """상승 추세 여부 확인 (단순하게 종가가 이동평균보다 높은지 확인)"""
-        current_close = self.c(m)
-        avg_close = self.avg(self.c, period, m)
-        
-        return current_close > avg_close
-    
-    def is_downtrend(self, period: int = 14, m: int = 0) -> bool:
-        """하락 추세 여부 확인 (단순하게 종가가 이동평균보다 낮은지 확인)"""
-        current_close = self.c(m)
-        avg_close = self.avg(self.c, period, m)
-        
-        return current_close < avg_close
-    
-    def momentum(self, period: int = 10, m: int = 0) -> float:
-        """모멘텀 계산 (현재 종가와 n기간 이전 종가의 차이)"""
-        current = self.c(m)
-        previous = self.c(m + period)
-        
-        return current - previous
-
-    # 데이터 변환 및 집계 함수들
-    def rate_of_change(self, period: int = 1, m: int = 0) -> float:
-        """변화율 계산 (현재 값과 n기간 이전 값의 백분율 변화)"""
-        current = self.c(m)
-        previous = self.c(m + period)
-        
-        if previous == 0:
-            return 0
-        
-        return ((current - previous) / previous) * 100
-    
-    def normalized_volume(self, period: int = 20, m: int = 0) -> float:
-        """거래량을 평균 거래량 대비 비율로 정규화"""
-        current_volume = self.v(m)
-        avg_volume = self.avg(self.v, period, m)
-        
-        if avg_volume == 0:
-            return 0
-        
-        return current_volume / avg_volume
-    
-    def accumulation(self, values: list) -> list:
-        """값의 누적 합계 계산"""
-        result = []
-        total = 0
-        
-        for val in values:
-            total += val
-            result.append(total)
-            
-        return result
-    
-    def streak_count(self, condition_func) -> int:
-        """연속된 조건 만족 횟수 계산"""
-        count = 0
-        data = self._get_data()
-        
-        for i in range(len(data)):
-            if condition_func(i):
-                count += 1
-            else:
-                break
-                
-        return count
-    
-    def detect_pattern(self, pattern_func, length: int) -> bool:
-        """특정 패턴 감지 (length 길이의 데이터에 pattern_func 적용)"""
-        if len(self._get_data()) < length:
-            return False
-            
-        # pattern_func에 데이터 전달하여 패턴 확인
-        return pattern_func(length)
-
 class ScriptManager:
     """
     투자 스크립트 관리 및 실행 클래스 (개선 버전)
