@@ -629,8 +629,6 @@ class ChartManager:
             
             self._cache_version = current_version
     
-
-    
     # 고속 기본값 반환 함수들 (직접 접근)
     def c(self, n: int = 0) -> float:
         """종가 반환 - 고속 버전"""
@@ -757,18 +755,7 @@ class ChartManager:
         
         return total
     
-    # 원본 데이터 직접 접근 함수
-    def get_raw_data(self):
-        """원본 데이터 직접 반환 (최고 성능)"""
-        self._ensure_data_cache()
-        return self._raw_data
-    
-    def get_data_length(self) -> int:
-        """데이터 길이 반환"""
-        self._ensure_data_cache()
-        return len(self._raw_data) if self._raw_data else 0
-    
-    # 호환성을 위한 기존 함수들
+    # 계산 함수들 (호환성 유지)
     def eavg(self, value_func, n: int, m: int = 0) -> float:
         """지수이동평균"""
         if not callable(value_func):
@@ -784,6 +771,22 @@ class ChartManager:
             result = alpha * value_func(i) + (1 - alpha) * result
         
         return result
+    
+    def wavg(self, value_func, n: int, m: int = 0) -> float:
+        """가중이동평균 계산"""
+        if not callable(value_func):
+            return float(value_func)
+        
+        total_value = 0.0
+        total_weight = 0.0
+        
+        for i in range(m, m + n):
+            weight = n - (i - m)  # 최신 데이터일수록 가중치 높음
+            value = value_func(i)
+            total_value += value * weight
+            total_weight += weight
+        
+        return total_value / total_weight if total_weight > 0 else 0.0
     
     def stdev(self, value_func, n: int, m: int = 0) -> float:
         """표준편차"""
@@ -824,9 +827,98 @@ class ChartManager:
         b_prev, b_curr = b_func(1), b_func(0)
         return a_prev >= b_prev and a_curr < b_curr
     
-    # 지표 계산 함수들
+    def bars_since(self, condition_func) -> int:
+        """조건이 만족된 이후 지나간 봉 개수"""
+        self._ensure_data_cache()
+        if not self._raw_data:
+            return 0
+        
+        for i in range(len(self._raw_data)):
+            if condition_func(i):
+                return i
+        return len(self._raw_data)
+
+    def highest_since(self, nth: int, condition_func, data_func) -> float:
+        """조건이 nth번째 만족된 이후 data_func의 최고값"""
+        self._ensure_data_cache()
+        if not self._raw_data:
+            return 0.0
+        
+        condition_met = 0
+        highest_val = float('-inf')
+        
+        for i in range(len(self._raw_data)):
+            if condition_func(i):
+                condition_met += 1
+                if condition_met == nth:
+                    # 이 지점부터 현재까지의 최고값 계산
+                    for j in range(i, -1, -1):
+                        val = data_func(j)
+                        highest_val = max(highest_val, val)
+                    break
+        
+        return highest_val if highest_val != float('-inf') else 0.0
+
+    def lowest_since(self, nth: int, condition_func, data_func) -> float:
+        """조건이 nth번째 만족된 이후 data_func의 최저값"""
+        self._ensure_data_cache()
+        if not self._raw_data:
+            return 0.0
+        
+        condition_met = 0
+        lowest_val = float('inf')
+        
+        for i in range(len(self._raw_data)):
+            if condition_func(i):
+                condition_met += 1
+                if condition_met == nth:
+                    # 이 지점부터 현재까지의 최저값 계산
+                    for j in range(i, -1, -1):
+                        val = data_func(j)
+                        lowest_val = min(lowest_val, val)
+                    break
+        
+        return lowest_val if lowest_val != float('inf') else 0.0
+
+    def value_when(self, nth: int, condition_func, data_func) -> float:
+        """조건이 nth번째 만족된 시점의 data_func 값"""
+        self._ensure_data_cache()
+        if not self._raw_data:
+            return 0.0
+        
+        condition_met = 0
+        
+        for i in range(len(self._raw_data)):
+            if condition_func(i):
+                condition_met += 1
+                if condition_met == nth:
+                    return data_func(i)
+        
+        return 0.0
+    
+    # 수학 함수들
+    def div(self, a, b, default=0):
+        """안전한 나눗셈 (0으로 나누기 방지)"""
+        return a / b if b != 0 else default
+    
+    # 논리 함수들
+    def iif(self, condition, true_value, false_value):
+        """조건에 따른 값 선택 (조건부 삼항 연산자)"""
+        return true_value if condition else false_value
+    
+    # ChartManager에 추가할 메소드
+    def indicator(self, func, *args):
+        """지표 계산 결과를 함수처럼 사용 가능한 객체 반환"""
+        # 내부 함수 생성 (클로저)
+        def callable_indicator(offset=0):
+            return func(*args, offset)
+        
+        # 함수 반환
+        return callable_indicator
+    
+    # 보조지표 계산 함수들
     def rsi(self, period: int = 14, m: int = 0) -> float:
-        """RSI 계산"""
+        """상대강도지수(RSI) 계산"""
         self._ensure_data_cache()
         if not self._raw_data or m + period + 1 > len(self._raw_data):
             return 50.0
@@ -853,15 +945,266 @@ class ChartManager:
         
         return 100 - (100 / (1 + rs))
     
-    # 유틸리티 함수들
-    def div(self, a, b, default=0):
-        """안전한 나눗셈"""
-        return a / b if b != 0 else default
+    def macd(self, fast: int = 12, slow: int = 26, signal: int = 9, m: int = 0) -> tuple:
+        """MACD(Moving Average Convergence Divergence) 계산
+        Returns: (MACD 라인, 시그널 라인, 히스토그램)
+        """
+        fast_ema = self.eavg(self.c, fast, m)
+        slow_ema = self.eavg(self.c, slow, m)
+        macd_line = fast_ema - slow_ema
+        
+        # 간단한 시그널 라인 (실제로는 MACD 값들의 EMA가 필요)
+        signal_line = self.eavg(self.c, signal, m)
+        histogram = macd_line - signal_line
+        
+        return (macd_line, signal_line, histogram)
     
-    def iif(self, condition, true_value, false_value):
-        """조건부 값 선택"""
-        return true_value if condition else false_value
+    def bollinger_bands(self, period: int = 20, std_dev: float = 2, m: int = 0) -> tuple:
+        """볼린저 밴드 계산
+        Returns: (상단 밴드, 중간 밴드(SMA), 하단 밴드)
+        """
+        middle_band = self.avg(self.c, period, m)
+        stdev = self.stdev(self.c, period, m)
+        
+        upper_band = middle_band + (stdev * std_dev)
+        lower_band = middle_band - (stdev * std_dev)
+        
+        return (upper_band, middle_band, lower_band)
+    
+    def stochastic(self, k_period: int = 14, d_period: int = 3, m: int = 0) -> tuple:
+        """스토캐스틱 오실레이터 계산
+        Returns: (%K, %D)
+        """
+        highest_high = self.highest(self.h, k_period, m)
+        lowest_low = self.lowest(self.l, k_period, m)
+        current_close = self.c(m)
+        
+        # %K 계산
+        percent_k = 0
+        if highest_high != lowest_low:
+            percent_k = 100 * ((current_close - lowest_low) / (highest_high - lowest_low))
+        
+        # %D 계산 (간단한 이동평균 사용)
+        percent_d = self.avg(self.c, d_period, m)
+        
+        return (percent_k, percent_d)
+    
+    def atr(self, period: int = 14, m: int = 0) -> float:
+        """평균 실제 범위(ATR) 계산"""
+        self._ensure_data_cache()
+        if not self._raw_data or len(self._raw_data) < period + 1 + m:
+            return 0.0
+        
+        tr_values = []
+        for i in range(m, m + period):
+            if i + 1 >= len(self._raw_data):
+                break
+                
+            high = self._raw_data[i].get('고가', 0)
+            low = self._raw_data[i].get('저가', 0)
+            prev_close = self._raw_data[i+1].get('현재가', 0)
             
+            tr1 = high - low
+            tr2 = abs(high - prev_close)
+            tr3 = abs(low - prev_close)
+            
+            tr = max(tr1, tr2, tr3)
+            tr_values.append(tr)
+        
+        return sum(tr_values) / len(tr_values) if tr_values else 0.0
+    
+    # 캔들패턴 인식 함수들
+    def is_doji(self, n: int = 0, threshold: float = 0.1) -> bool:
+        """도지 캔들 확인 (시가와 종가의 차이가 매우 작은 캔들)"""
+        o = self.o(n)
+        c = self.c(n)
+        h = self.h(n)
+        l = self.l(n)
+        
+        # 몸통 크기
+        body = abs(o - c)
+        # 전체 캔들 크기
+        candle_range = h - l
+        
+        if candle_range == 0:
+            return False
+            
+        # 몸통이 전체 캔들의 threshold% 이하이면 도지로 간주
+        return body / candle_range <= threshold
+    
+    def is_hammer(self, n: int = 0) -> bool:
+        """망치형 캔들 확인 (아래 꼬리가 긴 캔들)"""
+        o = self.o(n)
+        c = self.c(n)
+        h = self.h(n)
+        l = self.l(n)
+        
+        # 시가/종가 중 낮은 값
+        lower_val = min(o, c)
+        # 몸통 크기
+        body = abs(o - c)
+        # 아래 꼬리 크기
+        lower_shadow = lower_val - l
+        
+        # 전체 캔들 크기
+        candle_range = h - l
+        
+        if candle_range == 0 or body == 0:
+            return False
+            
+        # 아래 꼬리가 몸통의 2배 이상이고, 전체 캔들의 1/3 이상이면 망치형으로 간주
+        return (lower_shadow >= 2 * body) and (lower_shadow / candle_range >= 0.33)
+    
+    def is_engulfing(self, n: int = 0, bullish: bool = True) -> bool:
+        """포괄 패턴 확인 (이전 캔들을 완전히 덮는 형태)
+        bullish=True: 상승 포괄 패턴, bullish=False: 하락 포괄 패턴
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n + 1 >= len(self._raw_data):
+            return False
+            
+        curr_o = self.o(n)
+        curr_c = self.c(n)
+        prev_o = self.o(n + 1)
+        prev_c = self.c(n + 1)
+        
+        if bullish:
+            # 상승 포괄 패턴: 현재 캔들이 상승이고, 이전 캔들은 하락이며
+            # 현재 캔들이 이전 캔들의 시가/종가 범위를 모두 포함
+            return (curr_c > curr_o and  # 현재 캔들이 상승
+                    prev_c < prev_o and  # 이전 캔들이 하락
+                    curr_o <= prev_c and  # 현재 시가가 이전 종가보다 낮거나 같음
+                    curr_c >= prev_o)     # 현재 종가가 이전 시가보다 높거나 같음
+        else:
+            # 하락 포괄 패턴: 현재 캔들이 하락이고, 이전 캔들은 상승이며
+            # 현재 캔들이 이전 캔들의 시가/종가 범위를 모두 포함
+            return (curr_c < curr_o and   # 현재 캔들이 하락
+                    prev_c > prev_o and   # 이전 캔들이 상승
+                    curr_o >= prev_c and   # 현재 시가가 이전 종가보다 높거나 같음
+                    curr_c <= prev_o)      # 현재 종가가 이전 시가보다 낮거나 같음
+        
+    # 추세 분석 함수들
+    def is_uptrend(self, period: int = 14, m: int = 0) -> bool:
+        """상승 추세 여부 확인 (단순하게 종가가 이동평균보다 높은지 확인)"""
+        current_close = self.c(m)
+        avg_close = self.avg(self.c, period, m)
+        
+        return current_close > avg_close
+    
+    def is_downtrend(self, period: int = 14, m: int = 0) -> bool:
+        """하락 추세 여부 확인 (단순하게 종가가 이동평균보다 낮은지 확인)"""
+        current_close = self.c(m)
+        avg_close = self.avg(self.c, period, m)
+        
+        return current_close < avg_close
+    
+    def momentum(self, period: int = 10, m: int = 0) -> float:
+        """모멘텀 계산 (현재 종가와 n기간 이전 종가의 차이)"""
+        current = self.c(m)
+        previous = self.c(m + period)
+        
+        return current - previous
+
+    # 데이터 변환 및 집계 함수들
+    def rate_of_change(self, period: int = 1, m: int = 0) -> float:
+        """변화율 계산 (현재 값과 n기간 이전 값의 백분율 변화)"""
+        current = self.c(m)
+        previous = self.c(m + period)
+        
+        if previous == 0:
+            return 0
+        
+        return ((current - previous) / previous) * 100
+    
+    def normalized_volume(self, period: int = 20, m: int = 0) -> float:
+        """거래량을 평균 거래량 대비 비율로 정규화"""
+        current_volume = self.v(m)
+        avg_volume = self.avg(self.v, period, m)
+        
+        if avg_volume == 0:
+            return 0
+        
+        return current_volume / avg_volume
+    
+    def accumulation(self, values: list) -> list:
+        """값의 누적 합계 계산"""
+        result = []
+        total = 0
+        
+        for val in values:
+            total += val
+            result.append(total)
+            
+        return result
+    
+    def streak_count(self, condition_func) -> int:
+        """연속된 조건 만족 횟수 계산"""
+        self._ensure_data_cache()
+        if not self._raw_data:
+            return 0
+        
+        count = 0
+        for i in range(len(self._raw_data)):
+            if condition_func(i):
+                count += 1
+            else:
+                break
+                
+        return count
+    
+    def detect_pattern(self, pattern_func, length: int) -> bool:
+        """특정 패턴 감지 (length 길이의 데이터에 pattern_func 적용)"""
+        self._ensure_data_cache()
+        if not self._raw_data or len(self._raw_data) < length:
+            return False
+            
+        # pattern_func에 데이터 전달하여 패턴 확인
+        return pattern_func(length)
+    
+    # 캐시 관리 함수들
+    def clear_cache(self, code=None):
+        """특정 코드 또는 전체 캐시 초기화"""
+        if code:
+            # 특정 코드만 캐시 초기화
+            if hasattr(self, '_cache_version'):
+                self._cache_version = -1
+            if hasattr(self, '_raw_data'):
+                self._raw_data = None
+        else:
+            # 전체 캐시 초기화
+            if hasattr(self, '_cache_version'):
+                self._cache_version = -1
+            if hasattr(self, '_raw_data'):
+                self._raw_data = None
+
+    def get_ma(self, period: int = 20, count: int = 1) -> list:
+        """이동평균 리스트 반환"""
+        self._ensure_data_cache()
+        if not self._raw_data or len(self._raw_data) < period:
+            return []
+        
+        ma_list = []
+        for i in range(count):
+            if i + period > len(self._raw_data):
+                break
+            total = 0.0
+            for j in range(i, i + period):
+                total += self._raw_data[j].get('현재가', 0)
+            ma_list.append(total / period)
+        
+        return ma_list
+    
+    # 원본 데이터 직접 접근 함수
+    def get_raw_data(self):
+        """원본 데이터 직접 반환 (최고 성능)"""
+        self._ensure_data_cache()
+        return self._raw_data
+    
+    def get_data_length(self) -> int:
+        """데이터 길이 반환"""
+        self._ensure_data_cache()
+        return len(self._raw_data) if self._raw_data else 0
+                
 class ScriptManager:
     """
     투자 스크립트 관리 및 실행 클래스 (개선 버전)
@@ -910,51 +1253,8 @@ class ScriptManager:
         self._compiled_scripts = {}  # 컴파일된 스크립트 캐시 {script_name: code_obj}
         self.cht_dt = ChartData()  # 차트 데이터 관리자
 
-        import datetime
-        self.current_program_version = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
-        self._init_program_version()        
-
         # 파일에서 스크립트와 사용자 함수 로드
         self._load_scripts()
-
-    def _init_program_version(self):
-        """프로그램 버전 초기화"""
-        try:
-            cache_dir = os.path.dirname(self.script_file) or "."
-            cache_dir = os.path.join(cache_dir, "cache")
-            os.makedirs(cache_dir, exist_ok=True)
-            
-            version_file = os.path.join(cache_dir, "program_version.txt")
-            with open(version_file, "w") as f:
-                f.write(self.current_program_version)
-            
-            self.cache_dir = cache_dir
-            logging.info(f"프로그램 버전 초기화: {self.current_program_version}")
-        except Exception as e:
-            logging.error(f"프로그램 버전 초기화 오류: {e}")
-            self.cache_dir = "."
-
-    def _update_script_version(self, script_name: str):
-        """스크립트 버전을 현재 프로그램 버전으로 업데이트"""
-        try:
-            version_file = os.path.join(self.cache_dir, f"{script_name}_version.txt")
-            with open(version_file, "w") as f:
-                f.write(self.current_program_version)
-        except Exception as e:
-            logging.error(f"스크립트 버전 업데이트 오류 ({script_name}): {e}")
-
-    def _is_current_version(self, script_name: str) -> bool:
-        """스크립트가 현재 버전인지 확인"""
-        try:
-            version_file = os.path.join(self.cache_dir, f"{script_name}_version.txt")
-            if os.path.exists(version_file):
-                with open(version_file) as f:
-                    script_version = f.read().strip()
-                return script_version == self.current_program_version
-            return False
-        except Exception as e:
-            logging.error(f"버전 확인 오류 ({script_name}): {e}")
-            return False
 
     def _load_scripts(self):
         """스크립트 파일에서 스크립트 로드"""
@@ -1233,7 +1533,7 @@ class ScriptManager:
         # 결과 복사
         result_dict['logs'] = check_result['logs'].copy()
         result_dict['exec_time'] = check_result['exec_time']
-        result_dict['result'] = check_result['result']  # 이 줄 추가!
+        result_dict['result'] = check_result['result']
         
         if not check_result['success'] or check_result['type'] == 'error':
             result_dict['error'] = check_result['error'] or 'result가 None입니다.'
@@ -1245,7 +1545,6 @@ class ScriptManager:
         # save=False면 검사까지만 하고 반환
         if not save:
             result_dict['success'] = True
-            #result_dict['logs'].append(f'INFO: 스크립트 검사 완료: {script_name} (타입: {result_dict["type"]})')
             return result_dict
         
         # save=True인 경우 저장 및 컴파일 진행
@@ -1259,9 +1558,10 @@ class ScriptManager:
         
         self.scripts[script_name] = script_data
         
-        # 컴파일된 스크립트 캐시에서 제거 (재컴파일 필요)
-        if script_name in self._compiled_scripts:
-            del self._compiled_scripts[script_name]
+        # 컴파일된 스크립트 메모리 캐시에서 제거 (재컴파일 필요)
+        cache_key = f"{script_name}_compiled"
+        if cache_key in self._compiled_scripts:
+            del self._compiled_scripts[cache_key]
         
         # 파일 저장
         save_result = self._save_scripts()
@@ -1269,41 +1569,23 @@ class ScriptManager:
             result_dict['error'] = '파일 저장 실패'
             result_dict['logs'].append('ERROR: 파일 저장 실패')
             return result_dict
-        
-        # 컴파일 수행 (확장 기능이 있는 경우)
-        if hasattr(self, 'script_cache'):
-            try:
-                script_names = set(self.scripts.keys())
-                compile_success = self.script_cache.compile_script(script_name, script, script_names)
-                
-                if compile_success:
-                    result_dict['logs'].append(f'INFO: 스크립트 컴파일 완료: {script_name}')
-                    
-                    # 의존하는 스크립트들 재컴파일
-                    affected = self.script_cache.invalidate_script(script_name)
-                    for affected_name in affected:
-                        if affected_name != script_name and affected_name in self.scripts:
-                            affected_script = self.scripts[affected_name]['script']
-                            self.script_cache.compile_script(affected_name, affected_script, script_names)
-                    
-                    if len(affected) > 1:
-                        result_dict['logs'].append(f'INFO: 영향받은 스크립트 재컴파일: {len(affected)-1}개')
-                        logging.info(f"스크립트 컴파일 완료: {script_name} (영향받은 스크립트: {len(affected)-1}개)")
-                    else:
-                        logging.info(f"스크립트 컴파일 완료: {script_name}")
-                else:
-                    result_dict['logs'].append(f'WARNING: 스크립트 컴파일 실패: {script_name}')
-                    
-            except Exception as e:
-                error_msg = f'컴파일 오류: {e}'
-                result_dict['logs'].append(f'ERROR: {error_msg}')
-                logging.error(error_msg)
-        
-        self._update_script_version(script_name)
+
+        # 컴파일 수행 (추가된 부분)
+        try:
+            compiled_code = self._compile_new_version(script_name)
+            if compiled_code is not None:
+                result_dict['logs'].append(f'INFO: 스크립트 컴파일 완료: {script_name}')
+                logging.info(f"스크립트 컴파일 완료: {script_name}")
+            else:
+                result_dict['logs'].append(f'WARNING: 스크립트 컴파일 실패: {script_name}')
+                logging.warning(f"스크립트 컴파일 실패: {script_name}")
+        except Exception as e:
+            error_msg = f'컴파일 오류: {e}'
+            result_dict['logs'].append(f'ERROR: {error_msg}')
+            logging.error(error_msg)
 
         # 성공
         result_dict['success'] = True
-        #result_dict['logs'].append(f'INFO: 스크립트 저장 완료: {script_name} (타입: {result_dict["type"]})')
         
         return result_dict
 
@@ -1418,40 +1700,24 @@ class ScriptManager:
             result_dict['exec_time'] = time.time() - start_time
 
     def _get_compiled_code_fast(self, script_name: str):
-        """컴파일된 코드 빠른 획득 (매매용) - 버전 관리 적용
-        
-        Args:
-            script_name: 스크립트 이름
-            
-        Returns:
-            code object: 컴파일된 코드 객체 또는 None
-        """
+        """컴파일된 코드 빠른 획득 (메모리 캐시만 사용)"""
         cache_key = f"{script_name}_compiled"
         
-        # 메모리 캐시에 있으면 그냥 사용 (이미 현재 버전)
+        # 메모리 캐시에 있으면 바로 반환
         if cache_key in self._compiled_scripts:
             return self._compiled_scripts[cache_key]
         
-        # 확장 기능(파일 캐시) 확인
-        if hasattr(self, 'script_cache'):
-            cached_code = self.script_cache.load_compiled_script(script_name)
-            if cached_code and self._is_current_version(script_name):
-                # 파일 캐시가 현재 버전이면 메모리로 로드
-                self._compiled_scripts[cache_key] = cached_code
-                return cached_code
-        
-        # 현재 버전이 아니거나 캐시에 없으면 새로 컴파일
+        # 없으면 새로 컴파일
         return self._compile_new_version(script_name)
 
     def _compile_new_version(self, script_name: str):
-        """스크립트를 새 버전으로 컴파일"""
+        """스크립트를 새로 컴파일 (메모리 캐시만)"""
         script_data = self.scripts.get(script_name, {})
         script = script_data.get('script', '')
         if not script:
             return None
         
         try:
-            # 컴파일용 래퍼 스크립트 생성
             wrapped_script = self.make_wrapped_script(script, {}, self._indent_script, for_compiled=True)
             code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
             
@@ -1459,50 +1725,27 @@ class ScriptManager:
             cache_key = f"{script_name}_compiled"
             self._compiled_scripts[cache_key] = code_obj
             
-            # 파일 캐시 저장 (확장 기능이 있는 경우)
-            if hasattr(self, 'script_cache'):
-                script_names = set(self.scripts.keys())
-                self.script_cache.compile_script(script_name, script, script_names)
-            
-            # 현재 버전으로 기록
-            self._update_script_version(script_name)
-            
-            logging.info(f"스크립트 새 버전 컴파일 완료: {script_name}")
+            logging.info(f"스크립트 컴파일 완료: {script_name}")
             return code_obj
             
         except Exception as e:
-            logging.error(f"새 버전 컴파일 오류 ({script_name}): {e}")
+            logging.error(f"컴파일 오류 ({script_name}): {e}")
             return None
 
     def delete_script(self, script_name: str):
-        """스크립트 삭제
-        
-        Args:
-            script_name: 삭제할 스크립트 이름
-        
-        Returns:
-            bool: 삭제 성공 여부
-        """
+        """스크립트 삭제 (메모리 캐시만)"""
         if script_name in self.scripts:
-            del self.scripts[script_name]
-            # 컴파일된 스크립트 캐시에서도 제거
-            cache_key = f"{script_name}_compiled"
-            if cache_key in self._compiled_scripts:
-                del self._compiled_scripts[cache_key]
-            
-            # 확장 기능이 있는 경우 컴파일 캐시도 정리
-            if hasattr(self, 'script_cache'):
-                self.script_cache.invalidate_script(script_name)
-
-            # 버전 파일도 삭제
             try:
-                version_file = os.path.join(self.cache_dir, f"{script_name}_version.txt")
-                if os.path.exists(version_file):
-                    os.remove(version_file)
+                del self.scripts[script_name]
+                # 컴파일된 스크립트 메모리 캐시에서도 제거
+                cache_key = f"{script_name}_compiled"
+                if cache_key in self._compiled_scripts:
+                    del self._compiled_scripts[cache_key]
+                logging.info(f"스크립트 삭제 완료: {script_name}")
+                return self._save_scripts()
             except Exception as e:
-                logging.error(f"버전 파일 삭제 오류 ({script_name}): {e}")
-
-            return self._save_scripts()
+                logging.error(f"스크립트 삭제 오류 ({script_name}): {e}")
+                return False
         return False
     
     def _has_forbidden_syntax(self, script: str) -> bool:
@@ -1860,232 +2103,6 @@ def execute_script(kwargs):
 result = execute_script({repr(combined_kwargs)})
 """
                                 
-class CompiledScriptCache:
-        """컴파일된 스크립트 관리 클래스"""
-        
-        def __init__(self, cache_dir: str = dc.fp.cache_path):
-            """초기화
-            
-            Args:
-                cache_dir: 컴파일된 스크립트 캐시 디렉토리
-            """
-            self.cache_dir = cache_dir
-            self.compiled_cache = {}  # 메모리 내 캐시 {script_name: code_obj}
-            self.dependency_map = {}  # 의존성 맵 {script_name: set(dependencies)}
-            self.hash_map = {}        # 스크립트 해시 맵 {script_name: hash_value}
-            self.modules_cache = {}   # 로드된 모듈 캐시 {script_name: module}
-            
-            # 캐시 디렉토리 생성 (필요시 사용)
-            # os.makedirs(cache_dir, exist_ok=True)
-        
-        def get_script_hash(self, script: str) -> str:
-            """스크립트의 해시값 계산
-            
-            Args:
-                script: 스크립트 코드
-                
-            Returns:
-                str: 해시값
-            """
-            return hashlib.md5(script.encode('utf-8')).hexdigest()
-        
-        def get_cache_path(self, script_name: str) -> str:
-            """캐시 파일 경로 생성
-            
-            Args:
-                script_name: 스크립트 이름
-                
-            Returns:
-                str: 캐시 파일 경로
-            """
-            return os.path.join(self.cache_dir, f"{script_name}.pyc")
-        
-        def get_dependency_path(self, script_name: str) -> str:
-            """의존성 파일 경로 생성
-            
-            Args:
-                script_name: 스크립트 이름
-                
-            Returns:
-                str: 의존성 파일 경로
-            """
-            return os.path.join(self.cache_dir, f"{script_name}.dep")
-        
-        def analyze_dependencies(self, script: str, script_names: Set[str]) -> Set[str]:
-            """스크립트의 의존성 분석
-            
-            Args:
-                script: 스크립트 코드
-                script_names: 시스템에 등록된 모든 스크립트 이름 집합
-                
-            Returns:
-                Set[str]: 의존하는 스크립트 이름 집합
-            """
-            dependencies = set()
-            
-            try:
-                tree = ast.parse(script)
-                
-                # 함수 호출 검사하는 방문자 패턴
-                class DependencyVisitor(ast.NodeVisitor):
-                    def visit_Call(self, node):
-                        # 함수 호출 확인
-                        if isinstance(node.func, ast.Name):
-                            func_name = node.func.id
-                            # 호출된 함수가 등록된 스크립트 이름이면 의존성 추가
-                            if func_name in script_names:
-                                dependencies.add(func_name)
-                        
-                        self.generic_visit(node)
-                
-                visitor = DependencyVisitor()
-                visitor.visit(tree)
-                
-            except SyntaxError:
-                # 구문 오류가 있는 경우 빈 의존성 집합 반환
-                logging.warning(f"의존성 분석 중 구문 오류 발생")
-            
-            return dependencies
-        
-        def _indent_script(self, script, indent=4):
-            """스크립트 들여쓰기 추가"""
-            try:
-                lines = script.split('\n')
-                indented_lines = [' ' * indent + line if line.strip() else line for line in lines]
-                return '\n'.join(indented_lines)
-            except Exception as e:
-                logging.error(f"들여쓰기 처리 오류: {e}")
-                return script
-                
-        def compile_script(self, script_name: str, script: str, script_names: Set[str]) -> bool:
-            """스크립트 컴파일 및 캐싱
-            
-            Args:
-                script_name: 스크립트 이름
-                script: 스크립트 코드
-                script_names: 시스템에 등록된 모든 스크립트 이름 집합
-                
-            Returns:
-                bool: 컴파일 성공 여부
-            """
-            try:
-                # 해시값 계산
-                script_hash = self.get_script_hash(script)
-                self.hash_map[script_name] = script_hash
-                
-                # 의존성 분석
-                dependencies = self.analyze_dependencies(script, script_names)
-                self.dependency_map[script_name] = dependencies
-                
-                # 스크립트 컴파일 (새로운 형식으로 래핑)
-                wrapped_script = ScriptManager.make_wrapped_script(script, {}, self._indent_script)
-                code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
-                
-                # 메모리 캐시에 저장
-                self.compiled_cache[script_name] = code_obj
-                
-                # 파일에 저장 (필요한 경우)
-                cache_path = self.get_cache_path(script_name)
-                with open(cache_path, 'wb') as f:
-                    f.write(importlib.util.MAGIC_NUMBER)  # Python 매직 넘버
-                    f.write(b'\x00\x00\x00\x00')         # 타임스탬프 (0)
-                    f.write(b'\x00\x00\x00\x00')         # 소스 크기 (0)
-                    marshal.dump(code_obj, f)            # 코드 객체 저장
-                
-                # 의존성 정보 저장
-                dep_path = self.get_dependency_path(script_name)
-                with open(dep_path, 'wb') as f:
-                    pickle.dump({
-                        'hash': script_hash,
-                        'dependencies': dependencies
-                    }, f)
-                
-                return True
-                
-            except Exception as e:
-                logging.error(f"스크립트 컴파일 오류: {e}", exc_info=True)
-                return False
-                    
-        def load_compiled_script(self, script_name: str) -> Optional[Any]:
-            """컴파일된 스크립트 로드
-            
-            Args:
-                script_name: 스크립트 이름
-                
-            Returns:
-                Any: 컴파일된 코드 객체 또는 None (실패 시)
-            """
-            # 이미 메모리에 있으면 바로 반환
-            if script_name in self.compiled_cache:
-                return self.compiled_cache[script_name]
-            
-            # 파일에서 로드
-            cache_path = self.get_cache_path(script_name)
-            if not os.path.exists(cache_path):
-                return None
-            
-            try:
-                with open(cache_path, 'rb') as f:
-                    # 매직 넘버, 타임스탬프, 소스 크기 스킵
-                    f.read(12)
-                    code_obj = marshal.load(f)
-                    
-                    # 메모리 캐시에 저장
-                    self.compiled_cache[script_name] = code_obj
-                    return code_obj
-                    
-            except Exception as e:
-                logging.error(f"컴파일된 스크립트 로드 오류: {e}")
-                return None
-
-        def get_affected_scripts(self, script_name: str) -> Set[str]:
-            """특정 스크립트에 의존하는 모든 스크립트 찾기
-            
-            Args:
-                script_name: 스크립트 이름
-                
-            Returns:
-                Set[str]: 의존하는 스크립트 집합
-            """
-            affected = set()
-            
-            for name, deps in self.dependency_map.items():
-                if script_name in deps:
-                    affected.add(name)
-                    # 재귀적으로 의존성 체크 (간접 의존성)
-                    affected.update(self.get_affected_scripts(name))
-            
-            return affected
-
-        def invalidate_script(self, script_name: str) -> Set[str]:
-            """스크립트 및 의존하는 모든 스크립트의 캐시 무효화
-            
-            Args:
-                script_name: 스크립트 이름
-                
-            Returns:
-                Set[str]: 무효화된 스크립트 집합
-            """
-            # 이 스크립트에 의존하는 모든 스크립트 찾기
-            affected_scripts = self.get_affected_scripts(script_name)
-            affected_scripts.add(script_name)  # 자기 자신도 포함
-            
-            # 메모리 캐시에서 제거
-            for name in affected_scripts:
-                if name in self.compiled_cache:
-                    del self.compiled_cache[name]
-                if name in self.modules_cache:
-                    del self.modules_cache[name]
-            
-            return affected_scripts
-
-        def clear_cache(self):
-            """모든 캐시 초기화"""
-            self.compiled_cache.clear()
-            self.dependency_map.clear()
-            self.hash_map.clear()
-            self.modules_cache.clear()
-            
 # 예제 실행
 if __name__ == '__main__':
     mi3 = ChartManager('005930', 'mi', 3)
