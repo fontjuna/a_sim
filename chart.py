@@ -1252,7 +1252,7 @@ class ScriptManager:
     # 허용된 Python 기능 목록 (whitelist 방식)
     ALLOWED_MODULES = ['re', 'math', 'datetime', 'random', 'logging', 'json', 'collections']
 
-            # 허용된 Python 내장 함수 및 타입
+    # 허용된 Python 내장 함수 및 타입
     ALLOWED_BUILTINS = [
         # 기본 데이터 타입
         'int', 'float', 'str', 'bool', 'list', 'dict', 'set', 'tuple',
@@ -1430,9 +1430,11 @@ class ScriptManager:
             globals_dict['_current_kwargs'] = kwargs
             
             # 코드 실행
+            script_result = None
             try:
                 exec(code_obj, globals_dict, locals_dict)
-                script_result = globals_dict.get('_script_result')  # ret()로 설정된 값만 받음
+                # ret()로 설정된 값만 받음
+                script_result = globals_dict.get('_script_result')
             except SystemExit as e:
                 if str(e) == 'script_return':
                     script_result = globals_dict.get('_script_result')
@@ -1694,8 +1696,8 @@ class ScriptManager:
             locals_dict['kwargs'] = kwargs
             exec(code_obj, globals_dict, locals_dict)
 
-            # 실행 결과 가져오기
-            script_result = globals_dict.get('_script_result')  # ret()로 설정된 값만 받음
+            # 실행 결과 가져오기 - ret()로 설정된 값만 받음
+            script_result = globals_dict.get('_script_result')
             exec_time = time.time() - start_time
             
             # 실행 시간 경고 (기준 완화: 0.1초)
@@ -2022,67 +2024,63 @@ def {script_name}(*args, **kwargs):
             return {'ChartManager': ChartManager}, []
         
     def _script_caller(self, script_name, args=None, kwargs=None):
-        """스크립트 내에서 다른 스크립트를 호출하기 위한 함수 (개선된 전달 체계)"""
-        # 현재 컨텍스트에서 기본 변수들 가져오기
-        context_kwargs = {}
-        current_script_logs = None
-        
+        """스크립트 내에서 다른 스크립트를 호출하기 위한 함수 (직접 인자 전달 방식)"""
+        # 컨텍스트의 기존 kwargs 가져오기 (프레임 검사)
         try:
-            # 글로벌 컨텍스트에서 현재 kwargs 가져오기 (프레임 검사 제거)
             import inspect
             frame = inspect.currentframe().f_back
+            context_kwargs = {}
+            current_script_logs = None
+            original_kwargs_keys = set()
             
-            # user_script 함수의 로컬 변수에서 현재 값들 추출
             while frame:
+                # user_script 프레임에서 현재 변수값 우선 추출
                 if frame.f_code.co_name == 'user_script':
                     frame_locals = frame.f_locals
                     frame_globals = frame.f_globals
                     
-                    # 기본 변수들의 현재 값 가져오기
-                    context_kwargs['code'] = frame_locals.get('code', frame_globals.get('_current_kwargs', {}).get('code'))
-                    context_kwargs['name'] = frame_locals.get('name', frame_globals.get('_current_kwargs', {}).get('name', ''))
-                    context_kwargs['qty'] = frame_locals.get('qty', frame_globals.get('_current_kwargs', {}).get('qty', 0))
-                    context_kwargs['price'] = frame_locals.get('price', frame_globals.get('_current_kwargs', {}).get('price', 0))
-                    
-                    # 사용자 정의 변수들도 프레임 글로벌에서 가져오기
-                    current_kwargs = frame_globals.get('_current_kwargs', {})
-                    for key, value in current_kwargs.items():
-                        if key not in ['code', 'name', 'qty', 'price']:
-                            # 로컬에서 수정된 값이 있는지 확인
-                            if key in frame_globals:
-                                context_kwargs[key] = frame_globals[key]
-                            else:
-                                context_kwargs[key] = value
+                    # 로컬 변수에서 현재값 가져오기 (수정된 값 반영)
+                    context_kwargs['code'] = frame_locals.get('code')
+                    context_kwargs['name'] = frame_locals.get('name', '')
+                    context_kwargs['qty'] = frame_locals.get('qty', 0)
+                    context_kwargs['price'] = frame_locals.get('price', 0)
                     
                     # 로그 수집 리스트 찾기
                     current_script_logs = frame_globals.get('_script_logs')
                     break
+                    
+                # execute_script 프레임에서 원본 kwargs와 사용자 정의 변수들 가져오기
+                elif frame.f_code.co_name == 'execute_script':
+                    original_kwargs = frame.f_locals.get('kwargs', {})
+                    original_kwargs_keys = set(original_kwargs.keys())
+                    
+                    # 사용자 정의 변수들만 추가 (기본 변수는 user_script에서 가져옴)
+                    for key, value in original_kwargs.items():
+                        if key not in ['code', 'name', 'qty', 'price']:
+                            context_kwargs[key] = value
+                
                 frame = frame.f_back
                         
-        except Exception as e:
-            logging.warning(f"컨텍스트 추출 실패: {e}")
+        except:
             context_kwargs = {}
             current_script_logs = None
         
-        # 기본값 보장
-        if not context_kwargs:
-            context_kwargs = {'code': None, 'name': '', 'qty': 0, 'price': 0}
+        # 기본 kwargs에서 시작
+        new_kwargs = context_kwargs.copy()
         
-        # args 처리: 위치 인자를 kwargs로 변환 (code, name, qty, price 순서)
-        if args:
-            arg_names = ['code', 'name', 'qty', 'price']
-            for i, arg_value in enumerate(args):
-                if i < len(arg_names):
-                    context_kwargs[arg_names[i]] = arg_value
+        # args와 kwargs 처리
+        if args is None:
+            args = ()
+        if kwargs is None:
+            kwargs = {}
         
-        # kwargs 병합 (기존 값 덮어쓰기)
-        if kwargs:
-            context_kwargs.update(kwargs)
+        # kwargs만 병합 (위치 인자는 스크립트에서 직접 처리하도록)
+        new_kwargs.update(kwargs)
         
         # 순환 참조 검사
-        code = context_kwargs.get('code')
+        code = new_kwargs.get('code')
         if code is None:
-            logging.error(f"{script_name} 호출 시 code가 지정되지 않았습니다.")
+            logging.error(f"{script_name} 에서 code 가 지정되지 않았습니다.")
             return None
         
         script_key = f"{script_name}:{code}"
@@ -2090,12 +2088,8 @@ def {script_name}(*args, **kwargs):
             logging.error(f"순환 참조 감지: {script_name}")
             return None
         
-        # 스크립트 실행 - run_script_compiled 사용 (성능 최적화)
-        try:
-            result = self.run_script_compiled(script_name, context_kwargs)
-        except:
-            # 컴파일된 실행 실패 시 일반 실행으로 폴백
-            result = self.run_script(script_name, kwargs=context_kwargs)
+        # 스크립트 실행 - 결과 받기
+        result = self.run_script(script_name, kwargs=new_kwargs)
         
         # 로그 통합 (호출된 스크립트의 로그를 현재 스크립트 로그에 추가)
         if current_script_logs is not None and result.get('logs'):
@@ -2110,21 +2104,20 @@ def {script_name}(*args, **kwargs):
         return f"""
 def execute_script(kwargs):
     def user_script():
-        # 기본 변수들 설정
         code = kwargs.get('code')
         name = kwargs.get('name', '')
         qty = kwargs.get('qty', 0)
         price = kwargs.get('price', 0)
         
-        # 사용자 정의 변수들을 글로벌에 설정
+        # 사용자 정의 변수들 추출
         for key, value in kwargs.items():
             if key not in ['code', 'name', 'qty', 'price']:
                 globals()[key] = value
         
-        # 사용자 스크립트 실행 (result 변수 사용 금지, ret()만 사용)
+        # 사용자 스크립트 실행
 {indent_func(script, indent=8)}
         
-        # ret() 호출되지 않은 경우 None 반환
+        # result 변수는 무시, ret() 호출되지 않은 경우 None 반환
         return None
     
     # 함수 실행
@@ -2149,7 +2142,7 @@ def execute_script(kwargs):
 # 스크립트 실행
 result = execute_script({repr(combined_kwargs)})
 """
-
+        
 # 예제 실행
 if __name__ == '__main__':
     ct = ChartManager('005930', 'mi', 3)
