@@ -722,14 +722,14 @@ class GUI(QMainWindow, form_class):
                 QMessageBox.information(self, '알림', '스크립트명과 스크립트를 입력하세요.')
                 return
             if save and gm.스크립트.in_key(script_name):
-                reply = QMessageBox.question(self, '삭제 확인',
+                reply = QMessageBox.question(self, '확인',
                                             f'({script_name})는 이미 존재하는 스크립트입니다.\n같은 이름으로 스크립트를 저장 하시겠습니까?',
                                             QMessageBox.Yes | QMessageBox.No,
                                             QMessageBox.No)
 
                 if reply != QMessageBox.Yes: return
 
-            result = gm.scm.set_script_compiled(script_name, script, desc, kwargs={'code': '005930'}, save=save)
+            result = gm.scm.set_script_compiled(script_name, script, desc, kwargs={'code': '005930', 'name': '삼성전자'}, save=save)
             for log in result['logs']:
                 self.txtScriptMsg.append(log)
                 self.txtScriptMsg.moveCursor(QTextCursor.End)
