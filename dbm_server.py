@@ -196,9 +196,9 @@ class DBMServer:
         """스레드별 데이터베이스 연결 반환"""
         if not hasattr(self.thread_local, db_type):
             if db_type == 'chart':
-                db_name = 'abc_chart.db'
+                db_name = 'chart.db'
             else:
-                db_name = 'abc.db'
+                db_name = 'db.db'
             path = os.path.join(get_path(dc.fp.DB_PATH), db_name)
             conn = sqlite3.connect(path)
             conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
@@ -378,7 +378,7 @@ class DBMServer:
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
                     record = new_record()
-                    sim_record = {'일자': dt, '종목코드': code, '종목명': name, '전략명칭': st_name, '매수전략': st_buy}
+                    sim_record = {'매수일시': dt+tm, '종목코드': code, '종목명': name, '전략명칭': st_name, '매수전략': st_buy}
             
             elif kind == '매도':
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"

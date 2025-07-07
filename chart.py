@@ -677,8 +677,16 @@ class ChartManager:
             return 0.0
         
         return self._raw_data[n].get('거래대금', 0)
-    
-    def time(self, n: int = 0) -> str:
+
+    def bar(self, n: int = 0) -> int:
+        self._ensure_data_cache()
+        if not self._raw_data or n >= len(self._raw_data):
+            return (0, 0, 0, 0, 0, 0)
+        
+        return (self._raw_data[n].get('시가', 0), self._raw_data[n].get('고가', 0), self._raw_data[n].get('저가', 0), \
+            self._raw_data[n].get('현재가', 0), self._raw_data[n].get('거래량', 0), self._raw_data[n].get('거래대금', 0),)
+
+    def bar_time(self, n: int = 0) -> str:
         """시간 반환 - 고속 버전"""
         if self.cycle != 'mi':
             return ''
@@ -689,10 +697,19 @@ class ChartManager:
         
         return self._raw_data[n].get('체결시간', '')
     
-    def today(self) -> str:
+    def bar_date(self, n: int = 0) -> str:
         """오늘 날짜 반환"""
-        return datetime.now().strftime('%Y%m%d')
-    
+        self._ensure_data_cache()
+        if not self._raw_data or n >= len(self._raw_data):
+            return ''
+        if self.cycle == 'mi':
+            time_str = self._raw_data[n].get('체결시간', '')
+            if time_str:
+                return time_str[:8]
+            return ''
+        else:
+            return self._raw_data[n].get('일자', '')
+
     # 고속 계산 함수들
     def ma(self, period: int = 20, before: int = 0) -> float:
         """이동평균 - 고속 버전"""
@@ -1574,7 +1591,7 @@ class ScriptManager:
         try:
             compiled_code = self._compile_new_version(script_name)
             if compiled_code is not None:
-                result_dict['logs'].append(f'INFO: 스크립트 컴파일 완료: {script_name}')
+                #result_dict['logs'].append(f'INFO: 스크립트 컴파일 완료: {script_name}')
                 logging.info(f"스크립트 컴파일 완료: {script_name}")
             else:
                 result_dict['logs'].append(f'WARNING: 스크립트 컴파일 실패: {script_name}')
@@ -2069,10 +2086,10 @@ try:
     # 사용자 스크립트 실행
 {indent_func(script, indent=4)}
 except ZeroDivisionError:
-    debug('ZeroDivisionError 발생 - 기본값으로 처리')
+    echo('ZeroDivisionError 발생 - 기본값으로 처리')
     result = False
 except Exception as e:
-    debug(f'스크립트 실행 오류: {{e}}')
+    echo(f'스크립트 실행 오류: {{e}}')
     result = None
 """
         else:

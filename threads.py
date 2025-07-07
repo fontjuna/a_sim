@@ -334,7 +334,7 @@ class ChartSetter(QThread):
             
             if cycle in ['dy', 'mi']:
                 self.cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
-                #self.prx.order('dbm', 'upsert_chart', dict_list, cycle, tick)
+                self.prx.order('dbm', 'upsert_chart', dict_list, cycle, tick)
             
             return dict_list
         
