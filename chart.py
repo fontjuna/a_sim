@@ -1243,56 +1243,65 @@ class ChartManager:
         self._ensure_data_cache()
         return len(self._raw_data) if self._raw_data else 0
                 
+import threading
+from typing import Dict, Any
+
 class ScriptManager:
     """
-    투자 스크립트 관리 및 실행 클래스 (개선 버전)
+    투자 스크립트 관리 및 실행 클래스 (최적화 버전)
     
-    사용자 스크립트 실행, 검증, 관리(사용자 함수 포함)
+    사용자 스크립트 실행, 검증, 관리
     """
     # 허용된 Python 기능 목록 (whitelist 방식)
     ALLOWED_MODULES = ['re', 'math', 'datetime', 'random', 'logging', 'json', 'collections']
 
     # 허용된 Python 내장 함수 및 타입
     ALLOWED_BUILTINS = [
-        # 기본 데이터 타입
         'int', 'float', 'str', 'bool', 'list', 'dict', 'set', 'tuple',
-
-        # 데이터 처리 함수
         'len', 'max', 'min', 'sum', 'abs', 'all', 'any', 'round', 'sorted',
         'enumerate', 'zip', 'range',
-
-        # 형변환 함수
-        'int', 'float', 'str', 'bool', 'list', 'dict', 'set', 'tuple',
     ]
 
     # 허용되지 않는 문법 패턴
     FORBIDDEN_PATTERNS = [
-        r'import\s+(?!(' + '|'.join(ALLOWED_MODULES) + ')$)',   # 허용된 모듈만 임포트 가능
-        r'open\s*\(',                                           # 파일 열기 금지
-        r'exec\s*\(',                                           # exec() 사용 금지
-        r'eval\s*\(',                                           # eval() 사용 금지
-        r'__import__',                                          # __import__ 사용 금지
-        r'subprocess',                                          # subprocess 모듈 금지
-        r'os\.',                                                # os 모듈 사용 금지
-        r'sys\.',                                               # sys 모듈 사용 금지
-        r'while\s+.*:',                                         # while 루프 금지 (무한 루프 방지)
+        r'import\s+(?!(' + '|'.join(ALLOWED_MODULES) + ')$)',
+        r'open\s*\(',
+        r'exec\s*\(',
+        r'eval\s*\(',
+        r'__import__',
+        r'subprocess',
+        r'os\.',
+        r'sys\.',
+        r'while\s+.*:',
     ]
 
     def __init__(self, script_file=dc.fp.scripts_file):
-        """초기화
-        
-        Args:
-            script_file: 스크립트 저장 파일 경로
-        """
+        """초기화"""
         self.script_file = script_file
         self.scripts = {}  # {script_name: {script: str, type: str, desc: str}}
-        self.user_funcs = {}  # {script_name: {script: str, type: str, desc: str}}
         self._running_scripts = set()  # 실행 중인 스크립트 추적
-        self._compiled_scripts = {}  # 컴파일된 스크립트 캐시 {script_name: code_obj}
         self.cht_dt = ChartData()  # 차트 데이터 관리자
+        
+        # 스레드별 컨텍스트 관리
+        self._thread_local = threading.local()
 
-        # 파일에서 스크립트와 사용자 함수 로드
+        # 파일에서 스크립트 로드
         self._load_scripts()
+
+    def _get_current_context(self) -> Dict[str, Any]:
+        """현재 스레드의 실행 컨텍스트 가져오기"""
+        if not hasattr(self._thread_local, 'context'):
+            self._thread_local.context = {}
+        return self._thread_local.context
+
+    def _set_current_context(self, kwargs: Dict[str, Any]):
+        """현재 스레드의 실행 컨텍스트 설정"""
+        self._thread_local.context = kwargs.copy()
+
+    def _update_context_variable(self, key: str, value: Any):
+        """컨텍스트 특정 변수 업데이트"""
+        if hasattr(self._thread_local, 'context'):
+            self._thread_local.context[key] = value
 
     def _load_scripts(self):
         """스크립트 파일에서 스크립트 로드"""
@@ -1341,17 +1350,9 @@ class ScriptManager:
         else: return type(result).__name__
 
     def _validate_script_syntax(self, script: str, script_name: str) -> dict:
-        """스크립트 구문 검증
-        
-        Args:
-            script: 검증할 스크립트 코드
-            script_name: 스크립트 이름
-            
-        Returns:
-            dict: {'success': bool, 'error': str}
-        """
+        """스크립트 구문 검증"""
         # 스크립트 이름 유효성 검사
-        if not self._is_valid_identifier(script_name):
+        if not script_name.isidentifier():
             return {'success': False, 'error': f"유효하지 않은 스크립트 이름: {script_name}"}
         
         # 구문 분석
@@ -1375,16 +1376,7 @@ class ScriptManager:
         return {'success': True, 'error': None}
 
     def _execute_validated_script(self, script_name: str, script: str, kwargs: dict) -> dict:
-        """검증된 스크립트 실행 (공통 실행 로직)
-        
-        Args:
-            script_name: 스크립트 이름
-            script: 스크립트 코드
-            kwargs: 실행 매개변수
-            
-        Returns:
-            dict: 실행 결과
-        """
+        """검증된 스크립트 실행"""
         start_time = time.time()
         
         # 결과 초기화
@@ -1402,6 +1394,7 @@ class ScriptManager:
         if code is None:
             result_dict['error'] = "종목코드가 지정되지 않았습니다."
             result_dict['logs'].append('ERROR: 종목코드가 지정되지 않았습니다.')
+            result_dict['result'] = False  # 실패시 False 반환
             return result_dict
         
         # 순환 참조 방지
@@ -1409,10 +1402,14 @@ class ScriptManager:
         if script_key in self._running_scripts:
             result_dict['error'] = f"순환 참조 감지: {script_name}"
             result_dict['logs'].append(f'ERROR: 순환 참조 감지: {script_name}')
+            result_dict['result'] = False  # 실패시 False 반환
             return result_dict
         
         # 실행 중인 스크립트에 추가
         self._running_scripts.add(script_key)
+        
+        # 현재 컨텍스트 설정
+        self._set_current_context(kwargs)
         
         try:
             # 실행 환경 준비
@@ -1420,7 +1417,7 @@ class ScriptManager:
             locals_dict = {}
             
             # 래퍼 스크립트 생성
-            wrapped_script = self.make_wrapped_script(script, kwargs, self._indent_script)
+            wrapped_script = self._make_wrapped_script(script, kwargs)
             
             # 컴파일 및 실행
             code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
@@ -1433,13 +1430,13 @@ class ScriptManager:
             script_result = None
             try:
                 exec(code_obj, globals_dict, locals_dict)
-                # ret()로 설정된 값만 받음
                 script_result = globals_dict.get('_script_result')
             except SystemExit as e:
                 if str(e) == 'script_return':
                     script_result = globals_dict.get('_script_result')
                 else:
                     raise e
+            
             exec_time = time.time() - start_time
             
             # 실행 시간 경고
@@ -1461,18 +1458,17 @@ class ScriptManager:
             # 상세한 에러 정보 생성
             detailed_error = self._get_script_error_location(tb, script)
             
-            # 에러 로그 추가
             if not hasattr(script_logs, 'append'):
                 script_logs = []
             
             script_logs.append(f"ERROR: {detailed_error}")
             script_logs.append(f"TRACEBACK: {tb}")
             
-            # 시스템 로깅
             logging.error(f"{script_name} 스크립트 오류: {type(e).__name__} - {e}\n{tb}")
             
             result_dict['error'] = detailed_error
             result_dict['logs'] = script_logs
+            result_dict['result'] = False  # 실패시 False 반환
             return result_dict
             
         finally:
@@ -1484,17 +1480,7 @@ class ScriptManager:
             result_dict['exec_time'] = time.time() - start_time
 
     def run_script(self, script_name, script_contents=None, check_only=False, kwargs=None):
-        """스크립트 검사 및 실행 (검사용)
-        
-        Args:
-            script_name: 스크립트 이름
-            script_contents: 직접 제공된 스크립트 내용
-            check_only: 검사만 수행 여부
-            kwargs: 실행 매개변수
-            
-        Returns:
-            dict: 실행 결과
-        """
+        """스크립트 검사 및 실행"""
         if kwargs is None:
             kwargs = {}
         
@@ -1515,12 +1501,14 @@ class ScriptManager:
         
         if not script_contents:
             result_dict['error'] = f"스크립트 없음: {script_name}"
+            result_dict['result'] = False  # 실패시 False 반환
             return result_dict
         
         # 구문 검증
         validation_result = self._validate_script_syntax(script_contents, script_name)
         if not validation_result['success']:
             result_dict['error'] = validation_result['error']
+            result_dict['result'] = False  # 실패시 False 반환
             return result_dict
         
         # 실행
@@ -1539,19 +1527,8 @@ class ScriptManager:
         
         return result_dict
 
-    def set_script_compiled(self, script_name: str, script: str, desc: str = '', kwargs: dict = None, save: bool = True):
-        """스크립트 검사, 저장 및 컴파일 (통합 메서드)
-        
-        Args:
-            script_name: 스크립트 이름
-            script: 스크립트 코드
-            desc: 스크립트 설명
-            kwargs: 검사에 사용할 매개변수
-            save: True=저장+컴파일, False=검사만
-        
-        Returns:
-            dict: {'success': bool, 'result': None, 'error': str, 'type': str, 'logs': list, 'exec_time': float}
-        """
+    def set_script(self, script_name: str, script: str, desc: str = '', kwargs: dict = None, save: bool = True):
+        """스크립트 검사 및 저장"""
         if kwargs is None:
             kwargs = {}
         
@@ -1585,9 +1562,7 @@ class ScriptManager:
             result_dict['success'] = True
             return result_dict
         
-        # save=True인 경우 저장 및 컴파일 진행
-        
-        # 스크립트 데이터 생성 및 저장
+        # save=True인 경우 저장 진행
         script_data = {
             'script': script,
             'type': result_dict['type'],
@@ -1596,11 +1571,6 @@ class ScriptManager:
         
         self.scripts[script_name] = script_data
         
-        # 컴파일된 스크립트 메모리 캐시에서 제거 (재컴파일 필요)
-        cache_key = f"{script_name}_compiled"
-        if cache_key in self._compiled_scripts:
-            del self._compiled_scripts[cache_key]
-        
         # 파일 저장
         save_result = self._save_scripts()
         if not save_result:
@@ -1608,176 +1578,17 @@ class ScriptManager:
             result_dict['logs'].append('ERROR: 파일 저장 실패')
             return result_dict
 
-        # 컴파일 수행 (추가된 부분)
-        try:
-            compiled_code = self._compile_new_version(script_name)
-            if compiled_code is not None:
-                logging.info(f"스크립트 컴파일 완료: {script_name}")
-            else:
-                result_dict['logs'].append(f'WARNING: 스크립트 컴파일 실패: {script_name}')
-                logging.warning(f"스크립트 컴파일 실패: {script_name}")
-        except Exception as e:
-            error_msg = f'컴파일 오류: {e}'
-            result_dict['logs'].append(f'ERROR: {error_msg}')
-            logging.error(error_msg)
-
         # 성공
         result_dict['success'] = True
+        result_dict['logs'].append(f'INFO: 스크립트 저장 완료: {script_name}')
         
         return result_dict
 
-    def run_script_compiled(self, script_name: str, kwargs: dict = None):
-        """컴파일된 스크립트 실행 (매매용 고속 실행)
-        
-        Args:
-            script_name: 스크립트 이름
-            kwargs: 실행 매개변수
-            
-        Returns:
-            dict: 실행 결과
-        """
-        if kwargs is None:
-            kwargs = {}
-        
-        start_time = time.time()
-        
-        # 결과 초기화
-        result_dict = {
-            'success': False,
-            'result': None,
-            'error': None,
-            'type': None,
-            'logs': [],
-            'exec_time': 0,
-        }
-        
-        # 기본 검증 (최소한)
-        code = kwargs.get('code')
-        if code is None:
-            result_dict['error'] = "종목코드가 지정되지 않았습니다."
-            result_dict['logs'].append('ERROR: 종목코드가 지정되지 않았습니다.')
-            return result_dict
-        
-        # 스크립트 존재 확인
-        if script_name not in self.scripts:
-            result_dict['error'] = f"스크립트 없음: {script_name}"
-            result_dict['logs'].append(f'ERROR: 스크립트 없음: {script_name}')
-            return result_dict
-        
-        # 순환 참조 방지
-        script_key = f"{script_name}:{code}"
-        if script_key in self._running_scripts:
-            result_dict['error'] = f"순환 참조 감지: {script_name}"
-            result_dict['logs'].append(f'ERROR: 순환 참조 감지: {script_name}')
-            return result_dict
-        
-        # 실행 중인 스크립트에 추가
-        self._running_scripts.add(script_key)
-        
-        try:
-            # 차트 데이터 준비 상태 검사
-            if not self.cht_dt.is_code_registered(code):
-                result_dict['error'] = f"차트 데이터가 준비되지 않음: {code}"
-                result_dict['logs'].append(f'ERROR: 차트 데이터가 준비되지 않음: {code}')
-                return result_dict
-
-            # 컴파일된 코드 가져오기
-            code_obj = self._get_compiled_code_fast(script_name)
-            if code_obj is None:
-                result_dict['error'] = f"컴파일된 코드 없음: {script_name}"
-                result_dict['logs'].append(f'ERROR: 컴파일된 코드 없음: {script_name}')
-                return result_dict
-            
-            # 실행 환경 준비
-            globals_dict, script_logs = self._prepare_execution_globals(script_name)
-            locals_dict = {}
-            
-            # kwargs를 locals에 설정하고 단일 exec
-            locals_dict['kwargs'] = kwargs
-            exec(code_obj, globals_dict, locals_dict)
-
-            # 실행 결과 가져오기 - ret()로 설정된 값만 받음
-            script_result = globals_dict.get('_script_result')
-            exec_time = time.time() - start_time
-            
-            # 실행 시간 경고 (기준 완화: 0.1초)
-            if exec_time > 0.1:
-                warning_msg = f"컴파일된 스크립트 실행 시간 초과 ({script_name}:{code}): {exec_time:.4f}초"
-                logging.warning(warning_msg)
-                script_logs.append(f'WARNING: {warning_msg}')
-            
-            result_dict['success'] = True
-            result_dict['result'] = script_result
-            result_dict['type'] = self.get_script_type(script_result)
-            result_dict['exec_time'] = exec_time
-            result_dict['logs'] = script_logs
-            
-            return result_dict
-            
-        except Exception as e:
-            tb = traceback.format_exc()
-            
-            # 에러 로그 추가
-            error_msg = f"{type(e).__name__} - {e}"
-            result_dict['logs'].append(f"ERROR: {error_msg}")
-            result_dict['logs'].append(f"TRACEBACK: {tb}")
-            
-            # 시스템 로깅
-            logging.error(f"{script_name} 컴파일된 스크립트 오류: {error_msg}")
-            
-            result_dict['error'] = f"실행 오류: {error_msg}"
-            return result_dict
-            
-        finally:
-            # 실행 완료 후 추적 목록에서 제거
-            if script_key in self._running_scripts:
-                self._running_scripts.remove(script_key)
-            
-            # 실행 시간 기록
-            result_dict['exec_time'] = time.time() - start_time
-
-    def _get_compiled_code_fast(self, script_name: str):
-        """컴파일된 코드 빠른 획득 (메모리 캐시만 사용)"""
-        cache_key = f"{script_name}_compiled"
-        
-        # 메모리 캐시에 있으면 바로 반환
-        if cache_key in self._compiled_scripts:
-            return self._compiled_scripts[cache_key]
-        
-        # 없으면 새로 컴파일
-        return self._compile_new_version(script_name)
-
-    def _compile_new_version(self, script_name: str):
-        """스크립트를 새로 컴파일 (메모리 캐시만)"""
-        script_data = self.scripts.get(script_name, {})
-        script = script_data.get('script', '')
-        if not script:
-            return None
-        
-        try:
-            wrapped_script = self.make_wrapped_script(script, {}, self._indent_script)
-            code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
-            
-            # 메모리 캐시 저장
-            cache_key = f"{script_name}_compiled"
-            self._compiled_scripts[cache_key] = code_obj
-            
-            logging.info(f"스크립트 컴파일 완료: {script_name}")
-            return code_obj
-            
-        except Exception as e:
-            logging.error(f"컴파일 오류 ({script_name}): {e}")
-            return None
-
     def delete_script(self, script_name: str):
-        """스크립트 삭제 (메모리 캐시만)"""
+        """스크립트 삭제"""
         if script_name in self.scripts:
             try:
                 del self.scripts[script_name]
-                # 컴파일된 스크립트 메모리 캐시에서도 제거
-                cache_key = f"{script_name}_compiled"
-                if cache_key in self._compiled_scripts:
-                    del self._compiled_scripts[cache_key]
                 logging.info(f"스크립트 삭제 완료: {script_name}")
                 return self._save_scripts()
             except Exception as e:
@@ -1786,17 +1597,7 @@ class ScriptManager:
         return False
     
     def _has_forbidden_syntax(self, script: str) -> bool:
-        """금지된 구문이 있는지 확인
-        
-        Args:
-            script: 검사할 스크립트 코드
-        
-        Returns:
-            bool: 금지된 구문이 있으면 True
-        """
-        # 허용된 모듈 패턴
-        allowed_patterns = '|'.join(self.ALLOWED_MODULES)
-        
+        """금지된 구문이 있는지 확인"""
         for pattern in self.FORBIDDEN_PATTERNS:
             if re.search(pattern, script):
                 return True
@@ -1805,7 +1606,6 @@ class ScriptManager:
         try:
             tree = ast.parse(script)
             
-            # 방문자 패턴으로 AST 노드 검사
             class ForbiddenSyntaxVisitor(ast.NodeVisitor):
                 def __init__(self):
                     self.has_forbidden = False
@@ -1825,20 +1625,16 @@ class ScriptManager:
                     self.generic_visit(node)
                 
                 def visit_Call(self, node):
-                    # 함수 호출 확인
                     if isinstance(node.func, ast.Name):
                         func_name = node.func.id
                         if func_name in ['eval', 'exec', '__import__']:
                             self.has_forbidden = True
                             self.forbidden_reason = f"금지된 함수 호출: {func_name}"
-                        
-                    # 속성 접근 호출 확인 (예: os.system)
                     elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
                         module_name = node.func.value.id
                         if module_name in ['os', 'sys', 'subprocess']:
                             self.has_forbidden = True
                             self.forbidden_reason = f"금지된 모듈 사용: {module_name}"
-                    
                     self.generic_visit(node)
                 
                 def visit_While(self, node):
@@ -1860,49 +1656,15 @@ class ScriptManager:
         return False
     
     def _safe_loop(self, iterable, func):
-        """안전한 루프 실행 함수
-        
-        무한 루프 방지를 위한 for 루프 래퍼 함수.
-        
-        Args:
-            iterable: 반복 가능한 객체
-            func: 각 항목에 적용할 함수
-        
-        Returns:
-            list: 각 항목에 func를 적용한 결과 리스트
-        """
+        """안전한 루프 실행 함수"""
         results = []
         for item in iterable:
             results.append(func(item))
         return results
-
-    def _indent_script(self, script, indent=4):
-        """스크립트 들여쓰기 추가
-        
-        Args:
-            script: 원본 스크립트
-            indent: 들여쓰기 공백 수
-            
-        Returns:
-            str: 들여쓰기가 추가된 스크립트
-        """
-        try:
-            lines = script.split('\n')
-            indented_lines = [' ' * indent + line if line.strip() else line for line in lines]
-            return '\n'.join(indented_lines)
-        except Exception as e:
-            logging.error(f"들여쓰기 처리 오류: {e}")
-            # 오류 발생 시 원본 반환 (실행은 실패하더라도 예외는 발생시키지 않음)
-            return script
-
-    def _is_valid_identifier(self, name):
-        """유효한 식별자인지 확인"""
-        return name.isidentifier()
     
     def _get_script_error_location(self, tb_str, script):
         """스크립트 에러 위치 추출하여 한 줄 에러 메시지 반환"""
         try:
-            # 에러 라인 번호 찾기
             lines = tb_str.splitlines()
             error_line_num = None
             error_msg = "알 수 없는 오류"
@@ -1911,8 +1673,7 @@ class ScriptManager:
                 if "File \"<string>\"" in line and ", line " in line:
                     match = re.search(r", line (\d+)", line)
                     if match:
-                        # 래퍼 함수 오프셋 제거 (try 라인까지 12라인)
-                        wrapper_offset = 12
+                        wrapper_offset = 13
                         error_line_num = int(match.group(1)) - wrapper_offset
                 elif any(err_type in line for err_type in ["TypeError:", "NameError:", "SyntaxError:", "ValueError:", "AttributeError:", "IndexError:"]):
                     error_msg = line.strip()
@@ -1930,12 +1691,11 @@ class ScriptManager:
             return f"실행 오류: {error_msg}"
 
     def _prepare_execution_globals(self, current_script_name):
-        """실행 환경의 글로벌 변수 준비 (로그 수집 포함)"""
+        """실행 환경의 글로벌 변수 준비"""
         try:
-            # 스크립트용 로그 수집 리스트
             script_logs = []
             
-            # Python 내장 함수 제한 (허용된 것만 포함)
+            # Python 내장 함수 제한
             restricted_builtins = {}
             builtins_dict = __builtins__ if isinstance(__builtins__, dict) else dir(__builtins__)
             
@@ -1946,7 +1706,7 @@ class ScriptManager:
                     else:
                         restricted_builtins[name] = getattr(__builtins__, name)
             
-            # 필요한 모듈 로드
+            # 모듈 로드
             modules = {}
             for module_name in self.ALLOWED_MODULES:
                 try:
@@ -1955,36 +1715,24 @@ class ScriptManager:
                 except ImportError:
                     logging.warning(f"모듈 로드 실패: {module_name}")
             
-            # 로그 수집 래퍼 함수들
+            # 유틸리티 함수들
             def echo(msg):
                 script_logs.append(f"{current_script_name}: {msg}")
 
             def script_return(result=None):
-                # 글로벌 컨텍스트에 결과 저장
                 script_return.caller_globals['_script_result'] = result
                 raise SystemExit('script_return')
             
             def is_args(key, default_value):
-                """스크립트 내에서 인자 확인 함수"""
-                # 글로벌에서 직접 kwargs 참조 (성능 최적화)
-                if '_current_kwargs' in globals_dict:
-                    current_kwargs = globals_dict['_current_kwargs']
-                    return current_kwargs.get(key, default_value)
-                return default_value
+                current_context = self._get_current_context()
+                return current_context.get(key, default_value)
                         
             # 글로벌 환경 설정
             globals_dict = {
-                # Python 내장 함수들 (제한된 목록)
                 **restricted_builtins,
-                
-                # 허용된 모듈들
                 **modules,
-                
-                # 차트 매니저 및 단축 변수들
                 'ChartManager': ChartManager,
                 'CM': ChartManager,
-                
-                # 유틸리티 함수
                 'loop': self._safe_loop,
                 'run_script': self._script_caller,
                 'is_args': is_args,
@@ -1992,92 +1740,68 @@ class ScriptManager:
                 'ret': script_return,
                 '_script_logs': script_logs,
                 '_current_kwargs': {},
-                '_script_result': None,  # ret() 결과 저장용
+                '_script_result': None,
             }
             
-            # script_return에 글로벌 컨텍스트 전달
             script_return.caller_globals = globals_dict
             
-            # 모든 스크립트를 함수로 등록 (*args, **kwargs 지원)
+            # 모든 스크립트를 함수로 등록
             for script_name, script_data in self.scripts.items():
-                # 스크립트가 함수처럼 호출 가능하도록 래퍼 생성
                 wrapper_code = f"""
 def {script_name}(*args, **kwargs):
-    # 스크립트 호출 함수 - 결과값만 반환
     return run_script('{script_name}', args, kwargs)
 """
-                
-                # 스크립트 래퍼 함수 컴파일 및 추가
                 try:
                     exec(wrapper_code, globals_dict, globals_dict)
                 except Exception as e:
                     logging.error(f"스크립트 래퍼 생성 오류 ({script_name}): {e}")
             
-            # run_script 함수 추가 (스크립트 내에서 다른 스크립트 호출용)
-            globals_dict['run_script'] = self._script_caller
-            
             return globals_dict, script_logs
             
         except Exception as e:
             logging.error(f"실행 환경 준비 오류: {e}")
-            # 기본 환경 반환
             return {'ChartManager': ChartManager}, []
         
     def _script_caller(self, script_name, args=None, kwargs=None):
-        """스크립트 내에서 다른 스크립트를 호출하기 위한 함수 (직접 인자 전달 방식)"""
-        # 컨텍스트의 기존 kwargs 가져오기 (프레임 검사)
+        """스크립트 내에서 다른 스크립트를 호출하기 위한 함수"""
+        # 현재 컨텍스트에서 기본값 가져오기
+        current_context = self._get_current_context()
+        
+        # 프레임 검사로 현재 실행 중인 변수값 가져오기
         try:
             import inspect
             frame = inspect.currentframe().f_back
-            context_kwargs = {}
-            current_script_logs = None
-            original_kwargs_keys = set()
             
             while frame:
-                # user_script 프레임에서 현재 변수값 우선 추출
                 if frame.f_code.co_name == 'user_script':
                     frame_locals = frame.f_locals
-                    frame_globals = frame.f_globals
-                    
-                    # 로컬 변수에서 현재값 가져오기 (수정된 값 반영)
-                    context_kwargs['code'] = frame_locals.get('code')
-                    context_kwargs['name'] = frame_locals.get('name', '')
-                    context_kwargs['qty'] = frame_locals.get('qty', 0)
-                    context_kwargs['price'] = frame_locals.get('price', 0)
-                    
-                    # 로그 수집 리스트 찾기
-                    current_script_logs = frame_globals.get('_script_logs')
+                    # 현재 로컬 변수값으로 컨텍스트 업데이트
+                    if 'code' in frame_locals:
+                        self._update_context_variable('code', frame_locals['code'])
+                    if 'name' in frame_locals:
+                        self._update_context_variable('name', frame_locals['name'])
+                    if 'qty' in frame_locals:
+                        self._update_context_variable('qty', frame_locals['qty'])
+                    if 'price' in frame_locals:
+                        self._update_context_variable('price', frame_locals['price'])
                     break
-                    
-                # execute_script 프레임에서 원본 kwargs와 사용자 정의 변수들 가져오기
-                elif frame.f_code.co_name == 'execute_script':
-                    original_kwargs = frame.f_locals.get('kwargs', {})
-                    original_kwargs_keys = set(original_kwargs.keys())
-                    
-                    # 사용자 정의 변수들만 추가 (기본 변수는 user_script에서 가져옴)
-                    for key, value in original_kwargs.items():
-                        if key not in ['code', 'name', 'qty', 'price']:
-                            context_kwargs[key] = value
-                
                 frame = frame.f_back
                         
         except:
-            context_kwargs = {}
-            current_script_logs = None
+            pass
         
-        # 기본 kwargs에서 시작
-        new_kwargs = context_kwargs.copy()
+        # 업데이트된 컨텍스트 가져오기
+        new_kwargs = self._get_current_context().copy()
         
-        # args와 kwargs 처리
+        # 추가 인자 처리
         if args is None:
             args = ()
         if kwargs is None:
             kwargs = {}
         
-        # kwargs만 병합 (위치 인자는 스크립트에서 직접 처리하도록)
         new_kwargs.update(kwargs)
         
-        # 순환 참조 검사
+        # 기본 검증
         code = new_kwargs.get('code')
         if code is None:
             logging.error(f"{script_name} 에서 code 가 지정되지 않았습니다.")
@@ -2088,19 +1812,29 @@ def {script_name}(*args, **kwargs):
             logging.error(f"순환 참조 감지: {script_name}")
             return None
         
-        # 스크립트 실행 - 결과 받기
+        # 스크립트 실행
         result = self.run_script(script_name, kwargs=new_kwargs)
         
-        # 로그 통합 (호출된 스크립트의 로그를 현재 스크립트 로그에 추가)
-        if current_script_logs is not None and result.get('logs'):
-            current_script_logs.extend(result['logs'])
+        # 하위 스크립트 로그를 상위로 통합
+        try:
+            import inspect
+            frame = inspect.currentframe().f_back
+            while frame:
+                if '_script_logs' in frame.f_globals:
+                    parent_logs = frame.f_globals['_script_logs']
+                    if result.get('logs'):
+                        parent_logs.extend(result['logs'])
+                    break
+                frame = frame.f_back
+        except:
+            pass
         
-        # 결과값만 반환 (스크립트에서 사용하기 편하게)
-        return result['result'] if result['success'] else None
+        return result['result'] if result['success'] else False  # 실패시 False 반환
 
-    @staticmethod
-    def make_wrapped_script(script, combined_kwargs, indent_func):
-        """중복되는 wrapped_script 생성 코드 헬퍼 (ret 전용 버전)"""
+    def _make_wrapped_script(self, script, kwargs):
+        """래퍼 스크립트 생성"""
+        indented_script = '\n'.join(' '*8 + line if line.strip() else line for line in script.split('\n'))
+        
         return f"""
 def execute_script(kwargs):
     def user_script():
@@ -2115,15 +1849,12 @@ def execute_script(kwargs):
                 globals()[key] = value
         
         # 사용자 스크립트 실행
-{indent_func(script, indent=8)}
+{indented_script}
         
-        # result 변수는 무시, ret() 호출되지 않은 경우 None 반환
         return None
     
-    # 함수 실행
     try:
         user_script()
-        # ret()로 설정된 값 반환
         return globals().get('_script_result')
     except SystemExit as e:
         if str(e) == "script_return":
@@ -2140,9 +1871,9 @@ def execute_script(kwargs):
         raise
 
 # 스크립트 실행
-result = execute_script({repr(combined_kwargs)})
+result = execute_script({repr(kwargs)})
 """
-        
+            
 # 예제 실행
 if __name__ == '__main__':
     ct = ChartManager('005930', 'mi', 3)

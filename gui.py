@@ -729,7 +729,7 @@ class GUI(QMainWindow, form_class):
 
                 if reply != QMessageBox.Yes: return
 
-            result = gm.scm.set_script_compiled(script_name, script, desc, kwargs={'code': '005930', 'name': '삼성전자'}, save=save)
+            result = gm.scm.set_script(script_name, script, desc, kwargs={'code': '005930', 'name': '삼성전자'}, save=save)
             for log in result['logs']:
                 self.txtScriptMsg.append(log)
                 self.txtScriptMsg.moveCursor(QTextCursor.End)

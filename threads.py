@@ -440,15 +440,19 @@ class EvalStrategy(QThread):
         """매수 조건 충족 여부를 확인하는 메소드"""
         name = gm.dict종목정보.get(code, next='종목명')
 
-        if self.매수스크립트적용:
+        if self.매수스크립트적용: 
             if self.cht_dt.is_code_registered(code):
                 try:
-                    result = gm.scm.run_script_compiled(self.매수스크립트, kwargs={'code': code, 'name': name, 'qty': 0, 'price': price})
-                    if result['error']: logging.error(f'스크립트 실행 에러: {result["error"]}')
-                    if self.매수스크립트AND and not result.get('result', False): 
-                        gm.qwork['msg'].put(Work('주문내용', job={'msg': f'매수탈락 : {code} {name} {result["error"]}'}))
-                        return False, {}, f"매수스크립트 조건 불충족: {code} {name}"
+                    result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': 0})
+                    msg = ''
+                    if result['error']: 
+                        msg = f"매수스크립트 실행 에러: {code} {name} {result['error']}"
+                    elif self.매수스크립트AND and not result.get('result', False): 
+                        msg = f"매수스크립트 조건 불충족: {code} {name}"
                     gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
+                    if msg:
+                        gm.qwork['msg'].put(Work('주문내용', job={'msg': msg}))
+                        return False, {}, msg
                     logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
                 except Exception as e:
                     logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
@@ -572,11 +576,10 @@ class EvalStrategy(QThread):
 
             if self.매도스크립트적용:
                 if self.cht_dt.is_code_registered(code):
-                    result = gm.scm.run_script_compiled(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
+                    result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
                     if result['success']:
                         if self.매도스크립트OR and result.get('result', False): 
                             send_data['msg'] = '전략매도'
-                            gm.qwork['msg'].put(Work('주문내용', job={'msg': f'매도편입 : {code} {종목명}'}))
                             gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                             logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
                             return True, send_data, f"전략매도: {code} {종목명}"
