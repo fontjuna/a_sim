@@ -11,6 +11,7 @@ from queue import Queue
 import logging
 import os
 import json
+import time
 
 form_class = uic.loadUiType(os.path.join(get_path(dc.fp.RESOURCE_PATH), "aaa.ui"))[0]
 
@@ -729,20 +730,22 @@ class GUI(QMainWindow, form_class):
 
                 if reply != QMessageBox.Yes: return
 
-            result = gm.scm.set_script(script_name, script, desc, kwargs={'code': '005930', 'name': '삼성전자'}, save=save)
+            start_time = time.time()
+            result = gm.scm.set_script(script_name, script, desc, kwargs={'code': '005930'}, save=save)
+            exec_time = time.time() - start_time
             for log in result['logs']:
                 self.txtScriptMsg.append(log)
                 self.txtScriptMsg.moveCursor(QTextCursor.End)
-            if result['success']:
+            if not result['error']:
                 save_msg = ""
                 if save:
-                    save_msg = "컴파일 후 저장 되었습니다.\n"
+                    save_msg = "검사 후 저장 되었습니다.\n"
                     gm.스크립트.set(key=script_name, data={'스크립트': script, '타입': result['type'], '설명': desc})
                     gm.스크립트.update_table_widget(self.tblScript)
                     gm.list스크립트 = gm.스크립트.get(column='스크립트명')
                     self.gui_fx채움_스크립트콤보()
                     self.script_edited = False
-                QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n{save_msg}(걸린시간={result["exec_time"]:.5f}초)\n반환값={result["result"]}')
+                QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n{save_msg}(걸린시간={exec_time:.5f}초)\n반환값={result["result"]}')
             else:
                 QMessageBox.critical(self, '에러', result['error'])
                 #self.txtScriptMsg.append(result['error'])

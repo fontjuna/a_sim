@@ -440,23 +440,6 @@ class EvalStrategy(QThread):
         """매수 조건 충족 여부를 확인하는 메소드"""
         name = gm.dict종목정보.get(code, next='종목명')
 
-        if self.매수스크립트적용: 
-            if self.cht_dt.is_code_registered(code):
-                try:
-                    result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': 0})
-                    msg = ''
-                    if result['error']: 
-                        msg = f"매수스크립트 실행 에러: {code} {name} {result['error']}"
-                    elif self.매수스크립트AND and not result.get('result', False): 
-                        msg = f"매수스크립트 조건 불충족: {code} {name}"
-                    gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
-                    if msg:
-                        gm.qwork['msg'].put(Work('주문내용', job={'msg': msg}))
-                        return False, {}, msg
-                    logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
-                except Exception as e:
-                    logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
-
         if not gm.sim_on:
             status_market = com_market_status()
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
@@ -486,6 +469,25 @@ class EvalStrategy(QThread):
             if self.당일청산:
                 sell_time = datetime.strptime(self.청산시간, '%H:%M').time()
                 if now >= sell_time: return False, {}, f"청산시간 이후 매수 취소 {sell_time} ({code} {name})"
+
+        if self.매수스크립트적용: # 매수는 검색과 AND로만 연결 가능
+            if self.cht_dt.is_code_registered(code):
+                try:
+                    result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': 0})
+                    msg = ''
+                    if result['error']: 
+                        msg = f"매수스크립트 실행 에러: {code} {name} {result['error']}"
+                    elif self.매수스크립트AND and not result.get('result', False): 
+                        msg = f"매수스크립트 조건 불충족: {code} {name}"
+                    gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
+                    if msg:
+                        gm.qwork['msg'].put(Work('주문내용', job={'msg': msg}))
+                        return False, {}, msg
+                    logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
+                    gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
+
+                except Exception as e:
+                    logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
 
         try:
             send_data = {
@@ -577,23 +579,21 @@ class EvalStrategy(QThread):
             if self.매도스크립트적용:
                 if self.cht_dt.is_code_registered(code):
                     result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
-                    if result['success']:
+                    if not result['error']:
                         if self.매도스크립트OR and result.get('result', False): 
                             send_data['msg'] = '전략매도'
                             gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                             logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
                             return True, send_data, f"전략매도: {code} {종목명}"
                     else:
-                        if result['error']: 
-                            logging.error(f'스크립트 실행 에러: {result["error"]}')
-                            gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
-                        pass # 스크립트 무시
+                        logging.error(f'스크립트 실행 에러: {result["error"]}')
+                        gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                 else:
-                    result = {'success': False}
+                    result = {'error': '차트데이터 준비 안 됨'}
 
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
                 if self.매도스크립트적용 and self.매도스크립트AND:
-                    if not result.get('success', False): return False, {}, f"매도스크립트 조건 불충족: {code} {종목명}"
+                    if result.get('error'): return False, {}, f"{result['error']}: {code} {종목명}"
                 send_data['msg'] = '검색매도'
                 return True, send_data,  f"검색매도: {code} {종목명}"
 

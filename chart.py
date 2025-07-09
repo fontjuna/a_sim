@@ -1381,12 +1381,10 @@ class ScriptManager:
         
         # 결과 초기화
         result_dict = {
-            'success': False,
-            'result': None,
-            'error': None,
-            'type': None,
-            'logs': [],
-            'exec_time': 0,
+            'result': None,     # 스크립트 실행 결과값 (ret()로 설정된 값)
+            'error': None,      # 에러 메시지 (None이면 정상, 값이 있으면 실패)
+            'type': None,       # result의 데이터 타입
+            'logs': [],         # 실행 로그 (성공/실패 관계없이 수집)
         }
         
         # 종목코드 검증
@@ -1394,7 +1392,6 @@ class ScriptManager:
         if code is None:
             result_dict['error'] = "종목코드가 지정되지 않았습니다."
             result_dict['logs'].append('ERROR: 종목코드가 지정되지 않았습니다.')
-            result_dict['result'] = False  # 실패시 False 반환
             return result_dict
         
         # 순환 참조 방지
@@ -1402,7 +1399,6 @@ class ScriptManager:
         if script_key in self._running_scripts:
             result_dict['error'] = f"순환 참조 감지: {script_name}"
             result_dict['logs'].append(f'ERROR: 순환 참조 감지: {script_name}')
-            result_dict['result'] = False  # 실패시 False 반환
             return result_dict
         
         # 실행 중인 스크립트에 추가
@@ -1445,9 +1441,7 @@ class ScriptManager:
                 logging.warning(warning_msg)
                 script_logs.append(f'WARNING: {warning_msg}')
             
-            result_dict['success'] = True
             result_dict['result'] = script_result
-            result_dict['exec_time'] = exec_time
             result_dict['logs'] = script_logs
             
             return result_dict
@@ -1468,16 +1462,12 @@ class ScriptManager:
             
             result_dict['error'] = detailed_error
             result_dict['logs'] = script_logs
-            result_dict['result'] = False  # 실패시 False 반환
             return result_dict
             
         finally:
             # 실행 완료 후 추적 목록에서 제거
             if script_key in self._running_scripts:
                 self._running_scripts.remove(script_key)
-            
-            # 실행 시간 기록
-            result_dict['exec_time'] = time.time() - start_time
 
     def run_script(self, script_name, script_contents=None, check_only=False, kwargs=None):
         """스크립트 검사 및 실행"""
@@ -1486,12 +1476,10 @@ class ScriptManager:
         
         # 결과 초기화
         result_dict = {
-            'success': False,
             'result': None,
             'error': None,
             'type': None,
             'logs': [],
-            'exec_time': 0,
         }
         
         # 스크립트 내용 준비
@@ -1501,28 +1489,24 @@ class ScriptManager:
         
         if not script_contents:
             result_dict['error'] = f"스크립트 없음: {script_name}"
-            result_dict['result'] = False  # 실패시 False 반환
             return result_dict
         
         # 구문 검증
         validation_result = self._validate_script_syntax(script_contents, script_name)
         if not validation_result['success']:
             result_dict['error'] = validation_result['error']
-            result_dict['result'] = False  # 실패시 False 반환
             return result_dict
         
         # 실행
         exec_result = self._execute_validated_script(script_name, script_contents, kwargs)
         
         # 결과 복사
-        result_dict['success'] = exec_result['success']
         result_dict['result'] = exec_result['result']
         result_dict['error'] = exec_result['error']
         result_dict['logs'] = exec_result['logs']
-        result_dict['exec_time'] = exec_result['exec_time']
         
-        # 타입 설정
-        if result_dict['success']:
+        # 타입 설정 (정상 실행된 경우에만)
+        if result_dict['error'] is None:
             result_dict['type'] = self.get_script_type(result_dict['result'])
         
         return result_dict
@@ -1534,12 +1518,10 @@ class ScriptManager:
         
         # 결과 초기화
         result_dict = {
-            'success': False,
             'result': None,
             'error': None,
             'type': None,
             'logs': [],
-            'exec_time': 0,
         }
         
         # 검사 실행
@@ -1547,10 +1529,9 @@ class ScriptManager:
         
         # 결과 복사
         result_dict['logs'] = check_result['logs'].copy()
-        result_dict['exec_time'] = check_result['exec_time']
         result_dict['result'] = check_result['result']
         
-        if not check_result['success'] or check_result['type'] == 'error':
+        if check_result['error'] is not None or check_result['type'] == 'error':
             result_dict['error'] = check_result['error'] or 'result가 None입니다.'
             return result_dict
         
@@ -1559,7 +1540,6 @@ class ScriptManager:
         
         # save=False면 검사까지만 하고 반환
         if not save:
-            result_dict['success'] = True
             return result_dict
         
         # save=True인 경우 저장 진행
@@ -1579,7 +1559,6 @@ class ScriptManager:
             return result_dict
 
         # 성공
-        result_dict['success'] = True
         result_dict['logs'].append(f'INFO: 스크립트 저장 완료: {script_name}')
         
         return result_dict
@@ -1829,11 +1808,11 @@ def {script_name}(*args, **kwargs):
         except:
             pass
         
-        return result['result'] if result['success'] else False  # 실패시 False 반환
+        return result['result'] if result['error'] is None else False  # 실행 성공시 result, 실패시 False 반환
 
     def _make_wrapped_script(self, script, kwargs):
         """래퍼 스크립트 생성"""
-        indented_script = '\n'.join(' '*8 + line if line.strip() else line for line in script.split('\n'))
+        indented_script = '\n'.join(' ' * 8 + line if line.strip() else line for line in script.split('\n'))
         
         return f"""
 def execute_script(kwargs):
@@ -1873,7 +1852,7 @@ def execute_script(kwargs):
 # 스크립트 실행
 result = execute_script({repr(kwargs)})
 """
-            
+                
 # 예제 실행
 if __name__ == '__main__':
     ct = ChartManager('005930', 'mi', 3)
