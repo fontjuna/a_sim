@@ -470,24 +470,22 @@ class EvalStrategy(QThread):
                 sell_time = datetime.strptime(self.청산시간, '%H:%M').time()
                 if now >= sell_time: return False, {}, f"청산시간 이후 매수 취소 {sell_time} ({code} {name})"
 
-        if self.매수스크립트적용: # 매수는 검색과 AND로만 연결 가능
+        if self.매수스크립트적용: # 매수는 검색과 AND로만 연결 가능 맨 위에서 검사 해야 함
             if self.cht_dt.is_code_registered(code):
                 try:
                     result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': 0})
-                    msg = ''
-                    if result['error']: 
-                        msg = f"매수스크립트 실행 에러: {code} {name} {result['error']}"
-                    elif self.매수스크립트AND and not result.get('result', False): 
-                        msg = f"매수스크립트 조건 불충족: {code} {name}"
                     gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
-                    if msg:
+                    if result.get('error') or not result.get('result', False):
+                        msg = f"매수안함 : {code} {name} {result['error']}"
+                        logging.info(f"{msg}")
                         gm.qwork['msg'].put(Work('주문내용', job={'msg': msg}))
                         return False, {}, msg
                     logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
-                    gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
 
                 except Exception as e:
                     logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
+            else:
+                return False, {}, f"차트데이터 준비 안 됨: {code} {name}"
 
         try:
             send_data = {
@@ -514,9 +512,6 @@ class EvalStrategy(QThread):
 
             elif self.예수금:
                 pass
-                #예수금액 = self.예수금 * (self.예수금율 / 100)
-                #if 예수금액 > 0 and price > 0:
-                #    send_data['quantity'] = int(예수금액 / price)
 
             if send_data['quantity'] > 0:
                 return True, send_data, f"매수신호 : {code} {name} quantity={send_data['quantity']} price={send_data['price']}"
@@ -596,9 +591,6 @@ class EvalStrategy(QThread):
                     if result.get('error'): return False, {}, f"{result['error']}: {code} {종목명}"
                 send_data['msg'] = '검색매도'
                 return True, send_data,  f"검색매도: {code} {종목명}"
-
-            #if gm.sim_on and (수익률 > 30 or 수익률 < -30):
-            #    return False, {}, f"시뮬레이션 비정상 수익률: {code} {종목명} 매입가={매입가} 현재가={현재가} 수익률={수익률}"
 
             if self.로스컷 and self.로스컷율 != 0:
                 send_list = []
