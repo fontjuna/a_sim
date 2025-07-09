@@ -476,8 +476,7 @@ class EvalStrategy(QThread):
                     result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': 0})
                     gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                     if result.get('error') or not result.get('result', False):
-                        msg = f"매수안함 : {code} {name} {result['error']}"
-                        logging.info(f"{msg}")
+                        msg = f"조건불충 : {code} {name} result={result['result']} {result['error'] if result.get('error') else ''}"
                         gm.qwork['msg'].put(Work('주문내용', job={'msg': msg}))
                         return False, {}, msg
                     logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
@@ -485,7 +484,9 @@ class EvalStrategy(QThread):
                 except Exception as e:
                     logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
             else:
-                return False, {}, f"차트데이터 준비 안 됨: {code} {name}"
+                # 다시 넣음
+                gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price}})
+                return False, {}, f"차트미비: {code} {name}"
 
         try:
             send_data = {
@@ -528,7 +529,8 @@ class EvalStrategy(QThread):
             logging.info(f'매수결정: {reason}\nsend_data={send_data}')
             gm.order_q.put(send_data)
         else:
-            logging.info(f'매수안함: {reason} send_data={send_data}')
+            if '차트미비' not in reason: 
+                logging.info(f'매수안함: {reason} send_data={send_data}')
             key = f'{code}_매수'
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)

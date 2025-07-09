@@ -8,23 +8,26 @@ qty = 100
 
 # =============================================================================================
 
+# 스크립트명 : 개장후n봉최고종가
+
 # 지정 종목
-#code = '249420'
-echo(f'code={code}')
+code = '027050'
+#echo(f'code={code}')
 # 차트 매니저 생성 (3분봉)
 cm = ChartManager(code, 'mi', 3)
 
 # 넘겨진 인자 있는지 검사
-pre_bars = is_args('pre_bars', 65)
+pre_bars = is_args('pre_bars', 60)
 
 
 # 원본 데이터를 직접 가져오기 (최고 성능)
 data = cm.get_raw_data()
 
 result = []
-if len(data) > 1:
+skip = 0 # 제외 할 봉 갯수
+if len(data) > skip:
     # 현재봉 날짜 추출
-    current_time = data[1].get('체결시간', '')
+    current_time = data[skip].get('체결시간', '')
     #echo(f'current_time={current_time}')
     
     if len(current_time) >= 8:
@@ -56,5 +59,5 @@ if len(data) > 1:
                         # 현재 종가가 이전 봉들의 최고가보다 같거나 높으면
                         if current_close >= max_high:
                             result.append(check_idx)
+echo(f'code={code} result={result}')
 ret(result if 'result' in locals() else [])
-echo(f'code={code} result = {result}')

@@ -83,7 +83,13 @@ class ChartData:
             self._last_update_time[code] = 0
             
             # 모든 주기별 deque 미리 생성
-            for cycle_key, max_size in self.MAX_CANDLES.items():
+            #for cycle_key, max_size in self.MAX_CANDLES.items():
+            #    self._chart_data[code][cycle_key] = deque(maxlen=max_size)
+
+            # 실시간 업데이트할 주기들만 미리 생성
+            realtime_cycles = ['mi1', 'mi3', 'mi5', 'mi10', 'dy', 'wk', 'mo']
+            for cycle_key in realtime_cycles:
+                max_size = self.MAX_CANDLES.get(cycle_key, 1000)
                 self._chart_data[code][cycle_key] = deque(maxlen=max_size)
     
     def _increment_version(self, code: str):
@@ -249,7 +255,7 @@ class ChartData:
         return self._aggregate_minute_data(minute_data, tick)
     
     def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """실시간 차트 업데이트 (기존 인터페이스 유지)"""
+        """실시간 차트 업데이트 (주요 주기들 실시간 업데이트)"""
         
         code_lock = self._get_code_lock(code)
         with code_lock:
@@ -260,6 +266,9 @@ class ChartData:
             # 1분봉 업데이트
             self._update_minute_chart(code, price, volume, amount, datetime_str)
             
+            # 주요 분봉들 실시간 업데이트
+            self._update_major_minute_charts(code)
+            
             # 일봉 업데이트 (있는 경우에만)
             if self._chart_data[code]['dy']:
                 self._update_day_chart(code, price, volume, amount, datetime_str)
@@ -267,6 +276,24 @@ class ChartData:
             
             # 버전 업데이트
             self._increment_version(code)
+
+    def _update_major_minute_charts(self, code: str):
+        """주요 분봉들(3,5,10분) 실시간 업데이트"""
+        minute_data = list(self._chart_data[code]['mi1'])
+        if not minute_data:
+            return
+        
+        # 3, 5, 10분봉 업데이트
+        for tick in [3, 5, 10]:
+            cycle_key = f'mi{tick}'
+            if cycle_key in self._chart_data[code]:
+                aggregated_data = self._aggregate_minute_data(minute_data, tick)
+                
+                # 기존 deque 클리어 후 새 데이터 추가
+                agg_deque = self._chart_data[code][cycle_key]
+                agg_deque.clear()
+                for candle in aggregated_data:
+                    agg_deque.append(candle)
         
     def _update_minute_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
         """1분봉 업데이트 (전봉누적값 활용한 간단한 계산)"""
@@ -610,22 +637,28 @@ class ChartManager:
         self._raw_data = None  # 원본 데이터 직접 참조
         
     def _ensure_data_cache(self):
-        """데이터 캐시 확인 및 업데이트 (최소한의 체크)"""
+        """데이터 캐시 확인 및 업데이트 (주기별 최적화)"""
         current_version = self.cht_dt._data_versions.get(self.code, 0)
         
         if self._cache_version != current_version or self._raw_data is None:
-            # 원본 데이터 직접 참조 (복사 없음)
+            # 실시간 업데이트 주기들: 직접 접근 (초고속)
+            realtime_cycles = ['mi1', 'mi3', 'mi5', 'mi10', 'dy', 'wk', 'mo']
+            
             if self.cycle == 'mi':
                 cycle_key = f'mi{self.tick}'
-                if cycle_key == 'mi1':
-                    # 1분봉은 저장된 데이터 직접 사용
-                    self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get('mi1')
-                else:
-                    # ChartData의 집계 결과 직접 사용
+                if cycle_key in realtime_cycles:
+                    # 실시간 업데이트되는 주기: 직접 가져오기
                     self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(cycle_key, [])
+                else:
+                    # 기타 주기: 동적 생성 후 자체 캐싱
+                    self._raw_data = self.cht_dt.get_chart_data(self.code, self.cycle, self.tick)
             else:
-                # 일/주/월봉
-                self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(self.cycle, [])
+                # 일/주/월봉: 실시간 업데이트됨
+                if self.cycle in realtime_cycles:
+                    self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(self.cycle, [])
+                else:
+                    # 기타 주기: 동적 생성
+                    self._raw_data = self.cht_dt.get_chart_data(self.code, self.cycle, self.tick)
             
             self._cache_version = current_version
     
@@ -1435,7 +1468,7 @@ class ScriptManager:
             
             exec_time = time.time() - start_time
             
-            # 실행 시간 경고
+            # 실행 시간 경고 (0.005초 기준)
             if exec_time > 0.02:
                 warning_msg = f"스크립트 실행 시간 초과 ({script_name}:{code}): {exec_time:.4f}초"
                 logging.warning(warning_msg)
@@ -1703,6 +1736,13 @@ class ScriptManager:
                 raise SystemExit('script_return')
             
             def is_args(key, default_value):
+                # 현재 스크립트 호출시 전달된 kwargs에서 확인
+                if '_call_kwargs' in globals_dict:
+                    call_kwargs = globals_dict['_call_kwargs']
+                    if key in call_kwargs:
+                        return call_kwargs[key]
+                
+                # 전체 컨텍스트에서 확인
                 current_context = self._get_current_context()
                 return current_context.get(key, default_value)
                         
@@ -1794,6 +1834,18 @@ def {script_name}(*args, **kwargs):
         # 스크립트 실행
         result = self.run_script(script_name, kwargs=new_kwargs)
         
+        # 실행 전에 호출 kwargs 설정 (is_args용)
+        try:
+            import inspect
+            frame = inspect.currentframe().f_back
+            while frame:
+                if '_current_kwargs' in frame.f_globals:
+                    frame.f_globals['_call_kwargs'] = kwargs or {}
+                    break
+                frame = frame.f_back
+        except:
+            pass
+        
         # 하위 스크립트 로그를 상위로 통합
         try:
             import inspect
@@ -1852,7 +1904,7 @@ def execute_script(kwargs):
 # 스크립트 실행
 result = execute_script({repr(kwargs)})
 """
-                
+                    
 # 예제 실행
 if __name__ == '__main__':
     ct = ChartManager('005930', 'mi', 3)
