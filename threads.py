@@ -470,24 +470,6 @@ class EvalStrategy(QThread):
                 sell_time = datetime.strptime(self.청산시간, '%H:%M').time()
                 if now >= sell_time: return False, {}, f"청산시간 이후 매수 취소 {sell_time} ({code} {name})"
 
-        if self.매수스크립트적용: # 매수는 검색과 AND로만 연결 가능 맨 위에서 검사 해야 함
-            if self.cht_dt.is_code_registered(code):
-                try:
-                    result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': 0})
-                    gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
-                    if result.get('error') or not result.get('result', False):
-                        msg = f"조건불충 : {code} {name} result={result['result']} {result['error'] if result.get('error') else ''}"
-                        gm.qwork['msg'].put(Work('주문내용', job={'msg': msg}))
-                        return False, {}, msg
-                    logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
-
-                except Exception as e:
-                    logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
-            else:
-                # 다시 넣음
-                gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price}})
-                return False, {}, f"차트미비: {code} {name}"
-
         try:
             send_data = {
                 'rqname': rqname,
@@ -513,6 +495,24 @@ class EvalStrategy(QThread):
 
             elif self.예수금:
                 pass
+
+            if self.매수스크립트적용: # 매수는 검색과 AND로만 연결 가능 맨 위에서 검사 해야 함
+                if self.cht_dt.is_code_registered(code):
+                    try:
+                        result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': send_data['quantity']})
+                        gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
+                        if result.get('error') or not result.get('result', False):
+                            msg = f"스크립트 : {code} {name} 매수취소 {result['error'] if result.get('error') else ''}"
+                            gm.qwork['msg'].put(Work('주문내용', job={'msg': msg}))
+                            return False, {}, msg
+                        logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
+
+                    except Exception as e:
+                        logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
+                else:
+                    # 다시 넣음
+                    gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price}})
+                    return False, {}, f"차트미비: {code} {name}"
 
             if send_data['quantity'] > 0:
                 return True, send_data, f"매수신호 : {code} {name} quantity={send_data['quantity']} price={send_data['price']}"

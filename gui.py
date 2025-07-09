@@ -670,7 +670,7 @@ class GUI(QMainWindow, form_class):
             self.ledScriptName.setText(name)
             self.txtScript.setText(script)
             self.txtScriptDesc.setText(desc)
-            self.txtScriptMsg.clear()
+            #self.txtScriptMsg.clear()
             self.script_edited = False
 
         except Exception as e:
@@ -680,7 +680,7 @@ class GUI(QMainWindow, form_class):
         self.ledScriptName.setText('')
         self.txtScript.setText('')
         self.txtScriptDesc.setText('')
-        self.txtScriptMsg.clear()
+        #self.txtScriptMsg.clear()
 
     def gui_script_delete(self):
         try:
@@ -733,9 +733,11 @@ class GUI(QMainWindow, form_class):
             start_time = time.time()
             result = gm.scm.set_script(script_name, script, desc, kwargs={'code': '005930'}, save=save)
             exec_time = time.time() - start_time
-            for log in result['logs']:
-                self.txtScriptMsg.append(log)
-                self.txtScriptMsg.moveCursor(QTextCursor.End)
+
+            if result['logs']: self.txtScriptMsg.append('<검사결과>\n' + '\n'.join(result['logs'])+'\n')
+            self.txtScriptMsg.verticalScrollBar().setValue(self.txtScriptMsg.verticalScrollBar().maximum())
+            self.txtScriptMsg.horizontalScrollBar().setValue(0)
+
             if not result['error']:
                 save_msg = ""
                 if save:
