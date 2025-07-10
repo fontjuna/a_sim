@@ -17,6 +17,7 @@ import importlib.util
 from datetime import timedelta
 from collections import deque
 
+all_cycles = ['mi1', 'mi3', 'mi5', 'mi10', 'mi15', 'mi30', 'mi60', 'dy', 'wk', 'mo']
 class ChartData:
     """
     고성능 차트 데이터 관리 클래스 (메모리 기반, 0.01초 주기 최적화)
@@ -83,7 +84,6 @@ class ChartData:
             self._last_update_time[code] = 0
             
             # 모든 주기들을 미리 생성
-            all_cycles = ['mi1', 'mi3', 'mi5', 'mi10', 'mi15', 'mi30', 'mi60', 'dy', 'wk', 'mo']
             for cycle_key in all_cycles:
                 max_size = self.MAX_CANDLES.get(cycle_key, 1000)
                 self._chart_data[code][cycle_key] = deque(maxlen=max_size)
@@ -733,41 +733,35 @@ class ChartManager:
         self.code = code
         
         # 성능 최적화를 위한 캐시
-        self._data_cache = None
-        self._cache_version = -1
         self._raw_data = None  # 원본 데이터 직접 참조
+        self._cache_version = -1
+        self._data_length = 0
         
     def _ensure_data_cache(self):
-        """데이터 캐시 확인 및 업데이트 (주기별 최적화)"""
+        """데이터 캐시 확인 및 업데이트 (최적화)"""
         current_version = self.cht_dt._data_versions.get(self.code, 0)
         
-        if self._cache_version != current_version or self._raw_data is None:
-            # 실시간 업데이트 주기들: 직접 접근 (초고속)
-            realtime_cycles = ['mi1', 'mi3', 'mi5', 'mi10', 'dy', 'wk', 'mo']
-            
-            if self.cycle == 'mi':
-                cycle_key = f'mi{self.tick}'
-                if cycle_key in realtime_cycles:
-                    # 실시간 업데이트되는 주기: 직접 가져오기
-                    self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(cycle_key, [])
-                else:
-                    # 기타 주기: 동적 생성 후 자체 캐싱
-                    self._raw_data = self.cht_dt.get_chart_data(self.code, self.cycle, self.tick)
-            else:
-                # 일/주/월봉: 실시간 업데이트됨
-                if self.cycle in realtime_cycles:
-                    self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(self.cycle, [])
-                else:
-                    # 기타 주기: 동적 생성
-                    self._raw_data = self.cht_dt.get_chart_data(self.code, self.cycle, self.tick)
-            
-            self._cache_version = current_version
-    
+        # 버전이 같으면 즉시 리턴
+        if self._cache_version == current_version and self._raw_data is not None:
+            return
+        
+        # 버전이 다를 때만 데이터 갱신
+        if self.cycle == 'mi':
+            cycle_key = f'mi{self.tick}'
+            # 모든 분봉은 ChartData에서 실시간 업데이트됨 - 직접 가져오기
+            self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(cycle_key, [])
+        else:
+            # 일/주/월봉: ChartData에서 실시간 업데이트됨 - 직접 가져오기
+            self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(self.cycle, [])
+        
+        self._cache_version = current_version
+        self._data_length = len(self._raw_data) if self._raw_data else 0
+
     # 고속 기본값 반환 함수들 (직접 접근)
     def c(self, n: int = 0) -> float:
         """종가 반환 - 고속 버전"""
         self._ensure_data_cache()
-        if not self._raw_data or n >= len(self._raw_data):
+        if not self._raw_data or n >= self._data_length:
             return 0.0
         
         return self._raw_data[n].get('현재가', 0)
@@ -775,7 +769,7 @@ class ChartManager:
     def o(self, n: int = 0) -> float:
         """시가 반환 - 고속 버전"""
         self._ensure_data_cache()
-        if not self._raw_data or n >= len(self._raw_data):
+        if not self._raw_data or n >= self._data_length:
             return 0.0
         
         return self._raw_data[n].get('시가', 0)
@@ -783,7 +777,7 @@ class ChartManager:
     def h(self, n: int = 0) -> float:
         """고가 반환 - 고속 버전"""
         self._ensure_data_cache()
-        if not self._raw_data or n >= len(self._raw_data):
+        if not self._raw_data or n >= self._data_length:
             return 0.0
         
         return self._raw_data[n].get('고가', 0)
@@ -791,7 +785,7 @@ class ChartManager:
     def l(self, n: int = 0) -> float:
         """저가 반환 - 고속 버전"""
         self._ensure_data_cache()
-        if not self._raw_data or n >= len(self._raw_data):
+        if not self._raw_data or n >= self._data_length:
             return 0.0
         
         return self._raw_data[n].get('저가', 0)
@@ -799,7 +793,7 @@ class ChartManager:
     def v(self, n: int = 0) -> int:
         """거래량 반환 - 고속 버전"""
         self._ensure_data_cache()
-        if not self._raw_data or n >= len(self._raw_data):
+        if not self._raw_data or n >= self._data_length:
             return 0
         
         return int(self._raw_data[n].get('거래량', 0))
@@ -807,7 +801,7 @@ class ChartManager:
     def a(self, n: int = 0) -> float:
         """거래금액 반환 - 고속 버전"""
         self._ensure_data_cache()
-        if not self._raw_data or n >= len(self._raw_data):
+        if not self._raw_data or n >= self._data_length:
             return 0.0
         
         return self._raw_data[n].get('거래대금', 0)
@@ -815,7 +809,7 @@ class ChartManager:
     def longest_bar(self, p: float = 2.0, n: int = 0) -> tuple:
         if self.cycle != 'mi': return ('', 0, 0, 0, 0, 0, 0)
         self._ensure_data_cache()
-        if not self._raw_data or n >= len(self._raw_data):
+        if not self._raw_data or n >= self._data_length:
             return ('', 0, 0, 0, 0, 0, 0)
         date_str = self._raw_data[n].get('체결시간', '')[:8]
         length, pos = 0, 0
@@ -835,7 +829,7 @@ class ChartManager:
 
     def bar(self, n: int = 0) -> int:
         self._ensure_data_cache()
-        if not self._raw_data or n >= len(self._raw_data):
+        if not self._raw_data or n >= self._data_length:
             return (0, 0, 0, 0, 0, 0)
         
         return (self._raw_data[n].get('시가', 0), self._raw_data[n].get('고가', 0), self._raw_data[n].get('저가', 0), \
@@ -847,7 +841,7 @@ class ChartManager:
             return ''
         
         self._ensure_data_cache()
-        if not self._raw_data or n >= len(self._raw_data):
+        if not self._raw_data or n >= self._data_length:
             return ''
         
         return self._raw_data[n].get('체결시간', '')
@@ -855,7 +849,7 @@ class ChartManager:
     def bar_date(self, n: int = 0) -> str:
         """오늘 날짜 반환"""
         self._ensure_data_cache()
-        if not self._raw_data or n >= len(self._raw_data):
+        if not self._raw_data or n >= self._data_length:
             return ''
         if self.cycle == 'mi':
             time_str = self._raw_data[n].get('체결시간', '')
@@ -869,7 +863,7 @@ class ChartManager:
     def ma(self, period: int = 20, before: int = 0) -> float:
         """이동평균 - 고속 버전"""
         self._ensure_data_cache()
-        if not self._raw_data or before + period > len(self._raw_data):
+        if not self._raw_data or before + period > self._data_length:
             return 0.0
         
         total = 0.0
@@ -1005,10 +999,10 @@ class ChartManager:
         if not self._raw_data:
             return 0
         
-        for i in range(len(self._raw_data)):
+        for i in range(self._data_length):
             if condition_func(i):
                 return i
-        return len(self._raw_data)
+        return self._data_length
 
     def highest_since(self, nth: int, condition_func, data_func) -> float:
         """조건이 nth번째 만족된 이후 data_func의 최고값"""
@@ -1019,7 +1013,7 @@ class ChartManager:
         condition_met = 0
         highest_val = float('-inf')
         
-        for i in range(len(self._raw_data)):
+        for i in range(self._data_length):
             if condition_func(i):
                 condition_met += 1
                 if condition_met == nth:
@@ -1040,7 +1034,7 @@ class ChartManager:
         condition_met = 0
         lowest_val = float('inf')
         
-        for i in range(len(self._raw_data)):
+        for i in range(self._data_length):
             if condition_func(i):
                 condition_met += 1
                 if condition_met == nth:
@@ -1060,7 +1054,7 @@ class ChartManager:
         
         condition_met = 0
         
-        for i in range(len(self._raw_data)):
+        for i in range(self._data_length):
             if condition_func(i):
                 condition_met += 1
                 if condition_met == nth:
@@ -1092,7 +1086,7 @@ class ChartManager:
     def rsi(self, period: int = 14, m: int = 0) -> float:
         """상대강도지수(RSI) 계산"""
         self._ensure_data_cache()
-        if not self._raw_data or m + period + 1 > len(self._raw_data):
+        if not self._raw_data or m + period + 1 > self._data_length:
             return 50.0
         
         gains = 0.0
@@ -1164,7 +1158,7 @@ class ChartManager:
     def atr(self, period: int = 14, m: int = 0) -> float:
         """평균 실제 범위(ATR) 계산"""
         self._ensure_data_cache()
-        if not self._raw_data or len(self._raw_data) < period + 1 + m:
+        if not self._raw_data or self._data_length < period + 1 + m:
             return 0.0
         
         tr_values = []
@@ -1232,7 +1226,7 @@ class ChartManager:
         bullish=True: 상승 포괄 패턴, bullish=False: 하락 포괄 패턴
         """
         self._ensure_data_cache()
-        if not self._raw_data or n + 1 >= len(self._raw_data):
+        if not self._raw_data or n + 1 >= self._data_length:
             return False
             
         curr_o = self.o(n)
@@ -1327,7 +1321,7 @@ class ChartManager:
     def detect_pattern(self, pattern_func, length: int) -> bool:
         """특정 패턴 감지 (length 길이의 데이터에 pattern_func 적용)"""
         self._ensure_data_cache()
-        if not self._raw_data or len(self._raw_data) < length:
+        if not self._raw_data or self._data_length < length:
             return False
             
         # pattern_func에 데이터 전달하여 패턴 확인
@@ -1352,7 +1346,7 @@ class ChartManager:
     def get_ma(self, period: int = 20, count: int = 1) -> list:
         """이동평균 리스트 반환"""
         self._ensure_data_cache()
-        if not self._raw_data or len(self._raw_data) < period:
+        if not self._raw_data or self._data_length < period:
             return []
         
         ma_list = []
@@ -1375,7 +1369,7 @@ class ChartManager:
     def get_data_length(self) -> int:
         """데이터 길이 반환"""
         self._ensure_data_cache()
-        return len(self._raw_data) if self._raw_data else 0
+        return self._data_length
                 
 import threading
 from typing import Dict, Any
