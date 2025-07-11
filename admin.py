@@ -270,7 +270,7 @@ class Admin:
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
                 
             if gm.잔고목록.in_key(code):
-                gm.price_q.put({code: dictFID['현재가']}) # PriceUpdater
+                gm.price_q.put((code, dictFID['현재가'])) # PriceUpdater
         except Exception as e:
             logging.error(f'실시간 주식체결 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 

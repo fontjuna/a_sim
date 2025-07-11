@@ -53,20 +53,36 @@ class PriceUpdater(QThread):
         while self.running:
             batch = {}
             start_time = time.time()
-            while time.time() - start_time < dc.INTERVAL_SLOW: # 0.05초
+            while time.time() - start_time < dc.INTERVAL_BATCH:
                 data = self.price_q.get()
                 if data is None: 
                     self.running = False
                     return
-                batch.update(data)
-                if self.price_q.empty():
-                    break
-            if batch:
-                self.update_batch(batch)
+                code, price = data
+                batch[code] = price
+                if self.price_q.empty(): break
+
+            if batch: self.update_batch(batch)
+
             q_len = self.price_q.length()
-            if q_len > 5:
-                logging.warning(f'price_q 대기 큐 len={q_len}')
-    
+            if q_len > 5: logging.warning(f'price_q 대기 큐 len={q_len}')
+            
+    """
+    # 예전 코드
+    def run(self):
+        self.running = True
+        while self.running:
+            data = self.price_q.get()
+            if data is None: 
+                self.running = False
+                return
+            code, price = data
+            self.pri_fx처리_잔고데이터(code, price)
+            self.pri_fx검사_매도요건(code)
+
+            q_len = self.price_q.length()
+            if q_len > 5: logging.warning(f'price_q 대기 큐 len={q_len}')
+    """
     def update_batch(self, batch):
         for code, price in batch.items():
             self.pri_fx처리_잔고데이터(code, price)
