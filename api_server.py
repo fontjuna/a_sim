@@ -3,6 +3,7 @@ from classes import TimeLimiter, Toast
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread
+from datetime import datetime
 import logging
 import time
 import random
@@ -10,7 +11,6 @@ import threading
 import pythoncom
 import pandas as pd
 import copy
-import datetime
 import sys
 
 toast = None #Toast()
@@ -183,12 +183,12 @@ class SimData:
          return []
       
       if not self.start_time:
-         self.start_time = datetime.datetime.now()
+         self.start_time = datetime.now()
          # 첫 차트 데이터의 시간 찾기
          self.base_chart_time = self.extract_time_from_chart(self.chart_data[0]['체결시간'])
       
       # 현재 경과 시간 계산 (초 단위)
-      elapsed_seconds = (datetime.datetime.now() - self.start_time).total_seconds()
+      elapsed_seconds = (datetime.now() - self.start_time).total_seconds()
       
       # 현재 차트 시간 계산
       current_chart_seconds = self.base_chart_time.hour * 3600 + self.base_chart_time.minute * 60 + self.base_chart_time.second
@@ -493,7 +493,7 @@ class OnReceiveRealDataSim3(QThread):
                # 실시간 데이터 전송
                dictFID = {
                   '종목코드': code,
-                  '종목명': tick_data.get('종목명', ''),
+                  '종목명': self.api.GetMasterCodeName(code),
                   '현재가': f'{current_price:15d}',
                   '등락율': f'{float(tick_data.get("등락율", 0)):15.2f}',
                   '누적거래량': f'{int(tick_data.get("누적거래량", 0)):15d}',
@@ -1149,3 +1149,97 @@ class APIServer:
             return data
         return None
     
+    def get_chart_data(self, code, cycle, tick=1, times=1, wt=None, dt=None):
+        """차트 데이터 조회"""
+        try:
+            rqname = f'{dc.scr.차트종류[cycle]}차트'
+            trcode = dc.scr.차트TR[cycle]
+            screen = dc.scr.화면[rqname]
+            date = datetime.now().strftime('%Y%m%d')
+            dict_list = []
+            
+            if cycle in ['mi', 'tk']:
+                if tick == None:
+                    tick = '1'
+                elif isinstance(tick, int):
+                    tick = str(tick)
+                input = {'종목코드':code, '틱범위': tick, '수정주가구분': "1"}
+                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
+            else:
+                if cycle == 'dy':
+                    input = {'종목코드':code, '기준일자': date, '수정주가구분': "1"}
+                else:
+                    input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': "1"}
+                output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
+
+            dict_list = self._fetch_chart_data(rqname, trcode, input, output, screen, times, wt, dt)
+            
+            if not dict_list:
+                logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}')
+                return dict_list
+            
+            logging.debug(f'{rqname}: code:{code}, cycle:{cycle}, tick:{tick}, count:{len(dict_list)} {dict_list[:1]}')
+            
+            # 데이터 변환
+            dict_list = self._convert_chart_data(dict_list, code, cycle)
+            
+            #if cycle in ['dy', 'mi']:
+            #    self.cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
+            #elif cycle == 'tk':
+            #    self.prx.order('dbm', 'upsert_chart', dict_list, cycle, tick)
+            
+            return dict_list
+        
+        except Exception as e:
+            logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
+            return []
+
+    def _fetch_chart_data(self, rqname, trcode, input, output, screen, times, wt, dt):
+        """차트 데이터 fetch"""
+        next = '0'
+        dict_list = []
+        
+        while True:
+            if wt is not None: time.sleep(wt)
+            result = self.api_request(rqname, trcode, input, output, next=next, screen=screen)
+            if result is None:
+                break
+            
+            data, remain = result
+            if data is None or len(data) == 0: 
+                break
+                
+            dict_list.extend(data)
+            if trcode == dc.scr.차트TR['tk'] and dt is not None and data[-1]['체결시간'] < dt: times = 0
+            times -= 1
+            if not remain or times <= 0: 
+                break
+            next = '2'
+        
+        return dict_list
+
+    def _convert_chart_data(self, dict_list, code, cycle):
+        """차트 데이터 변환"""
+        if cycle in ['mi', 'tk']:
+            return [{
+                '종목코드': code,
+                '체결시간': item['체결시간'] if item['체결시간'] else datetime.now().strftime('%Y%m%d%H%M%S'),
+                '시가': abs(int(item['시가'])) if item['시가'] else 0,
+                '고가': abs(int(item['고가'])) if item['고가'] else 0,
+                '저가': abs(int(item['저가'])) if item['저가'] else 0,
+                '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
+                '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
+                '거래대금': 0,
+            } for item in dict_list]
+        else:
+            return [{
+                '종목코드': code,
+                '일자': item['일자'] if item['일자'] else datetime.now().strftime('%Y%m%d'),
+                '시가': abs(int(item['시가'])) if item['시가'] else 0,
+                '고가': abs(int(item['고가'])) if item['고가'] else 0,
+                '저가': abs(int(item['저가'])) if item['저가'] else 0,
+                '현재가': abs(int(item['현재가'])) if item['현재가'] else 0,
+                '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
+                '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
+            } for item in dict_list]
+
