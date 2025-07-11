@@ -460,6 +460,7 @@ class GUI(QMainWindow, form_class):
             gm.sim_on = gm.sim_no > 0
             gm.prx.order('api', 'api_init', sim_no=gm.sim_no)
             gm.prx.order('api', 'set_tickers')
+            gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
             gm.admin.restart()
             gm.admin.stg_start()
             if not all([gm.매수문자열, gm.매도문자열]):
@@ -504,6 +505,7 @@ class GUI(QMainWindow, form_class):
                 level = logging.INFO
             
             gm.json_config['root']['level'] = level
+            gm.log_level = level
             logging.getLogger().setLevel(level)
             gm.prx.order('api', 'set_log_level', level)
             gm.prx.order('dbm', 'set_log_level', level)

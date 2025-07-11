@@ -2,7 +2,7 @@ from PyQt5.QtCore import QThread, QTimer
 from classes import TimeLimiter, QData
 from public import gm, dc, Work,QWork, save_json, hoga, com_market_status
 from chart import ChartData
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import time
 
@@ -68,16 +68,16 @@ class PriceUpdater(QThread):
                 logging.warning(f'price_q 대기 큐 len={q_len}')
     
     def update_batch(self, batch):
-        for code, fid in batch.items():
-            self.pri_fx처리_잔고데이터(code, fid)
+        for code, price in batch.items():
+            self.pri_fx처리_잔고데이터(code, price)
             self.pri_fx검사_매도요건(code)
 
-    def pri_fx처리_잔고데이터(self, code, dictFID):
+    def pri_fx처리_잔고데이터(self, code, price):
         try:
             row = gm.잔고목록.get(key=code)
             if not row: return
 
-            현재가 = abs(int(dictFID['현재가']))
+            현재가 = abs(int(price))
             최고가 = row.get('최고가', 0)
             감시율 = row.get('감시시작율', 0.0) / 100
             보존율 = row.get('이익보존율', 0.0) / 100
@@ -102,7 +102,7 @@ class PriceUpdater(QThread):
             평가손익 = 평가금액 - 매입금액
             수익률 = (평가손익 / 매입금액) * 100 if 매입금액 > 0 else 0
 
-            dictFID.update({
+            row.update({
                 '현재가': 현재가,
                 '평가금액': 평가금액,
                 '평가손익': 평가손익,
@@ -112,7 +112,7 @@ class PriceUpdater(QThread):
                 '감시': 새감시,
                 '상태': 1,
             })
-            gm.잔고목록.set(key=code, data=dictFID)
+            gm.잔고목록.set(key=code, data=row)
 
             # 잔고합산 업데이트
             총매입금액, 총평가금액 = gm.잔고목록.sum(column=['매입금액', '평가금액'])
@@ -219,7 +219,7 @@ class OrderCommander(QThread):
         if gm.잔고목록.in_key(code):
             gm.잔고목록.set(key=code, data={'주문가능수량': 0})
         dict_data = {'전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
-                     '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, }
+                     '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, 'sim_no': gm.sim_no}
         self.prx.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
         self.prx.order('api', 'SendOrder', **cmd)
 
@@ -271,34 +271,42 @@ class ChartUpdater(QThread):
         #logging.debug(f'차트 업데이트: {code} 현재가: {job["현재가"]} 체결시간: {job["체결시간"]}')
 
 class ChartSetter(QThread):
-    def __init__(self, prx, todo_q):
+    def __init__(self, prx, setter_q):
         super().__init__()
         self.daemon = True
         self.name = 'cts'
         self.prx = prx
-        self.todo_q = todo_q
+        self.setter_q = setter_q
         self.running = False
         self.cht_dt = ChartData()
 
     def stop(self):
         self.running = False
-        self.todo_q.put(None)
+        self.setter_q.put(None)
 
     def run(self):
         self.running = True
         while self.running:
-            code = self.todo_q.get()
+            code = self.setter_q.get()
             if code is None: 
                 self.running = False
                 break
-            self.request_chart_data(code)
+            if isinstance(code, str):
+                self.request_chart_data(code)
+            elif isinstance(code, set):
+                self.request_sim_tickers(code)
 
     def request_chart_data(self, code):
         logging.debug(f"get_first_chart_data 요청: {code}")
         self.get_first_chart_data(code, cycle='mi', tick=1, times=3)
         self.get_first_chart_data(code, cycle='dy')
 
-    def get_first_chart_data(self, code, cycle, tick=1, times=1):
+    def request_sim_tickers(self, tickers_set):
+        logging.debug(f"get_first_chart_data 요청: {tickers_set}")
+        for code in tickers_set:
+            self.get_first_chart_data(code, cycle='tk', tick=10, times=99, date=dc.ToDay)
+    
+    def get_first_chart_data(self, code, cycle, tick=1, times=1, date=None):
         """차트 데이터 조회"""
         try:
             rqname = f'{dc.scr.차트종류[cycle]}차트'
@@ -321,7 +329,7 @@ class ChartSetter(QThread):
                     input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': "1"}
                 output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
 
-            dict_list = self._fetch_chart_data(rqname, trcode, input, output, screen, times)
+            dict_list = self._fetch_chart_data(rqname, trcode, input, output, screen, times, date)
             
             if not dict_list:
                 logging.warning(f'{rqname} 데이타 얻기 실패: code:{code}, cycle:{cycle}, tick:{tick}')
@@ -334,7 +342,8 @@ class ChartSetter(QThread):
             
             if cycle in ['dy', 'mi']:
                 self.cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
-                #self.prx.order('dbm', 'upsert_chart', dict_list, cycle, tick)
+            elif cycle == 'tk':
+                self.prx.order('dbm', 'upsert_chart', dict_list, cycle, tick)
             
             return dict_list
         
@@ -342,7 +351,7 @@ class ChartSetter(QThread):
             logging.error(f'{rqname} 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
             return []
 
-    def _fetch_chart_data(self, rqname, trcode, input, output, screen, times):
+    def _fetch_chart_data(self, rqname, trcode, input, output, screen, times, dt):
         """차트 데이터 fetch"""
         next = '0'
         dict_list = []
@@ -357,6 +366,7 @@ class ChartSetter(QThread):
                 break
                 
             dict_list.extend(data)
+            if trcode == dc.scr.차트TR['tk'] and dt is not None and data[-1]['체결시간'] < dt: times = 0
             times -= 1
             if not remain or times <= 0: 
                 break
@@ -401,6 +411,7 @@ class EvalStrategy(QThread):
         self.stop_time = '15:18'  # 매수시간 종료
         self.running = False
         self.cht_dt = ChartData()
+        self.reput_cnt = 0
 
     def set_dict(self, new_dict: dict) -> None:
         """딕셔너리 업데이트 및 인스턴스 변수 동기화"""
@@ -430,7 +441,13 @@ class EvalStrategy(QThread):
             self.running = False
             return
         if 'buy' in order:
-            self.order_buy(**order['buy'])
+            if 'time' in order['buy']:
+                if order['buy']['time'] < datetime.now() - timedelta(seconds=0.1):
+                    time.sleep(0.005)
+                    self.eval_q.put(order)
+                    return
+            buy_args = {k: v for k, v in order['buy'].items() if k != 'time'}
+            self.order_buy(**buy_args)
         elif 'sell' in order:
             self.order_sell(**order['sell'])
         elif 'cancel' in order:
@@ -483,20 +500,7 @@ class EvalStrategy(QThread):
                 'ordno': '',
             }
 
-            # 호가구분과 가격 설정
-            if self.매수지정가:
-                price = hoga(price, self.매수호가)
-                send_data['price'] = price
-
-            # 수량 계산
-            if self.투자금:
-                if self.투자금액 > 0 and price > 0:
-                    send_data['quantity'] = int((self.투자금액 + price)/ price) # 최소 1주 매수
-
-            elif self.예수금:
-                pass
-
-            if self.매수스크립트적용: # 매수는 검색과 AND로만 연결 가능 맨 위에서 검사 해야 함
+            if self.매수스크립트적용: # 다시 넣기 때문에 hoga()계산 전에 (price가 변경 됨)
                 if self.cht_dt.is_code_registered(code):
                     try:
                         result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': send_data['quantity']})
@@ -511,8 +515,21 @@ class EvalStrategy(QThread):
                         logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
                 else:
                     # 다시 넣음
-                    gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price}})
+                    gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price, 'time': datetime.now()}})
                     return False, {}, f"차트미비: {code} {name}"
+
+            # 호가구분과 가격 설정
+            if self.매수지정가:
+                price = hoga(price, self.매수호가)
+                send_data['price'] = price
+
+            # 수량 계산
+            if self.투자금:
+                if self.투자금액 > 0 and price > 0:
+                    send_data['quantity'] = int((self.투자금액 + price)/ price) # 최소 1주 매수
+
+            elif self.예수금:
+                pass
 
             if send_data['quantity'] > 0:
                 return True, send_data, f"매수신호 : {code} {name} quantity={send_data['quantity']} price={send_data['price']}"

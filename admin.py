@@ -33,6 +33,7 @@ class Admin:
         self.set_real_remove_all()
         self.get_holdings()
         self.json_load_define_sets()
+        self.get_sim_tickers()
         # 쓰레드 준비
         self.set_threads()
         self.start_threads()
@@ -104,6 +105,12 @@ class Admin:
         self.pri_fx얻기_잔고합산()
         self.pri_fx얻기_잔고목록()
         self.pri_fx등록_종목감시()
+
+    def get_sim_tickers(self):
+        tickers = gm.prx.answer('dbm', 'select_sim_ticker', dc.ToDay)
+        if tickers:
+            gm.tickers_set = set(row['종목코드'] for row in tickers)
+            logging.info(f'시뮬레이션 종목: {gm.tickers_set}')
 
     # 쓰레드 준비 -------------------------------------------------------------------------------------------
     def start_threads(self):
@@ -263,7 +270,7 @@ class Admin:
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
                 
             if gm.잔고목록.in_key(code):
-                gm.price_q.put({code: dictFID}) # PriceUpdater
+                gm.price_q.put({code: dictFID['현재가']}) # PriceUpdater
         except Exception as e:
             logging.error(f'실시간 주식체결 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -407,10 +414,6 @@ class Admin:
         except Exception as e:
             logging.error(f'실시간 시세 요청 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def dbm_query_result(self, result, error=None):
-        if error is not None:
-            logging.debug(f'디비 요청 결과: result={result} error={error}')
-
     # 매매전략 처리  -------------------------------------------------------------------------------------------
     def stg_start(self):
         try:
@@ -438,6 +441,10 @@ class Admin:
             self.send_status_msg('검색내용', args='')
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def stg_tickers_set_and_stop(self):
+        if gm.sim_no==0: gm.setter_q.put(gm.tickers_set)
+        self.stg_stop()
 
     def stg_fx실행_전략매매(self):
         try:
@@ -577,6 +584,7 @@ class Admin:
                     gm.setter_q.put(code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
+                if gm.sim_no==0: gm.prx.order('dbm', 'upsert_sim_ticker', code, 종목명, self.전략명칭, self.매수전략)
                 if code not in gm.set조건감시:
                     self.stg_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
 
@@ -689,7 +697,7 @@ class Admin:
                     self.end_timer = QTimer()
                     self.end_timer.setSingleShot(True)
                     self.end_timer.setInterval(int(remain_secs*1000))
-                    self.end_timer.timeout.connect(lambda: self.stg_stop())
+                    self.end_timer.timeout.connect(lambda: self.stg_tickers_set_and_stop())
                     self.end_timer.start()
 
         except Exception as e:
@@ -745,6 +753,7 @@ class Admin:
             dictFID['주문가격'] = 주문가격
             dictFID['미체결수량'] = 미체결수량
             dictFID['체결시간'] = dictFID.get('주문/체결시간', '')
+            dictFID['sim_no'] = gm.sim_no
 
             self.dbm_trade_upsert(dictFID)
 
@@ -933,8 +942,8 @@ class Admin:
                 st_name = dictFID['전략명칭']
                 ordno = dictFID['주문번호']
                 st_buy = dictFID['매수전략']
-
-                gm.prx.order('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_name, st_buy)
+                gm.tickers_set.add(code) # 틱차트 가져올 종목들
+                gm.prx.order('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_name, st_buy, gm.sim_no)
         except Exception as e:
             logging.error(f"dbm_trade_upsert 오류: {type(e).__name__} - {e}", exc_info=True)
 

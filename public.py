@@ -635,7 +635,9 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.order_q = None # ThreadSafeList()
         self.setter_q = None # ThreadSafeList()
         self.chart_q = None # ThreadSafeList()
-        
+
+        self.tickers_set = set() # 틱차트 가져오기
+
         self.toast = None
         self.json_config = dc.log_config
 

@@ -96,6 +96,7 @@ class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
     거래대금 = FieldsAttributes(name='거래대금', type='INTEGER', not_null=True, default=0)
     주기 = FieldsAttributes(name='주기', type='TEXT', not_null=True, default="''")
     틱 = FieldsAttributes(name='틱', type='INTEGER', not_null=True, default=1)
+    sim_no = FieldsAttributes(name='sim_no', type='INTEGER', not_null=True, default=0)
 
 class DataBaseColumns:  # 데이터베이스 테이블 정의
     f = DataBaseFields()
@@ -104,7 +105,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     TRD_SELECT_DATE = f"SELECT substr(처리일시, 12, 12) AS 처리시간, * FROM {TRD_TABLE_NAME} WHERE DATE(처리일시) = ? ORDER BY 처리일시 DESC"
     TRD_FIELDS = [f.id, f.전략명칭, f.주문구분, f.주문상태, f.주문번호, f.종목코드, f.종목명, f.현재가, f.주문수량, f.주문가격, \
                     f.미체결수량, f.매매구분, f.체결량, f.체결가, f.체결누계금액, f.체결번호, f.체결시간, f.단위체결가, f.단위체결량, f.당일매매수수료, \
-                        f.당일매매세금, f.원주문번호, f.처리일시]
+                        f.당일매매세금, f.원주문번호, f.처리일시, f.sim_no]
     TRD_COLUMNS = [col.name for col in TRD_FIELDS]
     TRD_INDEXES = {
         'idx_ordno': f"CREATE INDEX IF NOT EXISTS idx_ordno ON {TRD_TABLE_NAME}(주문번호)",
@@ -116,7 +117,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND 매도수량 > 0 ORDER BY 매수일자, 매수시간 DESC"
     CONC_FIELDS = [f.id, f.종목번호, f.종목명, f.손익금액, f.손익율, f.매수일자, f.매수시간,\
                     f.매수수량, f.매수가, f.매수금액, f.매수번호, f.매도일자, f.매도시간, f.매도수량,\
-                    f.매도가, f.매도금액, f.매도번호, f.제비용, f.매수전략, f.전략명칭]
+                    f.매도가, f.매도금액, f.매도번호, f.제비용, f.매수전략, f.전략명칭, f.sim_no]
     CONC_COLUMNS = [col.name for col in CONC_FIELDS]
     CONC_INDEXES = {
         'idx_buyorder': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_buyorder ON {CONC_TABLE_NAME}(매수일자, 매수번호)",
@@ -124,11 +125,13 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     }
     
     SIM_TABLE_NAME = 'sim_tickers'
-    SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 매수일시 DESC LIMIT 1"
-    SIM_FIELDS = [f.id, f.매수일시, f.종목코드, f.종목명, f.전략명칭, f.매수전략]
+    SIM_SELECT_ONE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND 종목코드 = ? LIMIT 1"
+    SIM_SELECT_SIM = f"SELECT 종목코드 FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND 매수시간 <> '' "
+    SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND 종목코드 = ? ORDER BY 일자, 시간 DESC"
+    SIM_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.종목명, f.매수가, f.매수시간, f.전략명칭, f.매수전략]
     SIM_COLUMNS = [col.name for col in SIM_FIELDS]
     SIM_INDEXES = {
-        'idx_code': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_code ON {SIM_TABLE_NAME}(종목코드)"
+        'idx_date_code': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_date_code ON {SIM_TABLE_NAME}(일자, 종목코드)"
     }
     
     MIN_TABLE_NAME = 'minute_n_tick'
@@ -237,7 +240,7 @@ class DBMServer:
         for index in db_columns.CONC_INDEXES.values():
             db_cursor.execute(index)
 
-        # 시뮬레이션 할 종목 테이블(실제 매수된 종목)
+        # 시뮬레이션 할 종목 테이블
         sql = self.create_table_sql(db_columns.SIM_TABLE_NAME, db_columns.SIM_FIELDS)
         db_cursor.execute(sql)
         for index in db_columns.SIM_INDEXES.values():
@@ -261,15 +264,9 @@ class DBMServer:
         for index in db_columns.DAY_INDEXES.values():
             chart_cursor.execute(index)
 
-        # 시뮬레이션 종목 테이블(매수검색된 종목)
-        sql = self.create_table_sql(db_columns.SIM_TABLE_NAME, db_columns.SIM_FIELDS)
-        chart_cursor.execute(sql)
-        for index in db_columns.SIM_INDEXES.values():
-            chart_cursor.execute(index)
-
         chart_conn.commit()
 
-        logging.debug('dbm_init completed')
+        logging.debug('dbm_initialize completed')
 
     def create_table_sql(self, table_name, fields, pk_columns=None):
         """테이블 생성 SQL문 생성"""
@@ -353,7 +350,7 @@ class DBMServer:
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)
 
-    def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno, st_name, st_buy):
+    def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno, st_name, st_buy, sim_no):
         """체결 정보 저장 및 손익 계산"""
         table = db_columns.CONC_TABLE_NAME
         record = None
@@ -365,7 +362,7 @@ class DBMServer:
             return { 
                 '종목번호': code, '종목명': name, '매수일자': dt, '매수시간': tm, 
                 '매수수량': qty, '매수가': price, '매수금액': amount, '매수번호': ordno, 
-                '매도수량': 0, '매수전략': st_buy, '전략명칭': st_name, 
+                '매도수량': 0, '매수전략': st_buy, '전략명칭': st_name, 'sim_no': sim_no
             }
 
         try:
@@ -378,7 +375,7 @@ class DBMServer:
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
                     record = new_record()
-                    sim_record = {'매수일시': dt+tm, '종목코드': code, '종목명': name, '전략명칭': st_name, '매수전략': st_buy}
+                    sim_record = {'일자': dt, '종목코드': code, '종목명': name, '매수가': price, '매수시간': tm}
             
             elif kind == '매도':
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
@@ -424,7 +421,7 @@ class DBMServer:
             
             self.table_upsert('db', table, record)
 
-            if sim_record and self.sim_no==0:
+            if sim_no==0 and sim_record:
                 self.table_upsert('db', db_columns.SIM_TABLE_NAME, sim_record)
                 sim_record = None
 
@@ -440,3 +437,20 @@ class DBMServer:
         dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
         self.table_upsert('chart', table, dict_data)
 
+    def upsert_sim_ticker(self, code, name, st_name, st_buy):
+        """시뮬레이션 종목 저장"""
+        table = db_columns.SIM_TABLE_NAME
+        find_time = datetime.now().strftime("%Y%m%d%H%M%S")
+        dt = find_time[:8]
+        result = self.execute_query(db_columns.SIM_SELECT_ONE, db='db', params=(dt, code))
+        if result: return
+        record = {
+            '일자': dt, '시간': find_time[8:], '종목코드': code, '종목명': name, '전략명칭': st_name, '매수전략': st_buy
+        }
+        self.table_upsert('db', table, record)
+
+    def select_sim_ticker(self, dt):
+        """시뮬레이션 종목 조회"""
+        table = db_columns.SIM_TABLE_NAME
+        result = self.execute_query(db_columns.SIM_SELECT_SIM, db='db', params=(dt,))
+        return result
