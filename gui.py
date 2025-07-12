@@ -114,8 +114,8 @@ class GUI(QMainWindow, form_class):
             self.btnStrategyDelete.clicked.connect(self.gui_strategy_delete)            # 실행전략 삭제
 
             self.btnRestartAll.clicked.connect(self.gui_strategy_restart)                 # 전략매매 재시작
-            self.btnStartAll.clicked.connect(lambda: self.gui_strategy_start(question=True))                   # 전략매매 시작
-            self.btnStopAll.clicked.connect(lambda: self.gui_strategy_stop(question=True))                     # 전략매매 중지
+            self.btnStartAll.clicked.connect(self.gui_strategy_start)                       # 전략매매 시작
+            self.btnStopAll.clicked.connect(self.gui_strategy_stop)                         # 전략매매 중지
             self.btnLoadDaily.clicked.connect(self.gui_daily_load)                      # 매매일지 로드
             self.btnDeposit.clicked.connect(self.gui_deposit_load)                      # 예수금 로드
             self.btnLoadConclusion.clicked.connect(self.gui_conclusion_load)            # 체결목록 로드
@@ -130,9 +130,6 @@ class GUI(QMainWindow, form_class):
             self.rbInfo.toggled.connect(lambda: self.gui_log_level_set('INFO', self.rbInfo.isChecked()))
             self.rbDebug.toggled.connect(lambda: self.gui_log_level_set('DEBUG', self.rbDebug.isChecked()))
 
-            # 시뮬레이션 재시작
-            self.btnSimStart.clicked.connect(lambda: self.gui_strategy_restart(sim=True)) # 시뮬레이션 재시작
-
             # 수동 주문 / 주문 취소
             self.btnTrOrder.clicked.connect(self.gui_tr_order)                          # 매매 주문 
             self.btnTrCancel.clicked.connect(self.gui_tr_cancel)                        # 매매 취소 
@@ -143,6 +140,9 @@ class GUI(QMainWindow, form_class):
             #그룹박스 체크
             self.gbxBuyCheck.toggled.connect(lambda: self.gui_gbx_check(self.gbxBuyCheck.isChecked(), 'buy'))
             self.gbxSellCheck.toggled.connect(lambda: self.gui_gbx_check(self.gbxSellCheck.isChecked(), 'sell'))
+
+            # 시뮬레이션 재시작
+            self.btnSimStart.clicked.connect(self.gui_simulation_restart) # 시뮬레이션 재시작
 
             # 시뮬레이션 실행일자 데이타 가져오기
             self.btnSimReadDay.clicked.connect(self.gui_sim_read_day)
@@ -444,24 +444,18 @@ class GUI(QMainWindow, form_class):
         #gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
         self.btnChartLoad.setEnabled(True)
 
-    def gui_strategy_restart(self, sim=False):
-        self.gui_strategy_stop(question=False, sim=sim)
+    def gui_strategy_restart(self):
+        self.gui_strategy_stop(question=False)
         self.gui_strategy_reload()
-        self.gui_strategy_start(question=False, sim=sim)
+        self.gui_strategy_start(question=False)
     
-    def gui_strategy_start(self, question=True, sim=False):
+    def gui_strategy_start(self, question=True):
         if question:
             response = QMessageBox.question(None, '전략매매 실행', '전략매매를 실행하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
         else:
             response = True
             
         if response:
-            if sim: gm.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
-            gm.sim_on = gm.sim_no > 0
-            gm.prx.order('api', 'api_init', sim_no=gm.sim_no)
-            gm.prx.order('api', 'set_tickers')
-            gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
-            gm.admin.restart()
             gm.admin.stg_start()
             if not all([gm.매수문자열, gm.매도문자열]):
                 gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
@@ -471,17 +465,40 @@ class GUI(QMainWindow, form_class):
         else:
             logging.debug('전략매매 시작 취소')
             
-    def gui_strategy_stop(self, question=True, sim=False):
+    def gui_strategy_stop(self, question=True):
         response = True
         if question:
             response = QMessageBox.question(None, '전략매매 중지', '전략매매를 중지하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
         if response:
             gm.admin.stg_stop()
-            gm.prx.order('api', 'thread_cleanup')
             self.set_strategy_toggle(run=False)
             gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
         else:
             logging.debug('전략매매 중지 취소')
+
+    def gui_simulation_restart(self):
+        self.gui_simulation_stop()
+        self.gui_simulation_start()
+
+    def gui_simulation_start(self):
+        gm.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
+        gm.sim_on = gm.sim_no > 0
+        gm.prx.order('api', 'api_init', sim_no=gm.sim_no)
+        gm.prx.order('api', 'set_tickers')
+        gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
+        gm.admin.restart()
+        gm.admin.stg_start()
+        if not all([gm.매수문자열, gm.매도문자열]):
+            gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
+            return
+        gm.toast.toast('전략매매를 실행했습니다.', duration=3000)
+        self.set_strategy_toggle(run=True)
+            
+    def gui_simulation_stop(self):
+        gm.admin.stg_stop()
+        gm.prx.order('api', 'thread_cleanup')
+        self.set_strategy_toggle(run=False)
+        gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
 
     def gui_strategy_changed(self):
         pass

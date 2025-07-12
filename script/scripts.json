@@ -1,10 +1,10 @@
 {
-    "돌파4시간3분5억_매수": {
-        "script": "# 스크립트명 : 돌파4시간3분5억_매수\n\n# 다른코드로 테스트\n#code='000660'\n#echo(f'coide={code}')\n\n# 차트\nct = ChartManager(code, 'mi', 3)\ndt = ChartManager(code, 'dy')\n\n# 함수주입\nmo, mh, ml, mc, mv = ct.o, ct.h, ct.l, ct.c, ct.v\n\n# 빠른 리턴\n돌파매도조건 = 돌파4시간3분5억_매도()\nif 돌파매도조건:\n    echo(f'[{False}] ({code} {name}) 취소원인=매도조건에 해당')\n    ret(False)\n    \n거래량조건 = abs(mv(0)) >= n봉중상위m봉평균거래량(n_bars=130, m_count=3) * 0.8\nif not 거래량조건:\n    echo(f'[{False}] ({code} {name}) 취소원인=거래량조건({mv(0)}) 불충족')\n    ret(False)\n\n# 데이타 수집\nh_list = 개장후n봉최고종가(pre_bars=80)\nh_len = len(h_list) if h_list else 0\n\nif h_len<2: \n    echo(f'[False] ({code} {name}) {h_list}')\n    ret(False)\n\n# 조건정의\n최고종가조건 = len(h_list) > 1\n현재봉조건 = mc(0) >= mc(h_list[-1]) if 최고종가조건 else False\n\n# 로깅\nmsg = ''\nif not 최고종가조건: msg += '최고종가, '\nif not 현재봉조건: msg += '현재봉조건'\n\n# 전략평가 결과 전달\nresult = 최고종가조건 and 현재봉조건\n\necho(f'[{result}] ({code} {name}) {\"취소원인=\" if msg else \"\"}{msg} 불충족')\n\nret(result)",
+    "돌파매수": {
+        "script": "# 스크립트명 : 돌파매수\n\n# 다른코드로 테스트\n#code='000660'\n#echo(f'coide={code}')\n\n# 차트\nct = ChartManager(code, 'mi', 3)\ndt = ChartManager(code, 'dy')\n\n# 함수주입\nmo, mh, ml, mc, mv = ct.o, ct.h, ct.l, ct.c, ct.v\n\n# 빠른 리턴\n돌파매도조건 = 일반매도()\nif 돌파매도조건:\n    echo(f'[{False}] ({code} {name}) 취소원인=매도조건에 해당')\n    ret(False)\n    \n거래량조건 = abs(mv(0)) >= n봉중상위m봉평균거래량(n_bars=130, m_count=3) * 0.8\nif not 거래량조건:\n    echo(f'[{False}] ({code} {name}) 취소원인=거래량조건({mv(0)}) 불충족')\n    ret(False)\n\n# 데이타 수집\nh_list = 개장후n봉최고종가(pre_bars=80)\nh_len = len(h_list) if h_list else 0\n\nif h_len<2: \n    echo(f'[False] ({code} {name}) 취소원인={h_list} 최고종가 2개 미만')\n    ret(False)\n\n# 조건정의\n최고종가조건 = len(h_list) > 1\n현재봉조건 = mc(0) >= mc(h_list[-1]) if 최고종가조건 else False\n\n# 로깅\nmsg = ''\nif not 최고종가조건: msg += '최고종가, '\nif not 현재봉조건: msg += '현재봉조건'\n\n# 전략평가 결과 전달\nresult = 최고종가조건 and 현재봉조건\nif msg: msg = '취소원인 = ' + msg +' 불충족'\necho(f'[{result}] ({code} {name}) {msg}')\n\nret(result)",
         "type": "bool",
         "desc": ""
     },
-    "돌파4시간3분5억_매도": {
+    "일반매도": {
         "script": "# 스크립트명 : 돌파4시간3분5억_매도\n\n# 다른종목으로 테스트\n#code = '389140'\n\n# 차트정의\n일 = ChartManager(code, 'dy')\n분 = ChartManager(code, 'mi', 3)\n\n#echo(f'code={code} 현재가={일.c()}')\n\n# 함수주입\ndc = 일.c\nmo, mc, ma = 분.o, 분.c, 분.ma\n\n# 미리 계산\nc_limit = int(dc(1) * 1.295)\nm_down_rate = 분.div(mo() - mc(), mo(), 0 )\nv0, v1, v2, v10 = ma(5, 0), ma(5, 1), ma(5, 2), ma(10)\n\n# 조건정의(결과 값이 논리값이 되도록 작성)\n상한가 = dc() >= c_limit \n급락 = mo() > mc() and m_down_rate > 0.03 # 봉하나에 3% 급락\n하락전환_3분5이평 = v2 <= v1 and v1 > v0\n이평역전_3분5_10이평 = v10 > v0\n이평아래 = v10 > mc()\n\n# 로깅\nmsg = ''\nif 상한가: \n    msg += f'상한가' #(전일{dc(1)}, 현재가{dc()}, 상한가{c_limit})'\nelif 급락: \n    msg += f'급락' #(시가:{mo()}, 현재가:{mc()}, 하락률:{m_down_rate:.2f})'\nelif 하락전환_3분5이평: \n    msg += f'하락전환_3분5이평' #(2:{v2}, 1:{v1}, 0:{v0})'\nelif 이평역전_3분5_10이평: \n    msg+= f'이평역전_3분5_10이평' #(5:{v0}, 10:{v10})'\nelif 이평아래: \n    msg += f'이평아래' #(이평:{v10}, 현재가:{dc()})'\n\nif not msg: msg = \" 없음\"\n#echo(f\"매도조건: code={code} {name}/{msg}\")\n\n# 전략평가 전송\nresult = 상한가 or 하락전환_3분5이평 or 이평역전_3분5_10이평 or 이평아래 or 급락\necho(f'[{result}] ({code} {name}) 현재가={dc()}/매도조건: {msg}')\nret(result)",
         "type": "bool",
         "desc": "상한가 이거나\n3분봉 5이평이 하락전환 하거나\n3분봉 5이평이 10이평을 하회 하거나\n현재가가 10이평을 하회 하거나\n3분봉에서 3%이상 급락시 매도"
@@ -13,6 +13,21 @@
         "script": "# 스크립트명 : 이전n봉최고종가\n\n# 지정 종목\n#code = '005930'\n#echo(f'code={code}')\n# 차트 매니저 생성 (3분봉)\ncm = ChartManager(code, 'mi', 3)\n\n# 넘겨진 인자 있는지 검사\npre_bars = is_args('pre_bars', 60)\ncheck_bars = is_args('check_bars', 130)  # 검사할 봉 개수 (현재봉 이전 n개부터)\n\n# 원본 데이터를 직접 가져오기 (최고 성능)\ndata = cm.get_raw_data()\n\nresult = []\n비교가 = '현재가' # = 종가\nskip = 1 # 제외 할 봉 갯수\n\nif len(data) > skip + check_bars:\n    # 현재봉 이전 check_bars개부터 검사 시작\n    start_check_idx = skip + check_bars\n    \n    # start_check_idx부터 현재봉(skip)까지 역순으로 검사\n    for check_idx in range(start_check_idx, skip - 1, -1):\n        current_close = data[check_idx]['현재가']\n        \n        # 현재봉을 제외한 이전 pre_bars-1개 봉의 최고가 구하기\n        start_idx = check_idx + 1\n        end_idx = min(start_idx + pre_bars - 1, len(data))\n        \n        if start_idx < len(data):\n            high_values = [data[i][비교가] for i in range(start_idx, end_idx)]\n            if high_values:\n                max_high = max(high_values)\n                \n                # 현재 종가가 이전 봉들의 최고가보다 같거나 높으면\n                if current_close >= max_high:\n                    result.append(check_idx)\n\necho(f'({code} {name}) {result}')\nret(result if 'result' in locals() else [])",
         "type": "list",
         "desc": "9시 개장 후 종가가 직전봉 부터 그 이전 n-1봉까지의 최고종가를 넘는 봉의 인덱스 리스트를 반환 합. 기본 n = 60"
+    },
+    "n봉중상위m봉평균거래량": {
+        "script": "# 스크립트명 : 상위거래량평균\n\n# 지정 종목\n#code = '005930'\n#echo(f'code={code}')\n# 차트 매니저 생성 (3분봉)\ncm = ChartManager(code, 'mi', 3)\n\n# 넘겨진 인자 있는지 검사\nn_bars = is_args('n_bars', 130)  # 검사할 이전 봉 개수 (기본값 130)\nm_count = is_args('m_count', 5)  # 상위 거래량 m개 (기본값 5)\n\n# 원본 데이터를 직접 가져오기 (최고 성능)\ndata = cm.get_raw_data()\n\nresult = 0\nskip = 1  # 제외 할 봉 갯수\n\nif len(data) > skip + n_bars:\n    # 현재봉 이전 n개 봉의 거래량 수집\n    volumes = []\n    for i in range(skip, skip + n_bars):\n        if i < len(data):\n            volume = data[i].get('거래량', 0)\n            volumes.append(volume)\n    \n    if volumes:\n        # 거래량 많은 순으로 정렬\n        volumes_sorted = sorted(volumes, reverse=True)\n        \n        # 상위 m개 선택 (m이 전체 개수보다 크면 전체 사용)\n        top_volumes = volumes_sorted[:min(m_count, len(volumes_sorted))]\n        \n        # 평균 계산\n        if top_volumes:\n            result = int(sum(top_volumes) / len(top_volumes))\n            #echo(f'이전{n_bars}개 중 상위{len(top_volumes)}개 평균거래량: {result:,.0f}')\n\necho(f'({code} {name}) 결과: {result:,d}')\nret(result)",
+        "type": "int",
+        "desc": ""
+    },
+    "인자받는쪽": {
+        "script": "m3 = ChartManager(code, 'mi', 3)\n\nshort = is_args('short', 5)\nlong = is_args('long', 10)\n\nma5 = m3.ma(short)\nma10 = m3.ma(long)\n\necho(f'{short} {long}')\n\ndn = ma10 > m3.c()\n\nresult = dn or ma5 < ma10\n\nret(result)",
+        "type": "bool",
+        "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
+    },
+    "인자주는쪽": {
+        "script": "result = 인자받는쪽(short=3, long=20)\nret(result)",
+        "type": "bool",
+        "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
     },
     "indicator": {
         "script": "dy = CM(code, 'dy')\nmi3 = CM(code, 'mi', 3)\n\nma20 = dy.indicator(dy.ma, 20)\necho(f'0={ma20()}, 1={ma20(1)}')\n\nsma5 = mi3.indicator(mi3.ma, 5) # SMA 5 계산 클로저 생성 \nsma10 = mi3.indicator(mi3.ma, 10) \n\ncross = mi3.cross_up(sma5, sma10) # 함수처럼 사용 가능\necho(f'sma5={sma5()}, sma10={sma10()}, cross={cross}')\n\nresult = ma20(0)\n\nret(result)",
@@ -28,16 +43,6 @@
         "script": "cm = ChartManager(code, 'dy')\n\n# RSI (상대강도지수)\nrsi = cm.rsi()                # 기본 14일 RSI\nrsi_9 = cm.rsi(9)             # 9일 RSI\nrsi_prev = cm.rsi(14, 1)      # 1봉 이전의 14일 RSI\n\n# MACD (이동평균수렴확산지수)\nmacd, signal, hist = cm.macd()  # 기본 MACD (12, 26, 9)\nmacd2, signal2, hist2 = cm.macd(5, 35, 5)  # 커스텀 MACD\n\n# 볼린저 밴드\nupper, middle, lower = cm.bollinger_bands()  # 기본 볼린저 밴드 (20일, 2시그마)\nupper2, middle2, lower2 = cm.bollinger_bands(10, 2.5)  # 커스텀 볼린저 밴드\n\n# 스토캐스틱\nk, d = cm.stochastic()  # 기본 스토캐스틱 (14, 3)\nk2, d2 = cm.stochastic(5, 3)  # 커스텀 스토캐스틱\n\n# ATR (평균진폭)\natr = cm.atr()  # 기본 14일 ATR\natr_5 = cm.atr(5)  # 5일 ATR\n\nresult = True\n\nret(result)",
         "type": "bool",
         "desc": "RSI, MACD, Bollinger Band, Stochastic, ATR"
-    },
-    "인자받는쪽": {
-        "script": "m3 = ChartManager(code, 'mi', 3)\n\nshort = is_args('short', 5)\nlong = is_args('long', 10)\n\nma5 = m3.ma(short)\nma10 = m3.ma(long)\n\necho(f'{short} {long}')\n\ndn = ma10 > m3.c()\n\nresult = dn or ma5 < ma10\n\nret(result)",
-        "type": "bool",
-        "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
-    },
-    "인자주는쪽": {
-        "script": "result = 인자받는쪽(short=3, long=20)\nret(result)",
-        "type": "bool",
-        "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
     },
     "Class설정": {
         "script": "class FMA:\n    def __init__(self, code, cycle='dy', tick=1, period=20):\n        self.ct = ChartManager(code, cycle, tick)\n        self.period = period\n    \n    def ma(self, n=0):\n        return self.ct.ma(period, n)\n\n# 초기 설정\ncycle = is_args('cycle', 'dy')\ntick = is_args('tick', 1)\nperiod = is_args('period', 20) \n\nresult = FMA(code, cycle, tick, period)\n\nret(result)\n#클래스를 리턴하는 스크립트 - 비추 입니다. (오버해드가 많음)",
@@ -67,11 +72,6 @@
     "조건평가데이타": {
         "script": "ct = ChartManager(code, 'dy', 3)\n\n# 최근 종가가 60000 미만인 봉 이후로 몇 봉이 지났는지 알고 싶을 때\nbars = ct.bars_since(lambda i: ct.c(i) < 60000)\necho(f'지난봉수: {bars}')\n\n# 최근 2번째로 종가가 60000 미만 이후부터 현재까지 고가의 최고값\nhigh = ct.highest_since(2, lambda i: ct.c(i) < 60000, ct.h)\necho(f'최고가: {high}')\n\n#최근 3번째로 종가가 60000을 넘은 시점의 시가:\nopen_price = ct.value_when(3, lambda i: ct.c(i) > 200, ct.o)\necho(f'세번째: {open_price}')\n\n\nresult = True\nret(result)",
         "type": "bool",
-        "desc": ""
-    },
-    "n봉중상위m봉평균거래량": {
-        "script": "# 스크립트명 : 상위거래량평균\n\n# 지정 종목\n#code = '005930'\n#echo(f'code={code}')\n# 차트 매니저 생성 (3분봉)\ncm = ChartManager(code, 'mi', 3)\n\n# 넘겨진 인자 있는지 검사\nn_bars = is_args('n_bars', 130)  # 검사할 이전 봉 개수 (기본값 130)\nm_count = is_args('m_count', 5)  # 상위 거래량 m개 (기본값 5)\n\n# 원본 데이터를 직접 가져오기 (최고 성능)\ndata = cm.get_raw_data()\n\nresult = 0\nskip = 1  # 제외 할 봉 갯수\n\nif len(data) > skip + n_bars:\n    # 현재봉 이전 n개 봉의 거래량 수집\n    volumes = []\n    for i in range(skip, skip + n_bars):\n        if i < len(data):\n            volume = data[i].get('거래량', 0)\n            volumes.append(volume)\n    \n    if volumes:\n        # 거래량 많은 순으로 정렬\n        volumes_sorted = sorted(volumes, reverse=True)\n        \n        # 상위 m개 선택 (m이 전체 개수보다 크면 전체 사용)\n        top_volumes = volumes_sorted[:min(m_count, len(volumes_sorted))]\n        \n        # 평균 계산\n        if top_volumes:\n            result = int(sum(top_volumes) / len(top_volumes))\n            #echo(f'이전{n_bars}개 중 상위{len(top_volumes)}개 평균거래량: {result:,.0f}')\n\necho(f'({code} {name}) 결과: {result:,d}')\nret(result)",
-        "type": "int",
         "desc": ""
     }
 }

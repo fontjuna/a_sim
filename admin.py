@@ -92,7 +92,6 @@ class Admin:
             dict_data.append({'스크립트명': k, '타입': v.get('type', ''), '스크립트': v.get('script', ''), '설명': v.get('desc', '')})
         gm.스크립트.set(data=dict_data)
         gm.list스크립트 = gm.스크립트.get(column='스크립트명')
-        # gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
 
     def set_real_remove_all(self):
         logging.debug('set_real_remove_all')
@@ -509,6 +508,7 @@ class Admin:
                 else:
                     raise Exception(f'{trade_type} 조건이 없습니다.')
                 logging.info(f'{trade_type} 전략 중지 - {cond_index:03d} : {cond_name}')
+            self.stg_ready = False # 현재가 업데이트 후 매도조건 검사 중지
             if self.매수적용: stop_trade('매수')
             if self.매도적용: stop_trade('매도')
             gm.evl.stop()
@@ -516,7 +516,6 @@ class Admin:
             gm.evl.deleteLater()
             gm.evl = None
             gm.eval_q.clear()
-            self.stg_ready = False
 
         except Exception as e:
             logging.error(f'전략 중지 오류: {type(e).__name__} - {e}', exc_info=True)

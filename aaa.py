@@ -67,7 +67,7 @@ class Main:
             self.splash.show() # showFullScreen()  # 화면 전체로 표시
             self.time_over = True
 
-    def set_before(self):
+    def set_tables(self):
         set_tables()
 
     def show(self):
@@ -76,7 +76,7 @@ class Main:
         #gm.gui.init()
         time.sleep(0.1)
 
-    def set_proc(self):
+    def set_components(self):
         try:
             logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
             gm.toast = Toast()
@@ -94,7 +94,7 @@ class Main:
             logging.error(str(e), exc_info=e)
             exit(1)
 
-    def prepare(self):
+    def ready(self):
         try:
             if gm.sim_no != 1:
                 logging.debug('prepare : 로그인 대기 시작')
@@ -114,24 +114,20 @@ class Main:
             logging.debug('prepare : admin 초기화 완료')
             if gm.gui_on: gm.gui.init()
             logging.debug('prepare : gui 초기화 완료')
+            gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
+            gm.admin.stg_start()
+
+            gm.ready = True
 
         except Exception as e:
             logging.error(str(e), exc_info=e)
             exit(1)
 
-    def trade_start(self):
-        logging.debug('trade_start')
-        gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
-        gm.admin.stg_start()
-        gm.ready = True
-
-    def run(self):
-        if gm.gui_on: 
-            self.splash.close()
-        if self.time_over:
-            QTimer.singleShot(15000, self.cleanup)
-        else:   
-            return self.app.exec_() if gm.gui_on else self.console_run()
+    def go(self):
+        if gm.gui_on: self.splash.close()
+        self.show()
+        if self.time_over: QTimer.singleShot(15000, self.cleanup)
+        else: return self.app.exec_() if gm.gui_on else self.console_run()
 
     def console_run(self):
         while True:
@@ -149,12 +145,10 @@ class Main:
     def main(self):
         self.init()
         self.show_splash()
-        self.set_before()
-        self.set_proc()
-        self.prepare()
-        self.show()
-        self.trade_start()
-        self.run()
+        self.set_tables()
+        self.set_components()
+        self.ready()
+        self.go()
 
     def cleanup(self):
         try:
