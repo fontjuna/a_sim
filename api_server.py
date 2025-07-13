@@ -660,7 +660,7 @@ class APIServer:
                     logging.error(f"조건검색 스레드 정리 오류: {e}")
 
     # 추가 메서드 --------------------------------------------------------------------------------------------------
-    #@profile_operation        
+    @profile_operation        
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         #logging.debug(f'api_request: rqname={rqname}, trcode={trcode}, input={input}, next={next}, screen={screen}, form={form}, timeout={timeout}')
         try:
@@ -1188,11 +1188,6 @@ class APIServer:
             
             # 데이터 변환
             dict_list = self._convert_chart_data(dict_list, code, cycle)
-            
-            #if cycle in ['dy', 'mi']:
-            #    self.cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
-            #elif cycle == 'tk':
-            #    self.prx.order('dbm', 'upsert_chart', dict_list, cycle, tick)
             
             return dict_list
         

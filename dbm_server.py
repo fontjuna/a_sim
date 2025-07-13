@@ -117,7 +117,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND 매도수량 > 0 ORDER BY 매수일자, 매수시간 DESC"
     CONC_FIELDS = [f.id, f.종목번호, f.종목명, f.손익금액, f.손익율, f.매수일자, f.매수시간,\
                     f.매수수량, f.매수가, f.매수금액, f.매수번호, f.매도일자, f.매도시간, f.매도수량,\
-                    f.매도가, f.매도금액, f.매도번호, f.제비용, f.매수전략, f.전략명칭, f.sim_no]
+                    f.매도가, f.매도금액, f.매도번호, f.제비용, f.매수전략, f.전략명칭, f.처리일시, f.sim_no]
     CONC_COLUMNS = [col.name for col in CONC_FIELDS]
     CONC_INDEXES = {
         'idx_buyorder': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_buyorder ON {CONC_TABLE_NAME}(매수일자, 매수번호)",
@@ -128,27 +128,37 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     SIM_SELECT_ONE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND 종목코드 = ? LIMIT 1"
     SIM_SELECT_SIM = f"SELECT 종목코드 FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND 매수시간 <> '' "
     SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND 종목코드 = ? ORDER BY 일자, 시간 DESC"
-    SIM_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.종목명, f.매수가, f.매수시간, f.전략명칭, f.매수전략]
+    SIM_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.종목명, f.매수가, f.매수시간, f.전략명칭, f.매수전략, f.처리일시]
     SIM_COLUMNS = [col.name for col in SIM_FIELDS]
     SIM_INDEXES = {
         'idx_date_code': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_date_code ON {SIM_TABLE_NAME}(일자, 종목코드)"
     }
     
-    MIN_TABLE_NAME = 'minute_n_tick'
+    TICK_TABLE_NAME = 'tick_chart'
+    TICK_SELECT_SAMPLE = f"SELECT * FROM {TICK_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 체결시간 DESC LIMIT 1"
+    TICK_SELECT_DATE = f"SELECT * FROM {TICK_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
+    TICK_SELECT_SIM = f"SELECT * FROM {TICK_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? ORDER BY 체결시간"
+    TICK_FIELDS = [f.id, f.종목코드, f.체결시간, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱, f.처리일시]
+    TICK_COLUMNS = [col.name for col in TICK_FIELDS]
+    TICK_INDEXES = {
+        'idx_time_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_time_cycle_tick_code ON {TICK_TABLE_NAME}(체결시간, 주기, 틱, 종목코드)"
+    }
+
+    MIN_TABLE_NAME = 'minute_chart'
     MIN_SELECT_SAMPLE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 체결시간 DESC LIMIT 1"
     MIN_SELECT_DATE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
     MIN_SELECT_SIM = f"SELECT * FROM {MIN_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? ORDER BY 체결시간"
-    MIN_FIELDS = [f.id, f.종목코드, f.체결시간, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱]
+    MIN_FIELDS = [f.id, f.종목코드, f.체결시간, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱, f.처리일시]
     MIN_COLUMNS = [col.name for col in MIN_FIELDS]
     MIN_INDEXES = {
         'idx_cycle_tick_code_time': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_tick_code_time ON {MIN_TABLE_NAME}(주기, 틱, 종목코드, 체결시간)",
         'idx_time_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_time_cycle_tick_code ON {MIN_TABLE_NAME}(체결시간, 주기, 틱, 종목코드)",
     }
 
-    DAY_TABLE_NAME = 'day_week_month'
+    DAY_TABLE_NAME = 'dwm_chart'
     DAY_SELECT_SAMPLE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 일자 DESC LIMIT 1"
     DAY_SELECT_DATE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 일자 = ? AND 주기 = ?"
-    DAY_FIELDS = [f.id, f.종목코드, f.일자, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱]
+    DAY_FIELDS = [f.id, f.종목코드, f.일자, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱, f.처리일시]
     DAY_COLUMNS = [col.name for col in DAY_FIELDS]
     DAY_INDEXES = {
         'idx_cycle_tick_code_date': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_tick_code_date ON {DAY_TABLE_NAME}(주기, 틱, 종목코드, 일자)",
@@ -253,7 +263,13 @@ class DBMServer:
         chart_conn = self.get_connection('chart')
         chart_cursor = chart_conn.cursor()
         
-        # 차트 테이블 (틱, 분)
+        # 차트 테이블 (틱)
+        sql = self.create_table_sql(db_columns.TICK_TABLE_NAME, db_columns.TICK_FIELDS)
+        chart_cursor.execute(sql)
+        for index in db_columns.TICK_INDEXES.values():
+            chart_cursor.execute(index)
+
+        # 차트 테이블 (분)
         sql = self.create_table_sql(db_columns.MIN_TABLE_NAME, db_columns.MIN_FIELDS)
         chart_cursor.execute(sql)
         for index in db_columns.MIN_INDEXES.values():
@@ -336,6 +352,7 @@ class DBMServer:
         except Exception as e:
             logging.error(f"Database error: {e}", exc_info=True)
             conn.rollback()
+            return None
 
     def table_upsert(self, db, table, dict_data):
         """테이블 업서트"""
@@ -376,7 +393,7 @@ class DBMServer:
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
                     record = new_record()
-                    sim_record = {'일자': dt, '종목코드': code, '종목명': name, '매수가': price, '매수시간': tm}
+                    sim_record = {'일자': dt, '종목코드': code, '종목명': name, '매수가': price, '매수시간': tm.replace(':', '')}
             
             elif kind == '매도':
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
@@ -434,7 +451,7 @@ class DBMServer:
 
     def upsert_chart(self, dict_data, cycle, tick=1):
         """차트 데이터 저장"""
-        table = db_columns.MIN_TABLE_NAME if cycle in ['mi', 'tk'] else db_columns.DAY_TABLE_NAME
+        table = db_columns.TICK_TABLE_NAME if cycle=='tk' else db_columns.MIN_TABLE_NAME if cycle=='mi' else db_columns.DAY_TABLE_NAME
         dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
         self.table_upsert('chart', table, dict_data)
 
@@ -446,7 +463,7 @@ class DBMServer:
         result = self.execute_query(db_columns.SIM_SELECT_ONE, db='db', params=(dt, code))
         if result: return
         record = {
-            '일자': dt, '시간': find_time[8:], '종목코드': code, '종목명': name, '전략명칭': st_name, '매수전략': st_buy
+            '일자': dt, '시간': find_time[8:], '종목코드': code, '종목명': name, '매수시간': '', '전략명칭': st_name, '매수전략': st_buy
         }
         self.table_upsert('db', table, record)
 

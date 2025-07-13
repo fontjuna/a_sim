@@ -284,7 +284,6 @@ class ChartUpdater(QThread):
             abs(int(fid['누적거래대금'])) if fid['누적거래대금'] else 0,
             dc.ToDay+fid['체결시간']
         )
-        #logging.debug(f'차트 업데이트: {code} 현재가: {job["현재가"]} 체결시간: {job["체결시간"]}')
 
 class ChartSetter(QThread):
     def __init__(self, prx, setter_q):
@@ -310,15 +309,15 @@ class ChartSetter(QThread):
             if isinstance(code, str):
                 self.request_chart_data(code)
             elif isinstance(code, set):
-                self.request_sim_tickers(code)
+                self.request_tick_chart(code)
 
     def request_chart_data(self, code):
         logging.debug(f"get_first_chart_data 요청: {code}")
         self.get_first_chart_data(code, cycle='mi', tick=1, times=3)
         self.get_first_chart_data(code, cycle='dy')
 
-    def request_sim_tickers(self, tickers_set):
-        logging.debug(f"request_sim_tickers 요청: {tickers_set}")
+    def request_tick_chart(self, tickers_set):
+        logging.debug(f"request_tick_chart 요청: {tickers_set}")
         for code in tickers_set:
             self.get_first_chart_data(code, cycle='tk', tick=30, times=99, wt=1.667, dt=dc.ToDay)
     
