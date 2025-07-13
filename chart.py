@@ -92,41 +92,7 @@ class ChartData:
         self._data_versions[code] = self._data_versions.get(code, 0) + 1
         self._last_update_time[code] = time.time()
     
-    def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
-        """차트 데이터 설정 (초고속 버전)"""
-        
-        if not data:
-            return
-        
-        # 1분봉과 일봉만 허용
-        if cycle == 'mi' and tick != 1:
-            logging.warning(f"Only 1-minute data allowed. Rejected: {cycle}, tick={tick}")
-            return
-        elif cycle not in ['mi', 'dy']:
-            logging.warning(f"Only 'mi'(tick=1) and 'dy' cycles allowed. Rejected: {cycle}")
-            return
-        
-        code_lock = self._get_code_lock(code)
-        with code_lock:
-            # 데이터 구조 준비
-            self._ensure_data_structure(code)
-            
-            if cycle == 'mi' and tick == 1:
-                # 1분봉 설정
-                self._set_minute_data(code, data)
-                # 모든 분봉들 한번에 생성
-                self._generate_all_minute_charts(code)
-                
-            elif cycle == 'dy':
-                # 일봉 설정
-                self._set_day_data(code, data)
-                # 주봉, 월봉 자동 생성
-                self._generate_week_month_data(code)
-            
-            # 버전 업데이트
-            self._increment_version(code)
-        
-    def _set_minute_data(self, code: str, data: list):
+    def _set_minute_chart(self, code: str, data: list):
         """1분봉 데이터 설정 (여러 날짜 처리, 마지막 봉에만 전봉누적값 추가)"""
         minute_deque = self._chart_data[code]['mi1']
         minute_deque.clear()
@@ -134,11 +100,10 @@ class ChartData:
         # 최신 MAX_CANDLES개만 유지 (data[0]이 최신)
         recent_data = data[:self.MAX_CANDLES['mi1']]
         
-        if not recent_data:
-            return
+        if not recent_data: return
         
         # 마지막 봉(인덱스 0)의 날짜
-        last_candle_date = recent_data[0]['체결시간'][:8]
+        last_candle_date = time.strftime('%Y%m%d', time.localtime()) #recent_data[0]['체결시간'][:8]
         
         for i, candle_data in enumerate(recent_data):
             candle = candle_data.copy()
@@ -163,17 +128,7 @@ class ChartData:
             
             minute_deque.append(candle)
     
-    def _set_day_data(self, code: str, data: list):
-        """일봉 데이터 설정"""
-        day_deque = self._chart_data[code]['dy']
-        day_deque.clear()
-        
-        # 최신 MAX_CANDLES개만 유지 (data[0]이 최신)
-        recent_data = data[:self.MAX_CANDLES['dy']]
-        for candle in recent_data:
-            day_deque.append(candle)
-
-    def _generate_all_minute_charts(self, code: str):
+    def _set_all_minute_chart(self, code: str):
         """모든 분봉들을 한번에 초고속 생성"""
         minute_data = list(self._chart_data[code]['mi1'])
         if not minute_data:
@@ -186,8 +141,7 @@ class ChartData:
         # 역순으로 처리 (과거 → 최신 순서) - 단일 순회
         for candle in reversed(minute_data):
             dt_str = candle['체결시간']
-            if len(dt_str) < 12:
-                continue
+            if len(dt_str) < 12: continue
             
             hour = int(dt_str[8:10])
             minute = int(dt_str[10:12])
@@ -230,11 +184,20 @@ class ChartData:
                 target_deque.clear()
                 target_deque.extend(result)
 
-    def _generate_week_month_data(self, code: str):
+    def _set_day_chart(self, code: str, data: list):
+        """일봉 데이터 설정"""
+        day_deque = self._chart_data[code]['dy']
+        day_deque.clear()
+        
+        # 최신 MAX_CANDLES개만 유지 (data[0]이 최신)
+        recent_data = data[:self.MAX_CANDLES['dy']]
+        for candle in recent_data:
+            day_deque.append(candle)
+
+    def _set_week_month_chart(self, code: str):
         """일봉에서 주봉/월봉 생성"""
         day_data = list(self._chart_data[code]['dy'])
-        if not day_data:
-            return
+        if not day_data: return
         
         # 주봉 생성
         week_data = self._aggregate_day_data(day_data, 'week')
@@ -250,13 +213,50 @@ class ChartData:
         for candle in month_data:
             month_deque.append(candle)
     
+    def is_code_registered(self, code: str) -> bool:
+        """종목 등록 여부 확인 (메모리 기반으로 단순화)"""
+        return code in self._chart_data and bool(self._chart_data[code].get('mi1') and bool(self._chart_data[code].get('dy')))
+    
+    def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
+        """차트 데이터 설정 (초고속 버전)"""
+        
+        if not data:
+            return
+        
+        # 1분봉과 일봉만 허용
+        if cycle == 'mi' and tick != 1:
+            logging.warning(f"Only 1-minute data allowed. Rejected: {cycle}, tick={tick}")
+            return
+        elif cycle not in ['mi', 'dy']:
+            logging.warning(f"Only 'mi'(tick=1) and 'dy' cycles allowed. Rejected: {cycle}")
+            return
+        
+        code_lock = self._get_code_lock(code)
+        with code_lock:
+            # 데이터 구조 준비
+            self._ensure_data_structure(code)
+            
+            if cycle == 'mi' and tick == 1:
+                # 1분봉 설정
+                self._set_minute_chart(code, data)
+                # 모든 분봉들 한번에 생성
+                self._set_all_minute_chart(code)
+                
+            elif cycle == 'dy':
+                # 일봉 설정
+                self._set_day_chart(code, data)
+                # 주봉, 월봉 자동 생성
+                self._set_week_month_chart(code)
+            
+            # 버전 업데이트
+            self._increment_version(code)
+        
     def get_chart_data(self, code: str, cycle: str, tick: int = None) -> list:
         """차트 데이터 반환 (항상 최신 데이터 보장)"""
         code_lock = self._get_code_lock(code)
         with code_lock:
             # 데이터 구조 확인
-            if code not in self._chart_data:
-                return []
+            if code not in self._chart_data: return []
             
             cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
             
@@ -268,23 +268,22 @@ class ChartData:
         return result
 
     def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """실시간 차트 업데이트 (초고속 0.0002초)"""
+        """실시간 차트 업데이트 (누적값 처리 통합)"""
         
         code_lock = self._get_code_lock(code)
         with code_lock:
             # 데이터 구조 확인
-            if code not in self._chart_data:
-                return
+            if code not in self._chart_data: return
             
-            # 1분봉 업데이트
+            # 1분봉 업데이트 (누적값 → 실제 거래량 변환)
             is_new_minute = self._update_minute_chart(code, price, volume, amount, datetime_str)
             
             if is_new_minute:
-                # 새 분봉 생성 (0.0001초)
-                self._create_new_minute_candles(code)
+                # 새 분봉 생성 (누적값 처리 로직 적용)
+                self._create_minute_candles(code)
             else:
-                # 기존 분봉 업데이트 (0.0001초)
-                self._update_existing_minute_candles(code, price, volume, amount, datetime_str)
+                # 기존 분봉 업데이트 (누적값 처리 로직 적용)
+                self._update_minute_candles(code, price, volume, amount, datetime_str)
             
             # 일봉 업데이트 (있는 경우에만)
             if self._chart_data[code]['dy']:
@@ -293,6 +292,111 @@ class ChartData:
             
             # 버전 업데이트
             self._increment_version(code)
+
+    def _create_minute_candles(self, code: str):
+        """새 분봉들 생성 (누적값 처리 로직 적용)"""
+        minute_data = self._chart_data[code]['mi1']
+        if not minute_data:
+            return
+        
+        latest_minute = minute_data[0]
+        base_time = latest_minute['체결시간']
+        current_date = base_time[:8]
+        
+        # 모든 분봉에 새 봉 추가
+        for tick in [3, 5, 10, 15, 30, 60]:
+            cycle_key = f'mi{tick}'
+            if cycle_key not in self._chart_data[code]:
+                continue
+            
+            # 새 분봉 시간 계산
+            new_time = self._calculate_tick_time(base_time, tick)
+            target_deque = self._chart_data[code][cycle_key]
+            
+            # 기존 봉과 같은 시간이면 업데이트, 다르면 새 봉 추가
+            if target_deque and target_deque[0]['체결시간'] == new_time:
+                # 기존 봉에 합치기 - 1분봉의 실제 거래량만 더하기
+                existing = target_deque[0]
+                existing['고가'] = max(existing['고가'], latest_minute['현재가'])
+                existing['저가'] = min(existing['저가'], latest_minute['현재가'])
+                existing['현재가'] = latest_minute['현재가']
+                existing['거래량'] += latest_minute['거래량']  # 1분봉의 실제 거래량
+                existing['거래대금'] += latest_minute.get('거래대금', 0)
+            else:
+                # 기존 로직: 최신 분봉의 누적값 + 거래량
+                if target_deque:
+                    prev_candle = target_deque[0]
+                    new_prev_cumulative_volume = prev_candle.get('전봉누적거래량', 0) + prev_candle.get('거래량', 0)
+                    new_prev_cumulative_amount = prev_candle.get('전봉누적거래대금', 0) + prev_candle.get('거래대금', 0)
+                else:
+                    new_prev_cumulative_volume = 0
+                    new_prev_cumulative_amount = 0
+                
+                # 새 분봉 생성
+                new_candle = {
+                    '종목코드': latest_minute['종목코드'],
+                    '체결시간': new_time,
+                    '시가': latest_minute['현재가'],
+                    '고가': latest_minute['현재가'],
+                    '저가': latest_minute['현재가'],
+                    '현재가': latest_minute['현재가'],
+                    '거래량': latest_minute['거래량'],  # 1분봉의 실제 거래량
+                    '거래대금': latest_minute.get('거래대금', 0),
+                    '전봉누적거래량': new_prev_cumulative_volume,
+                    '전봉누적거래대금': new_prev_cumulative_amount
+                }
+                
+                target_deque.appendleft(new_candle)
+
+    def _update_minute_candles(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
+        """기존 분봉들 업데이트 (누적값 처리 로직 적용)"""
+        minute_data = self._chart_data[code]['mi1']
+        if not minute_data:
+            return
+        
+        latest_minute = minute_data[0]
+        base_time = latest_minute['체결시간']
+        
+        # 1분봉의 거래량 증분 계산 (누적값에서 실제 거래량으로 변환된 값)
+        actual_minute_volume = latest_minute['거래량']
+        actual_minute_amount = latest_minute.get('거래대금', 0)
+        
+        # 이전 값과 비교하여 증분 계산
+        prev_volume = latest_minute.get('_prev_volume', actual_minute_volume)
+        prev_amount = latest_minute.get('_prev_amount', actual_minute_amount)
+        
+        volume_diff = actual_minute_volume - prev_volume
+        amount_diff = actual_minute_amount - prev_amount
+        
+        # 현재 값을 이전 값으로 저장
+        latest_minute['_prev_volume'] = actual_minute_volume
+        latest_minute['_prev_amount'] = actual_minute_amount
+        
+        # 모든 분봉의 최신 봉 업데이트
+        for tick in [3, 5, 10, 15, 30, 60]:
+            cycle_key = f'mi{tick}'
+            if cycle_key not in self._chart_data[code]:
+                continue
+            
+            target_deque = self._chart_data[code][cycle_key]
+            if not target_deque:
+                continue
+            
+            # 현재 분봉 시간 확인
+            tick_time = self._calculate_tick_time(base_time, tick)
+            
+            # 같은 시간 구간이면 업데이트
+            if target_deque[0]['체결시간'] == tick_time:
+                candle = target_deque[0]
+                candle['현재가'] = price
+                candle['고가'] = max(candle['고가'], price)
+                candle['저가'] = min(candle['저가'], price)
+                
+                # 증분만 더하기 (첫 실행시에는 증분이 0이 됨)
+                if volume_diff > 0:
+                    candle['거래량'] += volume_diff
+                if amount_diff > 0:
+                    candle['거래대금'] += amount_diff
 
     def _update_minute_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str) -> bool:
         """1분봉 업데이트 (새 봉 여부 반환)"""
@@ -321,25 +425,8 @@ class ChartData:
             # 새봉 생성
             new_candle = latest_candle.copy()
 
-            if '전봉누적거래량' in latest_candle:
-                # set_chart_data 후 첫 update_chart인 경우
-                # 당일 기존 봉들의 거래량 합계 계산
-                same_date_total_volume = 0
-                same_date_total_amount = 0
-                current_date = datetime_str[:8]
-                
-                for candle in minute_deque:
-                    if candle['체결시간'][:8] == current_date:
-                        same_date_total_volume += candle['거래량']
-                        same_date_total_amount += candle.get('거래대금', 0)
-                    else:
-                        break
-                
-                new_prev_cumulative_volume = same_date_total_volume
-                new_prev_cumulative_amount = same_date_total_amount                
-            else:
-                new_prev_cumulative_volume = latest_candle['전봉누적거래량'] + latest_candle['거래량']
-                new_prev_cumulative_amount = latest_candle['전봉누적거래대금'] + latest_candle['거래대금']
+            new_prev_cumulative_volume = latest_candle['전봉누적거래량'] + latest_candle['거래량']
+            new_prev_cumulative_amount = latest_candle['전봉누적거래대금'] + latest_candle['거래대금']
                 
             actual_volume = volume - new_prev_cumulative_volume
             actual_amount = amount - new_prev_cumulative_amount
@@ -467,10 +554,6 @@ class ChartData:
             }
             period_deque.appendleft(new_candle)  # 인덱스 0에 추가
     
-    def is_code_registered(self, code: str) -> bool:
-        """종목 등록 여부 확인 (메모리 기반으로 단순화)"""
-        return code in self._chart_data and bool(self._chart_data[code].get('mi1') and bool(self._chart_data[code].get('dy')))
-    
     def clean_up_safe(self):
         """메모리 정리 (메모리 기반으로 단순화)"""
         try:
@@ -493,51 +576,6 @@ class ChartData:
         except Exception as e:
             logging.error(f"[{datetime.now()}] Error in cleanup: {str(e)}")
     
-    def _create_new_minute_candles(self, code: str):
-        """새 분봉들 생성 (초고속 0.0001초)"""
-        minute_data = self._chart_data[code]['mi1']
-        if not minute_data:
-            return
-        
-        latest_minute = minute_data[0]
-        base_time = latest_minute['체결시간']
-        
-        # 모든 분봉에 새 봉 추가
-        for tick in [3, 5, 10, 15, 30, 60]:
-            cycle_key = f'mi{tick}'
-            if cycle_key not in self._chart_data[code]:
-                continue
-            
-            # 새 분봉 시간 계산
-            new_time = self._calculate_tick_time(base_time, tick)
-            
-            # 새 분봉 생성
-            new_candle = {
-                '종목코드': latest_minute['종목코드'],
-                '체결시간': new_time,
-                '시가': latest_minute['현재가'],
-                '고가': latest_minute['현재가'],
-                '저가': latest_minute['현재가'],
-                '현재가': latest_minute['현재가'],
-                '거래량': latest_minute['거래량'],
-                '거래대금': latest_minute.get('거래대금', 0)
-            }
-            
-            target_deque = self._chart_data[code][cycle_key]
-            
-            # 기존 봉과 같은 시간이면 업데이트, 다르면 새 봉 추가
-            if target_deque and target_deque[0]['체결시간'] == new_time:
-                # 기존 봉에 합치기
-                existing = target_deque[0]
-                existing['고가'] = max(existing['고가'], new_candle['고가'])
-                existing['저가'] = min(existing['저가'], new_candle['저가'])
-                existing['현재가'] = new_candle['현재가']
-                existing['거래량'] += new_candle['거래량']
-                existing['거래대금'] += new_candle['거래대금']
-            else:
-                # 새 봉 추가
-                target_deque.appendleft(new_candle)
-
     def _create_candle(self, code, time_str, close, open, high, low, volume, amount, is_missing=False):
         """캔들 객체 생성"""
         candle = {
@@ -553,47 +591,6 @@ class ChartData:
         if is_missing:
             candle['is_missing'] = True
         return candle
-
-    def _update_existing_minute_candles(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
-        """기존 분봉들 업데이트 (초고속 0.0001초)"""
-        minute_data = self._chart_data[code]['mi1']
-        if not minute_data:
-            return
-        
-        latest_minute = minute_data[0]
-        base_time = latest_minute['체결시간']
-        
-        # 거래량 증분 계산
-        prev_volume = latest_minute.get('_prev_volume', 0)
-        prev_amount = latest_minute.get('_prev_amount', 0)
-        volume_diff = latest_minute['거래량'] - prev_volume
-        amount_diff = latest_minute.get('거래대금', 0) - prev_amount
-        
-        # 이전 값 저장 (다음 비교용)
-        latest_minute['_prev_volume'] = latest_minute['거래량']
-        latest_minute['_prev_amount'] = latest_minute.get('거래대금', 0)
-        
-        # 모든 분봉의 최신 봉 업데이트
-        for tick in [3, 5, 10, 15, 30, 60]:
-            cycle_key = f'mi{tick}'
-            if cycle_key not in self._chart_data[code]:
-                continue
-            
-            target_deque = self._chart_data[code][cycle_key]
-            if not target_deque:
-                continue
-            
-            # 현재 분봉 시간 확인
-            tick_time = self._calculate_tick_time(base_time, tick)
-            
-            # 같은 시간 구간이면 업데이트
-            if target_deque[0]['체결시간'] == tick_time:
-                candle = target_deque[0]
-                candle['현재가'] = price
-                candle['고가'] = max(candle['고가'], price)
-                candle['저가'] = min(candle['저가'], price)
-                candle['거래량'] += volume_diff
-                candle['거래대금'] += amount_diff
 
     def _update_candle(self, candle, price, open_price=None, volume=None, amount=None):
         """캔들 업데이트"""
