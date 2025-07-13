@@ -5501,7 +5501,7 @@
       </widget>
       <widget class="QRadioButton" name="rbSim3">
        <property name="enabled">
-        <bool>false</bool>
+        <bool>true</bool>
        </property>
        <property name="geometry">
         <rect>

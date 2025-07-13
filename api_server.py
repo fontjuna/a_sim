@@ -47,8 +47,7 @@ def com_request_time_check(kind='order', cond_text = None):
 
 real_thread = {}
 cond_thread = {}
-cond_data_list =  [('079', '전고돌파3분5억-매수'), ('080', '전고돌파3분5억-매도'), ('073', '3분30억전고돌파-매수'), ('077', '3분30억전고돌파-매도'), ('075', '장시작3분-매수'),\
-                  ('074', '장시작3분-매도'), ('024', '1분10억'), ('076', '1분10억-매도'), ('004', '돌파4시간3분5억-매수'), ('006', '돌파4시간3분5억-매도'), ('005', '스크립트만')]
+cond_data_list =  [('100', '돌파매수'), ('200', '조건매도')]
 price_dict = {}
 real_tickers = set()
 ready_tickers = False
@@ -421,6 +420,7 @@ class OnReceiveRealDataSim1And2(QThread):
       self.is_running = True
       self.api = api
       self.frq_order = api.frq_order
+      self.code_tot = {}
 
    def run(self):
       while self.is_running:
@@ -435,15 +435,21 @@ class OnReceiveRealDataSim1And2(QThread):
             current_price = sim.update_price(code)
             price_dict[code] = current_price
 
+            qty = random.randint(0, 50)
+            if code not in self.code_tot:
+               self.code_tot[code] = {'totoal_qty': 50000, 'total_price': current_price * 50000}
+            self.code_tot[code]['totoal_qty'] += qty
+            self.code_tot[code]['total_price'] += qty * current_price
+
             # 실시간 데이터 전송
             dictFID = {
                '종목코드': code,
                '종목명': sim.ticker.get(code, {}).get('종목명', ''),
                '현재가': f'{current_price:15d}',
                '등락율': f'{round((current_price - sim.ticker[code]["전일가"]) / sim.ticker[code]["전일가"] * 100, 2):12.2f}',
-               '누적거래량': f'{500000:15d}',
-               '누적거래대금': f'{78452100:15d}',
-               '체결시간': time.strftime('%Y%m%d%H%M%S', time.localtime()),
+               '누적거래량': f'{self.code_tot[code]["totoal_qty"]:15d}',
+               '누적거래대금': f'{self.code_tot[code]["total_price"]:15d}',
+               '체결시간': time.strftime('%H%M%S', time.localtime()),
             }
 
             # 포트폴리오 업데이트
@@ -620,7 +626,8 @@ class APIServer:
 
     def thread_cleanup(self):
         # 실시간 데이터 스레드 정리
-        global real_thread
+        global real_tickers, real_thread, cond_thread   
+        real_tickers.clear()    
         logging.debug(f'실시간 데이터 스레드 삭제전: {real_thread}')
         for screen in list(real_thread.keys()):
             if real_thread[screen]:
@@ -637,7 +644,6 @@ class APIServer:
                     logging.error(f"실시간 스레드 정리 오류: {e}")
         
         # 조건검색 스레드 정리
-        global cond_thread
         logging.debug(f'조건검색 스레드 삭제전: {cond_thread}')
         for screen in list(cond_thread.keys()):
             if cond_thread[screen]:

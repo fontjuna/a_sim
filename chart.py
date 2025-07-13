@@ -17,7 +17,6 @@ import importlib.util
 from datetime import timedelta
 from collections import deque
 
-all_cycles = ['mi1', 'mi3', 'mi5', 'mi10', 'mi15', 'mi30', 'mi60', 'dy', 'wk', 'mo']
 class ChartData:
     """
     고성능 차트 데이터 관리 클래스 (메모리 기반, 0.01초 주기 최적화)
@@ -35,7 +34,7 @@ class ChartData:
         'mi30': 336,    # 30분봉: 약 7일치
         'mi60': 168,    # 60분봉: 약 7일치
         'dy': 1000,     # 일봉: 약 3년치
-        'wk': 520,      # 주봉: 약 10년치
+        'wk': 520,      # 주봉: 약 10년치 
         'mo': 120       # 월봉: 약 10년치
     }
 
@@ -84,7 +83,7 @@ class ChartData:
             self._last_update_time[code] = 0
             
             # 모든 주기들을 미리 생성
-            for cycle_key in all_cycles:
+            for cycle_key in self.MAX_CANDLES.keys():
                 max_size = self.MAX_CANDLES.get(cycle_key, 1000)
                 self._chart_data[code][cycle_key] = deque(maxlen=max_size)
     
@@ -334,9 +333,27 @@ class ChartData:
         else:
             # 새봉 생성
             new_candle = latest_candle.copy()
-            new_prev_cumulative_volume = latest_candle['전봉누적거래량'] + latest_candle['거래량']
-            new_prev_cumulative_amount = latest_candle['전봉누적거래대금'] + latest_candle['거래대금']
-            
+
+            if '전봉누적거래량' in latest_candle:
+                # set_chart_data 후 첫 update_chart인 경우
+                # 당일 기존 봉들의 거래량 합계 계산
+                same_date_total_volume = 0
+                same_date_total_amount = 0
+                current_date = datetime_str[:8]
+                
+                for candle in minute_deque:
+                    if candle['체결시간'][:8] == current_date:
+                        same_date_total_volume += candle['거래량']
+                        same_date_total_amount += candle.get('거래대금', 0)
+                    else:
+                        break
+                
+                new_prev_cumulative_volume = same_date_total_volume
+                new_prev_cumulative_amount = same_date_total_amount                
+            else:
+                new_prev_cumulative_volume = latest_candle['전봉누적거래량'] + latest_candle['거래량']
+                new_prev_cumulative_amount = latest_candle['전봉누적거래대금'] + latest_candle['거래대금']
+                
             actual_volume = volume - new_prev_cumulative_volume
             actual_amount = amount - new_prev_cumulative_amount
             
@@ -1375,19 +1392,23 @@ import threading
 from typing import Dict, Any
 
 class ScriptManager:
-    """
-    투자 스크립트 관리 및 실행 클래스 (최적화 버전)
-    
-    사용자 스크립트 실행, 검증, 관리
-    """
     # 허용된 Python 기능 목록 (whitelist 방식)
-    ALLOWED_MODULES = ['re', 'math', 'datetime', 'random', 'logging', 'json', 'collections']
+    ALLOWED_MODULES = [
+        're', 'math', 'datetime', 'random', 'logging', 'json', 'collections',
+        'time', 'calendar', 'decimal', 'fractions', 'statistics',
+        'itertools', 'functools', 'operator', 'string', 'textwrap', 'unicodedata',
+        'copy', 'heapq', 'bisect', 'weakref', 'array', 'struct'
+    ]
 
     # 허용된 Python 내장 함수 및 타입
     ALLOWED_BUILTINS = [
         'int', 'float', 'str', 'bool', 'list', 'dict', 'set', 'tuple',
         'len', 'max', 'min', 'sum', 'abs', 'all', 'any', 'round', 'sorted',
-        'enumerate', 'zip', 'range',
+        'enumerate', 'zip', 'range', 'type', 'isinstance', 'hasattr', 'getattr', 'setattr',
+        'reversed', 'filter', 'map', 'next', 'iter', 'chr', 'ord', 'hex', 'oct', 'bin',
+        'divmod', 'pow', 'slice', 'vars', 'dir', 'callable', 'format', 'repr',
+        'frozenset', 'bytearray', 'bytes', 'memoryview', 'complex', 'property',
+        'staticmethod', 'classmethod', 'super', 'object'
     ]
 
     # 허용되지 않는 문법 패턴

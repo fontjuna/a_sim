@@ -431,7 +431,7 @@ class EvalStrategy(QThread):
                 'ordno': '',
             }
 
-            if self.매수스크립트적용: # 다시 넣기 때문에 hoga()계산 전에 (price가 변경 됨)
+            if gm.sim_no != 1 and self.매수스크립트적용: # 다시 넣기 때문에 hoga()계산 전에 (price가 변경 됨)
                 if self.cht_dt.is_code_registered(code):
                     try:
                         result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': send_data['quantity']})
@@ -521,7 +521,7 @@ class EvalStrategy(QThread):
                 send_data['price'] = hoga(현재가, self.매도호가)
                 send_data['msg'] = '매도지정'
 
-            if self.매도스크립트적용:
+            if gm.sim_no != 1 and self.매도스크립트적용:
                 if self.cht_dt.is_code_registered(code):
                     result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
                     if not result['error']:
@@ -537,7 +537,7 @@ class EvalStrategy(QThread):
                     result = {'error': '차트데이터 준비 안 됨'}
 
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
-                if self.매도스크립트적용 and self.매도스크립트AND:
+                if gm.sim_no != 1 and self.매도스크립트적용 and self.매도스크립트AND:
                     if result.get('error'): return False, {}, f"{result['error']}: {code} {종목명}"
                 send_data['msg'] = '검색매도'
                 return True, send_data,  f"검색매도: {code} {종목명}"

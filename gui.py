@@ -64,7 +64,10 @@ class GUI(QMainWindow, form_class):
             self.tblScript.setColumnCount(3)
             self.tblScript.setHorizontalHeaderLabels(['스크립트명', '타입', '스크립트', '설명'])
 
-            self.cbChartTick.addItems(dc.ticks.get('틱봉',[]))
+            self.cbChartCycle.setCurrentText('분봉')
+            self.cbChartTick.clear()
+            self.cbChartTick.addItems(dc.ticks.get('분봉',[]))
+            self.cbChartTick.setCurrentText('3')
             self.cbChartCode.addItem('005930 삼성전자')
 
             # 폼 초기화 시
