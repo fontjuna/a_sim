@@ -260,21 +260,8 @@ class ChartData:
             
             cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
             
-            # 1분봉: 저장된 데이터 그대로 반환
-            if cycle_key == 'mi1':
-                result = list(self._chart_data[code]['mi1'])
-            
-            # 분봉: 항상 1분봉에서 동적 생성 (최신 보장)
-            elif cycle == 'mi':
-                result = self._get_dynamic_aggregated_data(code, tick)
-            
-            # 일/주/월봉: 저장된 데이터 그대로 반환 (update_chart에서 이미 최신 업데이트됨)
-            elif cycle in ['dy', 'wk', 'mo']:
-                if cycle_key in self._chart_data[code]:
-                    result = list(self._chart_data[code][cycle_key])
-                else:
-                    result = []
-            
+            if cycle_key in self._chart_data[code]:
+                result = list(self._chart_data[code][cycle_key])
             else:
                 result = []
         
@@ -680,54 +667,6 @@ class ChartData:
         
         return result
 
-    def _get_dynamic_aggregated_data(self, code: str, tick: int) -> list:
-        """1분봉에서 동적으로 분봉 생성 (실시간 보장)"""
-        minute_data = list(self._chart_data[code]['mi1'])
-        if not minute_data:
-            return []
-        
-        grouped_data = {}
-        
-        # 역순으로 처리 (과거 → 최신 순서)
-        for candle in reversed(minute_data):
-            dt_str = candle['체결시간']
-            if len(dt_str) < 12:
-                continue
-            
-            hour = int(dt_str[8:10])
-            minute = int(dt_str[10:12])
-            total_minutes = hour * 60 + minute
-            
-            tick_start = (total_minutes // tick) * tick
-            group_hour = tick_start // 60
-            group_minute = tick_start % 60
-            group_key = f"{dt_str[:8]}{group_hour:02d}{group_minute:02d}00"
-            
-            if group_key not in grouped_data:
-                grouped_data[group_key] = {
-                    '종목코드': candle['종목코드'],
-                    '체결시간': group_key,
-                    '시가': candle['시가'],
-                    '고가': candle['고가'],
-                    '저가': candle['저가'],
-                    '현재가': candle['현재가'],
-                    '거래량': candle['거래량'],
-                    '거래대금': candle.get('거래대금', 0)
-                }
-            else:
-                group = grouped_data[group_key]
-                group['현재가'] = candle['현재가']
-                group['고가'] = max(group['고가'], candle['고가'])
-                group['저가'] = min(group['저가'], candle['저가'])
-                group['거래량'] += candle['거래량']
-                group['거래대금'] += candle.get('거래대금', 0)
-        
-        # 결과를 시간순으로 정렬 (최신이 앞)
-        result = list(grouped_data.values())
-        result.sort(key=lambda x: x['체결시간'], reverse=True)
-        
-        return result
-    
     def _calculate_tick_time(self, datetime_str: str, tick: int) -> str:
         """틱 시간 계산"""
         if len(datetime_str) < 12:
