@@ -446,42 +446,6 @@ class ChartData:
             minute_deque.appendleft(new_candle)
             return True
 
-    def _calculate_candle_volume(self, code: str, current_cumulative: int, datetime_str: str) -> int:
-        """현재 봉의 실제 거래량 계산 (누적값 - 이전 봉들 합계)"""
-        minute_data = self._chart_data[code]['mi1']
-        if not minute_data:
-            return current_cumulative
-        
-        current_time = datetime_str[:12] + '00'  # 09:09:00
-        previous_total = 0
-        
-        for candle in minute_data:
-            candle_time = candle['체결시간']
-            if candle_time < current_time:  # 이전 봉들만
-                previous_total += candle['거래량']
-            else:
-                break  # 현재 봉이나 이후 봉은 제외
-        
-        return max(0, current_cumulative - previous_total)
-
-    def _calculate_candle_amount(self, code: str, current_cumulative: int, datetime_str: str) -> int:
-        """현재 봉의 실제 거래대금 계산 (누적값 - 이전 봉들 합계)"""
-        minute_data = self._chart_data[code]['mi1']
-        if not minute_data:
-            return current_cumulative
-        
-        current_time = datetime_str[:12] + '00'  # 09:09:00
-        previous_total = 0
-        
-        for candle in minute_data:
-            candle_time = candle['체결시간']
-            if candle_time < current_time:  # 이전 봉들만
-                previous_total += candle.get('거래대금', 0)
-            else:
-                break  # 현재 봉이나 이후 봉은 제외
-        
-        return max(0, current_cumulative - previous_total)
-
     def _update_day_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):
         """일봉 업데이트"""
         today = datetime_str[:8]
@@ -553,28 +517,6 @@ class ChartData:
                 '거래대금': amount
             }
             period_deque.appendleft(new_candle)  # 인덱스 0에 추가
-    
-    def clean_up_safe(self):
-        """메모리 정리 (메모리 기반으로 단순화)"""
-        try:
-            # 모든 데이터 클리어
-            for code_data in self._chart_data.values():
-                for deque_obj in code_data.values():
-                    if hasattr(deque_obj, 'clear'):
-                        deque_obj.clear()
-            
-            self._chart_data.clear()
-            self._data_versions.clear()
-            self._last_update_time.clear()
-            
-            # 락 정리
-            with self._code_locks_lock:
-                self._code_locks.clear()
-            
-            logging.debug(f"[{datetime.now()}] ChartData cleaned up in PID: {os.getpid()}")
-            
-        except Exception as e:
-            logging.error(f"[{datetime.now()}] Error in cleanup: {str(e)}")
     
     def _create_candle(self, code, time_str, close, open, high, low, volume, amount, is_missing=False):
         """캔들 객체 생성"""
