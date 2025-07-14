@@ -1,9 +1,11 @@
-from public import dc, gm, get_path, save_json, load_json, QData, SharedQueue
+from public import dc, gm, get_path, save_json, load_json, QData
 from dataclasses import dataclass, field
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal    
 from multiprocessing import Process
-from multiprocessing.queues import Empty
+from PyQt5.QtCore import QThread
+from multiprocessing import Process
+from dataclasses import dataclass, field
 import pythoncom
 import queue
 import threading
@@ -342,29 +344,23 @@ def get_windows_drive_free_percent():
     percent_free = (free / total) * 100
     return percent_free
 
-from PyQt5.QtCore import QThread
-from multiprocessing import Process
-from dataclasses import dataclass, field
-import time
-import threading
+# @dataclass
+# class QData:
+#     sender : str = None
+#     method : str = None
+#     answer : bool = False
+#     args : tuple = field(default_factory=tuple)
+#     kwargs : dict = field(default_factory=dict)
+#     callback : str = None
 
-@dataclass
-class QData:
-    sender : str = None
-    method : str = None
-    answer : bool = False
-    args : tuple = field(default_factory=tuple)
-    kwargs : dict = field(default_factory=dict)
-    callback : str = None
-
-class SharedQueue:
-    def __init__(self):
-        # 모든 경우에 multiprocessing.Queue 사용 (쓰레드와 프로세스 모두 호환)
-        import multiprocessing as mp
-        self.request = mp.Queue()
-        self.result = mp.Queue()
-        self.stream = mp.Queue()
-        self.payback = mp.Queue()
+# class SharedQueue:
+#     def __init__(self):
+#         # 모든 경우에 multiprocessing.Queue 사용 (쓰레드와 프로세스 모두 호환)
+#         import multiprocessing as mp
+#         self.request = mp.Queue()
+#         self.result = mp.Queue()
+#         self.stream = mp.Queue()
+#         self.payback = mp.Queue()
 
 class BaseModel:
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
@@ -468,7 +464,7 @@ class BaseModel:
         self.shared_qes[target].request.put(q_data)
         try:
             return self.my_qes.result.get(timeout=self.timeout)
-        except Empty:
+        except queue.Empty:
             pass
         except TimeoutError:
             logging.error(f"answer() 타임아웃:{self.name}의 요청 : {target}.{method}", exc_info=True)
@@ -488,7 +484,7 @@ class BaseModel:
         self.shared_qes[target].stream.put(q_data)
         try:
             return self.my_qes.payback.get(timeout=self.timeout)
-        except Empty:
+        except queue.Empty:
             pass
         except TimeoutError:
             logging.error(f"frq_answer() 타임아웃:{self.name}의 요청 : {target}.{method}", exc_info=True)

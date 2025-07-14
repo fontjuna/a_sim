@@ -882,7 +882,21 @@ class ChartManager:
         a_prev, a_curr = a_func(1), a_func(0)
         b_prev, b_curr = b_func(1), b_func(0)
         return a_prev >= b_prev and a_curr < b_curr
-    
+
+    def past_bars(self, dt: str = None) -> int:
+        """당일 분봉 개수 반환"""
+        if self.cycle != 'mi': return 0
+        self._ensure_data_cache()
+        if not self._raw_data: return 0
+        if dt is None: dt = datetime.now().strftime('%Y%m%d')
+        bars = 0
+        for i in range(self._data_length):
+            if self._raw_data[i].get('체결시간', '')[:8] == dt:
+                bars += 1
+            else:
+                break
+        return bars
+
     def bars_since(self, condition_func) -> int:
         """조건이 만족된 이후 지나간 봉 개수"""
         self._ensure_data_cache()
@@ -1029,14 +1043,14 @@ class ChartManager:
         """스토캐스틱 오실레이터 계산
         Returns: (%K, %D)
         """
-        highest_high = self.highest(self.h, k_period, m)
-        lowest_low = self.lowest(self.l, k_period, m)
+        hh = self.highest(self.h, k_period, m)
+        ll = self.lowest(self.l, k_period, m)
         current_close = self.c(m)
         
         # %K 계산
         percent_k = 0
-        if highest_high != lowest_low:
-            percent_k = 100 * ((current_close - lowest_low) / (highest_high - lowest_low))
+        if hh != ll:
+            percent_k = 100 * ((current_close - ll) / (hh - ll))
         
         # %D 계산 (간단한 이동평균 사용)
         percent_d = self.avg(self.c, d_period, m)
@@ -1215,6 +1229,253 @@ class ChartManager:
         # pattern_func에 데이터 전달하여 패턴 확인
         return pattern_func(length)
     
+    def get_extremes(self, n: int = 130, m: int = 1) -> dict:
+        """
+        현재봉 기준 n개 봉에서 각종 극값들을 구함
+        
+        Args:
+            n: 검사할 봉 개수
+            m: 시작 봉 인덱스 0=현재봉
+        
+        Returns:
+            dict: {
+                'hh': 최고고가,
+                'hc': 최고종가, 
+                'lc': 최저종가,
+                'll': 최저저가,
+                'hv': 최고거래량,
+                'lv': 최저거래량,
+                'ha': 최고거래대금,
+                'la': 최저거래대금,
+                'close': 전일종가,
+                'bars': 당일 봉 개수
+            }
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n <= 0:
+            return { 'hh': 0, 'hc': 0, 'lc': 0, 'll': 0, 'hv': 0, 'lv': 0, 'ha': 0, 'la': 0, 'close': 0, 'bars': 0 }
+        
+        # 시작 인덱스 설정
+        today = datetime.now().strftime('%Y%m%d')
+        start_idx = m
+        end_idx = start_idx + n
+        
+        # 데이터 길이 체크
+        if end_idx > self._data_length:
+            end_idx = self._data_length
+        
+        if start_idx >= end_idx:
+            return { 'hh': 0, 'hc': 0, 'lc': 0, 'll': 0, 'hv': 0, 'lv': 0, 'ha': 0, 'la': 0, 'close': 0, 'bars': 0 }
+        
+        # 초기값 설정 (첫 번째 봉)
+        first_candle = self._raw_data[start_idx]
+        hh = first_candle.get('고가', 0)
+        hc = first_candle.get('현재가', 0)
+        lc = first_candle.get('현재가', 0)
+        ll = first_candle.get('저가', 0)
+        hv = first_candle.get('거래량', 0)
+        lv = first_candle.get('거래량', 0)
+        ha = first_candle.get('거래대금', 0)
+        la = first_candle.get('거래대금', 0)
+        close = 0
+        bars = m + 1
+        
+        # n개 봉 순회하면서 극값 찾기
+        for i in range(start_idx + 1, end_idx):
+            candle = self._raw_data[i]
+            
+            high = candle.get('고가', 0)
+            close = candle.get('현재가', 0)
+            low = candle.get('저가', 0)
+            volume = candle.get('거래량', 0)
+            amount = candle.get('거래대금', 0)
+            
+            # 최고값들 업데이트
+            if high > hh: hh = high
+            if close > hc: hc = close
+            if volume > hv: hv = volume
+            if amount > ha: ha = amount
+            
+            # 최저값들 업데이트
+            if close < lc: lc = close
+            if low < ll: ll = low
+            if volume < lv: lv = volume
+            if amount < la: la = amount
+        
+            if self.cycle == 'mi':
+                if candle.get('체결시간', '')[:8] == today:
+                    bars += 1
+
+        close = self._raw_data[bars].get('현재가', 0)
+        return { 'hh': hh, 'hc': hc, 'lc': lc, 'll': ll, 'hv': hv, 'lv': lv, 'ha': ha, 'la': la, 'close': close, 'bars': bars }
+
+    def top_volume_avg(self, n: int = 130, cnt: int = 10, m: int = 1) -> float:
+        """
+        현재봉 기준 m봉 이전부터 n개 봉 중 거래량 상위 cnt개의 평균값
+        
+        Args:
+            m: 현재봉에서 m봉 이전부터 시작 (기본값: 1)
+            n: 검사할 봉 개수 (기본값: 130)
+            cnt: 상위 몇 개를 선택할지 (기본값: 10)
+        
+        Returns:
+            float: 상위 cnt개 거래량의 평균값
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n <= 0 or cnt <= 0 or m < 0:
+            return 0.0
+        
+        # 시작 인덱스와 끝 인덱스 설정
+        start_idx = m
+        end_idx = start_idx + n
+        
+        # 데이터 길이 체크
+        if start_idx >= self._data_length:
+            return 0.0
+        
+        if end_idx > self._data_length:
+            end_idx = self._data_length
+        
+        if start_idx >= end_idx:
+            return 0.0
+        
+        # 지정된 범위의 거래량 수집
+        volumes = []
+        for i in range(start_idx, end_idx):
+            volume = self._raw_data[i].get('거래량', 0)
+            if volume > 0:  # 0보다 큰 거래량만 수집
+                volumes.append(volume)
+        
+        # 거래량이 없으면 0 반환
+        if not volumes:
+            return 0.0
+        
+        # cnt가 실제 데이터 개수보다 크면 전체 데이터 사용
+        actual_cnt = min(cnt, len(volumes))
+        
+        # 거래량 내림차순 정렬 후 상위 cnt개 선택
+        volumes.sort(reverse=True)
+        top_volumes = volumes[:actual_cnt]
+        
+        # 평균 계산
+        return sum(top_volumes) / len(top_volumes)
+
+    def top_amount_avg(self, n: int = 130, cnt: int = 10, m: int = 1) -> float:
+        """
+        현재봉 기준 m봉 이전부터 n개 봉 중 거래대금 상위 cnt개의 평균값
+        
+        Args:
+            m: 현재봉에서 m봉 이전부터 시작 (기본값: 1)
+            n: 검사할 봉 개수 (기본값: 130)
+            cnt: 상위 몇 개를 선택할지 (기본값: 10)
+        
+        Returns:
+            float: 상위 cnt개 거래대금의 평균값
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n <= 0 or cnt <= 0 or m < 0:
+            return 0.0
+        
+        # 시작 인덱스와 끝 인덱스 설정
+        start_idx = m
+        end_idx = start_idx + n
+        
+        # 데이터 길이 체크
+        if start_idx >= self._data_length:
+            return 0.0
+        
+        if end_idx > self._data_length:
+            end_idx = self._data_length
+        
+        if start_idx >= end_idx:
+            return 0.0
+        
+        # 지정된 범위의 거래대금 수집
+        amounts = []
+        for i in range(start_idx, end_idx):
+            amount = self._raw_data[i].get('거래대금', 0)
+            if amount > 0:  # 0보다 큰 거래대금만 수집
+                amounts.append(amount)
+        
+        # 거래대금이 없으면 0 반환
+        if not amounts:
+            return 0.0
+        
+        # cnt가 실제 데이터 개수보다 크면 전체 데이터 사용
+        actual_cnt = min(cnt, len(amounts))
+        
+        # 거래대금 내림차순 정렬 후 상위 cnt개 선택
+        amounts.sort(reverse=True)
+        top_amounts = amounts[:actual_cnt]
+        
+        # 평균 계산
+        return sum(top_amounts) / len(top_amounts)
+
+    def get_close_tops(self, n: int = 130, cnt: int = 80, m: int = 1) -> tuple:
+        """
+        각 봉이 자신을 포함한 cnt개 봉 중 최고 종가인지 확인하여 인덱스를 수집 분봉만 해당
+        
+        Args:
+            m: 검사 종료 인덱스 (0=현재봉까지, 1=1봉까지, 3=3봉까지...)
+            n: 검사 시작 기준 (130이면 129+m부터 시작)
+            cnt: 비교할 봉 개수 (자신 포함)
+        
+        Returns:
+            tuple: (최고종가_인덱스_리스트, 당일_봉_개수)
+            
+        """
+        if self.cycle != 'mi': return ([], 0)
+
+        self._ensure_data_cache()
+        if not self._raw_data or m < 0 or n <= 0 or cnt <= 0:
+            return ([], 0)
+        
+        high_close_indices = []
+        
+        # 당일 봉 개수 계산
+        today_bars = 0
+        today = datetime.now().strftime('%Y%m%d')
+        for i in range(self._data_length):
+            if self._raw_data[i].get('체결시간', '')[:8] == today:
+                today_bars += 1
+            else:
+                break
+        
+        # n-1+m부터 m까지 역순으로 검사
+        start_idx = n - 1 + m  # n=130, m=0이면 129부터, m=3이면 132부터
+        end_idx = m            # m=0이면 0까지, m=3이면 3까지
+        
+        for current_idx in range(start_idx, end_idx - 1, -1):  # 역순
+            if current_idx >= self._data_length:
+                continue
+            
+            # 현재 검사 중인 봉의 종가
+            current_close = self._raw_data[current_idx].get('현재가', 0)
+            
+            # 비교 범위: current_idx부터 current_idx + cnt - 1까지
+            compare_start = current_idx
+            compare_end = current_idx + cnt
+            
+            # 데이터 길이 체크
+            if compare_end > self._data_length:
+                compare_end = self._data_length
+            
+            if compare_start >= compare_end:
+                continue
+            
+            # 비교 범위에서 최고 종가 찾기
+            max_close = 0
+            for i in range(compare_start, compare_end):
+                close = self._raw_data[i].get('현재가', 0)
+                if close > max_close:
+                    max_close = close
+            
+            # 현재 봉의 종가가 비교 범위의 최고 종가 이상이면 인덱스 추가
+            if current_close >= max_close and max_close > 0:
+                high_close_indices.append(current_idx)
+        
+        return (high_close_indices, today_bars)
+
     # 캐시 관리 함수들
     def clear_cache(self, code=None):
         """특정 코드 또는 전체 캐시 초기화"""

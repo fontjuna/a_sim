@@ -323,7 +323,7 @@ class ChartSetter(QThread):
     
     def get_first_chart_data(self, code, cycle, tick=1, times=1, wt=None, dt=None):
         dict_list = self.prx.answer('api', 'get_chart_data', code, cycle, tick, times, wt, dt)
-
+        if not dict_list: return
         if cycle in ['dy', 'mi']:
             self.cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
         elif cycle == 'tk':
