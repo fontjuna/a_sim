@@ -53,46 +53,19 @@ class ThreadSafeList:
 class ThreadSafeDict:
     def __init__(self):
         self.dict = {}
-        # 읽기-쓰기 락 사용 (여러 스레드가 동시에 읽을 수 있음)
-        from PyQt5.QtCore import QReadWriteLock
-        self.lock = QReadWriteLock()
-
-    def items(self):
-        self.lock.lockForRead()
-        try:
-            return list(self.dict.items())  # 복사본 반환
-        finally:
-            self.lock.unlock()
-
-    def keys(self):
-        self.lock.lockForRead()
-        try:
-            return list(self.dict.keys())  # 복사본 반환
-        finally:
-            self.lock.unlock()
-
-    def values(self):
-        self.lock.lockForRead()
-        try:
-            return list(self.dict.values())  # 복사본 반환
-        finally:
-            self.lock.unlock()
+        self.lock = threading.RLock()
 
     def set(self, key, value=None, next=None):
-        self.lock.lockForWrite()
-        try:
+        with self.lock:
             if next is None:
                 self.dict[key] = copy.deepcopy(value) if value is not None else {}
             else:
                 if key not in self.dict:
                     self.dict[key] = {}
                 self.dict[key][next] = copy.deepcopy(value) if value is not None else {}
-        finally:
-            self.lock.unlock()
 
     def get(self, key, next=None):
-        self.lock.lockForRead()
-        try:
+        with self.lock:
             if next is None:
                 value = self.dict.get(key)
                 return copy.deepcopy(value) if value is not None else None
@@ -101,37 +74,34 @@ class ThreadSafeDict:
                     return None
                 value = self.dict[key].get(next)
                 return copy.deepcopy(value) if value is not None else None
-        except Exception as e:
-            logging.error(f"ThreadSafeDict get 오류: {e}")
-            return None
-        finally:
-            self.lock.unlock()
 
     def contains(self, item):
-        self.lock.lockForRead()
-        try:
+        with self.lock:
             return item in self.dict
-        finally:
-            self.lock.unlock()
 
     def remove(self, key, next=None):
-        self.lock.lockForWrite()
-        try:
+        with self.lock:
             if next is None:
                 return copy.deepcopy(self.dict.pop(key, None))
             elif key in self.dict:
                 return copy.deepcopy(self.dict[key].pop(next, None))
             return None
-        except Exception as e:
-            logging.error(f"ThreadSafeDict remove 오류: {e}")
-            return None
-        finally:
-            self.lock.unlock()
             
+    def items(self):
+        with self.lock:
+            return list(self.dict.items())  # 복사본 반환
+
+    def keys(self):
+        with self.lock:
+            return list(self.dict.keys())  # 복사본 반환
+
+    def values(self):
+        with self.lock:
+            return list(self.dict.values())  # 복사본 반환
+
     def update_if_exists(self, key, next, value):
         """존재하는 경우에만 업데이트 (contains + set을 원자적으로 수행)"""
-        self.lock.lockForWrite()
-        try:
+        with self.lock:
             if key in self.dict:
                 if next is None:
                     self.dict[key] = copy.deepcopy(value) if value is not None else {}
@@ -140,8 +110,6 @@ class ThreadSafeDict:
                     self.dict[key][next] = copy.deepcopy(value) if value is not None else {}
                     return True
             return False
-        finally:
-            self.lock.unlock()
 
 class Toast(QWidget):
     def __init__(self):

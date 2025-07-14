@@ -1155,6 +1155,7 @@ class APIServer:
             return data
         return None
     
+    @profile_operation
     def get_chart_data(self, code, cycle, tick=1, times=1, wt=None, dt=None):
         """차트 데이터 조회"""
         try:

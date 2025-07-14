@@ -1,8 +1,7 @@
-from public import dc, gm
+from public import dc, profile_operation
 from datetime import datetime
 from typing import Set, Optional, Any
 import json
-import numpy as np
 import logging
 import time
 import ast
@@ -10,10 +9,6 @@ import traceback
 import re
 import os
 import threading
-import hashlib
-import marshal
-import pickle
-import importlib.util
 from datetime import timedelta
 from collections import deque
 
@@ -217,6 +212,7 @@ class ChartData:
         """종목 등록 여부 확인 (메모리 기반으로 단순화)"""
         return code in self._chart_data and bool(self._chart_data[code].get('mi1') and bool(self._chart_data[code].get('dy')))
     
+    @profile_operation
     def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
         """차트 데이터 설정 (초고속 버전)"""
         
@@ -732,14 +728,13 @@ class ChartManager:
 
     def bar_time(self, n: int = 0) -> str:
         """시간 반환 - 고속 버전"""
-        if self.cycle != 'mi':
-            return ''
+        if self.cycle != 'mi': return ''
         
         self._ensure_data_cache()
-        if not self._raw_data or n >= self._data_length:
-            return ''
+        if not self._raw_data or n >= self._data_length: return ''
         
-        return self._raw_data[n].get('체결시간', '')
+        time_str = self._raw_data[n].get('체결시간', '')
+        return time_str[8:] if time_str else ''
     
     def bar_date(self, n: int = 0) -> str:
         """오늘 날짜 반환"""
@@ -891,8 +886,7 @@ class ChartManager:
     def bars_since(self, condition_func) -> int:
         """조건이 만족된 이후 지나간 봉 개수"""
         self._ensure_data_cache()
-        if not self._raw_data:
-            return 0
+        if not self._raw_data: return 0
         
         for i in range(self._data_length):
             if condition_func(i):
@@ -944,8 +938,7 @@ class ChartManager:
     def value_when(self, nth: int, condition_func, data_func) -> float:
         """조건이 nth번째 만족된 시점의 data_func 값"""
         self._ensure_data_cache()
-        if not self._raw_data:
-            return 0.0
+        if not self._raw_data: return 0.0
         
         condition_met = 0
         

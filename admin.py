@@ -63,7 +63,7 @@ class Admin:
         gm.chart_q = ThreadSafeList('chart_q')
         gm.counter = CounterTicker()
         gm.dict종목정보 = ThreadSafeDict()
-        gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: 전략번호}
+        gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
         gm.scm = ScriptManager()
         gm.prx.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
         gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
