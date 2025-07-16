@@ -1,5 +1,4 @@
-from aaa.chart import ChartManager
-from aaa.log import echo, is_args, ret
+from aaa.chart import ChartManager, echo, is_args, ret, div, ma
 
 code = '005930'
 name = '삼성전자'
@@ -8,56 +7,50 @@ qty = 100
 
 # =============================================================================================
 
-# 스크립트명 : 개장후n봉최고종가
+# 스크립트명 : 돌파4시간3분5억_매도
 
-# 지정 종목
-code = '027050'
-#echo(f'code={code}')
-# 차트 매니저 생성 (3분봉)
-cm = ChartManager(code, 'mi', 3)
+# 다른종목으로 테스트
+#code = '234030'
 
-# 넘겨진 인자 있는지 검사
-pre_bars = is_args('pre_bars', 60)
+# 차트정의
+dm = ChartManager(code, 'dy')
+m3 = ChartManager(code, 'mi', 3)
 
+#echo(f'code={code} 현재가={일.c()}')
 
-# 원본 데이터를 직접 가져오기 (최고 성능)
-data = cm.get_raw_data()
+# 함수주입
+dc = dm.c
+mo, mc, ma = m3.o, m3.c, m3.ma
 
-result = []
-skip = 0 # 제외 할 봉 갯수
-if len(data) > skip:
-    # 현재봉 날짜 추출
-    current_time = data[skip].get('체결시간', '')
-    #echo(f'current_time={current_time}')
-    
-    if len(current_time) >= 8:
-        current_date = current_time[:8]  # YYYYMMDD
-        target_time = current_date + "090000"  # 9시 봉
+# 미리 계산
+c_limit = int(dc(1) * 1.295)
+m_down_rate = div(mo() - mc(), mo(), 0 )
+ma0, ma1, ma2, ma10 = ma(5, 0), ma(5, 1), ma(5, 2), ma(10)
 
-        # 9시 봉 인덱스 찾기
-        nine_oclock_index = -1
-        for i in range(len(data)):
-            time_str = data[i].get('체결시간', '')
-            if len(time_str) >= 12 and time_str[:12] == target_time[:12]:
-                nine_oclock_index = i
-                break
-        
-        if nine_oclock_index != -1:
-            # 9시 봉부터 현재봉(0)까지 역순으로 검사
-            for check_idx in range(nine_oclock_index, -1, -1):
-                current_close = data[check_idx]['현재가']
+# 조건정의(결과 값이 논리값이 되도록 작성)
+상한가 = c_limit < dc(0)
+급락 = mo() > mc() and m_down_rate > 0.03 # 봉하나에 3% 급락
+하락전환_3분5이평 = ma2 <= ma1 and ma1 > ma0
+이평역전_3분5_10이평 = ma10 > ma0
+이평아래 = ma10 > mc()
 
-                # 현재봉을 제외한 이전 pre_bars-1개 봉의 최고가 구하기
-                start_idx = check_idx + 1
-                end_idx = min(start_idx + pre_bars - 1, len(data))
-                
-                if start_idx < len(data):
-                    high_values = [data[i]['고가'] for i in range(start_idx, end_idx)]
-                    if high_values:
-                        max_high = max(high_values)
-                        
-                        # 현재 종가가 이전 봉들의 최고가보다 같거나 높으면
-                        if current_close >= max_high:
-                            result.append(check_idx)
-echo(f'code={code} result={result}')
-ret(result if 'result' in locals() else [])
+# 로깅
+msg = ''
+if 상한가: 
+    msg += f'상한가' #(전일{dc(1)}, 현재가{dc()}, 상한가{c_limit})'
+elif 급락: 
+    msg += f'급락' #(시가:{mo()}, 현재가:{mc()}, 하락률:{m_down_rate:.2f})'
+elif 하락전환_3분5이평: 
+    msg += f'하락전환_3분5이평' #(2:{ma2}, 1:{ma1}, 0:{ma0})'
+elif 이평역전_3분5_10이평: 
+    msg+= f'이평역전_3분5_10이평' #(5:{ma0}, 10:{ma10})'
+elif 이평아래: 
+    msg += f'이평아래' #(이평:{ma10}, 현재가:{dc()})'
+
+if not msg: msg = " 없음"
+#echo(f"매도조건: code={code} {name}/{msg}")
+
+# 전략평가 전송
+result = 상한가 or 하락전환_3분5이평 or 이평역전_3분5_10이평 or 이평아래 or 급락
+echo(f'[{result}] ({code} {name}) 현재가={dc()}/매도조건: {msg}')
+ret(result)

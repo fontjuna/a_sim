@@ -1,5 +1,5 @@
 from public import gm, dc, Work, hoga, load_json, save_json
-from classes import ThreadSafeDict, CounterTicker, ThreadSafeList
+from classes import ThreadSafeDict, CounterTicker, ThreadSafeQueue  
 from threads import OrderCommander, EvalStrategy, ChartSetter, ChartUpdater, PriceUpdater
 from chart import ScriptManager
 from tables import tbl
@@ -56,11 +56,11 @@ class Admin:
         logging.debug(f"서버:{gm.server}, 수수료율:{gm.수수료율}, 세금율:{gm.세금율}, 계좌:{gm.account}")
 
     def set_globals(self):
-        gm.price_q = ThreadSafeList('price_q')
-        gm.eval_q = ThreadSafeList('eval_q')
-        gm.order_q = ThreadSafeList('order_q')
-        gm.setter_q = ThreadSafeList('setter_q')
-        gm.chart_q = ThreadSafeList('chart_q')
+        gm.price_q = ThreadSafeQueue('price_q')
+        gm.eval_q = ThreadSafeQueue('eval_q')
+        gm.order_q = ThreadSafeQueue('order_q')
+        gm.setter_q = ThreadSafeQueue('setter_q')
+        gm.chart_q = ThreadSafeQueue('chart_q')
         gm.counter = CounterTicker()
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
@@ -114,6 +114,7 @@ class Admin:
     # 쓰레드 준비 -------------------------------------------------------------------------------------------
     def start_threads(self):
         gm.prx.receive_signal.connect(self.run_recesive_signals)
+        gm.prx.receive_real_data.connect(self.on_receive_real_data)
         gm.cts.start()
         gm.ctu.start()
         gm.odc.start()
@@ -136,7 +137,7 @@ class Admin:
         gm.cts = ChartSetter(gm.prx, gm.setter_q)
         gm.ctu = ChartUpdater(gm.prx, gm.chart_q)
         gm.odc = OrderCommander(gm.prx, gm.order_q)
-        gm.pri = PriceUpdater(gm.prx, gm.price_q)
+        gm.pri = PriceUpdater(gm.prx, gm.price_q, gm.잔고목록, gm.잔고합산)
 
     def run_recesive_signals(self, data):
         if hasattr(self, data.method):
@@ -250,9 +251,10 @@ class Admin:
         except Exception as e:
             logging.error(f"쓰레드 찾기오류 {code} {type} {cond_name} {cond_index}: {type(e).__name__} - {e}", exc_info=True)
 
-    def on_fx실시간_주식체결(self, code, rtype, dictFID):
+    def on_receive_real_data(self, data):
         if not gm.ready: return
         try:
+            code, rtype, dictFID = data
             현재가 = abs(int(dictFID['현재가']))
             updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
             if updated:
@@ -267,9 +269,10 @@ class Admin:
                         gm.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
                     gm.dict주문대기종목.remove(code)
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
-                
-            if gm.잔고목록.in_key(code):
-                gm.price_q.put((code, dictFID['현재가'])) # PriceUpdater
+            
+                row = gm.잔고목록.get(key=code)
+                if row: gm.price_q.put((code, 현재가, row)) # PriceUpdater
+
         except Exception as e:
             logging.error(f'실시간 주식체결 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -583,7 +586,7 @@ class Admin:
                     gm.setter_q.put(code)
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
-                if gm.sim_no==0: gm.prx.order('dbm', 'upsert_sim_ticker', code, 종목명, self.전략명칭, self.매수전략)
+                if gm.sim_no==0: gm.prx.order('dbm', 'insert_sim_ticker', code, 종목명, self.전략명칭, self.매수전략)
                 if code not in gm.set조건감시:
                     self.stg_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
 

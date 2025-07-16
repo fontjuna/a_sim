@@ -660,7 +660,6 @@ class APIServer:
                     logging.error(f"조건검색 스레드 정리 오류: {e}")
 
     # 추가 메서드 --------------------------------------------------------------------------------------------------
-    @profile_operation        
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
         #logging.debug(f'api_request: rqname={rqname}, trcode={trcode}, input={input}, next={next}, screen={screen}, form={form}, timeout={timeout}')
         try:
@@ -984,7 +983,7 @@ class APIServer:
                 if rtype == '주식체결': 
                     self.frq_order('prx', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
-                    self.frq_order('prx', 'on_fx실시간_장운영감시', **job)
+                    self.order('prx', 'on_fx실시간_장운영감시', **job)
                 #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
@@ -1155,7 +1154,6 @@ class APIServer:
             return data
         return None
     
-    @profile_operation
     def get_chart_data(self, code, cycle, tick=1, times=1, wt=None, dt=None):
         """차트 데이터 조회"""
         try:

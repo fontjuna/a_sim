@@ -393,7 +393,7 @@ class DBMServer:
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
                     record = new_record()
-                    sim_record = {'일자': dt, '종목코드': code, '종목명': name, '매수가': price, '매수시간': tm.replace(':', '')}
+                    sim_record = {'일자': dt, '종목코드': code, '매수가': price, '매수시간': tm.replace(':', '')}
             
             elif kind == '매도':
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
@@ -442,8 +442,8 @@ class DBMServer:
             if sim_no==0 and sim_record:
                 sql = f"SELECT * FROM {db_columns.SIM_TABLE_NAME} WHERE 일자 = ? AND 종목코드 = ? LIMIT 1"
                 result = self.execute_query(sql, db='db', params=(dt, code))
-                if result: sim_record.update(result[0])
-                self.table_upsert('db', db_columns.SIM_TABLE_NAME, sim_record)
+                if result: result[0].update(sim_record)
+                self.table_upsert('db', db_columns.SIM_TABLE_NAME, result[0])
                 sim_record = None
 
             return True
@@ -458,7 +458,7 @@ class DBMServer:
         dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
         self.table_upsert('chart', table, dict_data)
 
-    def upsert_sim_ticker(self, code, name, st_name, st_buy):
+    def insert_sim_ticker(self, code, name, st_name, st_buy):
         """시뮬레이션 종목 저장"""
         table = db_columns.SIM_TABLE_NAME
         find_time = datetime.now().strftime("%Y%m%d%H%M%S")

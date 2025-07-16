@@ -344,24 +344,6 @@ def get_windows_drive_free_percent():
     percent_free = (free / total) * 100
     return percent_free
 
-# @dataclass
-# class QData:
-#     sender : str = None
-#     method : str = None
-#     answer : bool = False
-#     args : tuple = field(default_factory=tuple)
-#     kwargs : dict = field(default_factory=dict)
-#     callback : str = None
-
-# class SharedQueue:
-#     def __init__(self):
-#         # 모든 경우에 multiprocessing.Queue 사용 (쓰레드와 프로세스 모두 호환)
-#         import multiprocessing as mp
-#         self.request = mp.Queue()
-#         self.result = mp.Queue()
-#         self.stream = mp.Queue()
-#         self.payback = mp.Queue()
-
 class BaseModel:
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         self.name = name
@@ -513,21 +495,27 @@ class MainModel(BaseModel):
 
 class QMainModel(BaseModel, QThread):
     receive_signal = pyqtSignal(object)
+    receive_real_data = pyqtSignal(object)
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         QThread.__init__(self)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
         self.emit_q = queue.Queue()  # (signal, args) 형태로 사용
+        self.emit_real_q = queue.Queue()
 
     def _initialize_instance(self):
         """QMainModel 전용 인스턴스 초기화"""
         super()._initialize_instance()
         self.instance.emit_q = self.emit_q
+        self.instance.emit_real_q = self.emit_real_q
 
     def _run_loop_iteration(self):
         """QMainModel 전용 emit_q 처리"""
         while not self.emit_q.empty():
             data = self.emit_q.get()
             self.receive_signal.emit(data)
+        while not self.emit_real_q.empty():
+            data = self.emit_real_q.get()
+            self.receive_real_data.emit(data)
 
     def _sleep(self):
         """QThread용 sleep"""
@@ -573,3 +561,47 @@ class KiwoomModel(BaseModel, Process):
 
     def stop(self):
         self.running = False
+
+class ThreadSafeQueue:
+    def __init__(self, name='thread_safe_queue'):
+        self.name = name
+        self.q = queue.Queue()
+        self.lock = threading.Lock()
+
+    def put(self, item):
+        self.q.put(item)
+
+    def get(self, block=True, timeout=None):
+        return self.q.get(block=block, timeout=timeout)
+
+    def length(self):
+        return self.q.qsize()
+
+    def clear(self):
+        with self.lock:
+            while not self.q.empty():
+                try:
+                    self.q.get_nowait()
+                except queue.Empty:
+                    break
+
+    def remove(self, item):
+        # queue.Queue는 중간 삭제가 불가하므로, 임시 큐로 재구성
+        with self.lock:
+            temp = queue.Queue()
+            removed = False
+            while not self.q.empty():
+                obj = self.q.get()
+                if not removed and obj == item:
+                    removed = True
+                    continue
+                temp.put(obj)
+            self.q = temp
+
+    def contains(self, item):
+        with self.lock:
+            items = list(self.q.queue)
+            return item in items
+
+    def empty(self):
+        return self.q.empty()

@@ -233,7 +233,7 @@ class GUI(QMainWindow, form_class):
                 data = gm.qwork['gui'].get()
                 getattr(self, data.order)(**data.job)
 
-            self.gui_update_status()
+            self.gui_display_status()
             self.gui_fx갱신_목록테이블()
 
         except Exception as e:
@@ -1290,7 +1290,7 @@ class GUI(QMainWindow, form_class):
                 self.leSimName.setText(data['종목명'])
 
     # 상태 표시 -------------------------------------------------------------------------------------
-    def gui_update_status(self, data=None):
+    def gui_display_status(self, data=None):
         try:
             # 기본 상태바 업데이트
             now = datetime.now()
@@ -1304,11 +1304,11 @@ class GUI(QMainWindow, form_class):
             while not gm.qwork['msg'].empty():
                 data = gm.qwork['msg'].get()
                 if data.order in ['주문내용', '체결내용']:
-                    self.gui_fx게시_주문내용(data.job['msg'])
+                    self.gui_display_conclusion(data.job['msg'])
                 elif data.order == '검색내용':
-                    self.gui_fx게시_검색내용(data.job['msg'])
+                    self.gui_display_strategy(data.job['msg'])
                 elif data.order == '스크립트':
-                    self.gui_fx게시_스크립트(data.job['msg'])
+                    self.gui_display_script(data.job['msg'])
                 elif data.order == '상태바':
                     self.lbl3.setText(data.job['msg'])
                     self.lbl3_update_time = now
@@ -1316,7 +1316,7 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
 
-    def gui_fx게시_스크립트(self, msgs):
+    def gui_display_script(self, msgs):
         current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         if isinstance(msgs, list):
             for msg in msgs:
@@ -1325,12 +1325,12 @@ class GUI(QMainWindow, form_class):
             self.txtScriptMsg.append(f"[{current_time}] {msgs}")
         self.txtScriptMsg.moveCursor(QTextCursor.End)
 
-    def gui_fx게시_주문내용(self, msg):
+    def gui_display_conclusion(self, msg):
         current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         self.txtOrder.append(f"[{current_time}] {msg}")
         self.txtOrder.moveCursor(QTextCursor.End)
 
-    def gui_fx게시_검색내용(self, msg):
+    def gui_display_strategy(self, msg):
         if msg == '':
             self.txtCondition.clear()
             return
