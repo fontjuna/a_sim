@@ -64,7 +64,6 @@ class PriceUpdater(QThread):
                     return
                 code, price, row = data
                 batch[code] = (price, row)
-                if self.price_q.empty(): break
 
             if batch: self.update_batch(batch)
 
@@ -260,51 +259,40 @@ class ChartUpdater(QThread):
     def stop(self):
         self.running = False
         self.chart_q.put(None)
-    """
+    
     def run(self):
         self.running = True
         while self.running:
             batch = {}
             start_time = time.time()
-            while time.time() - start_time < dc.INTERVAL_BATCH:
+            while time.time() - start_time < dc.INTERVAL_FAST:
                 data = self.chart_q.get()
                 if data is None: 
                     self.running = False
                     return
                 batch.update(data)
-                if self.chart_q.empty():
-                    break
             if batch: self.update_batch(batch)
+
             q_len = self.chart_q.length()
-            if q_len > 5: logging.warning(f'chart_q 대기 큐 len={q_len}')
+            if q_len > 30: logging.warning(f'chart_q 대기 큐 len={q_len}')
 
     """
     def run(self):
         self.running = True
-        # start_time = time.time()
-        # codes = set()
-        # requests = 0
         while self.running:
             data = self.chart_q.get()
             if data is None: 
                 self.running = False
                 return
             for code, fid in data.items():
-                self.update_chart(code, fid)
-            #     self.executor.submit(self.update_chart, code, fid)
-            #     codes.add(code)
-            #     requests += 1
-            # if time.time() - start_time > 60:
-            #     logging.info(f'chart_q 1분간 실행 종목수={len(codes)}, 요청수={requests:,d}')
-            #     start_time = time.time()
-            #     codes = set()
-            #     requests = 0
+                self.executor.submit(self.update_chart, code, fid)
+
             q_len = self.chart_q.length()
             if q_len > 30: logging.warning(f'chart_q 대기 큐 len={q_len}')
-
+    """
     def update_batch(self, batch):
         for code, fid in batch.items():
-            self.update_chart(code, fid)
+            self.executor.submit(self.update_chart, code, fid)
 
     def update_chart(self, code, fid):
         self.cht_dt.update_chart(
