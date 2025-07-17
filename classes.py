@@ -354,8 +354,8 @@ class BaseModel:
         self.instance = None
         self.my_qes = shared_qes[name]
         self.running = False
-        self.timeout = 15
-        self.queue_timeout = dc.INTERVAL_NORMAL
+        self.answer_timeout = 15
+        self.queue_timeout = dc.INTERVAL_NORMAL  # 큐 대기 시간 설정 가능
         
     def process_q_data(self, q_data):
         if not isinstance(q_data, QData): return None
@@ -373,7 +373,7 @@ class BaseModel:
     def _initialize_instance(self):
         """인스턴스 초기화 공통 로직"""
         if hasattr(self.kwargs, 'timeout'):
-            self.timeout = self.kwargs.get('timeout')
+            self.answer_timeout = self.kwargs.get('timeout')
         self.instance = self.cls(*self.args, **self.kwargs)
         self.instance.order = self.order
         self.instance.answer = self.answer
@@ -382,11 +382,11 @@ class BaseModel:
 
     def _process_queues(self):
         """큐 처리 공통 로직"""
-        try:
-            q_data = self.my_qes.request.get(timeout=self.queue_timeout)
+        if not self.my_qes.request.empty():
+            q_data = self.my_qes.request.get()
             self.process_q_data(q_data)
-        except queue.Empty:
-            pass
+        else:
+            time.sleep(self.queue_timeout)
             
         if hasattr(self.instance, 'run_main_work'):
             self.instance.run_main_work()
@@ -429,7 +429,7 @@ class BaseModel:
         q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs)
         self.shared_qes[target].request.put(q_data)
         try:
-            return self.my_qes.result.get(timeout=self.timeout)
+            return self.my_qes.result.get(timeout=self.answer_timeout)
         except queue.Empty:
             pass
         except TimeoutError:
@@ -438,7 +438,7 @@ class BaseModel:
         except Exception as e:
             logging.error(f"answer() 오류:{self.name}의 요청 : {target}.{method} - {e}", exc_info=True)
             return None
-        
+                
 class MainModel(BaseModel):
     """메인 쓰레드나 키움API 등을 위한 모델 (별도 쓰레드에서 run 실행)"""
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
@@ -466,7 +466,7 @@ class QMainModel(BaseModel, QThread):
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
         self.emit_q = queue.Queue()
         self.emit_real_q = queue.Queue()
-        self.queue_timeout = dc.INTERVAL_VERY_FAST
+        self.queue_timeout = dc.INTERVAL_VERY_FAST  # QMainModel은 빠른 반응성 필요
 
     def _initialize_instance(self):
         """QMainModel 전용 인스턴스 초기화"""
@@ -476,17 +476,13 @@ class QMainModel(BaseModel, QThread):
 
     def _run_loop_iteration(self):
         """QMainModel 전용 emit_q 처리"""
-        try:
-            data = self.emit_q.get(timeout=self.queue_timeout)
+        if not self.emit_q.empty():
+            data = self.emit_q.get()
             self.receive_signal.emit(data)
-        except queue.Empty:
-            pass
-            
-        try:
-            data = self.emit_real_q.get(timeout=self.queue_timeout)
+        
+        if not self.emit_real_q.empty():
+            data = self.emit_real_q.get()
             self.receive_real_data.emit(data)
-        except queue.Empty:
-            pass
 
     def stop(self):
         self.running = False
@@ -511,7 +507,7 @@ class KiwoomModel(BaseModel, Process):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         Process.__init__(self, name=name)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
-        self.queue_timeout = dc.INTERVAL_VERY_FAST
+        self.queue_timeout = dc.INTERVAL_VERY_FAST  # 실시간 데이터 처리 위해 빠르게
 
     def _run_loop_iteration(self):
         """Kiwoom 전용 ActiveX 이벤트 처리"""
