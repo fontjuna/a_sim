@@ -442,9 +442,10 @@ class DBMServer:
             if sim_no==0 and sim_record:
                 sql = f"SELECT * FROM {db_columns.SIM_TABLE_NAME} WHERE 일자 = ? AND 종목코드 = ? LIMIT 1"
                 result = self.execute_query(sql, db='db', params=(dt, code))
-                if result: result[0].update(sim_record)
-                self.table_upsert('db', db_columns.SIM_TABLE_NAME, result[0])
-                sim_record = None
+                if result: 
+                    result[0].update(sim_record)
+                    self.table_upsert('db', db_columns.SIM_TABLE_NAME, result[0])
+            sim_record = None
 
             return True
             

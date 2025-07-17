@@ -270,6 +270,7 @@ class Admin:
                     gm.dict주문대기종목.remove(code)
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
             
+            if gm.잔고목록.in_key(code):    
                 row = gm.잔고목록.get(key=code)
                 if row: gm.price_q.put((code, 현재가, row)) # PriceUpdater
 
@@ -392,6 +393,9 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
+            전일가 = gm.prx.answer('api', 'GetMasterLastPrice', '005930')
+            종목정보 = {'종목명': '삼성전자', '전일가': 전일가, "현재가": 0}
+            gm.dict종목정보.set('005930', 종목정보)
             gm.setter_q.put('005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")

@@ -2458,7 +2458,7 @@
         <x>0</x>
         <y>110</y>
         <width>321</width>
-        <height>291</height>
+        <height>201</height>
        </rect>
       </property>
       <property name="title">
@@ -2473,7 +2473,7 @@
          <x>10</x>
          <y>20</y>
          <width>301</width>
-         <height>261</height>
+         <height>171</height>
         </rect>
        </property>
        <property name="sizeAdjustPolicy">
@@ -2493,7 +2493,7 @@
         <x>0</x>
         <y>410</y>
         <width>631</width>
-        <height>151</height>
+        <height>141</height>
        </rect>
       </property>
       <property name="title">
@@ -2648,10 +2648,10 @@
      <widget class="QGroupBox" name="gbxSellCheck">
       <property name="geometry">
        <rect>
-        <x>320</x>
-        <y>110</y>
+        <x>10</x>
+        <y>310</y>
         <width>311</width>
-        <height>291</height>
+        <height>91</height>
        </rect>
       </property>
       <property name="title">
@@ -2666,7 +2666,7 @@
          <x>0</x>
          <y>20</y>
          <width>301</width>
-         <height>261</height>
+         <height>61</height>
         </rect>
        </property>
        <property name="sizeAdjustPolicy">
@@ -2684,7 +2684,7 @@
       <property name="geometry">
        <rect>
         <x>320</x>
-        <y>570</y>
+        <y>110</y>
         <width>311</width>
         <height>191</height>
        </rect>
@@ -2988,10 +2988,10 @@
      <widget class="QGroupBox" name="groupBox_2">
       <property name="geometry">
        <rect>
-        <x>10</x>
-        <y>570</y>
+        <x>320</x>
+        <y>310</y>
         <width>311</width>
-        <height>191</height>
+        <height>91</height>
        </rect>
       </property>
       <property name="title">
@@ -3002,8 +3002,8 @@
         <rect>
          <x>0</x>
          <y>20</y>
-         <width>311</width>
-         <height>171</height>
+         <width>301</width>
+         <height>61</height>
         </rect>
        </property>
        <property name="font">
@@ -3021,6 +3021,30 @@
         <bool>true</bool>
        </property>
       </widget>
+     </widget>
+     <widget class="QTextEdit" name="txtScriptMsg">
+      <property name="geometry">
+       <rect>
+        <x>10</x>
+        <y>560</y>
+        <width>611</width>
+        <height>201</height>
+       </rect>
+      </property>
+      <property name="font">
+       <font>
+        <family>맑은 고딕</family>
+       </font>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::Box</enum>
+      </property>
+      <property name="lineWrapMode">
+       <enum>QTextEdit::NoWrap</enum>
+      </property>
+      <property name="readOnly">
+       <bool>true</bool>
+      </property>
      </widget>
     </widget>
     <widget class="QWidget" name="tabOrderset">
@@ -5202,7 +5226,7 @@
         <attribute name="title">
          <string>스크립트실행</string>
         </attribute>
-        <widget class="QTextEdit" name="txtScriptMsg">
+        <widget class="QTextEdit" name="txtScriptText">
          <property name="geometry">
           <rect>
            <x>0</x>

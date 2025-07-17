@@ -692,7 +692,7 @@ class GUI(QMainWindow, form_class):
             self.ledScriptName.setText(name)
             self.txtScript.setText(script)
             self.txtScriptDesc.setText(desc)
-            #self.txtScriptMsg.clear()
+            #self.txtScriptText.clear()
             self.script_edited = False
 
         except Exception as e:
@@ -702,7 +702,7 @@ class GUI(QMainWindow, form_class):
         self.ledScriptName.setText('')
         self.txtScript.setText('')
         self.txtScriptDesc.setText('')
-        #self.txtScriptMsg.clear()
+        #self.txtScriptText.clear()
 
     def gui_script_delete(self):
         try:
@@ -729,7 +729,7 @@ class GUI(QMainWindow, form_class):
                     self.txtScript.setText('')
                     self.txtScriptDesc.setText('')
                     gm.scm.delete_script(name)
-                    #self.txtScriptMsg.clear()
+                    #self.txtScriptText.clear()
                     gm.list스크립트 = gm.스크립트.get(column='스크립트명')
                     self.gui_fx채움_스크립트콤보()
 
@@ -756,9 +756,9 @@ class GUI(QMainWindow, form_class):
             result = gm.scm.set_script(script_name, script, desc, kwargs={'code': '005930'}, save=save)
             exec_time = time.time() - start_time
 
-            if result['logs']: self.txtScriptMsg.append('<검사결과>\n' + '\n'.join(result['logs'])+'\n')
-            self.txtScriptMsg.verticalScrollBar().setValue(self.txtScriptMsg.verticalScrollBar().maximum())
-            self.txtScriptMsg.horizontalScrollBar().setValue(0)
+            if result['logs']: self.txtScriptText.append('<검사결과>\n' + '\n'.join(result['logs'])+'\n')
+            self.txtScriptText.verticalScrollBar().setValue(self.txtScriptText.verticalScrollBar().maximum())
+            self.txtScriptText.horizontalScrollBar().setValue(0)
 
             if not result['error']:
                 save_msg = ""
@@ -772,8 +772,8 @@ class GUI(QMainWindow, form_class):
                 QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n{save_msg}(걸린시간={exec_time:.5f}초)\n반환값={result["result"]}')
             else:
                 QMessageBox.critical(self, '에러', result['error'])
-                #self.txtScriptMsg.append(result['error'])
-                #self.txtScriptMsg.moveCursor(QTextCursor.End)
+                #self.txtScriptText.append(result['error'])
+                #self.txtScriptText.moveCursor(QTextCursor.End)
         except Exception as e:
             logging.error(f'스크립트 확인 오류: {type(e).__name__} - {e}', exc_info=True)
 

@@ -51,7 +51,7 @@ class PriceUpdater(QThread):
     def stop(self):
         self.running = False
         self.price_q.put(None)
-    
+    """
     def run(self):
         self.running = True
         while self.running:
@@ -80,15 +80,11 @@ class PriceUpdater(QThread):
             if data is None: 
                 self.running = False
                 return
-            row = self.잔고목록.get(key=data[0])
-            if not row: continue
-            code, price = data
-            self.executor.submit(self.update_current_price, code, price, row)
-            #self.check_sell_condition(code, row)
+            self.update_current_price(*data)
 
             q_len = self.price_q.length()
-            if q_len > 5: logging.warning(f'price_q 대기 큐 len={q_len}')
-    """
+            if q_len > 30: logging.warning(f'price_q 대기 큐 len={q_len}')
+    
     def update_batch(self, batch):
         for code, (price, row) in batch.items():
             self.executor.submit(self.update_current_price, code, price,row)
@@ -133,9 +129,7 @@ class PriceUpdater(QThread):
                     data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
                     gm.주문목록.set(key=key, data=data)
                     row.update({'rqname': '신규매도', 'account': gm.account})
-                    # 매도 조건 확인
                     gm.eval_q.put({'sell': {'row': row}})
-                    row.update({'주문가능수량': 0})
 
             self.잔고목록.set(key=code, data=row)
 
@@ -261,17 +255,18 @@ class ChartUpdater(QThread):
         self.chart_q = chart_q
         self.cht_dt = ChartData()
         self.running = False
+        self.executor = ThreadPoolExecutor(max_workers=8)
 
     def stop(self):
         self.running = False
         self.chart_q.put(None)
-
+    """
     def run(self):
         self.running = True
         while self.running:
             batch = {}
             start_time = time.time()
-            while time.time() - start_time < dc.INTERVAL_SLOW: # 0.05초
+            while time.time() - start_time < dc.INTERVAL_BATCH:
                 data = self.chart_q.get()
                 if data is None: 
                     self.running = False
@@ -279,11 +274,33 @@ class ChartUpdater(QThread):
                 batch.update(data)
                 if self.chart_q.empty():
                     break
-            if batch:
-                self.update_batch(batch)
+            if batch: self.update_batch(batch)
             q_len = self.chart_q.length()
-            if q_len > 5:
-                logging.warning(f'chart_q 대기 큐 len={q_len}')
+            if q_len > 5: logging.warning(f'chart_q 대기 큐 len={q_len}')
+
+    """
+    def run(self):
+        self.running = True
+        # start_time = time.time()
+        # codes = set()
+        # requests = 0
+        while self.running:
+            data = self.chart_q.get()
+            if data is None: 
+                self.running = False
+                return
+            for code, fid in data.items():
+                self.update_chart(code, fid)
+            #     self.executor.submit(self.update_chart, code, fid)
+            #     codes.add(code)
+            #     requests += 1
+            # if time.time() - start_time > 60:
+            #     logging.info(f'chart_q 1분간 실행 종목수={len(codes)}, 요청수={requests:,d}')
+            #     start_time = time.time()
+            #     codes = set()
+            #     requests = 0
+            q_len = self.chart_q.length()
+            if q_len > 30: logging.warning(f'chart_q 대기 큐 len={q_len}')
 
     def update_batch(self, batch):
         for code, fid in batch.items():
