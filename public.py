@@ -551,7 +551,7 @@ class DefineConstants:  # 글로벌 상수 정의
         self.INTERVAL_NORMAL = 0.01
         self.INTERVAL_FAST = 0.005
         self.INTERVAL_SLOW = 0.05
-        self.INTERVAL_BATCH = 0.013
+        self.INTERVAL_BATCH = 0.011
         self.INTERVAL_GUI = 199 #milliseconds
         self.TODAY = datetime.now().strftime('%Y-%m-%d')
         self.ToDay = datetime.now().strftime('%Y%m%d')

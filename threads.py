@@ -265,7 +265,7 @@ class ChartUpdater(QThread):
         while self.running:
             batch = {}
             start_time = time.time()
-            while time.time() - start_time < dc.INTERVAL_FAST:
+            while time.time() - start_time < dc.INTERVAL_BATCH:
                 data = self.chart_q.get()
                 if data is None: 
                     self.running = False
