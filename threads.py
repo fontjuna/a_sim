@@ -34,6 +34,10 @@ class ProxyAdmin():
     def on_fx실시간_주식체결(self, code, rtype, dictFID):
         self.emit_real_q.put((code, rtype, dictFID))
 
+    def on_fx배치_주식체결(self, batch):
+        for code, dictFID in batch.items():
+            self.emit_real_q.put((code, None, dictFID))
+
     def on_fx실시간_주문체결(self, gubun, dictFID): # 주문체결 결과 수신
         self.emit_q.put(QWork(method='on_fx실시간_주문체결', args=(gubun, dictFID,)))
 

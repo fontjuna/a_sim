@@ -419,10 +419,13 @@ class OnReceiveRealDataSim1And2(QThread):
       self.daemon = True
       self.is_running = True
       self.api = api
-      self.frq_order = api.frq_order
+      self.order = api.order
       self.code_tot = {}
+      self.start_time = time.time()
 
    def run(self):
+      self.start_time = time.time()
+      batch = {}
       while self.is_running:
          if not self.api.connected or not ready_tickers:
             time.sleep(0.01)
@@ -461,9 +464,14 @@ class OnReceiveRealDataSim1And2(QThread):
                'rtype': '주식체결',
                'dictFID': dictFID
             }
-            self.frq_order('prx', 'on_fx실시간_주식체결', **job)
 
-            time.sleep(0.2/len(sim.ticker))
+            batch[code] = dictFID
+            if time.time() - self.start_time > 0.01:
+                self.order('prx', 'on_fx배치_주식체결', batch)
+                batch = {}
+                self.start_time = time.time()
+
+            time.sleep(0.001)
 
    def stop(self):
       self.is_running = False
@@ -475,7 +483,7 @@ class OnReceiveRealDataSim3(QThread):
       self.daemon = True
       self.is_running = True
       self.api = api
-      self.frq_order = api.frq_order
+      self.order = api.order
 
    def run(self):
       while self.is_running:
@@ -516,7 +524,7 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               self.frq_order('prx', 'on_fx실시간_주식체결', **job)
+               self.order('prx', 'on_fx실시간_주식체결', **job)
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -981,7 +989,7 @@ class APIServer:
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    self.frq_order('prx', 'on_fx실시간_주식체결', **job)
+                    self.order('prx', 'on_fx실시간_주식체결', **job)
                 elif rtype == '장시작시간': 
                     self.order('prx', 'on_fx실시간_장운영감시', **job)
                 #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")

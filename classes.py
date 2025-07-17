@@ -351,29 +351,23 @@ class BaseModel:
         self.shared_qes = shared_qes
         self.args = args
         self.kwargs = kwargs
-        self.instance = None #self.cls(*self.args, **self.kwargs)
+        self.instance = None
         self.my_qes = shared_qes[name]
         self.running = False
         self.timeout = 15
         
-    def process_q_data(self, q_data, queue_type='request'):
+    def process_q_data(self, q_data):
         if not isinstance(q_data, QData): return None
         if q_data.method == 'stop': self.stop()
         if hasattr(self.instance, q_data.method):
             if q_data.answer:
                 result = getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
-                if queue_type == 'request':
-                    self.shared_qes[q_data.sender].result.put(result)
-                elif queue_type == 'stream':
-                    self.shared_qes[q_data.sender].payback.put(result)
+                self.shared_qes[q_data.sender].result.put(result)
             else:
                 result = getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
                 if q_data.callback:
                     callback_data = QData(sender=self.name, method=q_data.callback, answer=False, args=(result,))
-                    if queue_type == 'request':
-                        self.shared_qes[q_data.sender].request.put(callback_data)
-                    elif queue_type == 'stream':
-                        self.shared_qes[q_data.sender].stream.put(callback_data)
+                    self.shared_qes[q_data.sender].request.put(callback_data)
 
     def _initialize_instance(self):
         """인스턴스 초기화 공통 로직"""
@@ -382,22 +376,16 @@ class BaseModel:
         self.instance = self.cls(*self.args, **self.kwargs)
         self.instance.order = self.order
         self.instance.answer = self.answer
-        self.instance.frq_order = self.frq_order
-        self.instance.frq_answer = self.frq_answer
         if hasattr(self.instance, 'initialize'):
             self.instance.initialize()
 
     def _process_queues(self):
         """큐 처리 공통 로직"""
-        # 어떤 곳에서든 올 수 있는 request 처리
-        if not self.my_qes.request.empty():
-            q_data = self.my_qes.request.get()
-            self.process_q_data(q_data, 'request')
-            
-        # 어떤 곳에서든 올 수 있는 stream 처리 (고빈도 가능)
-        if not self.shared_qes[self.name].stream.empty():
-            q_data = self.shared_qes[self.name].stream.get()
-            self.process_q_data(q_data, 'stream')
+        try:
+            q_data = self.my_qes.request.get(timeout=dc.INTERVAL_NORMAL)
+            self.process_q_data(q_data)
+        except queue.Empty:
+            pass
             
         if hasattr(self.instance, 'run_main_work'):
             self.instance.run_main_work()
@@ -405,10 +393,6 @@ class BaseModel:
     def _run_loop_iteration(self):
         """각 모델별 특수 처리를 위한 메서드 (오버라이드 가능)"""
         pass
-
-    def _sleep(self):
-        """각 모델별 sleep 구현 (오버라이드 가능)"""
-        time.sleep(dc.INTERVAL_NORMAL)
 
     def _common_run_logic(self):
         """공통 run 로직"""
@@ -418,8 +402,7 @@ class BaseModel:
         while self.running:
             try:
                 self._process_queues()
-                self._run_loop_iteration()  # 각 모델별 특수 처리
-                self._sleep()
+                self._run_loop_iteration()
             except (EOFError, ConnectionError, BrokenPipeError):
                 break
             except Exception as e:
@@ -454,27 +437,7 @@ class BaseModel:
         except Exception as e:
             logging.error(f"answer() 오류:{self.name}의 요청 : {target}.{method} - {e}", exc_info=True)
             return None
-
-    def frq_order(self, target, method, *args, **kwargs):
-        """스트림 명령 (answer=False)"""
-        q_data = QData(sender=self.name, method=method, answer=False, args=args, kwargs=kwargs)
-        self.shared_qes[target].stream.put(q_data)
-
-    def frq_answer(self, target, method, *args, **kwargs):
-        """스트림 요청/응답 (answer=True)"""
-        q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs)
-        self.shared_qes[target].stream.put(q_data)
-        try:
-            return self.my_qes.payback.get(timeout=self.timeout)
-        except queue.Empty:
-            pass
-        except TimeoutError:
-            logging.error(f"frq_answer() 타임아웃:{self.name}의 요청 : {target}.{method}", exc_info=True)
-            return None
-        except Exception as e:
-            logging.error(f"frq_answer() 오류:{self.name}의 요청 : {target}.{method} - {e}", exc_info=True)
-            return None
-
+        
 class MainModel(BaseModel):
     """메인 쓰레드나 키움API 등을 위한 모델 (별도 쓰레드에서 run 실행)"""
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
@@ -496,10 +459,11 @@ class MainModel(BaseModel):
 class QMainModel(BaseModel, QThread):
     receive_signal = pyqtSignal(object)
     receive_real_data = pyqtSignal(object)
+    
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         QThread.__init__(self)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
-        self.emit_q = queue.Queue()  # (signal, args) 형태로 사용
+        self.emit_q = queue.Queue()
         self.emit_real_q = queue.Queue()
 
     def _initialize_instance(self):
@@ -510,16 +474,17 @@ class QMainModel(BaseModel, QThread):
 
     def _run_loop_iteration(self):
         """QMainModel 전용 emit_q 처리"""
-        while not self.emit_q.empty():
-            data = self.emit_q.get()
+        try:
+            data = self.emit_q.get(timeout=0.001)
             self.receive_signal.emit(data)
-        while not self.emit_real_q.empty():
-            data = self.emit_real_q.get()
+        except queue.Empty:
+            pass
+            
+        try:
+            data = self.emit_real_q.get(timeout=0.001)
             self.receive_real_data.emit(data)
-
-    def _sleep(self):
-        """QThread용 sleep"""
-        QThread.msleep(5) # 0.005 seconds
+        except queue.Empty:
+            pass
 
     def stop(self):
         self.running = False
