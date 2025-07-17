@@ -164,8 +164,8 @@ class SharedQueue:
         import multiprocessing as mp
         self.request = mp.Queue()
         self.result = mp.Queue()
-        self.stream = mp.Queue()
-        self.payback = mp.Queue()
+        #self.stream = mp.Queue()
+        #self.payback = mp.Queue()
 
 class FIDs:             # 실시간 조회 필드 아이디
     거래구분 = {

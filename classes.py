@@ -355,6 +355,7 @@ class BaseModel:
         self.my_qes = shared_qes[name]
         self.running = False
         self.timeout = 15
+        self.queue_timeout = dc.INTERVAL_NORMAL
         
     def process_q_data(self, q_data):
         if not isinstance(q_data, QData): return None
@@ -382,7 +383,7 @@ class BaseModel:
     def _process_queues(self):
         """큐 처리 공통 로직"""
         try:
-            q_data = self.my_qes.request.get(timeout=dc.INTERVAL_NORMAL)
+            q_data = self.my_qes.request.get(timeout=self.queue_timeout)
             self.process_q_data(q_data)
         except queue.Empty:
             pass
@@ -465,6 +466,7 @@ class QMainModel(BaseModel, QThread):
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
         self.emit_q = queue.Queue()
         self.emit_real_q = queue.Queue()
+        self.queue_timeout = dc.INTERVAL_VERY_FAST
 
     def _initialize_instance(self):
         """QMainModel 전용 인스턴스 초기화"""
@@ -475,13 +477,13 @@ class QMainModel(BaseModel, QThread):
     def _run_loop_iteration(self):
         """QMainModel 전용 emit_q 처리"""
         try:
-            data = self.emit_q.get(timeout=0.001)
+            data = self.emit_q.get(timeout=self.queue_timeout)
             self.receive_signal.emit(data)
         except queue.Empty:
             pass
             
         try:
-            data = self.emit_real_q.get(timeout=0.001)
+            data = self.emit_real_q.get(timeout=self.queue_timeout)
             self.receive_real_data.emit(data)
         except queue.Empty:
             pass
@@ -509,6 +511,7 @@ class KiwoomModel(BaseModel, Process):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         Process.__init__(self, name=name)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
+        self.queue_timeout = dc.INTERVAL_VERY_FAST
 
     def _run_loop_iteration(self):
         """Kiwoom 전용 ActiveX 이벤트 처리"""
