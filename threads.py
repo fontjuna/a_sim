@@ -3,6 +3,7 @@ from classes import TimeLimiter, QData
 from public import gm, dc, Work,QWork, save_json, hoga, com_market_status, profile_operation
 from chart import ChartData
 from datetime import datetime, timedelta
+import queue
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -365,7 +366,8 @@ class EvalStrategy(QThread):
         self.running = False
         self.cht_dt = ChartData()
         self.reput_cnt = 0
-        self.executor = ThreadPoolExecutor(max_workers=8)  # 추가: 스레드풀 생성
+        self.sell_executor = ThreadPoolExecutor(max_workers=6)
+        self.buy_executor = ThreadPoolExecutor(max_workers=2)
 
     def set_dict(self, new_dict: dict) -> None:
         """딕셔너리 업데이트 및 인스턴스 변수 동기화"""
@@ -387,11 +389,27 @@ class EvalStrategy(QThread):
     def run(self):
         self.running = True
         while self.running:
-            data = self.eval_q.get()
-            if data is None:
-                self.running = False
-                return
-            self.executor.submit(self.eval_order, data)  # 병렬 처리로 변경
+            try:
+                # 첫 번째 데이터는 즉시 처리
+                data = self.eval_q.get(timeout=dc.INTERVAL_NORMAL)
+                if data is None:
+                    self.running = False
+                    return
+                self.eval_order(data)
+                
+                # 추가 데이터들은 즉시 처리 (큐에 있는 만큼)
+                while True:
+                    try:
+                        data = self.eval_q.get_nowait()
+                        if data is None:
+                            self.running = False
+                            return
+                        self.eval_order(data)
+                    except queue.Empty:
+                        break
+                        
+            except queue.Empty:
+                continue
 
     def eval_order(self, data):
         if 'buy' in data:
@@ -402,11 +420,13 @@ class EvalStrategy(QThread):
                     self.eval_q.put(data)
                     return
             buy_args = {k: v for k, v in data['buy'].items() if k != 'time'}
-            self.order_buy(**buy_args)
+            self.buy_executor.submit(self.order_buy, **buy_args)
+            
         elif 'sell' in data:
-            self.order_sell(**data['sell'])
+            self.sell_executor.submit(self.order_sell, **data['sell'])
+            
         elif 'cancel' in data:
-            self.order_cancel(**data['cancel'])
+            self.buy_executor.submit(self.order_cancel, **data['cancel']) # buy에 꼽사리
 
     def is_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         """매수 조건 충족 여부를 확인하는 메소드"""

@@ -162,7 +162,7 @@ class Main:
 
             def close_queue(name):
                 if name in gm.shared_qes:
-                    for q in [gm.shared_qes[name].stream, gm.shared_qes[name].request, gm.shared_qes[name].result, gm.shared_qes[name].payback]:
+                    for q in [gm.shared_qes[name].request, gm.shared_qes[name].result]:
                         try:
                             q.close()
                             q.join_thread()
