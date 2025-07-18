@@ -270,7 +270,7 @@ class Admin:
                     gm.dict주문대기종목.remove(code)
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
             
-            if gm.잔고목록.in_key(code):    
+            if gm.잔고목록.in_key(code):
                 row = gm.잔고목록.get(key=code)
                 if row: gm.price_q.put((code, 현재가, row)) # PriceUpdater
 

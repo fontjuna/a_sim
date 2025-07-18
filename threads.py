@@ -51,7 +51,7 @@ class PriceUpdater(QThread):
         self.잔고목록 = holdings
         self.잔고합산 = holdings_sum
         self.running = True
-        self.executor = ThreadPoolExecutor(max_workers=8)
+        self.executor = ThreadPoolExecutor(max_workers=4)
 
     def stop(self):
         self.running = False
@@ -259,7 +259,7 @@ class ChartUpdater(QThread):
         self.chart_q = chart_q
         self.cht_dt = ChartData()
         self.running = False
-        self.executor = ThreadPoolExecutor(max_workers=8)
+        self.executor = ThreadPoolExecutor(max_workers=4)
 
     def stop(self):
         self.running = False
@@ -365,7 +365,7 @@ class EvalStrategy(QThread):
         self.stop_time = '15:18'  # 매수시간 종료
         self.running = False
         self.cht_dt = ChartData()
-        self.sell_executor = ThreadPoolExecutor(max_workers=6)
+        self.sell_executor = ThreadPoolExecutor(max_workers=2)
         self.buy_executor = ThreadPoolExecutor(max_workers=2)
 
     def set_dict(self, new_dict: dict) -> None:
@@ -390,22 +390,23 @@ class EvalStrategy(QThread):
         while self.running:
             try:
                 # 첫 번째 데이터는 즉시 처리
-                data = self.eval_q.get(timeout=dc.INTERVAL_NORMAL)
+                #data = self.eval_q.get(timeout=dc.INTERVAL_NORMAL)
+                data = self.eval_q.get()
                 if data is None:
                     self.running = False
-                    return
+                    break
                 self.eval_order(data)
                 
-                # 추가 데이터들은 즉시 처리 (큐에 있는 만큼)
-                while True:
-                    try:
-                        data = self.eval_q.get(block=False)
-                        if data is None:
-                            self.running = False
-                            return
-                        self.eval_order(data)
-                    except queue.Empty:
-                        break
+                # # 추가 데이터들은 즉시 처리 (큐에 있는 만큼)
+                # while True:
+                #     try:
+                #         data = self.eval_q.get(block=False)
+                #         if data is None:
+                #             self.running = False
+                #             return
+                #         self.eval_order(data)
+                #     except queue.Empty:
+                #         break
                         
             except queue.Empty:
                 continue

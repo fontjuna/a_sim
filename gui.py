@@ -487,11 +487,12 @@ class GUI(QMainWindow, form_class):
         gm.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
         gm.sim_on = gm.sim_no > 0
         gm.prx.order('api', 'api_init', sim_no=gm.sim_no)
+        #if gm.sim_no != 1: gm.prx.order('api', 'CommConnect', True)
         gm.prx.order('api', 'set_tickers')
         gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
         gm.admin.restart()
         gm.admin.stg_start()
-        if not all([gm.매수문자열, gm.매도문자열]):
+        if not any([gm.매수문자열, gm.매도문자열]):
             gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
             return
         gm.toast.toast('전략매매를 실행했습니다.', duration=3000)

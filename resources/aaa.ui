@@ -3000,9 +3000,9 @@
       <widget class="QTextEdit" name="txtCondition">
        <property name="geometry">
         <rect>
-         <x>0</x>
+         <x>10</x>
          <y>20</y>
-         <width>301</width>
+         <width>291</width>
          <height>61</height>
         </rect>
        </property>
@@ -5499,7 +5499,7 @@
       </widget>
       <widget class="QRadioButton" name="rbSim1">
        <property name="enabled">
-        <bool>true</bool>
+        <bool>false</bool>
        </property>
        <property name="geometry">
         <rect>
@@ -5528,7 +5528,7 @@
       </widget>
       <widget class="QRadioButton" name="rbSim3">
        <property name="enabled">
-        <bool>true</bool>
+        <bool>false</bool>
        </property>
        <property name="geometry">
         <rect>

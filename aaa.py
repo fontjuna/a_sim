@@ -103,10 +103,8 @@ class Main:
                     connected = gm.prx.answer('api', 'GetConnectState') == 1
                     if connected: break
                     if time.time() - start_time > 20:
-                        gm.sim_no = 1
-                        gm.prx.order('api', 'api_init', gm.sim_no)
-                        logging.error('prepare : 로그인 대기 시간 초과, 시뮬레이션 1 모드로 변경')
-                        break
+                        logging.error('prepare : 로그인 대기 시간 초과. 종료 합니다. ')
+                        exit('로그인 대기 시간 초과. 종료 합니다. ')
                     time.sleep(0.5)
             gm.prx.order('api', 'set_tickers')
             gm.admin.init()
@@ -196,9 +194,9 @@ class Main:
                         if obj.is_alive():
                             obj.terminate()
                             obj.join(timeout=1)
-                            logging.debug(f'{name} Process 강제 종료.')
-                        else:
                             logging.debug(f'{name} Process 종료.')
+                        else:
+                            logging.debug(f'{name} Process 정상 종료.')
                     except Exception as e:
                         logging.debug(f'{name} Process 종료 실패: {e}')
 
@@ -266,6 +264,7 @@ if __name__ == "__main__":
     import multiprocessing
     from public import gm
     multiprocessing.freeze_support() # 없으면 실행파일(exe)로 실행시 DBMServer멀티프로세스 생성시 프로그램 리셋되어 시작 반복 하는 것 방지
+    exit_code = 0
     try:
         logging.info(f"{'#'*10} LIBERANIMO logiacl intelligence enhanced robo aotonomic investment management operations START {'#'*50}")
         main = Main()
