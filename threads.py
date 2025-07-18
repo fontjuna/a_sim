@@ -56,7 +56,7 @@ class PriceUpdater(QThread):
     def stop(self):
         self.running = False
         self.price_q.put(None)
-    """
+    
     def run(self):
         self.running = True
         while self.running:
@@ -73,7 +73,7 @@ class PriceUpdater(QThread):
             if batch: self.update_batch(batch)
 
             q_len = self.price_q.length()
-            if q_len > 5: logging.warning(f'price_q 대기 큐 len={q_len}')
+            if q_len > 30: logging.warning(f'price_q 대기 큐 len={q_len}')
             
     """
     # 예전 코드
@@ -84,11 +84,11 @@ class PriceUpdater(QThread):
             if data is None: 
                 self.running = False
                 return
-            self.update_current_price(*data)
+            self.executor.submit(self.update_current_price, *data)
 
             q_len = self.price_q.length()
             if q_len > 30: logging.warning(f'price_q 대기 큐 len={q_len}')
-    
+    """
     def update_batch(self, batch):
         for code, (price, row) in batch.items():
             self.executor.submit(self.update_current_price, code, price,row)
@@ -365,7 +365,6 @@ class EvalStrategy(QThread):
         self.stop_time = '15:18'  # 매수시간 종료
         self.running = False
         self.cht_dt = ChartData()
-        self.reput_cnt = 0
         self.sell_executor = ThreadPoolExecutor(max_workers=6)
         self.buy_executor = ThreadPoolExecutor(max_workers=2)
 
@@ -400,7 +399,7 @@ class EvalStrategy(QThread):
                 # 추가 데이터들은 즉시 처리 (큐에 있는 만큼)
                 while True:
                     try:
-                        data = self.eval_q.get_nowait()
+                        data = self.eval_q.get(block=False)
                         if data is None:
                             self.running = False
                             return
@@ -421,12 +420,41 @@ class EvalStrategy(QThread):
                     return
             buy_args = {k: v for k, v in data['buy'].items() if k != 'time'}
             self.buy_executor.submit(self.order_buy, **buy_args)
+            #future =self.buy_executor.submit(self.order_buy, **buy_args)
+            #future.add_done_callback(lambda f: self.buy_done_callback(f, data['buy']))
             
         elif 'sell' in data:
             self.sell_executor.submit(self.order_sell, **data['sell'])
             
         elif 'cancel' in data:
             self.buy_executor.submit(self.order_cancel, **data['cancel']) # buy에 꼽사리
+
+    def buy_done_callback(self, future, data):
+        try:
+            is_ok, send_data, reason = future.result()
+            if is_ok:
+                logging.info(f'매수결정: {reason}\nsend_data={send_data}')
+                gm.order_q.put(send_data)
+                return
+            
+            if 'time' in data:
+                if data['time'] < datetime.now() - timedelta(seconds=0.1):
+                    time.sleep(0.005)
+                    self.eval_q.put({'buy': data})
+                    return
+                else:
+                    data.pop('time')
+
+            if 'script' in data:
+
+
+                if '차트미비' not in reason: 
+                    logging.info(f'매수안함: {reason} send_data={send_data}')
+                key = f'{data["code"]}_매수'
+                if gm.주문목록.in_key(key):
+                    gm.주문목록.delete(key=key)
+        except Exception as e:
+            logging.error(f'주문 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def is_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         """매수 조건 충족 여부를 확인하는 메소드"""
@@ -483,6 +511,7 @@ class EvalStrategy(QThread):
                         if result.get('error') or not result.get('result', False):
                             msg = f"스크립트 : {code} {name} 매수취소 {result['error'] if result.get('error') else ''}"
                             gm.qwork['msg'].put(Work('주문내용', job={'msg': msg}))
+                            #gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price, 'script': result['logs']}})
                             return False, {}, msg
                         logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
 
