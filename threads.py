@@ -337,8 +337,8 @@ class ChartSetter(QThread):
     def request_chart_data(self, code):
         if self.cht_dt.is_code_registered(code): return
         logging.debug(f"get_first_chart_data 요청: {code}")
-        self.get_first_chart_data(code, cycle='mi', tick=1, times=3)
-        self.get_first_chart_data(code, cycle='dy')
+        self.get_first_chart_data(code, cycle='mi', tick=1, times=99, dt=dc.BEFORE_ONE_MONTH)
+        self.get_first_chart_data(code, cycle='dy', times=99, dt=dc.BEFORE_TEN_YEARS)
 
     def request_tick_chart(self, tickers_set):
         logging.debug(f"request_tick_chart 요청: {tickers_set}")
@@ -388,28 +388,11 @@ class EvalStrategy(QThread):
     def run(self):
         self.running = True
         while self.running:
-            try:
-                # 첫 번째 데이터는 즉시 처리
-                #data = self.eval_q.get(timeout=dc.INTERVAL_NORMAL)
-                data = self.eval_q.get()
-                if data is None:
-                    self.running = False
-                    break
-                self.eval_order(data)
-                
-                # # 추가 데이터들은 즉시 처리 (큐에 있는 만큼)
-                # while True:
-                #     try:
-                #         data = self.eval_q.get(block=False)
-                #         if data is None:
-                #             self.running = False
-                #             return
-                #         self.eval_order(data)
-                #     except queue.Empty:
-                #         break
-                        
-            except queue.Empty:
-                continue
+            data = self.eval_q.get()
+            if data is None:
+                self.running = False
+                break
+            self.eval_order(data)
 
     def eval_order(self, data):
         if 'buy' in data:
@@ -591,31 +574,20 @@ class EvalStrategy(QThread):
                 'ordno': '',
             }
 
+            script_and = self.매도스크립트적용 and self.매도스크립트AND
+            script_or = self.매도스크립트적용 and self.매도스크립트OR
+            strategy_sell = self.매도적용 and sell_condition
+
             # 호가구분과 가격 설정
             if self.매도지정가:
                 send_data['price'] = hoga(현재가, self.매도호가)
                 send_data['msg'] = '매도지정'
 
-            if gm.sim_no != 1 and self.매도스크립트적용:
-                if self.cht_dt.is_code_registered(code):
-                    result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
-                    if not result['error']:
-                        if self.매도스크립트OR and result.get('result', False): 
-                            send_data['msg'] = '전략매도'
-                            gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
-                            logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
-                            return True, send_data, f"전략매도: {code} {종목명}"
-                    else:
-                        logging.error(f'스크립트 실행 에러: {result["error"]}')
-                        gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
-                else:
-                    result = {'error': '차트데이터 준비 안 됨'}
-
             if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
-                if gm.sim_no != 1 and self.매도스크립트적용 and self.매도스크립트AND:
-                    if result.get('error'): return False, {}, f"{result['error']}: {code} {종목명}"
-                send_data['msg'] = '검색매도'
-                return True, send_data,  f"검색매도: {code} {종목명}"
+                if gm.sim_no != 1 and script_or:
+                    #if result.get('error'): return False, {}, f"{result['error']}: {code} {종목명}"
+                    send_data['msg'] = '검색매도'
+                    return True, send_data,  f"검색매도: {code} {종목명}"
 
             if self.로스컷 and self.로스컷율 != 0:
                 send_list = []
@@ -676,6 +648,21 @@ class EvalStrategy(QThread):
                     if 고점대비하락률 + self.스탑주문율 <= 0:
                         send_data['msg'] = '스탑주문'
                         return True, send_data, f"스탑주문율: 스탑주문율율={self.스탑주문율} 수익률={수익률}  {code} {종목명}"
+
+            if gm.sim_no != 1 and self.매도스크립트적용:
+                if self.cht_dt.is_code_registered(code):
+                    result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
+                    if not result['error']:
+                        if result.get('result', False): # self.매도스크립트AND 조건
+                            send_data['msg'] = '전략매도'
+                            gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
+                            logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
+                            return True, send_data, f"전략매도: {code} {종목명}"
+                    else:
+                        logging.error(f'스크립트 실행 에러: {result["error"]}')
+                        gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
+                else:
+                    result = {'error': '차트데이터 준비 안 됨'} # 차트데이터 준비 안 될 수 없음
 
             return False, {}, "조건없음"
 

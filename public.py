@@ -3,7 +3,7 @@
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import logging.config
 import logging.handlers
@@ -555,6 +555,8 @@ class DefineConstants:  # 글로벌 상수 정의
         self.INTERVAL_GUI = 199 #milliseconds
         self.TODAY = datetime.now().strftime('%Y-%m-%d')
         self.ToDay = datetime.now().strftime('%Y%m%d')
+        self.BEFORE_TEN_YEARS = (datetime.now() - timedelta(days=3650)).strftime('%Y-%m-%d')
+        self.BEFORE_ONE_MONTH = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
         self.TOAST_TIME = 5000  # 밀리초
 
         self.const = Constants()

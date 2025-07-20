@@ -459,11 +459,7 @@ class OnReceiveRealDataSim1And2(QThread):
             portfolio.update_stock_price(code, current_price)
 
             # 실시간 데이터 전송
-            job = {
-               'code': code,
-               'rtype': '주식체결',
-               'dictFID': dictFID
-            }
+            job = { 'code': code, 'rtype': '주식체결', 'dictFID': dictFID }
 
             batch[code] = dictFID
             if time.time() - self.start_time > 0.01:
