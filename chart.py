@@ -1,4 +1,4 @@
-from public import dc, profile_operation
+from public import dc, profile_operation, hoga
 from datetime import datetime, timedelta
 from typing import Dict, Any
 from collections import deque
@@ -20,16 +20,16 @@ class ChartData:
 
     # 데이터 크기 제한 (메모리 관리)
     MAX_CANDLES = {
-        'mi1': 7620,   # 1분봉: 약 20일치
-        'mi3': 2560,    # 3분봉: 약 20일치  
-        'mi5': 1540,    # 5분봉: 약 20일치
-        'mi10': 720,   # 10분봉: 약 20일치
-        'mi15': 540,    # 15분봉: 약 20일치
-        'mi30': 270,    # 30분봉: 약 20일치
-        'mi60': 135,    # 60분봉: 약 20일치
-        'dy': 2400,     # 일봉: 약 10년치
-        'wk': 480,      # 주봉: 약 10년치 
-        'mo': 120       # 월봉: 약 10년치
+        'mi1': 2700,   # 1분봉: 약 7일치
+        'mi3': 900,    # 3분봉: 약 7일치  
+        'mi5': 540,    # 5분봉: 약 7일치
+        'mi10': 270,   # 10분봉: 약 7일치
+        'mi15': 180,    # 15분봉: 약 7일치
+        'mi30': 90,    # 30분봉: 약 7일치
+        'mi60': 45,    # 60분봉: 약 7일치
+        'dy': 600,     # 일봉: 약 2.5년치
+        'wk': 140,      # 주봉: 약 2.5년치 
+        'mo': 30       # 월봉: 약 2.5년치
     }
 
     def __new__(cls):
@@ -2231,6 +2231,7 @@ class ScriptManager:
                 'iif': safe_iif,
                 'run_script': self._script_caller,
                 'is_args': is_args,
+                'hoga': hoga,
                 'echo': echo,
                 'ret': script_return,
                 '_script_logs': script_logs,

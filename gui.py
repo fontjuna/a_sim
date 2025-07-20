@@ -269,7 +269,7 @@ class GUI(QMainWindow, form_class):
         date_text = self.dtMonitor.date().toString("yyyy-MM-dd")
         try:
             gm.매매목록.delete()
-            dict_list = gm.prx.answer('dbm', 'execute_query', sql=db_columns.TRD_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.prx.answer('dbm', 'execute_query', sql=db_columns.TRD_SELECT_DATE, db='db', params=(date_text, gm.sim_no))
             if dict_list is not None and len(dict_list) > 0:
                 gm.매매목록.set(data=dict_list)
                 logging.info(f"매매목록 얻기 완료: data count={gm.매매목록.len()}")
@@ -361,7 +361,7 @@ class GUI(QMainWindow, form_class):
         date_text = self.dtConclusion.date().toString("yyyyMMdd")
         try:
             gm.체결목록.delete()
-            dict_list = gm.prx.answer('dbm', 'execute_query', sql=db_columns.CONC_SELECT_DATE, db='db', params=(date_text,))
+            dict_list = gm.prx.answer('dbm', 'execute_query', sql=db_columns.CONC_SELECT_DATE, db='db', params=(date_text, gm.sim_no))
             if dict_list is not None and len(dict_list) > 0:
                 gm.체결목록.set(data=dict_list)
                 손익금액, 매수금액 = gm.체결목록.sum(column=['손익금액', '매수금액'], filter={'매도수량': ('==', '@매수수량')})

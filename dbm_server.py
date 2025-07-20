@@ -102,7 +102,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     f = DataBaseFields()
 
     TRD_TABLE_NAME = 'trades'
-    TRD_SELECT_DATE = f"SELECT substr(처리일시, 12, 12) AS 처리시간, * FROM {TRD_TABLE_NAME} WHERE DATE(처리일시) = ? ORDER BY 처리일시 DESC"
+    TRD_SELECT_DATE = f"SELECT substr(처리일시, 12, 12) AS 처리시간, * FROM {TRD_TABLE_NAME} WHERE DATE(처리일시) = ? AND sim_no = ? ORDER BY 처리일시"
     TRD_FIELDS = [f.id, f.전략명칭, f.주문구분, f.주문상태, f.주문번호, f.종목코드, f.종목명, f.현재가, f.주문수량, f.주문가격, \
                     f.미체결수량, f.매매구분, f.체결량, f.체결가, f.체결누계금액, f.체결번호, f.체결시간, f.단위체결가, f.단위체결량, f.당일매매수수료, \
                         f.당일매매세금, f.원주문번호, f.처리일시, f.sim_no]
@@ -114,7 +114,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     }
 
     CONC_TABLE_NAME = 'conclusion'
-    CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND 매도수량 > 0 ORDER BY 매수일자, 매수시간 DESC"
+    CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND sim_no = ? AND 매도수량 > 0 ORDER BY 매수일자, 매수시간 DESC"
     CONC_FIELDS = [f.id, f.종목번호, f.종목명, f.손익금액, f.손익율, f.매수일자, f.매수시간,\
                     f.매수수량, f.매수가, f.매수금액, f.매수번호, f.매도일자, f.매도시간, f.매도수량,\
                     f.매도가, f.매도금액, f.매도번호, f.제비용, f.매수전략, f.전략명칭, f.처리일시, f.sim_no]

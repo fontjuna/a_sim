@@ -337,8 +337,8 @@ class ChartSetter(QThread):
     def request_chart_data(self, code):
         if self.cht_dt.is_code_registered(code): return
         logging.debug(f"get_first_chart_data 요청: {code}")
-        self.get_first_chart_data(code, cycle='mi', tick=1, times=99, dt=dc.BEFORE_ONE_MONTH)
-        self.get_first_chart_data(code, cycle='dy', times=99, dt=dc.BEFORE_TEN_YEARS)
+        self.get_first_chart_data(code, cycle='mi', tick=1, times=3)
+        self.get_first_chart_data(code, cycle='dy')
 
     def request_tick_chart(self, tickers_set):
         logging.debug(f"request_tick_chart 요청: {tickers_set}")
