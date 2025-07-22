@@ -397,7 +397,7 @@ class OnReceiveRealConditionSim(QThread):
             'cond_name': self.cond_name,
             'cond_index': int(self.cond_index),
          }
-         self.order('prx', 'on_fx실시간_조건검색', **data)
+         self.order('prx', 'on_receive_real_condition', **data)
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -463,7 +463,7 @@ class OnReceiveRealDataSim1And2(QThread):
 
             batch[code] = dictFID
             if time.time() - self.start_time > 0.01:
-                self.order('prx', 'on_fx배치_주식체결', batch)
+                self.order('prx', 'on_receive_real_bach', batch)
                 batch = {}
                 self.start_time = time.time()
 
@@ -520,7 +520,7 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               self.order('prx', 'on_fx실시간_주식체결', **job)
+               self.order('prx', 'on_receive_real_data', **job)
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -886,7 +886,7 @@ class APIServer:
                 'ordno': '',
             }
 
-            self.OnReceiveChejanData(code, orderno, order)
+            self.OnReceiveChejanDataSim(code, orderno, order)
             return 0
 
     def CommRqData(self, rqname, trcode, next, screen):
@@ -924,7 +924,7 @@ class APIServer:
                 'screen': screen,
                 'rqname': rqname,
                 }
-                self.order('prx', 'on_fx수신_주문결과TR', **result)
+                self.order('prx', 'on_receive_tr_data', **result)
 
             except Exception as e:
                 logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -969,7 +969,7 @@ class APIServer:
             'cond_index': cond_index
         }
         #logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
-        self.order('prx', 'on_fx실시간_조건검색', **data)
+        self.order('prx', 'on_receive_real_condition', **data)
 
     def OnReceiveRealData(self, code, rtype, data):
         # sim_no = 0일 때만 사용 (실제 API 서버)
@@ -985,7 +985,7 @@ class APIServer:
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    self.order('prx', 'on_fx실시간_주식체결', **job)
+                    self.order('prx', 'on_receive_real_data', **job)
                 elif rtype == '장시작시간': 
                     self.order('prx', 'on_fx실시간_장운영감시', **job)
                 #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
@@ -993,10 +993,6 @@ class APIServer:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             
     def OnReceiveChejanData(self, gubun, item_cnt, fid_list):
-        if self.sim_no != 0: 
-            self.OnReceiveChejanDataSim(gubun, item_cnt, fid_list)
-            return
-        
         try:
             dictFID = {}
             if gubun == '0': dict_tmp = dc.fid.주문체결
@@ -1006,9 +1002,7 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            self.order('prx', 'on_fx실시간_주문체결', gubun, dictFID)
-            #if gubun == '0': self.order('odr', 'odr_recieve_chegyeol_data', dictFID)
-            #elif gubun == '1': self.order('odr', 'odr_recieve_balance_data', dictFID)
+            self.order('prx', 'on_receive_chejan_data', gubun, dictFID)
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1023,8 +1017,8 @@ class APIServer:
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                #self.order('odr', 'odr_recieve_balance_data', dictFID)
-                self.order('prx', 'on_fx실시간_주문체결', '1', dictFID)
+                dictFID['매도/매수구분'] = '2' if order['ordtype'] == 2 else '1'
+                self.order('prx', 'on_receive_chejan_data', '1', dictFID)
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1062,8 +1056,7 @@ class APIServer:
 
                     portfolio.process_order(dictFID)
 
-                #self.order('odr', 'odr_recieve_chegyeol_data', dictFID)
-                self.order('prx', 'on_fx실시간_주문체결', '0', dictFID)
+                self.order('prx', 'on_receive_chejan_data', '0', dictFID)
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------
@@ -1157,6 +1150,12 @@ class APIServer:
             data = self.ocx.dynamicCall("GetCommDataEx(QString, QString)", trcode, rqname)
             return data
         return None
+
+    @profile_operation
+    def get_first_chart_data(self, code, times=1, wt=None, dt=None):
+        dict_mi = self.get_chart_data(code, 'mi', 1, times, wt, dt)
+        dict_dy = self.get_chart_data(code, 'dy', 1, times, wt, dt)
+        return (dict_mi, dict_dy)
     
     def get_chart_data(self, code, cycle, tick=1, times=1, wt=None, dt=None):
         """차트 데이터 조회"""

@@ -25,31 +25,29 @@ class ProxyAdmin():
     def on_fx실시간_장운영감시(self, code, rtype, dictFID): # 장 운영 상황 감시
         self.emit_q.put(QWork(method='on_fx실시간_장운영감시', args=(code, rtype, dictFID,)))
 
-    def on_fx수신_주문결과TR(self, code, name, order_no, screen, rqname):
+    def on_receive_tr_data(self, code, name, order_no, screen, rqname):
         logging.debug(f'프록시 실시간_주문결과: {code} {name} {order_no} {screen} {rqname}')
-        self.emit_q.put(QWork(method='on_fx수신_주문결과TR', args=(code, name, order_no, screen, rqname,)))
+        self.emit_q.put(QWork(method='on_receive_tr_data', args=(code, name, order_no, screen, rqname,)))
 
-    def on_fx실시간_조건검색(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
-        self.emit_q.put(QWork(method='on_fx실시간_조건검색', args=(code, type, cond_name, cond_index,)))
+    def on_receive_real_condition(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
+        self.emit_q.put(QWork(method='on_receive_real_condition', args=(code, type, cond_name, cond_index,)))
 
-    def on_fx실시간_주식체결(self, code, rtype, dictFID):
+    def on_receive_real_data(self, code, rtype, dictFID):
         self.emit_real_q.put((code, rtype, dictFID))
 
-    def on_fx배치_주식체결(self, batch):
+    def on_receive_real_bach(self, batch):
         for code, dictFID in batch.items():
             self.emit_real_q.put((code, None, dictFID))
 
-    def on_fx실시간_주문체결(self, gubun, dictFID): # 주문체결 결과 수신
-        self.emit_q.put(QWork(method='on_fx실시간_주문체결', args=(gubun, dictFID,)))
+    def on_receive_chejan_data(self, gubun, dictFID): # 주문체결 결과 수신
+        self.emit_q.put(QWork(method='on_receive_chejan_data', args=(gubun, dictFID,)))
 
 class PriceUpdater(QThread):
-    def __init__(self, prx, price_q, holdings, holdings_sum):
+    def __init__(self, prx, price_q):
         super().__init__()
         self.daemon = True
         self.prx = prx
         self.price_q = price_q
-        self.잔고목록 = holdings
-        self.잔고합산 = holdings_sum
         self.running = True
         self.executor = ThreadPoolExecutor(max_workers=4)
 
@@ -67,8 +65,8 @@ class PriceUpdater(QThread):
                 if data is None: 
                     self.running = False
                     return
-                code, price, row = data
-                batch[code] = (price, row)
+                code, price, row, dictFID = data
+                batch[code] = (price, row, dictFID)
 
             if batch: self.update_batch(batch)
 
@@ -90,11 +88,10 @@ class PriceUpdater(QThread):
             if q_len > 30: logging.warning(f'price_q 대기 큐 len={q_len}')
     """
     def update_batch(self, batch):
-        for code, (price, row) in batch.items():
-            self.executor.submit(self.update_current_price, code, price,row)
+        for code, (price, row, dictFID) in batch.items():
+            self.executor.submit(self.update_current_price, code, price, row, dictFID)
     
-    @profile_operation
-    def update_current_price(self, code, price, row):
+    def update_current_price(self, code, price, row, dictFID):
         try:
             현재가 = abs(int(price))
             최고가 = row.get('최고가', 0)
@@ -125,20 +122,22 @@ class PriceUpdater(QThread):
                 '보존': 새보존,
                 '감시': 새감시,
                 '상태': 1,
+                '등락율': float(dictFID.get('등락율', 0)),
+                '누적거래량': int(dictFID.get('누적거래량', 0)),
             })
 
-            if row['주문가능수량'] > 0 and row['보유수량'] > 0 and row['현재가'] > 0:
+            if row['보유수량'] > 0 and row['현재가'] > 0: #row['주문가능수량'] > 0 and 
                 key = f'{code}_매도'
                 if not gm.주문목록.in_key(key):
                     data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
                     gm.주문목록.set(key=key, data=data)
-                    row.update({'rqname': '신규매도', 'account': gm.account})
+                    row.update({'rqname': '신규매도', 'account': gm.account}) # '주문가능수량': 0, 
                     gm.eval_q.put({'sell': {'row': row}})
 
-            self.잔고목록.set(key=code, data=row)
+            gm.잔고목록.set(key=code, data=row)
 
             # 잔고합산 업데이트
-            총매입금액, 총평가금액 = self.잔고목록.sum(column=['매입금액', '평가금액'])
+            총매입금액, 총평가금액 = gm.잔고목록.sum(column=['매입금액', '평가금액'])
             총평가손익금액 = 총평가금액 - 총매입금액
             총수익률 = (총평가손익금액 / 총매입금액 * 100) if 총매입금액 else 0
 
@@ -147,14 +146,14 @@ class PriceUpdater(QThread):
             이전추정예탁자산 = gm.l2잔고합산_copy['추정예탁자산'] or 0
             추정예탁자산 = 이전추정예탁자산 + 총평가금액 - 이전총평가금액
 
-            self.잔고합산.set(data={
+            gm.잔고합산.set(data={
                 '총매입금액': 총매입금액,
                 '총평가금액': 총평가금액,
                 '추정예탁자산': 추정예탁자산,
                 '총평가손익금액': 총평가손익금액,
                 '총수익률(%)': round(총수익률, 2),
             }, key=0)
-            gm.l2잔고합산_copy = self.잔고합산.get(key=0)
+            gm.l2잔고합산_copy = gm.잔고합산.get(key=0)
 
             if 새감시 != 감시 or 새보존 != 보존:
                 gm.holdings[code]['감시'] = 새감시
@@ -163,21 +162,6 @@ class PriceUpdater(QThread):
 
         except Exception as e:
             logging.error(f'실시간 배치 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    @profile_operation
-    def check_sell_condition(self, code, row):
-        if not gm.stg_run: return
-        if row['주문가능수량'] == 0: return
-        if row['보유수량'] == 0: return
-        if row['현재가'] == 0: return
-        if row['상태'] == 0: return
-        key = f'{code}_매도'
-        data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
-        if gm.주문목록.in_key(key): return
-        gm.주문목록.set(key=key, data=data)
-        self.잔고목록.set(key=code, data={'주문가능수량': 0})
-        row.update({'rqname': '신규매도', 'account': gm.account})
-        gm.eval_q.put({'sell': {'row': row}})
 
 class OrderCommander(QThread):
     def __init__(self, prx, order_q):
@@ -334,24 +318,26 @@ class ChartSetter(QThread):
             elif isinstance(code, set):
                 self.request_tick_chart(code)
 
+    @profile_operation
     def request_chart_data(self, code):
         if self.cht_dt.is_code_registered(code): return
         logging.debug(f"get_first_chart_data 요청: {code}")
-        self.get_first_chart_data(code, cycle='mi', tick=1, times=3)
-        self.get_first_chart_data(code, cycle='dy')
+        dict_tuple = self.prx.answer('api', 'get_first_chart_data', code)
+        if not all(dict_tuple): return
+        if dict_tuple[0]:
+            self.cht_dt.set_chart_data(code, dict_tuple[0], 'mi', 1)
+        if dict_tuple[1]:
+            self.cht_dt.set_chart_data(code, dict_tuple[1], 'dy', 1)
 
     def request_tick_chart(self, tickers_set):
         logging.debug(f"request_tick_chart 요청: {tickers_set}")
         for code in tickers_set:
-            self.get_first_chart_data(code, cycle='tk', tick=30, times=99, wt=1.667, dt=dc.ToDay)
+            self.request_first_chart_data(code, cycle='tk', tick=30, times=99, wt=1.667, dt=dc.ToDay)
     
-    def get_first_chart_data(self, code, cycle, tick=1, times=1, wt=None, dt=None):
+    def request_first_chart_data(self, code, cycle, tick=1, times=1, wt=None, dt=None):
         dict_list = self.prx.answer('api', 'get_chart_data', code, cycle, tick, times, wt, dt)
         if not dict_list: return
-        if cycle in ['dy', 'mi']:
-            self.cht_dt.set_chart_data(code, dict_list, cycle, int(tick))
-        elif cycle == 'tk':
-            self.prx.order('dbm', 'upsert_chart', dict_list, cycle, tick)
+        self.prx.order('dbm', 'upsert_chart', dict_list, cycle, tick)
 
 class EvalStrategy(QThread):
     def __init__(self, prx, eval_q):
@@ -528,7 +514,6 @@ class EvalStrategy(QThread):
             logging.error(f'매수조건 확인 중 오류: {type(e).__name__} - {e}', exc_info=True)
             return False, send_data, "검사오류"
 
-    @profile_operation
     def order_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         is_ok, send_data, reason = self.is_buy(code, rqname, price) # rqname : 전략
         if is_ok:
@@ -670,7 +655,6 @@ class EvalStrategy(QThread):
             logging.error(f'매도조건 확인 중 오류: {type(e).__name__} - {e}', exc_info=True)
             return False, {}, "검사오류"
 
-    @profile_operation
     def order_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
         is_ok, send_data, reason = self.is_sell(row, sell_condition)
         if reason not in ["조건없음", "장 운영시간이 아님"]:
@@ -685,10 +669,10 @@ class EvalStrategy(QThread):
             else:
                 gm.order_q.put(send_data)
         else:
+            #gm.잔고목록.set(key=row['종목번호'], data={'주문가능수량': row['보유수량']})
             key = f'{row["종목번호"]}_매도'
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)
-            gm.잔고목록.set(key=row['종목번호'], data={'주문가능수량': row['보유수량']})
 
         return is_ok, send_data, reason
 

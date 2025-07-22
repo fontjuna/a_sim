@@ -102,7 +102,7 @@ class Main:
                 while True:
                     connected = gm.prx.answer('api', 'GetConnectState') == 1
                     if connected: break
-                    if time.time() - start_time > 20:
+                    if time.time() - start_time > 30:
                         logging.error('prepare : 로그인 대기 시간 초과. 종료 합니다. ')
                         exit('로그인 대기 시간 초과. 종료 합니다. ')
                     time.sleep(0.5)

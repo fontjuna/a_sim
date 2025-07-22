@@ -211,7 +211,7 @@ class ChartData:
         """종목 등록 여부 확인 (메모리 기반으로 단순화)"""
         return code in self._chart_data and bool(self._chart_data[code].get('mi1') and bool(self._chart_data[code].get('dy')))
     
-    @profile_operation
+    #@profile_operation
     def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
         """차트 데이터 설정 (초고속 버전)"""
         
@@ -929,6 +929,36 @@ class ChartManager:
         return callable_indicator
     
     # 보조지표 계산 함수들
+    def get_obv_array(self, count: int = 10) -> list:
+        """OBV 배열을 한 번에 계산하여 반환"""
+        self._ensure_data_cache()
+        if not self._raw_data or self._data_length < 2:
+            return [0.0] * count
+        
+        obv_values = []
+        running_obv = 0.0
+        
+        # 역순으로 처리하여 OBV 계산
+        for i in range(self._data_length - 1, -1, -1):
+            if i == self._data_length - 1:
+                obv_values.append(0.0)
+                continue
+            
+            current_close = self._raw_data[i].get('현재가', 0)
+            prev_close = self._raw_data[i + 1].get('현재가', 0)
+            volume = self._raw_data[i].get('거래량', 0)
+            
+            if current_close > prev_close:
+                running_obv += volume
+            elif current_close < prev_close:
+                running_obv -= volume
+            
+            obv_values.append(running_obv)
+        
+        # 최신 순으로 뒤집고 필요한 개수만 반환
+        obv_values.reverse()
+        return obv_values[:count]
+        
     def rsi(self, period: int = 14, m: int = 0) -> float:
         """상대강도지수(RSI) 계산"""
         self._ensure_data_cache()
@@ -2231,7 +2261,7 @@ class ScriptManager:
                 'iif': safe_iif,
                 'run_script': self._script_caller,
                 'is_args': is_args,
-                'hoga': hoga,
+                'hoga': lambda x, y: hoga(x, y),
                 'echo': echo,
                 'ret': script_return,
                 '_script_logs': script_logs,

@@ -460,7 +460,7 @@ class GUI(QMainWindow, form_class):
             
         if response:
             gm.admin.stg_start()
-            if not all([gm.매수문자열, gm.매도문자열]):
+            if not any([gm.매수문자열, gm.매도문자열]):
                 gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
                 return
             gm.toast.toast('전략매매를 실행했습니다.', duration=3000)
