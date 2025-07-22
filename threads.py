@@ -89,7 +89,8 @@ class PriceUpdater(QThread):
     """
     def update_batch(self, batch):
         for code, (price, row, dictFID) in batch.items():
-            self.executor.submit(self.update_current_price, code, price, row, dictFID)
+            #self.executor.submit(self.update_current_price, code, price, row, dictFID) # 중복매도 우려
+            self.update_current_price(code, price, row, dictFID)
     
     def update_current_price(self, code, price, row, dictFID):
         try:
@@ -121,18 +122,17 @@ class PriceUpdater(QThread):
                 '최고가': 현재가 if 현재가 > 최고가 else 최고가,
                 '보존': 새보존,
                 '감시': 새감시,
-                '상태': 1,
                 '등락율': float(dictFID.get('등락율', 0)),
                 '누적거래량': int(dictFID.get('누적거래량', 0)),
             })
 
-            if row['보유수량'] > 0 and row['현재가'] > 0: #row['주문가능수량'] > 0 and 
-                key = f'{code}_매도'
-                if not gm.주문목록.in_key(key):
-                    data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
-                    gm.주문목록.set(key=key, data=data)
-                    row.update({'rqname': '신규매도', 'account': gm.account}) # '주문가능수량': 0, 
-                    gm.eval_q.put({'sell': {'row': row}})
+            #if row['보유수량'] > 0 and row['현재가'] > 0:
+            key = f'{code}_매도'
+            if not gm.주문목록.in_key(key):
+                data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
+                gm.주문목록.set(key=key, data=data)
+                row.update({'rqname': '신규매도', 'account': gm.account})
+                gm.eval_q.put({'sell': {'row': row}})
 
             gm.잔고목록.set(key=code, data=row)
 

@@ -336,7 +336,6 @@ class Admin:
                 dict_list = [{
                     **item,
                     '종목번호': item['종목번호'].lstrip('A'),
-                    '상태': 0,
                     '감시시작율': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('감시시작율', item.get('감시시작율', gm.basic_strategy.get('감시시작율', 0.0))),
                     '이익보존율': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('이익보존율', item.get('이익보존율', gm.basic_strategy.get('이익보존율', 0.0))),
                     '감시': gm.holdings.get(item['종목번호'].lstrip('A'), {}).get('감시', item.get('감시', 0)),
@@ -897,8 +896,12 @@ class Admin:
             logging.info(msg)
 
             if remain_qty == 0:
-                # if kind == '매도' and gm.잔고목록.in_key(code):
-                #     gm.잔고목록.set(key=code, data={'주문가능수량': 0}) # 주문목록 삭제후 체잔데이터 업데이트 사이에 또 매도 주문 들어 오는 것 방지
+                if kind == '매도' and gm.잔고목록.in_key(code):
+                    gm.잔고목록.delete(key=code) # 주문목록 삭제후 체잔데이터 업데이트 사이에 또 매도 주문 들어 오는 것 방지
+                    gm.holdings.pop(code, None)
+                    save_json(dc.fp.holdings_file, gm.holdings)
+                    if gm.잔고목록.len() == 0:
+                        self.pri_fx얻기_잔고합산()
                 gm.주문목록.delete(key=f'{code}_{kind}') # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
 
         except Exception as e:
@@ -917,13 +920,13 @@ class Admin:
             kind = '매도' if kind == '2' else '매수'
             code = dictFID['종목코드'].lstrip('A')
             dictFID['종목코드'] = code
-            if 보유수량 == 0: 
-                if not gm.잔고목록.delete(key=code):
-                    logging.warning(f'잔고목록 삭제 실패: {code}\n잔고목록=\n{tabulate(gm.잔고목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
-                gm.holdings.pop(code, None)
-                save_json(dc.fp.holdings_file, gm.holdings)
-                if gm.잔고목록.len() == 0:
-                    self.pri_fx얻기_잔고합산()
+            # if 보유수량 == 0: 
+            #     if not gm.잔고목록.delete(key=code):
+            #         logging.warning(f'잔고목록 삭제 실패: {code}\n잔고목록=\n{tabulate(gm.잔고목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+            #     gm.holdings.pop(code, None)
+            #     save_json(dc.fp.holdings_file, gm.holdings)
+            #     if gm.잔고목록.len() == 0:
+            #         self.pri_fx얻기_잔고합산()
             #else:
             #    if gm.잔고목록.in_key(code) and kind == '매수': # 매도경우 할 필요 없고 주문가능수량 업데이트 되면 재 매도 주문 가능 해지므로 방지 함
             #        gm.잔고목록.set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량, '주문가능수량': 주문가능수량, '현재가': 현재가})

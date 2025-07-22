@@ -490,6 +490,7 @@ class GUI(QMainWindow, form_class):
         #if gm.sim_no != 1: gm.prx.order('api', 'CommConnect', True)
         gm.prx.order('api', 'set_tickers')
         gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
+        time.sleep(1)
         gm.admin.restart()
         gm.admin.stg_start()
         if not any([gm.매수문자열, gm.매도문자열]):
