@@ -612,7 +612,6 @@ class GUI(QMainWindow, form_class):
 
         if self.rbTrBuy.isChecked():
             if row:
-                QMessageBox.warning(self, '알림', '이미 보유 중인 종목입니다.')
                 response = QMessageBox.question(None, '알림', '이미 보유 중인 종목입니다. 매수 하시겠습니까?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
                 if not response:
                     return
@@ -642,6 +641,7 @@ class GUI(QMainWindow, form_class):
             row['주문가능수량'] -= qty if row['주문가능수량'] >= qty else row['주문가능수량']
             gm.잔고목록.set(key=code, data=row)
 
+        gm.set주문중.add(code)
         key = f'{code}_{kind}'
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 

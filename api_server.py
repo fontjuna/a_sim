@@ -1,4 +1,4 @@
-from public import hoga, dc, init_logger, profile_operation
+from public import hoga, dc, init_logger, profile_operation, QWork
 from classes import TimeLimiter, Toast
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtWidgets import QApplication
@@ -391,13 +391,13 @@ class OnReceiveRealConditionSim(QThread):
          current_count = len(self.current_stocks)
          if current_count >= 3 and type == 'I': continue
 
-         data = {
-            'code': code,
-            'type': type,
-            'cond_name': self.cond_name,
-            'cond_index': int(self.cond_index),
-         }
-         self.order('prx', 'on_receive_real_condition', **data)
+        #  data = {
+        #     'code': code,
+        #     'type': type,
+        #     'cond_name': self.cond_name,
+        #     'cond_index': int(self.cond_index),
+        #  }
+         self.order('prx', 'proxy_method', QWork(method='on_receive_real_condition', args=(code, type, self.cond_name, int(self.cond_index))))
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -917,14 +917,15 @@ class APIServer:
                 data = rqname.split('_')
                 code = data[1]
                 order_no = self.GetCommData(trcode, rqname, 0, '주문번호')
-                result = {
-                'code': code,
-                'name': self.GetMasterCodeName(code),
-                'order_no': order_no,
-                'screen': screen,
-                'rqname': rqname,
-                }
-                self.order('prx', 'on_receive_tr_data', **result)
+                name = self.GetMasterCodeName(code)
+                # result = {
+                # 'code': code,
+                # 'name': name,
+                # 'order_no': order_no,
+                # 'screen': screen,
+                # 'rqname': rqname,
+                # }
+                self.order('prx', 'proxy_method', QWork(method='on_receive_tr_data', args=(code, name, order_no, screen, rqname)))
 
             except Exception as e:
                 logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -962,14 +963,14 @@ class APIServer:
 
     # 응답 실시간 --------------------------------------------------------------------------------------------------
     def OnReceiveRealCondition(self, code, id_type, cond_name, cond_index):
-        data = {
-            'code': code,
-            'type': id_type,
-            'cond_name': cond_name,
-            'cond_index': cond_index
-        }
+        # data = {
+        #     'code': code,
+        #     'type': id_type,
+        #     'cond_name': cond_name,
+        #     'cond_index': cond_index
+        # }
         #logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
-        self.order('prx', 'on_receive_real_condition', **data)
+        self.order('prx', 'proxy_method', QWork(method='on_receive_real_condition', args=(code, id_type, cond_name, cond_index)))
 
     def OnReceiveRealData(self, code, rtype, data):
         # sim_no = 0일 때만 사용 (실제 API 서버)
@@ -987,7 +988,7 @@ class APIServer:
                 if rtype == '주식체결': 
                     self.order('prx', 'on_receive_real_data', **job)
                 elif rtype == '장시작시간': 
-                    self.order('prx', 'on_fx실시간_장운영감시', **job)
+                    self.order('prx', 'proxy_method', QWork(method='on_fx실시간_장운영감시', args=(code, rtype, dictFID)))
                 #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
@@ -1151,7 +1152,7 @@ class APIServer:
             return data
         return None
 
-    @profile_operation
+    #@profile_operation
     def get_first_chart_data(self, code, times=1, wt=None, dt=None):
         dict_mi = self.get_chart_data(code, 'mi', 1, times, wt, dt)
         dict_dy = self.get_chart_data(code, 'dy', 1, times, wt, dt)

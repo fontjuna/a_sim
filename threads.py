@@ -22,15 +22,15 @@ class ProxyAdmin():
     def proxy_method(self, qwork):
         self.emit_q.put(qwork) # qwork = QWork()
 
-    def on_fx실시간_장운영감시(self, code, rtype, dictFID): # 장 운영 상황 감시
-        self.emit_q.put(QWork(method='on_fx실시간_장운영감시', args=(code, rtype, dictFID,)))
+    # def on_fx실시간_장운영감시(self, code, rtype, dictFID): # 장 운영 상황 감시
+    #     self.emit_q.put(QWork(method='on_fx실시간_장운영감시', args=(code, rtype, dictFID,)))
 
-    def on_receive_tr_data(self, code, name, order_no, screen, rqname):
-        logging.debug(f'프록시 실시간_주문결과: {code} {name} {order_no} {screen} {rqname}')
-        self.emit_q.put(QWork(method='on_receive_tr_data', args=(code, name, order_no, screen, rqname,)))
+    # def on_receive_tr_data(self, code, name, order_no, screen, rqname):
+    #     logging.debug(f'프록시 주문결과: {code} {name} {order_no} {screen} {rqname}')
+    #     self.emit_q.put(QWork(method='on_receive_tr_data', args=(code, name, order_no, screen, rqname,)))
 
-    def on_receive_real_condition(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
-        self.emit_q.put(QWork(method='on_receive_real_condition', args=(code, type, cond_name, cond_index,)))
+    # def on_receive_real_condition(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
+    #     self.emit_q.put(QWork(method='on_receive_real_condition', args=(code, type, cond_name, cond_index,)))
 
     def on_receive_real_data(self, code, rtype, dictFID):
         self.emit_real_q.put((code, rtype, dictFID))
@@ -40,7 +40,7 @@ class ProxyAdmin():
             self.emit_real_q.put((code, None, dictFID))
 
     def on_receive_chejan_data(self, gubun, dictFID): # 주문체결 결과 수신
-        self.emit_q.put(QWork(method='on_receive_chejan_data', args=(gubun, dictFID,)))
+        self.emit_chejan_q.put((gubun, dictFID))
 
 class PriceUpdater(QThread):
     def __init__(self, prx, price_q):
@@ -54,6 +54,7 @@ class PriceUpdater(QThread):
     def stop(self):
         self.running = False
         self.price_q.put(None)
+        self.executor.shutdown(wait=True)
     
     def run(self):
         self.running = True
@@ -126,14 +127,14 @@ class PriceUpdater(QThread):
                 '누적거래량': int(dictFID.get('누적거래량', 0)),
             })
 
-            #if row['보유수량'] > 0 and row['현재가'] > 0:
             key = f'{code}_매도'
-            if not gm.주문목록.in_key(key):
-                data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
+            data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
+            row.update({'rqname': '신규매도', 'account': gm.account})
+            #if not gm.주문목록.in_key(key) and row['주문가능수량'] > 0 and row['보유수량'] > 0:
+            if code not in gm.set주문중:
+                gm.set주문중.add(code)
                 gm.주문목록.set(key=key, data=data)
-                row.update({'rqname': '신규매도', 'account': gm.account})
                 gm.eval_q.put({'sell': {'row': row}})
-
             gm.잔고목록.set(key=code, data=row)
 
             # 잔고합산 업데이트
@@ -216,9 +217,11 @@ class OrderCommander(QThread):
 
         전략명칭 = gm.실행전략['전략명칭']
         매수전략 = gm.설정전략['매수전략']
+
         name = self.prx.answer('api', 'GetMasterCodeName', code)
         logging.debug(f'주문 요청 확인: code={code}, name={name}')
         주문유형 = dc.fid.주문유형FID[ordtype]
+
         kind = msg if msg else 주문유형
         job = {"구분": kind, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
         gm.admin.send_status_msg('주문내용', job)
@@ -226,13 +229,14 @@ class OrderCommander(QThread):
         rqname = f'{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
         key = f'{code}_{주문유형.lstrip("신규")}'
         gm.주문목록.set(key=key, data={'상태': '전송', '요청명': rqname})
+        if gm.잔고목록.in_key(code): gm.잔고목록.set(key=code, data={'주문가능수량': 0}) # 있으면 매도 이므로
+
         cmd = { 'rqname': rqname, 'screen': screen, 'accno': accno, 'ordtype': ordtype, 'code': code, 'hoga': hoga, 'quantity': quantity, 'price': price, 'ordno': ordno }
-        if gm.잔고목록.in_key(code):
-            gm.잔고목록.set(key=code, data={'주문가능수량': 0})
+        self.prx.order('api', 'SendOrder', **cmd)
+
         dict_data = {'전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
                      '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, 'sim_no': gm.sim_no}
         self.prx.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
-        self.prx.order('api', 'SendOrder', **cmd)
 
 class ChartUpdater(QThread):
     def __init__(self, prx, chart_q):
@@ -248,7 +252,8 @@ class ChartUpdater(QThread):
     def stop(self):
         self.running = False
         self.chart_q.put(None)
-    
+        self.executor.shutdown(wait=True)
+
     def run(self):
         self.running = True
         while self.running:
@@ -318,7 +323,7 @@ class ChartSetter(QThread):
             elif isinstance(code, set):
                 self.request_tick_chart(code)
 
-    @profile_operation
+    #@profile_operation
     def request_chart_data(self, code):
         if self.cht_dt.is_code_registered(code): return
         logging.debug(f"get_first_chart_data 요청: {code}")
@@ -370,6 +375,8 @@ class EvalStrategy(QThread):
             self.clear_timer.deleteLater()
             self.clear_timer = None
         self.eval_q.put(None)
+        self.sell_executor.shutdown(wait=True)
+        self.buy_executor.shutdown(wait=True)
 
     def run(self):
         self.running = True
@@ -382,22 +389,24 @@ class EvalStrategy(QThread):
 
     def eval_order(self, data):
         if 'buy' in data:
-            # 차트데이타 준비 안 됐으면 다시 큐에 넣고 준비되기를 기다림 최대 0.1초 기다림
             if 'time' in data['buy']:
-                if data['buy']['time'] < datetime.now() - timedelta(seconds=0.1):
+                if data['buy']['time'] > datetime.now() - timedelta(seconds=0.4):
                     time.sleep(0.005)
                     self.eval_q.put(data)
                     return
             buy_args = {k: v for k, v in data['buy'].items() if k != 'time'}
-            self.buy_executor.submit(self.order_buy, **buy_args)
+            self.order_buy(**buy_args)
+            #self.buy_executor.submit(self.order_buy, **buy_args)
             #future =self.buy_executor.submit(self.order_buy, **buy_args)
             #future.add_done_callback(lambda f: self.buy_done_callback(f, data['buy']))
             
         elif 'sell' in data:
-            self.sell_executor.submit(self.order_sell, **data['sell'])
+            #self.sell_executor.submit(self.order_sell, **data['sell'])
+            self.order_sell(**data['sell'])
             
         elif 'cancel' in data:
-            self.buy_executor.submit(self.order_cancel, **data['cancel']) # buy에 꼽사리
+            self.order_cancel(**data['cancel']) # buy에 꼽사리
+            #self.buy_executor.submit(self.order_cancel, **data['cancel']) # buy에 꼽사리
 
     def buy_done_callback(self, future, data):
         try:
@@ -481,7 +490,6 @@ class EvalStrategy(QThread):
                         if result.get('error') or not result.get('result', False):
                             msg = f"스크립트 : {code} {name} 매수취소 {result['error'] if result.get('error') else ''}"
                             gm.qwork['msg'].put(Work('주문내용', job={'msg': msg}))
-                            #gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price, 'script': result['logs']}})
                             return False, {}, msg
                         logging.info(f">>> 매수스크립트 조건 충족: {code} {name}")
 
@@ -489,6 +497,7 @@ class EvalStrategy(QThread):
                         logging.error(f'매수스크립트 검사 오류: {code} {name} - {type(e).__name__} - {e}', exc_info=True)
                 else:
                     # 다시 넣음 최대 0.1초 동안 차트데이타 준비될 때까지 반복함
+                    logging.error(f'차트데이터 준비 안 됨: 매수 {code} {name} {price}')
                     gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price, 'time': datetime.now()}})
                     return False, {}, f"차트미비: {code} {name}"
 
@@ -520,6 +529,7 @@ class EvalStrategy(QThread):
             logging.info(f'매수결정: {reason}\nsend_data={send_data}')
             gm.order_q.put(send_data)
         else:
+            gm.set주문중.discard(code)
             if '차트미비' not in reason: 
                 logging.info(f'매수안함: {reason} send_data={send_data}')
             key = f'{code}_매수'
@@ -596,7 +606,7 @@ class EvalStrategy(QThread):
 
                 return True, send_data, f"로스컷 : {code} {종목명}"
 
-            if not gm.sim_on:
+            if gm.sim_no == 0:
                 if self.당일청산 and datetime.now().strftime('%H:%M') >= self.청산시간:
                     send_list = []
                     rows = gm.잔고목록.get()
@@ -647,6 +657,7 @@ class EvalStrategy(QThread):
                         logging.error(f'스크립트 실행 에러: {result["error"]}')
                         gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                 else:
+                    logging.error(f'차트데이터 준비 안 됨: 매도 {code} {종목명} {매입가} {보유수량}')
                     result = {'error': '차트데이터 준비 안 됨'} # 차트데이터 준비 안 될 수 없음
 
             return False, {}, "조건없음"
@@ -669,7 +680,8 @@ class EvalStrategy(QThread):
             else:
                 gm.order_q.put(send_data)
         else:
-            #gm.잔고목록.set(key=row['종목번호'], data={'주문가능수량': row['보유수량']})
+            gm.set주문중.discard(row['종목번호'])
+            gm.잔고목록.set(key=row['종목번호'], data={'주문가능수량': row['보유수량']})
             key = f'{row["종목번호"]}_매도'
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)

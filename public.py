@@ -278,7 +278,6 @@ class FIDs:             # 실시간 조회 필드 아이디
         '당일순매수량': 945,
         '매도/매수구분': 946,
         '당일총매도손익': 950,
-        '예수금': 951,
         '(최우선)매도호가': 27,
         '(최우선)매수호가': 28,
         '기준가': 307,
@@ -672,7 +671,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.l2잔고합산_copy = None
         self.l2손익합산 = 0
 
-        # 조건목록 그룹박스 체크상태
+        # 조건목록 그룹박스 체크상태 (종목 자동 삭제 역할)
         self.gbx_buy_checked = False
         self.gbx_sell_checked = False
             
@@ -689,6 +688,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.매도문자열 = ''
         self.set종목감시 = set()
         self.set조건감시 = set() 
+        self.set주문중 = None # ThreadSafeSet()
         self.수수료율 = 0.0
         self.세금율 = 0.0
         self.holdings = {}

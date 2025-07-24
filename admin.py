@@ -1,5 +1,5 @@
 from public import gm, dc, Work, hoga, load_json, save_json
-from classes import ThreadSafeDict, CounterTicker, ThreadSafeQueue  
+from classes import ThreadSafeDict, CounterTicker, ThreadSafeQueue, ThreadSafeSet
 from threads import OrderCommander, EvalStrategy, ChartSetter, ChartUpdater, PriceUpdater
 from chart import ScriptManager
 from tables import tbl
@@ -64,6 +64,7 @@ class Admin:
         gm.counter = CounterTicker()
         gm.dict종목정보 = ThreadSafeDict()
         gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
+        gm.set주문중 = ThreadSafeSet()
         gm.scm = ScriptManager()
         gm.prx.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
         gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
@@ -115,6 +116,7 @@ class Admin:
     def start_threads(self):
         gm.prx.receive_signal.connect(self.run_recesive_signals)
         gm.prx.receive_real_data.connect(self.on_receive_real_data)
+        gm.prx.receive_chejan_data.connect(self.on_receive_chejan_data)
         gm.cts.start()
         gm.ctu.start()
         gm.odc.start()
@@ -255,19 +257,24 @@ class Admin:
         if not gm.ready: return
         try:
             code, rtype, dictFID = data
+
             현재가 = abs(int(dictFID['현재가']))
             updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
             if updated:
-                data = gm.dict주문대기종목.get(code, None)
-                if data:
-                    gm.주문목록.set(key=f'{code}_{data["kind"]}', data={'상태': '요청'})
-                    if data['kind'] == '매수':
-                        gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': 현재가}})
-                    elif data['kind'] == '매도':
-                        row = gm.잔고목록.get(key=code)
-                        row['현재가'] = 현재가
-                        gm.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
+                if code not in gm.set주문중:
+                    data = gm.dict주문대기종목.get(code, None)
+                    if data:
+                        gm.주문목록.set(key=f'{code}_{data["kind"]}', data={'상태': '요청'})
+                        if data['kind'] == '매수':
+                            gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': 현재가}})
+                        elif data['kind'] == '매도':
+                            row = gm.잔고목록.get(key=code)
+                            row['현재가'] = 현재가
+                            gm.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
+                        gm.set주문중.add(code)
+                if gm.dict주문대기종목.contains(code):
                     gm.dict주문대기종목.remove(code)
+
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
             
             if gm.잔고목록.in_key(code):
@@ -277,8 +284,9 @@ class Admin:
         except Exception as e:
             logging.error(f'실시간 주식체결 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def on_receive_chejan_data(self, gubun, dictFID):
+    def on_receive_chejan_data(self, data):
         if not gm.ready: return
+        gubun, dictFID = data
         logging.debug(f'실시간 주문체결: {gubun} {dictFID}')
         if gubun == '0':
             self.odr_recieve_chegyeol_data(dictFID)
@@ -441,6 +449,7 @@ class Admin:
             gm.매수조건목록.delete()
             gm.매도조건목록.delete()
             gm.주문목록.delete()
+            gm.set주문중.clear()
             self.send_status_msg('검색내용', args='')
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -540,6 +549,8 @@ class Admin:
 
     def stg_fx편입_실시간조건감시(self, kind, code, type, cond_name, cond_index):
         try:
+            if code in gm.set주문중: return
+
             종목명 = gm.prx.answer('api', 'GetMasterCodeName', code)
             if not gm.dict종목정보.contains(code):
                 전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
@@ -559,16 +570,16 @@ class Admin:
                     logging.debug(f'매도 가능 수량 없음: {code} {종목명}')
                     return # 매도 가능 수량 없음
 
-                if gm.주문목록.in_key(key): 
-                    logging.debug(f'매도 주문 처리 중: {code} {종목명}')
-                    return # 주문 처리 중 - 여기에 있어야 메세지 생략 안 함
+                # if gm.주문목록.in_key(key): 
+                #     logging.debug(f'매도 주문 처리 중: {code} {종목명}')
+                #     return # 주문 처리 중 - 여기에 있어야 메세지 생략 안 함
 
                 if not gm.매도조건목록.in_key(code):
                     gm.매도조건목록.set(key=code, data={'종목명': 종목명})
-                    self.send_status_msg('주문내용', {'구분': f'{kind}편입', '종목코드': code, '종목명': 종목명})
-                    if not gm.잔고목록.in_key(code): 
-                        gm.setter_q.put(code)
-                    gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
+                self.send_status_msg('주문내용', {'구분': f'{kind}편입', '종목코드': code, '종목명': 종목명})
+                if not gm.잔고목록.in_key(code): 
+                    gm.setter_q.put(code)
+                gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if code not in gm.set조건감시:
                     self.stg_fx등록_종목감시([code], 1) # ----------------------------- 조건 만족 종목 실시간 감시 추가
@@ -577,15 +588,15 @@ class Admin:
                 if gm.잔고목록.in_key(code): 
                     #logging.debug(f'기 보유종목: {code} {종목명}')
                     return # 기 보유종목
-                if gm.주문목록.in_key(key): 
-                    logging.debug(f'매수 주문 처리 중: {code} {종목명}')
-                    return # 주문 처리 중 - 여기에 있어야 메세지 생략 안 함     
+                # if gm.주문목록.in_key(key): 
+                #     logging.debug(f'매수 주문 처리 중: {code} {종목명}')
+                #     return # 주문 처리 중 - 여기에 있어야 메세지 생략 안 함     
                 
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'종목명': 종목명})
-                    self.send_status_msg('주문내용', {'구분': f'{kind}편입', '종목코드': code, '종목명': 종목명})
-                    gm.setter_q.put(code)
-                    gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
+                self.send_status_msg('주문내용', {'구분': f'{kind}편입', '종목코드': code, '종목명': 종목명})
+                gm.setter_q.put(code)
+                gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
                 if gm.sim_no==0: gm.prx.order('dbm', 'insert_sim_ticker', code, 종목명, self.전략명칭, self.매수전략)
                 if code not in gm.set조건감시:
@@ -597,10 +608,12 @@ class Admin:
             gm.주문목록.set(key=key, data=data) # 아래 보다 먼저 실행 해야 함
 
             if kind == '매수' and self.매수시장가:
+                gm.set주문중.add(code)
                 price = int((gm.dict종목정보.get(code, '현재가') or hoga(gm.dict종목정보.get(code, '전일가'), 99)))
                 logging.debug(f'매수 시장가: {code} {종목명} {price}')
                 gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price}})
             elif kind == '매도' and self.매도시장가:
+                gm.set주문중.add(code)
                 row = gm.잔고목록.get(key=code)
                 gm.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
             else:
@@ -769,6 +782,7 @@ class Admin:
                 #if row and 주문수량 != 0 and 미체결수량 == 0: # 주문 취소주문 클리어
                 logging.debug(f'주문체결 취소확인: key={key} {code} {dictFID["종목명"]} order_no = {order_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
                 #    gm.주문목록.delete(key=key) 
+                gm.set주문중.discard(code)
                 gm.주문목록.delete(filter={'키': '취소'})
 
         except Exception as e:
@@ -780,6 +794,7 @@ class Admin:
             remain_qty = int(dictFID.get('미체결수량', 0) or 0)
 
             if qty != 0 and remain_qty == 0: # 주문취소 원 주문 클리어(체결 없음) / 처음 접수시 qty = remain_qty
+                gm.set주문중.discard(dictFID['종목코드'])
                 gm.주문목록.delete(key=f'{dictFID["종목코드"]}_{dictFID["주문구분"]}')
                 return
             
@@ -807,6 +822,7 @@ class Admin:
                     else:
                         pass
                     logging.debug(f'취소주문 접수: origin_no={origin_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+
                 else: # 외부주문
                     종목명 = gm.prx.answer('api', 'GetMasterCodeName', code)
                     if not gm.dict종목정보.contains(code):
@@ -817,6 +833,7 @@ class Admin:
                     if code not in gm.set조건감시:
                         self.stg_fx등록_종목감시([code], 1)
 
+                    gm.set주문중.add(code)
                     row = {'키': key, '구분': kind, '상태': '외부접수', '종목코드': code, '종목명': name, '주문번호': order_no, '주문수량': qty, '미체결수량': remain_qty, '주문가격': price}
                     gm.주문목록.set(key=key, data=row)
                     logging.debug(f'외부주문 접수: order_no={order_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
@@ -896,13 +913,29 @@ class Admin:
             logging.info(msg)
 
             if remain_qty == 0:
+                gm.set주문중.discard(code)
                 if kind == '매도' and gm.잔고목록.in_key(code):
-                    gm.잔고목록.delete(key=code) # 주문목록 삭제후 체잔데이터 업데이트 사이에 또 매도 주문 들어 오는 것 방지
+                    if gm.잔고목록.delete(key=code): # 주문목록 삭제후 체잔데이터 업데이트 사이에 또 매도 주문 들어 오는 것 방지
+                        logging.debug(f'잔고목록 1차 삭제 성공: {code} {name}')
+                    else:
+                        logging.debug(f'잔고목록 1차 삭제 실패: {code} {name}')
+                        if gm.잔고목록.delete(key=code):
+                            logging.debug(f'잔고목록 2차 삭제 성공: {code} {name}')
+                        else:
+                            logging.debug(f'잔고목록 2차 삭제 실패: {code} {name}')
                     gm.holdings.pop(code, None)
                     save_json(dc.fp.holdings_file, gm.holdings)
                     if gm.잔고목록.len() == 0:
                         self.pri_fx얻기_잔고합산()
-                gm.주문목록.delete(key=f'{code}_{kind}') # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
+
+                if gm.주문목록.delete(key=f'{code}_{kind}'): # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
+                    logging.debug(f'주문목록 1차 삭제 성공: {code} {name}')
+                else:
+                    logging.debug(f'주문목록 1차 삭제 실패: {code} {name}')
+                    if gm.주문목록.delete(key=f'{code}_{kind}'):
+                        logging.debug(f'주문목록 2차 삭제 성공: {code} {name}')
+                    else:
+                        logging.debug(f'주문목록 2차 삭제 실패: {code} {name}')
 
         except Exception as e:
             logging.error(f"주문 체결 오류: {kind} {type(e).__name__} - {e}", exc_info=True)
@@ -916,11 +949,10 @@ class Admin:
             주문가능수량 = int(dictFID.get('주문가능수량', 0) or 0)
             gm.l2손익합산 = int(dictFID.get('당일총매도손익', 0) or 0)
             kind = dictFID.get('매도/매수구분', '')
-            logging.debug(f'매도/매수구분: kind={kind} type={type(kind)}')
             kind = '매도' if kind == '2' else '매수'
             code = dictFID['종목코드'].lstrip('A')
             dictFID['종목코드'] = code
-            # if 보유수량 == 0: 
+            #if 보유수량 == 0: 
             #     if not gm.잔고목록.delete(key=code):
             #         logging.warning(f'잔고목록 삭제 실패: {code}\n잔고목록=\n{tabulate(gm.잔고목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
             #     gm.holdings.pop(code, None)
@@ -934,7 +966,7 @@ class Admin:
             #self.dbm_trade_upsert(dictFID)
             msg = f"잔고변경 : {code} {dictFID['종목명']} 보유수량:{보유수량}주 매입단가:{매입단가}원 매입금액:{보유수량 * 매입단가}원 주문가능수량:{주문가능수량}주"
             logging.info(msg)
-            logging.debug(f'잔고 dictFID:\n{tabulate(pd.DataFrame([dictFID]), headers="keys", showindex=True, numalign="right")}')
+            if kind == '매수': logging.debug(f'잔고 dictFID:\n{tabulate(pd.DataFrame([dictFID]), headers="keys", showindex=True, numalign="right")}')
         except Exception as e:
             logging.error(f"잔고 변경 오류: {type(e).__name__} - {e}", exc_info=True)
 

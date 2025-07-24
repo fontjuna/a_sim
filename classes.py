@@ -113,6 +113,72 @@ class ThreadSafeDict:
                     return True
             return False
 
+class ThreadSafeSet:
+    """쓰레드 안전한 set 클래스"""
+    def __init__(self):
+        self._set = set()
+        self._lock = threading.Lock()
+    
+    def add(self, item):
+        with self._lock:
+            self._set.add(item)
+    
+    def discard(self, item):
+        with self._lock:
+            self._set.discard(item)
+    
+    def clear(self):
+        with self._lock:
+            self._set.clear()
+
+    def __contains__(self, item):
+        with self._lock:
+            return item in self._set
+
+class ThreadSafeQueue:
+    def __init__(self, name='thread_safe_queue'):
+        self.name = name
+        self.q = queue.Queue()
+        self.lock = threading.Lock()
+
+    def put(self, item):
+        self.q.put(item)
+
+    def get(self, block=True, timeout=None):
+        return self.q.get(block=block, timeout=timeout)
+
+    def length(self):
+        return self.q.qsize()
+
+    def clear(self):
+        with self.lock:
+            while not self.q.empty():
+                try:
+                    self.q.get_nowait()
+                except queue.Empty:
+                    break
+
+    def remove(self, item):
+        # queue.Queue는 중간 삭제가 불가하므로, 임시 큐로 재구성
+        with self.lock:
+            temp = queue.Queue()
+            removed = False
+            while not self.q.empty():
+                obj = self.q.get()
+                if not removed and obj == item:
+                    removed = True
+                    continue
+                temp.put(obj)
+            self.q = temp
+
+    def contains(self, item):
+        with self.lock:
+            items = list(self.q.queue)
+            return item in items
+
+    def empty(self):
+        return self.q.empty()
+
 class Toast(QWidget):
     def __init__(self):
         super().__init__()
@@ -460,12 +526,14 @@ class MainModel(BaseModel):
 class QMainModel(BaseModel, QThread):
     receive_signal = pyqtSignal(object)
     receive_real_data = pyqtSignal(object)
+    receive_chejan_data = pyqtSignal(object)
     
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         QThread.__init__(self)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
         self.emit_q = queue.Queue()
         self.emit_real_q = queue.Queue()
+        self.emit_chejan_q = queue.Queue()
         self.queue_timeout = dc.INTERVAL_VERY_FAST  # QMainModel은 빠른 반응성 필요
 
     def _initialize_instance(self):
@@ -473,6 +541,7 @@ class QMainModel(BaseModel, QThread):
         super()._initialize_instance()
         self.instance.emit_q = self.emit_q
         self.instance.emit_real_q = self.emit_real_q
+        self.instance.emit_chejan_q = self.emit_chejan_q
 
     def _run_loop_iteration(self):
         """QMainModel 전용 emit_q 처리"""
@@ -483,6 +552,10 @@ class QMainModel(BaseModel, QThread):
         if not self.emit_real_q.empty():
             data = self.emit_real_q.get()
             self.receive_real_data.emit(data)
+
+        if not self.emit_chejan_q.empty():
+            data = self.emit_chejan_q.get()
+            self.receive_chejan_data.emit(data)
 
     def stop(self):
         self.running = False
@@ -526,46 +599,4 @@ class KiwoomModel(BaseModel, Process):
     def stop(self):
         self.running = False
 
-class ThreadSafeQueue:
-    def __init__(self, name='thread_safe_queue'):
-        self.name = name
-        self.q = queue.Queue()
-        self.lock = threading.Lock()
 
-    def put(self, item):
-        self.q.put(item)
-
-    def get(self, block=True, timeout=None):
-        return self.q.get(block=block, timeout=timeout)
-
-    def length(self):
-        return self.q.qsize()
-
-    def clear(self):
-        with self.lock:
-            while not self.q.empty():
-                try:
-                    self.q.get_nowait()
-                except queue.Empty:
-                    break
-
-    def remove(self, item):
-        # queue.Queue는 중간 삭제가 불가하므로, 임시 큐로 재구성
-        with self.lock:
-            temp = queue.Queue()
-            removed = False
-            while not self.q.empty():
-                obj = self.q.get()
-                if not removed and obj == item:
-                    removed = True
-                    continue
-                temp.put(obj)
-            self.q = temp
-
-    def contains(self, item):
-        with self.lock:
-            items = list(self.q.queue)
-            return item in items
-
-    def empty(self):
-        return self.q.empty()

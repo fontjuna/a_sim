@@ -1643,6 +1643,21 @@ class TableManager:
         with self.lock:
             return key in self.data_dict
     
+    def in_key_set(self, key, data):
+        """
+        원자적 업데이트(키가 존재하는 경우 데이터 업데이트)
+        """
+        # 키 없는 모드에서는 항상 False
+        if self.no_key_mode: return False
+            
+        with self.lock:
+            if key not in self.data_dict: return False
+            # 빈 데이터 필드 제거
+            valid_data = {k: v for k, v in data.items() if k in self.all_columns}
+            if not valid_data: return False
+            
+            return self._set_item_by_key(key, valid_data)
+            
     def in_column(self, column, value):
         """
         in_column('col', 값) -> bool      # 컬럼에 값 존재 여부
