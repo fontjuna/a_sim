@@ -915,27 +915,13 @@ class Admin:
             if remain_qty == 0:
                 gm.set주문중.discard(code)
                 if kind == '매도' and gm.잔고목록.in_key(code):
-                    if gm.잔고목록.delete(key=code): # 주문목록 삭제후 체잔데이터 업데이트 사이에 또 매도 주문 들어 오는 것 방지
-                        logging.debug(f'잔고목록 1차 삭제 성공: {code} {name}')
-                    else:
-                        logging.debug(f'잔고목록 1차 삭제 실패: {code} {name}')
-                        if gm.잔고목록.delete(key=code):
-                            logging.debug(f'잔고목록 2차 삭제 성공: {code} {name}')
-                        else:
-                            logging.debug(f'잔고목록 2차 삭제 실패: {code} {name}')
+                    gm.잔고목록.delete(key=code) # 주문목록 삭제후 체잔데이터 업데이트 사이에 또 매도 주문 들어 오는 것 방지
                     gm.holdings.pop(code, None)
                     save_json(dc.fp.holdings_file, gm.holdings)
                     if gm.잔고목록.len() == 0:
                         self.pri_fx얻기_잔고합산()
 
-                if gm.주문목록.delete(key=f'{code}_{kind}'): # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
-                    logging.debug(f'주문목록 1차 삭제 성공: {code} {name}')
-                else:
-                    logging.debug(f'주문목록 1차 삭제 실패: {code} {name}')
-                    if gm.주문목록.delete(key=f'{code}_{kind}'):
-                        logging.debug(f'주문목록 2차 삭제 성공: {code} {name}')
-                    else:
-                        logging.debug(f'주문목록 2차 삭제 실패: {code} {name}')
+                gm.주문목록.delete(key=f'{code}_{kind}') # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
 
         except Exception as e:
             logging.error(f"주문 체결 오류: {kind} {type(e).__name__} - {e}", exc_info=True)

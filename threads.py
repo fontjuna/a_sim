@@ -540,7 +540,7 @@ class EvalStrategy(QThread):
 
     def is_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
         try:
-            if not gm.sim_on:
+            if gm.sim_no == 0:
                 status_market = com_market_status()
                 if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
@@ -569,11 +569,22 @@ class EvalStrategy(QThread):
                 'ordno': '',
             }
 
-            script_and = self.매도스크립트적용 and self.매도스크립트AND
             script_or = self.매도스크립트적용 and self.매도스크립트OR
-            strategy_sell = self.매도적용 and sell_condition
 
-            # 호가구분과 가격 설정
+            if gm.sim_no == 0:
+                if self.당일청산 and datetime.now().strftime('%H:%M') >= self.청산시간:
+                    send_list = []
+                    rows = gm.잔고목록.get()
+                    if self.청산시장가:
+                        send_list = [{**send_data, 'code': row['종목번호'], 'price': 0, 'quantity': row['보유수량'], 'msg': '청산시장'} for row in rows]
+                    else:
+                        send_list = [{**send_data, 'code': row['종목번호'], 'price': hoga(row['현재가'], self.청산호가), 'quantity': row['보유수량'], 'hoga': '01', 'msg': '청산지정'} for row in rows]
+
+                    if send_list:
+                        return True, send_list, f"당일청산: 청산시간={self.청산시간}"
+
+                    return True, send_data, f"당일청산: 청산시간={self.청산시간}, {code} {종목명}"
+
             if self.매도지정가:
                 send_data['price'] = hoga(현재가, self.매도호가)
                 send_data['msg'] = '매도지정'
@@ -605,20 +616,6 @@ class EvalStrategy(QThread):
                     return True, send_list, f"로스컷 : 로스컷율={self.로스컷율}"
 
                 return True, send_data, f"로스컷 : {code} {종목명}"
-
-            if gm.sim_no == 0:
-                if self.당일청산 and datetime.now().strftime('%H:%M') >= self.청산시간:
-                    send_list = []
-                    rows = gm.잔고목록.get()
-                    if self.청산시장가:
-                        send_list = [{**send_data, 'code': code, 'price': 0, 'quantity': row['보유수량'], 'msg': '청산시장'} for row in rows]
-                    else:
-                        send_list = [{**send_data, 'code': code, 'price': hoga(현재가, self.청산호가), 'quantity': row['보유수량'], 'hoga': '01', 'msg': '청산지정'} for row in rows]
-
-                    if send_list:
-                        return True, send_list, f"당일청산: 청산시간={self.청산시간}"
-
-                    return True, send_data, f"당일청산: 청산시간={self.청산시간}, {code} {종목명}"
 
             if self.손실제한:
                 send_data['msg'] = '손실제한'
@@ -716,7 +713,8 @@ class EvalStrategy(QThread):
                 self.clear_timer.stop()
                 self.clear_timer.deleteLater()
                 self.clear_timer = None
-            row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 0, '매수가': 0, '수익률(%)': 0 }
+            # is_sell을 부르기 위해 더미 데이터로 콜 하고 실제 청산 루틴에서 실 데이터를 처리 함
+            row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 9, '매입가': 9, '보유수량': 9, '수익률(%)': 0 }
             start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.청산시간}", '%Y-%m-%d %H:%M')
             delay_msec = max(0, (start_time - now).total_seconds() * 1000)
             self.clear_timer = QTimer()

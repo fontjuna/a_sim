@@ -626,11 +626,11 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.odr = None # 주문 결과 처리
         self.scm = None # 스크립트 매니저
 
-        self.price_q = None    # ThreadSafeList()
-        self.eval_q = None # ThreadSafeList()
-        self.order_q = None # ThreadSafeList()
-        self.setter_q = None # ThreadSafeList()
-        self.chart_q = None # ThreadSafeList()
+        self.price_q = None    # ThreadSafeQueue()
+        self.eval_q = None # ThreadSafeQueue()
+        self.order_q = None # ThreadSafeQueue()
+        self.setter_q = None # ThreadSafeQueue()
+        self.chart_q = None # ThreadSafeQueue()
 
         self.tickers_set = set() # 틱차트 가져오기
 
