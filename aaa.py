@@ -86,7 +86,7 @@ class Main:
             gm.prx.start()
             gm.api = KiwoomModel('api', APIServer, gm.shared_qes)
             gm.api.start()
-            gm.prx.order('api', 'api_init', gm.sim_no)
+            gm.prx.order('api', 'api_init', gm.sim_no, gm.log_level)
             gm.prx.order('api', 'CommConnect', False)
             gm.dbm = ProcessModel('dbm', DBMServer, gm.shared_qes)
             gm.dbm.start()

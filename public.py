@@ -688,7 +688,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.매도문자열 = ''
         self.set종목감시 = set()
         self.set조건감시 = set() 
-        self.set주문중 = None # ThreadSafeSet()
+        self.set주문종목 = None # ThreadSafeSet()
         self.수수료율 = 0.0
         self.세금율 = 0.0
         self.holdings = {}

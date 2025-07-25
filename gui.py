@@ -486,8 +486,7 @@ class GUI(QMainWindow, form_class):
     def gui_simulation_start(self):
         gm.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
         gm.sim_on = gm.sim_no > 0
-        gm.prx.order('api', 'api_init', sim_no=gm.sim_no)
-        #if gm.sim_no != 1: gm.prx.order('api', 'CommConnect', True)
+        gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
         gm.prx.order('api', 'set_tickers')
         gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
         time.sleep(1)
@@ -641,7 +640,7 @@ class GUI(QMainWindow, form_class):
             row['주문가능수량'] -= qty if row['주문가능수량'] >= qty else row['주문가능수량']
             gm.잔고목록.set(key=code, data=row)
 
-        gm.set주문중.add(code)
+        gm.set주문종목.add(code)
         key = f'{code}_{kind}'
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 

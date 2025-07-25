@@ -131,8 +131,8 @@ class PriceUpdater(QThread):
             data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
             row.update({'rqname': '신규매도', 'account': gm.account})
             #if not gm.주문목록.in_key(key) and row['주문가능수량'] > 0 and row['보유수량'] > 0:
-            if code not in gm.set주문중:
-                gm.set주문중.add(code)
+            if code not in gm.set주문종목 and row['주문가능수량'] > 0:
+                gm.set주문종목.add(code)
                 gm.주문목록.set(key=key, data=data)
                 gm.eval_q.put({'sell': {'row': row}})
             gm.잔고목록.set(key=code, data=row)
@@ -229,7 +229,7 @@ class OrderCommander(QThread):
         rqname = f'{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
         key = f'{code}_{주문유형.lstrip("신규")}'
         gm.주문목록.set(key=key, data={'상태': '전송', '요청명': rqname})
-        if gm.잔고목록.in_key(code): gm.잔고목록.set(key=code, data={'주문가능수량': 0}) # 있으면 매도 이므로
+        #if gm.잔고목록.in_key(code): gm.잔고목록.set(key=code, data={'주문가능수량': 0}) # 있으면 매도 이므로
 
         cmd = { 'rqname': rqname, 'screen': screen, 'accno': accno, 'ordtype': ordtype, 'code': code, 'hoga': hoga, 'quantity': quantity, 'price': price, 'ordno': ordno }
         self.prx.order('api', 'SendOrder', **cmd)
@@ -455,7 +455,7 @@ class EvalStrategy(QThread):
             return False, {}, f"보유 종목수 제한 {code} {name} \
             보유종목={gm.잔고목록.len()}종목/보유제한={self.보유제한} 종목 초과" # 전략별 보유로 계산
 
-        if not gm.sim_on:
+        if gm.sim_no == 0:
             now = datetime.now().time()
             if self.운영시간:
                 start_time = datetime.strptime('09:00', '%H:%M').time()
@@ -529,7 +529,7 @@ class EvalStrategy(QThread):
             logging.info(f'매수결정: {reason}\nsend_data={send_data}')
             gm.order_q.put(send_data)
         else:
-            gm.set주문중.discard(code)
+            gm.set주문종목.discard(code)
             if '차트미비' not in reason: 
                 logging.info(f'매수안함: {reason} send_data={send_data}')
             key = f'{code}_매수'
@@ -677,8 +677,8 @@ class EvalStrategy(QThread):
             else:
                 gm.order_q.put(send_data)
         else:
-            gm.set주문중.discard(row['종목번호'])
-            gm.잔고목록.set(key=row['종목번호'], data={'주문가능수량': row['보유수량']})
+            gm.set주문종목.discard(row['종목번호'])
+            #gm.잔고목록.set(key=row['종목번호'], data={'주문가능수량': row['보유수량']})
             key = f'{row["종목번호"]}_매도'
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)

@@ -584,6 +584,7 @@ class APIServer:
                 logging.debug(f"ActiveX 컨트롤 생성 시작: KHOPENAPI.KHOpenAPICtrl.1")
                 self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
                 self._set_signal_slots()
+
             logging.debug(f'api_init completed: pid={pid} (Sim mode {self.sim_no}) ocx={self.ocx}')
             
         except Exception as e:
