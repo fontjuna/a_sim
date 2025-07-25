@@ -575,6 +575,7 @@ class EvalStrategy(QThread):
                 if self.당일청산 and datetime.now().strftime('%H:%M') >= self.청산시간:
                     send_list = []
                     rows = gm.잔고목록.get()
+                    if not rows: return False, {}, "당일청산 종목 없음"
                     if self.청산시장가:
                         send_list = [{**send_data, 'code': row['종목번호'], 'price': 0, 'quantity': row['보유수량'], 'msg': '청산시장'} for row in rows]
                     else:
