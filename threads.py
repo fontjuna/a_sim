@@ -131,12 +131,13 @@ class PriceUpdater(QThread):
             data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
             row.update({'rqname': '신규매도', 'account': gm.account})
             if code in gm.set주문종목:
-                logging.debug(f'주문 중인 종목: {code} {row["종목명"]} {gm.set주문종목.list()}  {"*"*20}')
+                #logging.debug(f'주문 중인 종목: {code} {row["종목명"]} {gm.set주문종목.list()}  {"*"*20}')
+                pass
             else: 
                 gm.set주문종목.add(code)
-                #logging.debug(f'주문 추가 종목: {code} {row["종목명"]} {gm.set주문종목.list()}')
-                gm.주문목록.set(key=key, data=data)
-                gm.eval_q.put({'sell': {'row': row}})
+                if row['주문가능수량'] > 0: 
+                    gm.주문목록.set(key=key, data=data)
+                    gm.eval_q.put({'sell': {'row': row}})
 
             gm.잔고목록.set(key=code, data=row)
 
