@@ -1363,8 +1363,7 @@ class TableManager:
         if isinstance(data, dict):
             # 빈 데이터 필드 제거
             valid_data = {k: v for k, v in data.items() if k in self.all_columns}
-            if not valid_data:
-                return False
+            if not valid_data: return False
             
             with self.lock:
                 # 1. 특정 키 업데이트/추가
@@ -1637,11 +1636,8 @@ class TableManager:
         in_key((값1, 값2)) -> bool        # 복합 키 존재 여부
         """
         # 키 없는 모드에서는 항상 False
-        if self.no_key_mode:
-            return False
-            
-        with self.lock:
-            return key in self.data_dict
+        if self.no_key_mode: return False
+        with self.lock: return key in self.data_dict
     
     def in_key_set(self, key, data):
         """

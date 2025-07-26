@@ -22,8 +22,8 @@ class ProxyAdmin():
     def proxy_method(self, qwork):
         self.emit_q.put(qwork) # qwork = QWork()
 
-    # def on_fx실시간_장운영감시(self, code, rtype, dictFID): # 장 운영 상황 감시
-    #     self.emit_q.put(QWork(method='on_fx실시간_장운영감시', args=(code, rtype, dictFID,)))
+    # def on_receive_market_status(self, code, rtype, dictFID): # 장 운영 상황 감시
+    #     self.emit_q.put(QWork(method='on_receive_market_status', args=(code, rtype, dictFID,)))
 
     # def on_receive_tr_data(self, code, name, order_no, screen, rqname):
     #     logging.debug(f'프록시 주문결과: {code} {name} {order_no} {screen} {rqname}')
@@ -576,15 +576,13 @@ class EvalStrategy(QThread):
                     send_list = []
                     rows = gm.잔고목록.get()
                     if not rows: return False, {}, "당일청산 종목 없음"
+
                     if self.청산시장가:
                         send_list = [{**send_data, 'code': row['종목번호'], 'price': 0, 'quantity': row['보유수량'], 'msg': '청산시장'} for row in rows]
-                    else:
+                    elif self.청산지정가:
                         send_list = [{**send_data, 'code': row['종목번호'], 'price': hoga(row['현재가'], self.청산호가), 'quantity': row['보유수량'], 'hoga': '01', 'msg': '청산지정'} for row in rows]
 
-                    if send_list:
-                        return True, send_list, f"당일청산: 청산시간={self.청산시간}"
-
-                    return True, send_data, f"당일청산: 청산시간={self.청산시간}, {code} {종목명}"
+                    return True, send_list, f"당일청산: 청산시간={self.청산시간}, {code} {종목명}"
 
             if self.매도지정가:
                 send_data['price'] = hoga(현재가, self.매도호가)

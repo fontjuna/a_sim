@@ -989,7 +989,7 @@ class APIServer:
                 if rtype == '주식체결': 
                     self.order('prx', 'on_receive_real_data', **job)
                 elif rtype == '장시작시간': 
-                    self.order('prx', 'proxy_method', QWork(method='on_fx실시간_장운영감시', args=(code, rtype, dictFID)))
+                    self.order('prx', 'proxy_method', QWork(method='on_receive_market_status', args=(code, rtype, dictFID)))
                 #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)

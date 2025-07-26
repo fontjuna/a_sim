@@ -209,7 +209,7 @@ class Admin:
             return False
 
     # api 처리 메소드 -----------------------------------------------------------------------------------------------
-    def on_fx실시간_장운영감시(self, code, rtype, dictFID): # 장 운영 상황 감시
+    def on_receive_market_status(self, code, rtype, dictFID): # 장 운영 상황 감시
         fid215 = dictFID['장운영구분']
         fid20 = dictFID['체결시간']
         fid214 = dictFID['장시작예상잔여시간']
