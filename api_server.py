@@ -460,14 +460,16 @@ class OnReceiveRealDataSim1And2(QThread):
 
             # 실시간 데이터 전송
             job = { 'code': code, 'rtype': '주식체결', 'dictFID': dictFID }
+            self.order('prx', 'on_receive_real_data', **job)
+            time.sleep(0.005)
 
-            batch[code] = dictFID
-            if time.time() - self.start_time > 0.01:
-                self.order('prx', 'on_receive_real_bach', batch)
-                batch = {}
-                self.start_time = time.time()
+            # batch[code] = dictFID
+            # if time.time() - self.start_time > 0.02:
+            #     self.order('prx', 'on_receive_real_bach', batch)
+            #     batch = {}
+            #     self.start_time = time.time()
+            #time.sleep(0.001)
 
-            time.sleep(0.001)
 
    def stop(self):
       self.is_running = False

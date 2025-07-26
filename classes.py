@@ -127,6 +127,10 @@ class ThreadSafeSet:
         with self._lock:
             self._set.discard(item)
     
+    def list(self):
+        with self._lock:
+            return list(self._set)
+    
     def clear(self):
         with self._lock:
             self._set.clear()

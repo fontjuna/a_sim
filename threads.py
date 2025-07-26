@@ -66,8 +66,8 @@ class PriceUpdater(QThread):
                 if data is None: 
                     self.running = False
                     return
-                code, price, row, dictFID = data
-                batch[code] = (price, row, dictFID)
+                code, row = data
+                batch[code] = row
 
             if batch: self.update_batch(batch)
 
@@ -89,13 +89,13 @@ class PriceUpdater(QThread):
             if q_len > 30: logging.warning(f'price_q 대기 큐 len={q_len}')
     """
     def update_batch(self, batch):
-        for code, (price, row, dictFID) in batch.items():
+        for code, row in batch.items():
             #self.executor.submit(self.update_current_price, code, price, row, dictFID) # 중복매도 우려
-            self.update_current_price(code, price, row, dictFID)
+            self.update_current_price(code, row)
     
-    def update_current_price(self, code, price, row, dictFID):
+    def update_current_price(self, code, row):
         try:
-            현재가 = abs(int(price))
+            현재가 = row['현재가']
             최고가 = row.get('최고가', 0)
             감시율 = row.get('감시시작율', 0.0) / 100
             보존율 = row.get('이익보존율', 0.0) / 100
@@ -123,18 +123,21 @@ class PriceUpdater(QThread):
                 '최고가': 현재가 if 현재가 > 최고가 else 최고가,
                 '보존': 새보존,
                 '감시': 새감시,
-                '등락율': float(dictFID.get('등락율', 0)),
-                '누적거래량': int(dictFID.get('누적거래량', 0)),
+                '등락율': float(row.get('등락율', 0)),
+                '누적거래량': int(row.get('누적거래량', 0)),
             })
 
             key = f'{code}_매도'
             data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
             row.update({'rqname': '신규매도', 'account': gm.account})
-            #if not gm.주문목록.in_key(key) and row['주문가능수량'] > 0 and row['보유수량'] > 0:
-            if code not in gm.set주문종목 and row['주문가능수량'] > 0:
+            if code in gm.set주문종목:
+                logging.debug(f'주문 중인 종목: {code} {row["종목명"]} {gm.set주문종목.list()}  {"*"*20}')
+            else: 
                 gm.set주문종목.add(code)
+                #logging.debug(f'주문 추가 종목: {code} {row["종목명"]} {gm.set주문종목.list()}')
                 gm.주문목록.set(key=key, data=data)
                 gm.eval_q.put({'sell': {'row': row}})
+
             gm.잔고목록.set(key=code, data=row)
 
             # 잔고합산 업데이트
@@ -229,7 +232,6 @@ class OrderCommander(QThread):
         rqname = f'{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
         key = f'{code}_{주문유형.lstrip("신규")}'
         gm.주문목록.set(key=key, data={'상태': '전송', '요청명': rqname})
-        #if gm.잔고목록.in_key(code): gm.잔고목록.set(key=code, data={'주문가능수량': 0}) # 있으면 매도 이므로
 
         cmd = { 'rqname': rqname, 'screen': screen, 'accno': accno, 'ordtype': ordtype, 'code': code, 'hoga': hoga, 'quantity': quantity, 'price': price, 'ordno': ordno }
         self.prx.order('api', 'SendOrder', **cmd)
@@ -529,12 +531,12 @@ class EvalStrategy(QThread):
             logging.info(f'매수결정: {reason}\nsend_data={send_data}')
             gm.order_q.put(send_data)
         else:
-            gm.set주문종목.discard(code)
             if '차트미비' not in reason: 
                 logging.info(f'매수안함: {reason} send_data={send_data}')
             key = f'{code}_매수'
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)
+            gm.set주문종목.discard(code)
 
         return is_ok, send_data, reason
 
@@ -563,7 +565,7 @@ class EvalStrategy(QThread):
                 'accno': gm.account,
                 'ordtype': 2,  # 매도
                 'code': code,
-                'quantity': row.get('보유수량', 0), #row.get('주문가능수량', row.get('보유수량', 0)),
+                'quantity': row.get('보유수량', 0), 
                 'price': 현재가,
                 'hoga': '03' if self.매도시장가 else '00',
                 'ordno': '',
@@ -668,7 +670,7 @@ class EvalStrategy(QThread):
             logging.info(f'매도결정: {reason}\nsend_data={send_data}')
         if is_ok:
             if not self.매도적용:
-                gm.admin.send_status_msg('주문내용', {'구분': f'매도편입', '전략명칭': self.전략명칭, '종목코드': row['종목번호'], '종목명': row['종목명']})
+                gm.admin.send_status_msg('주문내용', {'구분': f'매도편입', '종목코드': row['종목번호'], '종목명': row['종목명'], '메시지': '/ 검사결과'})
             if isinstance(send_data, list):
                 logging.debug(f'** 복수 매도 주문목록 **: {send_data}')
                 for data in send_data:
@@ -676,11 +678,10 @@ class EvalStrategy(QThread):
             else:
                 gm.order_q.put(send_data)
         else:
-            gm.set주문종목.discard(row['종목번호'])
-            #gm.잔고목록.set(key=row['종목번호'], data={'주문가능수량': row['보유수량']})
             key = f'{row["종목번호"]}_매도'
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)
+            gm.set주문종목.discard(row['종목번호'])
 
         return is_ok, send_data, reason
 
