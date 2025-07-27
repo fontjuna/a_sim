@@ -139,9 +139,6 @@ class PriceUpdater(QThread):
                 gm.주문목록.set(key=key, data=data)
                 gm.eval_q.put((code, 'sell', {'row': row}))
 
-            # gm.주문목록.set(key=key, data=data)
-            # gm.eval_q.put((code, 'sell', {'row': row}))
-
             gm.잔고목록.set(key=code, data=row)
 
             # 잔고합산 업데이트
