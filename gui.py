@@ -564,7 +564,7 @@ class GUI(QMainWindow, form_class):
     def gui_receipt_list_select(self, row_index, col_index):
         code = self.tblReceiptList.item(row_index, 2).text()
         kind = self.tblReceiptList.item(row_index, 0).text()
-        key = f'{code}_{kind}'
+        key = (code, kind)
         logging.debug(f'cell = [{row_index:02d}:{col_index:02d}] code = {code} kind = {kind} key = {key}')
         row = gm.주문목록.get(key=key)
         if row:
@@ -574,7 +574,7 @@ class GUI(QMainWindow, form_class):
             self.spbTrQty.setValue(row['주문수량'])
             self.rbTrSell.setChecked(True if row['구분'] == '매도' else False)
             # self.leTrStrategy.setText(row['전략'])
-            self.leTrCancelKey.setText(row['키'])
+            self.leTrCancelKey.setText(f'{row["종목코드"]}_{row["구분"]}')
 
     # 수동 주문 ---------------------------------------------------------------------------------------------
     def gui_tr_code_changed(self, kind='tr'):
@@ -641,14 +641,15 @@ class GUI(QMainWindow, form_class):
             gm.잔고목록.set(key=code, data=row)
 
         gm.set주문종목.add(code)
-        key = f'{code}_{kind}'
+        key = (code, kind)
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문목록.set(key=key, data=data) 
         # 주문 전송
         gm.order_q.put(send_data)
 
     def gui_tr_cancel(self):
-        key = self.leTrCancelKey.text()
+        text = self.leTrCancelKey.text().split('_')
+        key = (text[0], text[1])
         row = gm.주문목록.get(key=key)
         if not row:
             QMessageBox.warning(self, '알림', '주문접수목록에서 취소할 항목을 선택하세요.')

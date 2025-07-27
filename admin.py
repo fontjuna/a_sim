@@ -264,7 +264,7 @@ class Admin:
                 if code not in gm.set주문종목:
                     data = gm.dict주문대기종목.get(code, None)
                     if data:
-                        gm.주문목록.set(key=f'{code}_{data["kind"]}', data={'상태': '요청'})
+                        gm.주문목록.set(key=(code, data["kind"]), data={'상태': '요청'})
                         if data['kind'] == '매수':
                             gm.eval_q.put((code, 'buy', {'rqname': '신규매수', 'price': 현재가}))
                         elif data['kind'] == '매도':
@@ -566,7 +566,7 @@ class Admin:
                 logging.debug(f'주문 대기 종목: {code} {종목명}')
                 return
 
-            key = f'{code}_{kind}'
+            key = (code, kind)
             if kind == '매도':
                 if not gm.잔고목록.in_key(code): 
                     #logging.debug(f'매도 할 종목 없음: {code} {종목명}')
@@ -733,7 +733,7 @@ class Admin:
         if gm.주문목록.len() == 0: return
         try:
             code = origin_row['종목코드']
-            key = f'{code}_{kind}'
+            key = (code, kind)
             if not gm.주문목록.in_key(key): return
 
             order_no = origin_row['주문번호']
@@ -741,7 +741,7 @@ class Admin:
             주문수량 = dictFID['주문수량']
             미체결수량 = dictFID['미체결수량']
 
-            data={'키': f'{key}', '구분': kind, '상태': '취소요청', '종목코드': code, '종목명': name}
+            data={'구분': kind, '상태': '취소요청', '종목코드': code, '종목명': name}
             gm.주문목록.set(key=key, data=data)
 
             gm.eval_q.put((code, 'cancel', {'kind': kind, 'order_no': order_no}))
@@ -755,9 +755,9 @@ class Admin:
         try:
             dictFID['주문구분'] = dictFID['주문구분'].lstrip('+-')
             code = dictFID['종목코드'].lstrip('A')
-            key = f'{code}_{dictFID["주문구분"]}'
-            order_no = dictFID['주문번호']
+            key = (code, dictFID["주문구분"])
             row = gm.주문목록.get(key=key)
+            order_no = dictFID['주문번호']
             전략명칭 = gm.실행전략['전략명칭']
             전략정의 = gm.설정전략
             주문상태 = dictFID.get('주문상태', '')
@@ -788,12 +788,12 @@ class Admin:
             elif '체결' in 주문상태:
                 self.odr_conclution_data(dictFID)
             elif '확인' in 주문상태:
-                row = gm.주문목록.get(key=key)
+                # row = gm.주문목록.get(key=key)
                 #if row and 주문수량 != 0 and 미체결수량 == 0: # 주문 취소주문 클리어
                 logging.debug(f'주문체결 취소확인: key={key} {code} {dictFID["종목명"]} order_no = {order_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
                 #    gm.주문목록.delete(key=key) 
                 gm.set주문종목.discard(code)
-                gm.주문목록.delete(filter={'키': '취소'})
+                gm.주문목록.delete(filter={'구분': '취소'})
 
         except Exception as e:
             logging.error(f"접수체결 오류: {type(e).__name__} - {e}", exc_info=True)
@@ -805,16 +805,16 @@ class Admin:
 
             if qty != 0 and remain_qty == 0: # 주문취소 원 주문 클리어(체결 없음) / 처음 접수시 qty = remain_qty
                 gm.set주문종목.discard(dictFID['종목코드'])
-                gm.주문목록.delete(key=f'{dictFID["종목코드"]}_{dictFID["주문구분"]}')
+                gm.주문목록.delete(key=(dictFID["종목코드"], dictFID["주문구분"]))
                 return
             
             kind = '매수' if dictFID['매도수구분']=='2' else '매도'
             code = dictFID['종목코드']
             name = dictFID['종목명']
-            key = f'{code}_{dictFID["주문구분"]}'
             order_no = dictFID['주문번호']
             price = int(dictFID.get('주문가격', 0) or 0)
 
+            key = (code, dictFID["주문구분"])
             row = gm.주문목록.get(key=key)
             if row:
                 row.update({'상태': '접수', '주문번호': order_no, '주문수량': qty, '미체결수량': remain_qty, '주문가격': price})
@@ -823,11 +823,11 @@ class Admin:
             else: # 취소주문, 외부주문
                 origin_no = dictFID['원주문번호'].strip('0')
                 if origin_no: # 취소주문
-                    origin_key = f'{code}_{dictFID["주문구분"][:2]}'
-                    origin_row = gm.주문목록.get(filter={'키': origin_key, '주문번호': origin_no})
+                    kind = dictFID["주문구분"][:2]
+                    origin_row = gm.주문목록.get(filter={'종목코드': code, '구분': kind, '주문번호': origin_no})
                     if origin_row:
                         origin_row[0].update({'상태': '취소접수', '주문번호': order_no, '주문수량': qty, '미체결수량': remain_qty, '주문가격': price})
-                        gm.주문목록.set(key=origin_key, data=origin_row[0]) # 취소주문 접수 바로 다음 확인에서 삭제처리
+                        gm.주문목록.set(key=(code, kind), data=origin_row[0]) # 취소주문 접수 바로 다음 확인에서 삭제처리
                         return
                     else:
                         pass
@@ -844,7 +844,7 @@ class Admin:
                         self.stg_fx등록_종목감시([code], 1)
 
                     gm.set주문종목.add(code)
-                    row = {'키': key, '구분': kind, '상태': '외부접수', '종목코드': code, '종목명': name, '주문번호': order_no, '주문수량': qty, '미체결수량': remain_qty, '주문가격': price}
+                    row = {'구분': kind, '상태': '외부접수', '종목코드': code, '종목명': name, '주문번호': order_no, '주문수량': qty, '미체결수량': remain_qty, '주문가격': price}
                     gm.주문목록.set(key=key, data=row)
                     logging.debug(f'외부주문 접수: order_no={order_no} \n주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
 
@@ -873,17 +873,17 @@ class Admin:
             remain_qty = int(dictFID.get('미체결수량', 0) or 0)
 
             if qty == 0 and remain_qty == 0: 
-                gm.주문목록.delete(key=f'{dictFID["종목코드"]}_{dictFID["주문구분"]}')
+                gm.주문목록.delete(key=(dictFID["종목코드"], dictFID["주문구분"]))
                 return # 주문취소 클리어
 
             kind = dictFID.get('주문구분', '')
             code = dictFID['종목코드']
-            key = f'{code}_{kind}'
             name = dictFID['종목명']
             price = int(dictFID.get('체결가', 0) or 0)
             amount = price * qty
             order_no = dictFID.get('주문번호', '')
 
+            key = (code, kind)
             order_row = gm.주문목록.get(key=key)
             if not order_row:
                 logging.error(f"주문목록이 None 입니다. {code} {name} 매도 체결처리 디비 저장 실패 ***")
@@ -924,7 +924,7 @@ class Admin:
 
             if remain_qty == 0:
                 gm.set주문종목.discard(code)
-                gm.주문목록.delete(key=f'{code}_{kind}') # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
+                gm.주문목록.delete(key=(code, kind)) # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
 
         except Exception as e:
             logging.error(f"주문 체결 오류: {kind} {type(e).__name__} - {e}", exc_info=True)

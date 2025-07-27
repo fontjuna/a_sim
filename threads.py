@@ -127,8 +127,8 @@ class PriceUpdater(QThread):
                 '누적거래량': int(row.get('누적거래량', 0)),
             })
 
-            key = f'{code}_매도'
-            data={'키': key, '구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
+            #key = f'{code}_매도'
+            data={'구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
             row.update({'rqname': '신규매도', 'account': gm.account})
             if code in gm.set주문종목:
                 #logging.debug(f'주문 중인 종목: {code} {row["종목명"]} {gm.set주문종목.list()}  {"*"*20}')
@@ -136,7 +136,7 @@ class PriceUpdater(QThread):
             else: 
                 gm.set주문종목.add(code)
                 # if row['주문가능수량'] > 0: 
-                gm.주문목록.set(key=key, data=data)
+                gm.주문목록.set(key=(code, '매도'), data=data)
                 gm.eval_q.put((code, 'sell', {'row': row}))
 
             gm.잔고목록.set(key=code, data=row)
@@ -231,7 +231,7 @@ class OrderCommander(QThread):
         gm.admin.send_status_msg('주문내용', job)
 
         rqname = f'{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
-        key = f'{code}_{주문유형.lstrip("신규")}'
+        key = (code, 주문유형.lstrip("신규"))
         gm.주문목록.set(key=key, data={'상태': '전송', '요청명': rqname})
 
         cmd = { 'rqname': rqname, 'screen': screen, 'accno': accno, 'ordtype': ordtype, 'code': code, 'hoga': hoga, 'quantity': quantity, 'price': price, 'ordno': ordno }
@@ -429,11 +429,9 @@ class EvalStrategy(QThread):
                     data.pop('time')
 
             if 'script' in data:
-
-
                 if '차트미비' not in reason: 
                     logging.info(f'매수안함: {reason} send_data={send_data}')
-                key = f'{data["code"]}_매수'
+                key = (data[0], '매수')
                 if gm.주문목록.in_key(key):
                     gm.주문목록.delete(key=key)
         except Exception as e:
@@ -535,7 +533,7 @@ class EvalStrategy(QThread):
         else:
             if '차트미비' not in reason: 
                 logging.info(f'매수안함: {reason} send_data={send_data}')
-            key = f'{code}_매수'
+            key = (code, '매수')
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)
             gm.set주문종목.discard(code)
@@ -680,7 +678,7 @@ class EvalStrategy(QThread):
             else:
                 gm.order_q.put(send_data)
         else:
-            key = f'{code}_매도'
+            key = (code, '매도')
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)
             gm.set주문종목.discard(code)
