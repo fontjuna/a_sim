@@ -135,9 +135,12 @@ class PriceUpdater(QThread):
                 pass
             else: 
                 gm.set주문종목.add(code)
-                if row['주문가능수량'] > 0: 
-                    gm.주문목록.set(key=key, data=data)
-                    gm.eval_q.put({'sell': {'row': row}})
+                # if row['주문가능수량'] > 0: 
+                gm.주문목록.set(key=key, data=data)
+                gm.eval_q.put((code, 'sell', {'row': row}))
+
+            # gm.주문목록.set(key=key, data=data)
+            # gm.eval_q.put((code, 'sell', {'row': row}))
 
             gm.잔고목록.set(key=code, data=row)
 
@@ -391,25 +394,26 @@ class EvalStrategy(QThread):
             self.eval_order(data)
 
     def eval_order(self, data):
-        if 'buy' in data:
-            if 'time' in data['buy']:
-                if data['buy']['time'] > datetime.now() - timedelta(seconds=0.4):
+        # data = (code, type, kwargs)
+        # if data[0] in gm.set주문종목:
+        #     logging.debug(f'주문 중인 종목: {data[0]} {data[1]} {gm.set주문종목.list()} {"*"*20}')
+        #     return
+        # gm.set주문종목.add(data[0])
+
+        if data[1] == 'buy':
+            if 'time' in data[2]:
+                if data[2]['time'] > datetime.now() - timedelta(seconds=0.4):
+                    # gm.set주문종목.discard(data[0])
                     time.sleep(0.005)
                     self.eval_q.put(data)
                     return
-            buy_args = {k: v for k, v in data['buy'].items() if k != 'time'}
-            self.order_buy(**buy_args)
-            #self.buy_executor.submit(self.order_buy, **buy_args)
-            #future =self.buy_executor.submit(self.order_buy, **buy_args)
-            #future.add_done_callback(lambda f: self.buy_done_callback(f, data['buy']))
+            self.order_buy(data[0], data[2].get('rqname', '신규매수'), data[2].get('price', 0))
             
-        elif 'sell' in data:
-            #self.sell_executor.submit(self.order_sell, **data['sell'])
-            self.order_sell(**data['sell'])
+        elif data[1] == 'sell':
+            self.order_sell(data[0], data[2].get('row', {}), data[2].get('sell_condition', False))
             
-        elif 'cancel' in data:
-            self.order_cancel(**data['cancel']) # buy에 꼽사리
-            #self.buy_executor.submit(self.order_cancel, **data['cancel']) # buy에 꼽사리
+        elif data[1] == 'cancel':
+            self.order_cancel(data[0], data[2].get('kind', ''), data[2].get('order_no', ''))
 
     def buy_done_callback(self, future, data):
         try:
@@ -422,7 +426,7 @@ class EvalStrategy(QThread):
             if 'time' in data:
                 if data['time'] < datetime.now() - timedelta(seconds=0.1):
                     time.sleep(0.005)
-                    self.eval_q.put({'buy': data})
+                    self.eval_q.put((data['code'], 'buy', data))
                     return
                 else:
                     data.pop('time')
@@ -501,7 +505,7 @@ class EvalStrategy(QThread):
                 else:
                     # 다시 넣음 최대 0.1초 동안 차트데이타 준비될 때까지 반복함
                     logging.error(f'차트데이터 준비 안 됨: 매수 {code} {name} {price}')
-                    gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price, 'time': datetime.now()}})
+                    gm.eval_q.put((code, 'buy', {'rqname': '신규매수', 'price': price, 'time': datetime.now()}))
                     return False, {}, f"차트미비: {code} {name}"
 
             # 호가구분과 가격 설정
@@ -665,13 +669,13 @@ class EvalStrategy(QThread):
             logging.error(f'매도조건 확인 중 오류: {type(e).__name__} - {e}', exc_info=True)
             return False, {}, "검사오류"
 
-    def order_sell(self, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
+    def order_sell(self, code, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
         is_ok, send_data, reason = self.is_sell(row, sell_condition)
         if reason not in ["조건없음", "장 운영시간이 아님"]:
             logging.info(f'매도결정: {reason}\nsend_data={send_data}')
         if is_ok:
             if not self.매도적용:
-                gm.admin.send_status_msg('주문내용', {'구분': f'매도편입', '종목코드': row['종목번호'], '종목명': row['종목명'], '메시지': '/ 검사결과'})
+                gm.admin.send_status_msg('주문내용', {'구분': f'매도편입', '종목코드': code, '종목명': row['종목명'], '메시지': '/ 검사결과'})
             if isinstance(send_data, list):
                 logging.debug(f'** 복수 매도 주문목록 **: {send_data}')
                 for data in send_data:
@@ -679,14 +683,14 @@ class EvalStrategy(QThread):
             else:
                 gm.order_q.put(send_data)
         else:
-            key = f'{row["종목번호"]}_매도'
+            key = f'{code}_매도'
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)
-            gm.set주문종목.discard(row['종목번호'])
+            gm.set주문종목.discard(code)
 
         return is_ok, send_data, reason
 
-    def order_cancel(self, kind, order_no, code):
+    def order_cancel(self, code, kind, order_no):
         try:
             rqname = '매수취소' if kind == '매수' else '매도취소'
 
