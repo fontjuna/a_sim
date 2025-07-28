@@ -95,6 +95,8 @@ class PriceUpdater(QThread):
     
     def update_current_price(self, code, row):
         try:
+            if not gm.잔고목록.in_key(code): return
+            
             현재가 = row['현재가']
             최고가 = row.get('최고가', 0)
             감시율 = row.get('감시시작율', 0.0) / 100
@@ -127,15 +129,11 @@ class PriceUpdater(QThread):
                 '누적거래량': int(row.get('누적거래량', 0)),
             })
 
-            #key = f'{code}_매도'
             data={'구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
             row.update({'rqname': '신규매도', 'account': gm.account})
-            if code in gm.set주문종목:
-                #logging.debug(f'주문 중인 종목: {code} {row["종목명"]} {gm.set주문종목.list()}  {"*"*20}')
-                pass
-            else: 
+
+            if not code in gm.set주문종목: 
                 gm.set주문종목.add(code)
-                # if row['주문가능수량'] > 0: 
                 gm.주문목록.set(key=(code, '매도'), data=data)
                 gm.eval_q.put((code, 'sell', {'row': row}))
 
@@ -359,8 +357,8 @@ class EvalStrategy(QThread):
         self.stop_time = '15:18'  # 매수시간 종료
         self.running = False
         self.cht_dt = ChartData()
-        self.sell_executor = ThreadPoolExecutor(max_workers=2)
-        self.buy_executor = ThreadPoolExecutor(max_workers=2)
+        self.sell_executor = ThreadPoolExecutor(max_workers=3)
+        self.buy_executor = ThreadPoolExecutor(max_workers=1)
 
     def set_dict(self, new_dict: dict) -> None:
         """딕셔너리 업데이트 및 인스턴스 변수 동기화"""
@@ -391,26 +389,18 @@ class EvalStrategy(QThread):
             self.eval_order(data)
 
     def eval_order(self, data):
-        # data = (code, type, kwargs)
-        # if data[0] in gm.set주문종목:
-        #     logging.debug(f'주문 중인 종목: {data[0]} {data[1]} {gm.set주문종목.list()} {"*"*20}')
-        #     return
-        # gm.set주문종목.add(data[0])
-
-        if data[1] == 'buy':
-            if 'time' in data[2]:
-                if data[2]['time'] > datetime.now() - timedelta(seconds=0.4):
-                    # gm.set주문종목.discard(data[0])
-                    time.sleep(0.005)
-                    self.eval_q.put(data)
-                    return
-            self.order_buy(data[0], data[2].get('rqname', '신규매수'), data[2].get('price', 0))
+        if 'time' in data[2]:
+            if data[2]['time'] > datetime.now() - timedelta(seconds=0.4):
+                time.sleep(0.005)
+                self.eval_q.put(data)
+                return
             
-        elif data[1] == 'sell':
-            self.order_sell(data[0], data[2].get('row', {}), data[2].get('sell_condition', False))
-            
-        elif data[1] == 'cancel':
-            self.order_cancel(data[0], data[2].get('kind', ''), data[2].get('order_no', ''))
+        if data[1] == 'buy': 
+            self.buy_executor.submit(self.order_buy, data[0], data[2].get('rqname', '신규매수'), data[2].get('price', 0))
+        elif data[1] == 'sell': 
+            self.sell_executor.submit(self.order_sell, data[0], data[2].get('row', {}), data[2].get('sell_condition', False))
+        elif data[1] == 'cancel': 
+            self.buy_executor.submit(self.order_cancel, data[0], data[2].get('kind', ''), data[2].get('order_no', ''))
 
     def buy_done_callback(self, future, data):
         try:
@@ -642,7 +632,7 @@ class EvalStrategy(QThread):
                         send_data['msg'] = '스탑주문'
                         return True, send_data, f"스탑주문율: 스탑주문율율={self.스탑주문율} 수익률={수익률}  {code} {종목명}"
 
-            if gm.sim_no != 1 and self.매도스크립트적용:
+            if gm.sim_no != 1 and self.매도스크립트적용 and code != '999999':
                 if self.cht_dt.is_code_registered(code):
                     result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
                     if not result['error']:
@@ -655,8 +645,12 @@ class EvalStrategy(QThread):
                         logging.error(f'스크립트 실행 에러: {result["error"]}')
                         gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                 else:
+                    # 다시 넣음 최대 0.1초 동안 차트데이타 준비될 때까지 반복함
                     logging.error(f'차트데이터 준비 안 됨: 매도 {code} {종목명} {매입가} {보유수량}')
-                    result = {'error': '차트데이터 준비 안 됨'} # 차트데이터 준비 안 될 수 없음
+                    gm.eval_q.put((code, 'sell', {'code': code, 'row': row, 'sell_condition': sell_condition, 'time': datetime.now()}))
+                    return False, {}, f"차트미비: {code} {종목명}"
+                    # logging.error(f'차트데이터 준비 안 됨: 매도 {code} {종목명} {매입가} {보유수량}')
+                    # result = {'error': '차트데이터 준비 안 됨'} # 차트데이터 준비 안 될 수 있음 (시작시 보유종목 처리 시)
 
             return False, {}, "조건없음"
 
@@ -720,6 +714,6 @@ class EvalStrategy(QThread):
             self.clear_timer = QTimer()
             self.clear_timer.setSingleShot(True)
             self.clear_timer.setInterval(delay_msec)
-            self.clear_timer.timeout.connect(lambda: self.order_sell(row))
+            self.clear_timer.timeout.connect(lambda: self.order_sell('999999', row))
             self.clear_timer.start(delay_msec)
 

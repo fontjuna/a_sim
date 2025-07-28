@@ -279,7 +279,7 @@ class Admin:
             
             if gm.잔고목록.in_key(code):
                 row = gm.잔고목록.get(key=code)
-                row.update({'현재가': 현재가, '등락율': float(dictFID.get('등락률', 0)), '누적거래량': int(dictFID.get('누적거래량', 0))})
+                row.update({'현재가': 현재가, '등락율': float(dictFID.get('등락율', 0)), '누적거래량': int(dictFID.get('누적거래량', 0))})
                 if row: gm.price_q.put((code, row)) # PriceUpdater
 
         except Exception as e:
@@ -923,6 +923,13 @@ class Admin:
             logging.info(msg)
 
             if remain_qty == 0:
+                if kind == '매도':
+                    if not gm.잔고목록.delete(key=code):
+                        logging.warning(f'잔고목록 삭제 실패: {code} {dictFID["종목명"]}')
+                    gm.holdings.pop(code, None)
+                    save_json(dc.fp.holdings_file, gm.holdings)
+                    if gm.잔고목록.len() == 0: self.pri_fx얻기_잔고합산()
+
                 gm.set주문종목.discard(code)
                 gm.주문목록.delete(key=(code, kind)) # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
 
@@ -940,17 +947,15 @@ class Admin:
             kind = '매도' if dictFID.get('매도/매수구분', '') == '2' else '매수'
             code = dictFID['종목코드'].lstrip('A')
             dictFID['종목코드'] = code
-            if 보유수량 == 0 and kind == '매도': 
-                #logging.warning(f'잔고목록 삭제전: {code} {dictFID["종목명"]}\n잔고목록=\n{tabulate(pd.DataFrame([gm.잔고목록.get(key=code)]), headers="keys", showindex=True, numalign="right")}')
-                if not gm.잔고목록.delete(key=code):
-                    logging.warning(f'잔고목록 삭제 실패: {code} {dictFID["종목명"]}')
-                    # input('any key press to continue ...')
-                gm.holdings.pop(code, None)
-                save_json(dc.fp.holdings_file, gm.holdings)
-                if gm.잔고목록.len() == 0: self.pri_fx얻기_잔고합산()
+            # if 보유수량 == 0: 
+            #     if not gm.잔고목록.delete(key=code):
+            #         logging.warning(f'잔고목록 삭제 실패: {code} {dictFID["종목명"]}')
+            #     gm.holdings.pop(code, None)
+            #     save_json(dc.fp.holdings_file, gm.holdings)
+            #     if gm.잔고목록.len() == 0: self.pri_fx얻기_잔고합산()
 
-            if gm.잔고목록.in_key(code):
-                gm.잔고목록.set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량, '주문가능수량': 주문가능수량, '현재가': 현재가})
+            # if gm.잔고목록.in_key(code):
+            gm.잔고목록.in_key_set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량, '주문가능수량': 주문가능수량, '현재가': 현재가})
 
             msg = f"잔고변경 : {code} {dictFID['종목명']} 보유수량:{보유수량}주 매입단가:{매입단가}원 매입금액:{보유수량 * 매입단가}원 주문가능수량:{주문가능수량}주"
             logging.info(msg)
