@@ -402,7 +402,7 @@ class EvalStrategy(QThread):
         elif data[1] == 'cancel': 
             self.buy_executor.submit(self.order_cancel, data[0], data[2].get('kind', ''), data[2].get('order_no', ''))
 
-    def buy_done_callback(self, future, data):
+    def is_buy_callback(self, future, data):
         try:
             is_ok, send_data, reason = future.result()
             if is_ok:
@@ -580,11 +580,29 @@ class EvalStrategy(QThread):
                 send_data['price'] = hoga(현재가, self.매도호가)
                 send_data['msg'] = '매도지정'
 
-            if self.매도적용 and sell_condition: # 검색 종목이므로 그냥 매도
-                if gm.sim_no != 1 and script_or:
+            if self.매도적용:
+                if script_or and sell_condition: # 검색 종목이므로 그냥 매도
                     #if result.get('error'): return False, {}, f"{result['error']}: {code} {종목명}"
                     send_data['msg'] = '검색매도'
                     return True, send_data,  f"검색매도: {code} {종목명}"
+                else:
+                    if gm.sim_no != 1 and self.매도스크립트적용 and code != '999999':
+                        if self.cht_dt.is_code_registered(code):
+                            result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
+                            if not result['error']:
+                                if result.get('result', False): # self.매도스크립트AND 조건
+                                    send_data['msg'] = '전략매도'
+                                    gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
+                                    logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
+                                    return True, send_data, f"전략매도: {code} {종목명}"
+                            else:
+                                logging.error(f'스크립트 실행 에러: {result["error"]}')
+                                gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
+                        else:
+                            # 다시 넣음 최대 0.1초 동안 차트데이타 준비될 때까지 반복함
+                            logging.error(f'차트데이터 준비 안 됨: 매도 {code} {종목명} {매입가} {보유수량}')
+                            gm.eval_q.put((code, 'sell', {'code': code, 'row': row, 'sell_condition': sell_condition, 'time': datetime.now()}))
+                            return False, {}, f"차트미비: {code} {종목명}"
 
             if self.로스컷 and self.로스컷율 != 0:
                 send_list = []
@@ -631,26 +649,6 @@ class EvalStrategy(QThread):
                     if 고점대비하락률 + self.스탑주문율 <= 0:
                         send_data['msg'] = '스탑주문'
                         return True, send_data, f"스탑주문율: 스탑주문율율={self.스탑주문율} 수익률={수익률}  {code} {종목명}"
-
-            if gm.sim_no != 1 and self.매도스크립트적용 and code != '999999':
-                if self.cht_dt.is_code_registered(code):
-                    result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
-                    if not result['error']:
-                        if result.get('result', False): # self.매도스크립트AND 조건
-                            send_data['msg'] = '전략매도'
-                            gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
-                            logging.info(f">>> 매도스크립트 조건 충족: {code} {종목명} {매입가} {보유수량}")
-                            return True, send_data, f"전략매도: {code} {종목명}"
-                    else:
-                        logging.error(f'스크립트 실행 에러: {result["error"]}')
-                        gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
-                else:
-                    # 다시 넣음 최대 0.1초 동안 차트데이타 준비될 때까지 반복함
-                    logging.error(f'차트데이터 준비 안 됨: 매도 {code} {종목명} {매입가} {보유수량}')
-                    gm.eval_q.put((code, 'sell', {'code': code, 'row': row, 'sell_condition': sell_condition, 'time': datetime.now()}))
-                    return False, {}, f"차트미비: {code} {종목명}"
-                    # logging.error(f'차트데이터 준비 안 됨: 매도 {code} {종목명} {매입가} {보유수량}')
-                    # result = {'error': '차트데이터 준비 안 됨'} # 차트데이터 준비 안 될 수 있음 (시작시 보유종목 처리 시)
 
             return False, {}, "조건없음"
 

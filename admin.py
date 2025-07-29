@@ -619,12 +619,10 @@ class Admin:
                 gm.set주문종목.add(code)
                 price = int((gm.dict종목정보.get(code, '현재가') or hoga(gm.dict종목정보.get(code, '전일가'), 99)))
                 logging.debug(f'매수 시장가: {code} {종목명} {price}')
-                #gm.eval_q.put({'buy': {'code': code, 'rqname': '신규매수', 'price': price}})
                 gm.eval_q.put((code, 'buy', {'rqname': '신규매수', 'price': price}))
             elif kind == '매도' and self.매도시장가:
                 gm.set주문종목.add(code)
                 row = gm.잔고목록.get(key=code)
-                #gm.eval_q.put({'sell': {'row': row, 'sell_condition': True}})
                 gm.eval_q.put((code, 'sell', {'row': row, 'sell_condition': True}))
             else:
                 gm.dict주문대기종목.set(key=code, value={'kind': kind})
