@@ -871,6 +871,10 @@ class GUI(QMainWindow, form_class):
                 if not self.ledConditionBuy.text():
                     QMessageBox.warning(self, '알림', '매수 조건식을 입력하세요.')
                     return
+            if self.chkScriptSell.isChecked() and self.rbScriptSellAnd.isChecked():
+                if not self.chkConditionSell.isChecked():
+                    QMessageBox.warning(self, '알림', '매도전략이 지정되지 않았습니다.')
+                    return
             if self.chkConditionSell.isChecked():
                 if not self.ledConditionSell.text():
                     QMessageBox.warning(self, '알림', '매도 조건식을 입력하세요.')

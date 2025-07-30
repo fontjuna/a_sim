@@ -555,7 +555,7 @@ class Admin:
 
             if code in gm.set주문종목: 
                 logging.warning(f'주문 중인 종목: {code} {종목명} {gm.set주문종목.list()} {"*"*5}')
-                return
+                return # 주문 중인 종목
 
             if not gm.dict종목정보.contains(code):
                 전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
@@ -569,12 +569,11 @@ class Admin:
             key = (code, kind)
             if kind == '매도':
                 if not gm.잔고목록.in_key(code): 
-                    #logging.debug(f'매도 할 종목 없음: {code} {종목명}')
                     return # 매도 할 종목 없음 - 매도조건목록에도 추가 하지도 않고 있지도 않음
                 
-                if gm.잔고목록.get(key=code, column='주문가능수량') == 0: # 체결시 해제 하고 잔고처리 하는 사이에 재 주문 들어 오는 것 방지
-                    logging.debug(f'매도 가능 수량 없음: {code} {종목명}')
-                    return # 매도 가능 수량 없음
+                # if gm.잔고목록.get(key=code, column='주문가능수량') == 0: # 체결시 해제 하고 잔고처리 하는 사이에 재 주문 들어 오는 것 방지
+                #     logging.debug(f'매도 가능 수량 없음: {code} {종목명}')
+                #     return # 매도 가능 수량 없음
 
                 # if gm.주문목록.in_key(key): 
                 #     logging.debug(f'매도 주문 처리 중: {code} {종목명}')
@@ -584,8 +583,8 @@ class Admin:
                     gm.매도조건목록.set(key=code, data={'종목명': 종목명})
 
                 self.send_status_msg('주문내용', {'구분': f'{kind}편입', '종목코드': code, '종목명': 종목명, '메시지': '/ 조건검색'})
-                if not gm.잔고목록.in_key(code): 
-                    gm.setter_q.put(code)
+                # if not gm.잔고목록.in_key(code): # 위에서 return 함
+                #     gm.setter_q.put(code)
 
                 gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
@@ -596,13 +595,16 @@ class Admin:
                 if gm.잔고목록.in_key(code): 
                     #logging.debug(f'기 보유종목: {code} {종목명}')
                     return # 기 보유종목
+                
                 # if gm.주문목록.in_key(key): 
                 #     logging.debug(f'매수 주문 처리 중: {code} {종목명}')
                 #     return # 주문 처리 중 - 여기에 있어야 메세지 생략 안 함     
                 
                 if not gm.매수조건목록.in_key(code): 
                     gm.매수조건목록.set(key=code, data={'종목명': 종목명})
+
                 self.send_status_msg('주문내용', {'구분': f'{kind}편입', '종목코드': code, '종목명': 종목명, '메시지': '/ 조건검색'})
+                
                 gm.setter_q.put(code)
                 gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
 
@@ -615,15 +617,15 @@ class Admin:
             data={'키': key, '구분': kind, '상태': '대기', '종목코드': code, '종목명': 종목명, '전략매도': True}
             gm.주문목록.set(key=key, data=data) # 아래 보다 먼저 실행 해야 함
 
-            if kind == '매수' and self.매수시장가:
+            if self.매수시장가 or self.매도시장가:
                 gm.set주문종목.add(code)
-                price = int((gm.dict종목정보.get(code, '현재가') or hoga(gm.dict종목정보.get(code, '전일가'), 99)))
-                logging.debug(f'매수 시장가: {code} {종목명} {price}')
-                gm.eval_q.put((code, 'buy', {'rqname': '신규매수', 'price': price}))
-            elif kind == '매도' and self.매도시장가:
-                gm.set주문종목.add(code)
-                row = gm.잔고목록.get(key=code)
-                gm.eval_q.put((code, 'sell', {'row': row, 'sell_condition': True}))
+                if kind == '매수':
+                    price = int((gm.dict종목정보.get(code, '현재가') or hoga(gm.dict종목정보.get(code, '전일가'), 99)))
+                    gm.eval_q.put((code, 'buy', {'rqname': '신규매수', 'price': price}))
+                elif kind == '매도':
+                    row = gm.잔고목록.get(key=code)
+                    gm.eval_q.put((code, 'sell', {'row': row, 'sell_condition': True}))
+                logging.debug(f'{kind} 시장가 주문: {code} {종목명} {price}')
             else:
                 gm.dict주문대기종목.set(key=code, value={'kind': kind})
   
