@@ -114,7 +114,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     }
 
     CONC_TABLE_NAME = 'conclusion'
-    CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND sim_no = ? AND 매도수량 > 0 ORDER BY 매수일자, 매수시간 DESC"
+    CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND sim_no = ? AND 매도수량 > 0 ORDER BY 매도시간 DESC"
     CONC_FIELDS = [f.id, f.종목번호, f.종목명, f.손익금액, f.손익율, f.매수일자, f.매수시간,\
                     f.매수수량, f.매수가, f.매수금액, f.매수번호, f.매도일자, f.매도시간, f.매도수량,\
                     f.매도가, f.매도금액, f.매도번호, f.제비용, f.매수전략, f.전략명칭, f.처리일시, f.sim_no]
