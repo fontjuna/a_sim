@@ -9,6 +9,8 @@ __pycache__/
 # 폴더
 db/
 log/
+config/
+script/
 
 # Distribution / packaging
 .Python
@@ -33,6 +35,8 @@ wheels/
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+.spec/
+spec/
 
 # Installer logs
 pip-log.txt

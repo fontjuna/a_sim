@@ -463,7 +463,9 @@ class BaseModel:
 
     def _run_loop_iteration(self):
         """각 모델별 특수 처리를 위한 메서드 (오버라이드 가능)"""
-        pass
+        if hasattr(self.instance, 'loop_worker_model'):
+            self.instance.loop_worker_model()
+        #pass
 
     def _common_run_logic(self):
         """공통 run 로직"""

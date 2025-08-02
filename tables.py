@@ -1580,15 +1580,13 @@ class TableManager:
     def _match_conditions(self, row, conditions):
         """항목이 조건에 맞는지 확인"""
         for column, value in conditions.items():
-            if column not in row:
-                return False
+            if column not in row: return False
                 
             item_value = row[column]
             
             # 문자열인 경우 포함 여부 확인
             if isinstance(item_value, str) and isinstance(value, str):
-                if value not in item_value:
-                    return False
+                if value not in item_value: return False
             # 컬럼 간 비교인 경우 ('컬럼' 또는 '@컬럼')
             elif isinstance(value, (list, tuple)) and len(value) == 2:
                 op, compare_value = value

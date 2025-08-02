@@ -22,16 +22,6 @@ class ProxyAdmin():
     def proxy_method(self, qwork):
         self.emit_q.put(qwork) # qwork = QWork()
 
-    # def on_receive_market_status(self, code, rtype, dictFID): # 장 운영 상황 감시
-    #     self.emit_q.put(QWork(method='on_receive_market_status', args=(code, rtype, dictFID,)))
-
-    # def on_receive_tr_data(self, code, name, order_no, screen, rqname):
-    #     logging.debug(f'프록시 주문결과: {code} {name} {order_no} {screen} {rqname}')
-    #     self.emit_q.put(QWork(method='on_receive_tr_data', args=(code, name, order_no, screen, rqname,)))
-
-    # def on_receive_real_condition(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
-    #     self.emit_q.put(QWork(method='on_receive_real_condition', args=(code, type, cond_name, cond_index,)))
-
     def on_receive_real_data(self, code, rtype, dictFID):
         self.emit_real_q.put((code, rtype, dictFID))
 
@@ -132,10 +122,12 @@ class PriceUpdater(QThread):
             data={'구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
             row.update({'rqname': '신규매도', 'account': gm.account})
 
-            if not code in gm.set주문종목: 
-                gm.set주문종목.add(code)
-                gm.주문목록.set(key=(code, '매도'), data=data)
-                gm.eval_q.put((code, 'sell', {'row': row}))
+            if not (gm.주문목록.in_key((code, '매수')) or gm.주문목록.in_key((code, '매도'))): # 이게 필요 없어야 하는데 왜 gm.set주문종목 에서 안 걸러지는지 모르겠음
+                # 부분적으로 매수 중인 경우 매도 사유 발생시 매수 미완료 시에도 매도 처리가 됨 따라서 매수된것만 매도 되고 나머진 계속 매수됨 실제와 프로그램 잔고 불일치
+                if not code in gm.set주문종목: 
+                    gm.set주문종목.add(code)
+                    gm.주문목록.set(key=(code, '매도'), data=data)
+                    gm.eval_q.put((code, 'sell', {'row': row}))
 
             gm.잔고목록.set(key=code, data=row)
 
@@ -394,13 +386,12 @@ class EvalStrategy(QThread):
                 time.sleep(0.005)
                 self.eval_q.put(data)
                 return
-            
         if data[1] == 'buy': 
             self.buy_executor.submit(self.order_buy, data[0], data[2].get('rqname', '신규매수'), data[2].get('price', 0))
         elif data[1] == 'sell': 
             self.sell_executor.submit(self.order_sell, data[0], data[2].get('row', {}), data[2].get('sell_condition', False))
         elif data[1] == 'cancel': 
-            self.buy_executor.submit(self.order_cancel, data[0], data[2].get('kind', ''), data[2].get('order_no', ''))
+            self.buy_executor.submit(self.order_cancel, data[0], data[2].get('rqname', ''), data[2].get('order_no', ''))
 
     def is_buy_callback(self, future, data):
         try:
@@ -518,11 +509,13 @@ class EvalStrategy(QThread):
     def order_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         is_ok, send_data, reason = self.is_buy(code, rqname, price) # rqname : 전략
         if is_ok:
-            logging.info(f'매수결정: {reason}\nsend_data={send_data}')
+            logging.info(f'매수결정: {reason}')
+            logging.debug(f'send_data={send_data}')
             gm.order_q.put(send_data)
         else:
             if '차트미비' not in reason: 
-                logging.info(f'매수안함: {reason} send_data={send_data}')
+                logging.info(f'매수안함: {reason}')
+                logging.debug(f'send_data={send_data}')
             key = (code, '매수')
             if gm.주문목록.in_key(key):
                 gm.주문목록.delete(key=key)
@@ -678,13 +671,11 @@ class EvalStrategy(QThread):
 
     def order_cancel(self, code, kind, order_no):
         try:
-            rqname = '매수취소' if kind == '매수' else '매도취소'
-
             send_data = {
-                'rqname': rqname,
-                'screen': dc.scr.화면[rqname],
+                'rqname': kind+'xx',
+                'screen': dc.scr.화면[kind+'취소'],
                 'accno': gm.account,
-                'ordtype': 3 if rqname == '매수취소' else 4,
+                'ordtype': 3 if kind == '매수' else 4,
                 'code': code,
                 'quantity': 0,
                 'price': 0,

@@ -587,7 +587,7 @@ class APIServer:
                 self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
                 self._set_signal_slots()
 
-            logging.debug(f'api_init completed: pid={pid} (Sim mode {self.sim_no}) ocx={self.ocx}')
+            logging.info(f'api_init completed: pid={pid} (Sim mode {self.sim_no}) ocx={self.ocx}')
             
         except Exception as e:
             logging.error(f"API 초기화 오류: {type(e).__name__} - {e}", exc_info=True)
@@ -629,7 +629,7 @@ class APIServer:
     
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
-        logging.info(f'API 로그 레벨 설정: {level}')
+        logging.debug(f'API 로그 레벨 설정: {level}')
 
     def thread_cleanup(self):
         # 실시간 데이터 스레드 정리
@@ -903,7 +903,7 @@ class APIServer:
         logging.debug(f'OnEventConnect: code={code}')
         self.connected = code == 0
         self.order('prx', 'set_connected', self.connected)
-        logging.debug(f'Login {"Success" if self.connected else "Failed"}')
+        logging.info(f'Login {"Success" if self.connected else "Failed"}')
 
     def OnReceiveConditionVer(self, ret, msg):
         logging.debug(f'ret={ret}, msg={msg}')

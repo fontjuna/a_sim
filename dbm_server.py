@@ -66,6 +66,9 @@ class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
     원주문번호 = FieldsAttributes(name='원주문번호', type='TEXT', not_null=True, default="''")
     전략명칭 = FieldsAttributes(name='전략명칭', type='TEXT', not_null=True, default="''")
     제비용 = FieldsAttributes(name='제비용', type='INTEGER', not_null=True, default=0)
+    조건구분 = FieldsAttributes(name='조건구분', type='TEXT', not_null=True, default="''")
+    조건번호 = FieldsAttributes(name='조건번호', type='TEXT', not_null=True, default="''")
+    조건식명 = FieldsAttributes(name='조건식명', type='TEXT', not_null=True, default="''")
     종목명 = FieldsAttributes(name='종목명', type='TEXT', not_null=True, default="''")
     종목번호 = FieldsAttributes(name='종목번호', type='TEXT', not_null=True, default="''")
     종목코드 = FieldsAttributes(name='종목코드', type='TEXT', not_null=True, default="''")
@@ -134,6 +137,14 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
         'idx_date_code': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_date_code ON {SIM_TABLE_NAME}(일자, 종목코드)"
     }
     
+    COND_TABLE_NAME = 'real_condition'
+    COND_SELECT_DATE = f"SELECT * FROM {COND_TABLE_NAME} WHERE substr(처리일시, 1, 10) = ? ORDER BY 처리일시"
+    COND_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.조건구분, f.조건번호, f.조건식명, f.전략명칭, f.매수전략, f.처리일시]
+    COND_COLUMNS = [col.name for col in COND_FIELDS]
+    COND_INDEXES = {
+        'idx_date_code': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_date_code ON {COND_TABLE_NAME}(처리일시)"
+    }
+    
     TICK_TABLE_NAME = 'tick_chart'
     TICK_SELECT_SAMPLE = f"SELECT * FROM {TICK_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 체결시간 DESC LIMIT 1"
     TICK_SELECT_DATE = f"SELECT * FROM {TICK_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
@@ -183,7 +194,7 @@ class DBMServer:
 
     def cleanup(self):
         try:
-            db_tables = [db_columns.TRD_TABLE_NAME, db_columns.CONC_TABLE_NAME]
+            db_tables = [db_columns.TRD_TABLE_NAME, db_columns.CONC_TABLE_NAME, db_columns.COND_TABLE_NAME]
             chart_tables = [db_columns.MIN_TABLE_NAME, db_columns.DAY_TABLE_NAME]
             for table in db_tables:
                 self.cleanup_old_data(db='db', table=table)
@@ -230,7 +241,7 @@ class DBMServer:
 
     def set_log_level(self, level):
         logging.getLogger().setLevel(level)
-        logging.info(f'DBM 로그 레벨 설정: {level}')
+        logging.debug(f'DBM 로그 레벨 설정: {level}')
 
     def db_initialize(self):
         """DB 초기화"""
@@ -255,6 +266,12 @@ class DBMServer:
         sql = self.create_table_sql(db_columns.SIM_TABLE_NAME, db_columns.SIM_FIELDS)
         db_cursor.execute(sql)
         for index in db_columns.SIM_INDEXES.values():
+            db_cursor.execute(index)
+
+        # 시뮬레이션 할 조건검색된 종목 테이블
+        sql = self.create_table_sql(db_columns.COND_TABLE_NAME, db_columns.COND_FIELDS)
+        db_cursor.execute(sql)
+        for index in db_columns.COND_INDEXES.values():
             db_cursor.execute(index)
 
         db_conn.commit()
@@ -328,6 +345,9 @@ class DBMServer:
             
         except Exception as e:
             logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)
+
+    def loop_worker_model(self):
+        """BaseModel의 워커 루프"""
 
     def execute_query(self, sql, db='chart', params=None):
         """SQL 실행"""
