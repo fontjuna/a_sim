@@ -651,7 +651,8 @@ class EvalStrategy(QThread):
     def order_sell(self, code, row: dict, sell_condition=False) -> tuple[bool, dict, str]:
         is_ok, send_data, reason = self.is_sell(row, sell_condition)
         if reason not in ["조건없음", "장 운영시간이 아님"]:
-            logging.info(f'매도결정: {reason}\nsend_data={send_data}')
+            logging.info(f'매도결정: {reason}')
+            logging.debug(f'send_data={send_data}')
         if is_ok:
             if not self.매도적용:
                 gm.admin.send_status_msg('주문내용', {'구분': f'매도편입', '종목코드': code, '종목명': row['종목명'], '메시지': '/ 검사결과'})

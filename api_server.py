@@ -1021,7 +1021,7 @@ class APIServer:
                 dictFID['보유수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
-                dictFID['매도/매수구분'] = '2' if order['ordtype'] == 2 else '1'
+                dictFID['매도/매수구분'] = '1' if order['ordtype'] == 2 else '2'
                 self.order('prx', 'on_receive_chejan_data', '1', dictFID)
             else:
                 dictFID = {}

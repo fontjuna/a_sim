@@ -139,7 +139,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     
     COND_TABLE_NAME = 'real_condition'
     COND_SELECT_DATE = f"SELECT * FROM {COND_TABLE_NAME} WHERE substr(처리일시, 1, 10) = ? ORDER BY 처리일시"
-    COND_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.조건구분, f.조건번호, f.조건식명, f.전략명칭, f.매수전략, f.처리일시]
+    COND_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.조건구분, f.조건번호, f.조건식명, f.전략명칭, f.매수전략, f.처리일시, f.sim_no]
     COND_COLUMNS = [col.name for col in COND_FIELDS]
     COND_INDEXES = {
         'idx_date_code': f"CREATE UNIQUE INDEX IF NOT EXISTS idx_date_code ON {COND_TABLE_NAME}(처리일시)"
@@ -496,3 +496,11 @@ class DBMServer:
         table = db_columns.SIM_TABLE_NAME
         result = self.execute_query(db_columns.SIM_SELECT_SIM, db='db', params=(dt,))
         return result
+
+    def insert_real_condition(self, code, type, cond_name, cond_index, st_name, st_buy, sim_no):
+        처리일시 = datetime.now().strftime("%Y%m%d%H%M%S")
+        record = {
+            '일자': 처리일시[:8], '시간': 처리일시[8:], '종목코드': code, '조건구분': type, '조건번호': cond_index, '조건식명': cond_name,
+            '전략명칭': st_name, '매수전략': st_buy, 'sim_no': sim_no
+            }
+        self.table_upsert('db', db_columns.COND_TABLE_NAME, record)

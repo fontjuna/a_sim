@@ -236,6 +236,8 @@ class Admin:
         if not gm.ready: return
         if gm.sim_no == 0 and time.time() < 90000: return
         try:
+            gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, self.전략명칭, self.매수전략, gm.sim_no)
+
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
             if condition == gm.매수문자열:
                 kind = '매수'
@@ -871,29 +873,25 @@ class Admin:
             단위체결량 = int(dictFID.get('단위체결량', 0) or 0)
             단위체결가 = int(dictFID.get('단위체결가', 0) or 0)
 
-        except Exception as e:
-            logging.error(f"주문 체결 오류: {kind} {type(e).__name__} - {e}", exc_info=True)
+            def buy_conclution():
+                try:
+                    data = {'종목번호': code, '종목명': name, '보유수량': qty, '매입가': price, '매입금액': amount, \
+                                '매수전략': 전략정의['매수전략'], '전략명칭': 전략정의['전략명칭'], '감시시작율': 전략정의['감시시작율'], '이익보존율': 전략정의['이익보존율'],\
+                                '감시': 0, '보존': 0, '매수일자': dc.ToDay, '매수시간': 매매시간, '매수번호': order_no, '매수수량': qty, '매수가': price, '매수금액': amount}
+                    if not gm.잔고목록.in_key(code):
+                        gm.holdings[code] = data
+                        save_json(dc.fp.holdings_file, gm.holdings)
 
-        def buy_conclution():
-            try:
-                data = {'종목번호': code, '종목명': name, '보유수량': qty, '매입가': price, '매입금액': amount, \
-                            '매수전략': 전략정의['매수전략'], '전략명칭': 전략정의['전략명칭'], '감시시작율': 전략정의['감시시작율'], '이익보존율': 전략정의['이익보존율'],\
-                            '감시': 0, '보존': 0, '매수일자': dc.ToDay, '매수시간': 매매시간, '매수번호': order_no, '매수수량': qty, '매수가': price, '매수금액': amount}
-                if not gm.잔고목록.in_key(code):
-                    gm.holdings[code] = data
-                    save_json(dc.fp.holdings_file, gm.holdings)
+                        # 매수 제한 기록
+                        gm.counter.set_add(code)
 
-                    # 매수 제한 기록
-                    gm.counter.set_add(code)
+                        logging.debug(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
 
-                    logging.debug(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
+                    gm.잔고목록.set(key=code, data=data)
 
-                gm.잔고목록.set(key=code, data=data)
+                except Exception as e:
+                    logging.error(f"매수 처리중 오류 발생: {code} {name} ***", exc_info=True)
 
-            except Exception as e:
-                logging.error(f"매수 처리중 오류 발생: {code} {name} ***", exc_info=True)
-
-        try:
             msg = {'구분': f'{kind}체결', '전략명칭': 전략명칭, '종목코드': code, '종목명': name,\
                     '주문수량': dictFID.get('주문수량', 0), '주문가격': dictFID.get('주문가격', 0), '주문번호': order_no}
             if kind == '매수': buy_conclution()
@@ -933,7 +931,7 @@ class Admin:
             #     save_json(dc.fp.holdings_file, gm.holdings)
             #     if gm.잔고목록.len() == 0: self.pri_fx얻기_잔고합산()
 
-            # if gm.잔고목록.in_key(code):
+            # gm.잔고목록.in_key(code)  있으면 업데이트 
             gm.잔고목록.in_key_set(key=code, data={'보유수량': 보유수량, '매입가': 매입단가, '매입금액': 매입단가 * 보유수량, '주문가능수량': 주문가능수량, '현재가': 현재가})
 
             msg = f"{kind}주문 잔고 변경: {code} {dictFID['종목명']} 보유수량={보유수량} 매입단가={매입단가} 매입금액={보유수량 * 매입단가} 주문가능수량={주문가능수량}"
