@@ -457,7 +457,7 @@ class Admin:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def stg_tickers_set_and_stop(self):
-        if gm.sim_no==0: gm.setter_q.put(gm.tickers_set)
+        #if gm.sim_no==0: gm.setter_q.put(gm.tickers_set)
         self.stg_stop()
 
     def stg_fx실행_전략매매(self):

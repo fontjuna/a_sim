@@ -9,6 +9,7 @@ import copy
 import time
 import multiprocessing as mp
 from collections import defaultdict
+from typing import Union
 
 @dataclass
 class FieldsAttributes: # 데이터베이스 필드 속성
@@ -19,7 +20,7 @@ class FieldsAttributes: # 데이터베이스 필드 속성
     autoincrement: bool = False
     unique: bool = False
     not_null: bool = False
-    index: any = False
+    index: Union[bool, str] = False #index=True 시 자동 생성, index='custom_index_name'이면 특정 이름으로 생성
     foreign_key: dict = None
     check: str = None
 
@@ -302,14 +303,14 @@ class DBMServer:
 
         logging.debug('dbm_initialize completed')
 
-    def create_table_sql(self, table_name, fields, pk_columns=None):
+    def create_table_sql(self, table_name, fields, conflict_cols=None):
         """테이블 생성 SQL문 생성"""
         field_definitions = []
         for field in fields:
             definition = f"{field.name} {field.type}"
             if field.not_null:
                 definition += " NOT NULL"
-            if field.unique:
+            if field.unique and (not conflict_cols or field.name not in conflict_cols):
                 definition += " UNIQUE"
             if field.primary:
                 definition += " PRIMARY KEY"
@@ -321,10 +322,13 @@ class DBMServer:
                 definition += f" CHECK({field.check})"
             if field.foreign_key:
                 fk = field.foreign_key
-                definition += f" REFERENCES {fk['table']}({fk['column']})"
+                columns = fk['columns'] if 'columns' in fk else [fk['column']] # columns=['id', 'user_id']  또는 단일 컬럼 ['id']
+                joined_columns = ', '.join(columns)
+                definition += f" REFERENCES {fk['table']}({joined_columns})"                
             field_definitions.append(definition)
-        if pk_columns:
-            field_definitions.append(f"PRIMARY KEY ({', '.join(pk_columns)})")
+        # 복합 UPSRERT키 설정
+        if conflict_cols:
+            field_definitions.append(f"UNIQUE ({', '.join(conflict_cols)})")
         return f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(field_definitions)});"
 
     def cleanup_old_data(self, db='db', table=db_columns.TRD_TABLE_NAME):
@@ -374,15 +378,29 @@ class DBMServer:
             conn.rollback()
             return None
 
-    def table_upsert(self, db, table, dict_data):
+    def table_upsert(self, db, table, dict_data, conflict_cols=None):
         """테이블 업서트"""
         try:
             is_list = isinstance(dict_data, list)   
             temp = dict_data[0] if is_list else dict_data
+
             columns = ','.join(temp.keys())
             column_str = ', '.join(['?'] * len(temp))
             params = [tuple(item.values()) for item in dict_data] if is_list else [tuple(dict_data.values())]
-            sql = f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ({column_str})"
+
+            if conflict_cols:
+                # UPDATE 대상 컬럼 정의 (conflict 컬럼 제외)
+                update_columns = [col for col in temp.keys() if col not in conflict_cols]
+                update_expr = ', '.join([f"{col}=excluded.{col}" for col in update_columns])
+                conflict_target = ', '.join(conflict_cols)
+
+                sql = f"""
+                INSERT INTO {table} ({columns})
+                VALUES ({column_str})
+                ON CONFLICT({conflict_target}) DO UPDATE SET {update_expr}
+                """
+            else:
+                sql = f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ({column_str})"
             #logging.debug(f'table_upsert: {sql}')
             self.execute_query(sql, db=db, params=params)
         except Exception as e:
