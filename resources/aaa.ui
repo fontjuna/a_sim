@@ -2462,7 +2462,7 @@
        </rect>
       </property>
       <property name="title">
-       <string>매수검색종목(체크:자동삭제)</string>
+       <string>매수검색목록(체크:자동삭제)</string>
       </property>
       <property name="checkable">
        <bool>true</bool>
@@ -2497,7 +2497,7 @@
        </rect>
       </property>
       <property name="title">
-       <string>주문접수종목</string>
+       <string>주문진행목록</string>
       </property>
       <widget class="QTableWidget" name="tblReceiptList">
        <property name="geometry">
@@ -2655,7 +2655,7 @@
        </rect>
       </property>
       <property name="title">
-       <string>매도검색종목(체크:자동삭제)</string>
+       <string>매도검색목록(체크:자동삭제)</string>
       </property>
       <property name="checkable">
        <bool>true</bool>

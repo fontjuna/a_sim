@@ -42,15 +42,7 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
         '컬럼': ['매수시간', '종목코드', '종목명'] + hd손익목록['정수'] + ['손익율', '전략명칭']
     })
 
-    # hd주문목록 = {
-    #     '키': '키', # 종목코드_구분 : 005930_매수
-    #     '정수': ['주문수량', '주문가격', '미체결수량'],
-    #     '실수': [],
-    #     '컬럼': ['키', '구분', '상태', '종목코드', '종목명', '주문번호', '주문수량', '주문가격', '미체결수량', '요청명', '비고'],
-    #     '헤더': ['구분', '상태', '종목코드', '종목명', '주문수량', '주문가격', '미체결수량', '비고'],
-    # }
-
-    hd주문목록 = {
+    hd주문진행목록 = {
         '키': ['종목코드', '구분'], # 종목코드_구분 : 005930_매수
         '정수': ['주문수량', '주문가격', '미체결수량'],
         '실수': [],
@@ -1821,15 +1813,15 @@ class TableManager:
 def set_tables():
     gm.잔고합산 = TableManager(tbl.hd잔고합산)
     gm.잔고목록 = TableManager(tbl.hd잔고목록)
-    gm.매수조건목록 = TableManager(tbl.hd조건목록)
-    gm.매도조건목록 = TableManager(tbl.hd조건목록)
+    gm.매수검색목록 = TableManager(tbl.hd조건목록)
+    gm.매도검색목록 = TableManager(tbl.hd조건목록)
+    gm.주문진행목록 = TableManager(tbl.hd주문진행목록)
     gm.손익목록 = TableManager(tbl.hd손익목록)
     gm.예수금 = TableManager(tbl.hd예수금)
     gm.일지합산 = TableManager(tbl.hd일지합산)
     gm.일지목록 = TableManager(tbl.hd일지목록)
     gm.체결목록 = TableManager(tbl.hd체결목록)
     gm.전략정의 = TableManager(tbl.hd전략정의)
-    gm.주문목록 = TableManager(tbl.hd주문목록)
     gm.매매목록 = TableManager(tbl.hd매매목록)
     gm.스크립트 = TableManager(tbl.hd스크립트)
     gm.차트자료 = TableManager(tbl.hd차트자료)

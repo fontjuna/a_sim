@@ -73,7 +73,6 @@ class Main:
     def show(self):
         if not gm.gui_on: return
         gm.gui.gui_show()
-        #gm.gui.init()
         time.sleep(0.1)
 
     def set_components(self):

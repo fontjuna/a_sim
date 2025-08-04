@@ -122,11 +122,11 @@ class PriceUpdater(QThread):
             data={'구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
             row.update({'rqname': '신규매도', 'account': gm.account})
 
-            if not (gm.주문목록.in_key((code, '매수')) or gm.주문목록.in_key((code, '매도'))): # 이게 필요 없어야 하는데 왜 gm.set주문종목 에서 안 걸러지는지 모르겠음
+            if not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))): # 이게 필요 없어야 하는데 왜 gm.set주문종목 에서 안 걸러지는지 모르겠음
                 # 부분적으로 매수 중인 경우 매도 사유 발생시 매수 미완료 시에도 매도 처리가 됨 따라서 매수된것만 매도 되고 나머진 계속 매수됨 실제와 프로그램 잔고 불일치
-                if not code in gm.set주문종목: 
-                    gm.set주문종목.add(code)
-                    gm.주문목록.set(key=(code, '매도'), data=data)
+                #if not code in gm.set주문종목: 
+                #    gm.set주문종목.add(code)
+                    gm.주문진행목록.set(key=(code, '매도'), data=data)
                     gm.eval_q.put((code, 'sell', {'row': row}))
 
             gm.잔고목록.set(key=code, data=row)
@@ -222,7 +222,7 @@ class OrderCommander(QThread):
 
         rqname = f'{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
         key = (code, 주문유형.lstrip("신규"))
-        gm.주문목록.set(key=key, data={'상태': '전송', '요청명': rqname})
+        gm.주문진행목록.set(key=key, data={'상태': '전송', '요청명': rqname})
 
         cmd = { 'rqname': rqname, 'screen': screen, 'accno': accno, 'ordtype': ordtype, 'code': code, 'hoga': hoga, 'quantity': quantity, 'price': price, 'ordno': ordno }
         self.prx.order('api', 'SendOrder', **cmd)
@@ -413,8 +413,8 @@ class EvalStrategy(QThread):
                 if '차트미비' not in reason: 
                     logging.info(f'매수안함: {reason} send_data={send_data}')
                 key = (data[0], '매수')
-                if gm.주문목록.in_key(key):
-                    gm.주문목록.delete(key=key)
+                if gm.주문진행목록.in_key(key):
+                    gm.주문진행목록.delete(key=key)
         except Exception as e:
             logging.error(f'주문 처리 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -517,9 +517,9 @@ class EvalStrategy(QThread):
                 logging.info(f'매수안함: {reason}')
                 logging.debug(f'send_data={send_data}')
             key = (code, '매수')
-            if gm.주문목록.in_key(key):
-                gm.주문목록.delete(key=key)
-            gm.set주문종목.discard(code)
+            if gm.주문진행목록.in_key(key):
+                gm.주문진행목록.delete(key=key)
+            #gm.set주문종목.discard(code)
 
         return is_ok, send_data, reason
 
@@ -657,16 +657,16 @@ class EvalStrategy(QThread):
             if not self.매도적용:
                 gm.admin.send_status_msg('주문내용', {'구분': f'매도편입', '종목코드': code, '종목명': row['종목명'], '메시지': '/ 검사결과'})
             if isinstance(send_data, list):
-                logging.debug(f'** 복수 매도 주문목록 **: {send_data}')
+                logging.debug(f'** 복수 매도 주문진행목록 **: {send_data}')
                 for data in send_data:
                     gm.order_q.put(data)
             else:
                 gm.order_q.put(send_data)
         else:
             key = (code, '매도')
-            if gm.주문목록.in_key(key):
-                gm.주문목록.delete(key=key)
-            gm.set주문종목.discard(code)
+            if gm.주문진행목록.in_key(key):
+                gm.주문진행목록.delete(key=key)
+            #gm.set주문종목.discard(code)
 
         return is_ok, send_data, reason
 

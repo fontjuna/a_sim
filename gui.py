@@ -138,7 +138,7 @@ class GUI(QMainWindow, form_class):
             self.btnTrCancel.clicked.connect(self.gui_tr_cancel)                        # 매매 취소 
             self.leTrCode.editingFinished.connect(lambda: self.gui_tr_code_changed(kind='tr'))             # 종목코드 변경
             self.tblBalanceHeld.cellClicked.connect(self.gui_balance_held_select)       # 잔고목록 선택
-            self.tblReceiptList.cellClicked.connect(self.gui_receipt_list_select)       # 주문목록 선택
+            self.tblReceiptList.cellClicked.connect(self.gui_receipt_list_select)       # 주문진행목록 선택
 
             #그룹박스 체크
             self.gbxBuyCheck.toggled.connect(lambda: self.gui_gbx_check(self.gbxBuyCheck.isChecked(), 'buy'))
@@ -245,9 +245,9 @@ class GUI(QMainWindow, form_class):
 
     def gui_table_update(self):
         gm.잔고목록.update_table_widget(self.tblBalanceHeld)
-        gm.매수조건목록.update_table_widget(self.tblConditionBuy)
-        gm.매도조건목록.update_table_widget(self.tblConditionSell)
-        gm.주문목록.update_table_widget(self.tblReceiptList)
+        gm.매수검색목록.update_table_widget(self.tblConditionBuy)
+        gm.매도검색목록.update_table_widget(self.tblConditionSell)
+        gm.주문진행목록.update_table_widget(self.tblReceiptList)
 
     # QWidget 이벤트 -------------------------------------------------------------------------------------
     def gui_account_reload(self):
@@ -538,13 +538,13 @@ class GUI(QMainWindow, form_class):
         if kind == 'buy':
             gm.gbx_buy_checked = value
             if value:
-                gm.매수조건목록.delete(filter={'이탈': '⊙'})
+                gm.매수검색목록.delete(filter={'이탈': '⊙'})
             else:
                 self.tblConditionBuy.setEnabled(True)
         else:
             gm.gbx_sell_checked = value
             if value:
-                gm.매도조건목록.delete(filter={'이탈': '⊙'})
+                gm.매도검색목록.delete(filter={'이탈': '⊙'})
             else:
                 self.tblConditionSell.setEnabled(True)
 
@@ -566,7 +566,7 @@ class GUI(QMainWindow, form_class):
         kind = self.tblReceiptList.item(row_index, 0).text()
         key = (code, kind)
         logging.debug(f'cell = [{row_index:02d}:{col_index:02d}] code = {code} kind = {kind} key = {key}')
-        row = gm.주문목록.get(key=key)
+        row = gm.주문진행목록.get(key=key)
         if row:
             self.leTrCode.setText(row['종목코드'])
             self.leTrName.setText(row['종목명'])
@@ -640,10 +640,10 @@ class GUI(QMainWindow, form_class):
             row['주문가능수량'] -= qty if row['주문가능수량'] >= qty else row['주문가능수량']
             gm.잔고목록.set(key=code, data=row)
 
-        gm.set주문종목.add(code)
+        #gm.set주문종목.add(code)
         key = (code, kind)
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
-        gm.주문목록.set(key=key, data=data) 
+        gm.주문진행목록.set(key=key, data=data) 
         # 주문 전송
         gm.order_q.put(send_data)
         gm.setter_q.put(code)
@@ -651,12 +651,12 @@ class GUI(QMainWindow, form_class):
     def gui_tr_cancel(self):
         text = self.leTrCancelKey.text().split('_')
         key = (text[0], text[1])
-        row = gm.주문목록.get(key=key)
+        row = gm.주문진행목록.get(key=key)
         if not row:
             QMessageBox.warning(self, '알림', '주문접수목록에서 취소할 항목을 선택하세요.')
             return
         if row['상태'] != '접수':
-            gm.주문목록.delete(key=key)
+            gm.주문진행목록.delete(key=key)
             return
         
         odrerno = row['주문번호']
@@ -1076,23 +1076,23 @@ class GUI(QMainWindow, form_class):
                 self.tblBalanceHeld.setColumnCount(len(dc.const.hd잔고목록['헤더']))
                 self.tblBalanceHeld.setHeaderLabels(dc.const.hd잔고목록['헤더'])
 
-            if gm.매수조건목록:
-                gm.매수조건목록.update_table_widget(self.tblConditionBuy)
+            if gm.매수검색목록:
+                gm.매수검색목록.update_table_widget(self.tblConditionBuy)
             else:
                 self.tblConditionBuy.setColumnCount(len(dc.const.hd조건목록['헤더']))
                 self.tblConditionBuy.setHeaderLabels(dc.const.hd조건목록['헤더'])
 
-            if gm.매도조건목록:
-                gm.매도조건목록.update_table_widget(self.tblConditionSell)
+            if gm.매도검색목록:
+                gm.매도검색목록.update_table_widget(self.tblConditionSell)
             else:
                 self.tblConditionSell.setColumnCount(len(dc.const.hd조건목록['헤더']))
                 self.tblConditionSell.setHeaderLabels(dc.const.hd조건목록['헤더'])
 
-            if gm.주문목록:
-                gm.주문목록.update_table_widget(self.tblReceiptList)    
+            if gm.주문진행목록:
+                gm.주문진행목록.update_table_widget(self.tblReceiptList)    
             else:
-                self.tblReceiptList.setColumnCount(len(dc.const.hd주문목록['헤더']))
-                self.tblReceiptList.setHeaderLabels(dc.const.hd주문목록['헤더'])
+                self.tblReceiptList.setColumnCount(len(dc.const.hd주문진행목록['헤더']))
+                self.tblReceiptList.setHeaderLabels(dc.const.hd주문진행목록['헤더'])
 
         except Exception as e:
             logging.error(f'목록테이블 갱신 오류: {type(e).__name__} - {e}', exc_info=True)

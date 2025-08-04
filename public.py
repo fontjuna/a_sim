@@ -642,7 +642,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.list전략튜플 = []
         self.list스크립트 = []
         self.dict종목정보 = None     # ThreadSafeDict() # 종목정보 = {종목코드: {'종목명': 종목명, '현재가': 현재가, '전일가': 전일가}}
-        self.dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
+        #self.dict주문대기종목 = None # ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
 
         self.qwork = {} # {'gui': Queue(), 'msg': Queue()}
     
@@ -654,15 +654,15 @@ class GlobalMemory:      # 글로벌 메모리 정의
 
         self.잔고합산 = None # TableManager
         self.잔고목록 = None # TableManager
-        self.매수조건목록 = None # TableManager
-        self.매도조건목록 = None # TableManager
+        self.매수검색목록 = None # TableManager
+        self.매도검색목록 = None # TableManager
+        self.주문진행목록 = None # TableManager
         self.예수금 = None # TableManager
         self.일지합산 = None # TableManager
         self.일지목록 = None # TableManager
         self.체결목록 = None # TableManager
         self.손익목록 = None # TableManager
         self.전략정의 = None # TableManager
-        self.주문목록 = None # TableManager
         self.매매목록 = None # TableManager
         self.스크립트 = None # TableManager
         self.차트자료 = None # TableManager
@@ -688,7 +688,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.매도문자열 = ''
         self.set종목감시 = set()
         self.set조건감시 = set() 
-        self.set주문종목 = None # ThreadSafeSet()
+        #self.set주문종목 = None # ThreadSafeSet()
         self.수수료율 = 0.0
         self.세금율 = 0.0
         self.holdings = {}
