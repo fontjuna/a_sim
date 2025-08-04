@@ -263,7 +263,8 @@ class Admin:
             현재가 = abs(int(dictFID['현재가']))
             updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
             if updated:
-                data = gm.dict주문대기종목.get(code, None)
+                #data = gm.dict주문대기종목.get(code, None)
+                data = gm.주문목록.get(filter={'종목코드': code, '상태': '대기'})
                 if data:
                     gm.주문목록.set(key=(code, data["kind"]), data={'상태': '요청'})
                     if data['kind'] == '매수':
@@ -272,8 +273,8 @@ class Admin:
                         row = gm.잔고목록.get(key=code)
                         row['현재가'] = 현재가
                         gm.eval_q.put((code, 'sell', {'row': row, 'sell_condition': True}))
-                if gm.dict주문대기종목.contains(code):
-                    gm.dict주문대기종목.remove(code)
+                # if gm.dict주문대기종목.contains(code):
+                #     gm.dict주문대기종목.remove(code)
 
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
             
@@ -561,9 +562,9 @@ class Admin:
                 logging.debug(f'주문 처리 중인 종목: {kind} {code} {종목명}')
                 return
             
-            if gm.dict주문대기종목.contains(code):
-                logging.debug(f'주문 대기 종목: {kind} {code} {종목명}')
-                return
+            #if gm.dict주문대기종목.contains(code):
+            #    logging.debug(f'주문 대기 종목: {kind} {code} {종목명}')
+            #    return
 
             if not gm.dict종목정보.contains(code):
                 전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
@@ -598,9 +599,9 @@ class Admin:
                 row = gm.잔고목록.get(key=code)
                 gm.eval_q.put((code, 'sell', {'row': row, 'sell_condition': True}))
                 logging.debug(f'{kind} 시장가 주문: {code} {종목명} price={row["현재가"]} qty={row["보유수량"]}')
-            else:
-                gm.dict주문대기종목.set(key=code, value={'kind': kind})
-                logging.debug(f'{kind} 지정가 주문: {code} {종목명}')
+            #else:
+            #    gm.dict주문대기종목.set(key=code, value={'kind': kind})
+            #    logging.debug(f'{kind} 지정가 주문: {code} {종목명}')
   
             gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
             if code not in gm.set조건감시: self.stg_fx등록_종목감시([code], 1) # 조건 만족 종목 실시간 감시 추가
