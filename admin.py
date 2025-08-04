@@ -572,11 +572,13 @@ class Admin:
 
             if kind == '매도':
                 if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음 - 매도조건목록에도 추가 하지도 않고 있지도 않음
-                if not gm.매도조건목록.in_key(code): gm.매도조건목록.set(key=code, data={'종목명': 종목명})
+                if gm.매도조건목록.in_key(code): return # 매도 중
+                gm.매도조건목록.set(key=code, data={'종목명': 종목명})
 
             else: # if kind == '매수':
                 if gm.잔고목록.in_key(code): return # 기 보유종목
-                if not gm.매수조건목록.in_key(code): gm.매수조건목록.set(key=code, data={'종목명': 종목명})
+                if gm.매수조건목록.in_key(code): return # 매수 중
+                gm.매수조건목록.set(key=code, data={'종목명': 종목명})
 
                 gm.setter_q.put(code)
                 if gm.sim_no==0: gm.prx.order('dbm', 'insert_sim_ticker', code, 종목명, self.전략명칭, self.매수전략)

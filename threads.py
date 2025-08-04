@@ -391,7 +391,7 @@ class EvalStrategy(QThread):
         elif data[1] == 'sell': 
             self.sell_executor.submit(self.order_sell, data[0], data[2].get('row', {}), data[2].get('sell_condition', False))
         elif data[1] == 'cancel': 
-            self.buy_executor.submit(self.order_cancel, data[0], data[2].get('rqname', ''), data[2].get('order_no', ''))
+            self.buy_executor.submit(self.order_cancel, data[0], data[2].get('kind', ''), data[2].get('order_no', ''))
 
     def is_buy_callback(self, future, data):
         try:
