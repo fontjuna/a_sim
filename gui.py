@@ -646,6 +646,7 @@ class GUI(QMainWindow, form_class):
         gm.주문목록.set(key=key, data=data) 
         # 주문 전송
         gm.order_q.put(send_data)
+        gm.setter_q.put(code)
 
     def gui_tr_cancel(self):
         text = self.leTrCancelKey.text().split('_')

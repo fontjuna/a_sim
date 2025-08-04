@@ -398,7 +398,6 @@ class DBMServer:
                 """
             else:
                 sql = f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ({column_str})"
-            #logging.debug(f'table_upsert: {sql}')
             self.execute_query(sql, db=db, params=params)
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)

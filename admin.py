@@ -770,10 +770,12 @@ class Admin:
                 # row = gm.주문목록.get(key=key)
                 #if row and 주문수량 != 0 and 미체결수량 == 0: # 주문 취소주문 클리어
                 logging.info(f'{kind}주문 취소 확인: order_no = {order_no} {code} {dictFID["종목명"]}')
-                logging.debug(f'주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                if gm.주문목록.len() == 0: logging.debug(f'주문목록=없음')
+                else: logging.debug(f'주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
                 gm.set주문종목.discard(code)
                 gm.주문목록.delete(filter={'구분': '취소'})
-                logging.debug(f'주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
+                if gm.주문목록.len() == 0: logging.debug(f'주문목록=없음')
+                else: logging.debug(f'주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
 
         except Exception as e:
             logging.error(f"접수체결 오류: {type(e).__name__} - {e}", exc_info=True)
@@ -831,7 +833,7 @@ class Admin:
             logging.debug(f'주문목록=\n{tabulate(gm.주문목록.get(type="df"), headers="keys", showindex=True, numalign="right")}')
             row = gm.주문목록.get(key=key)
             try:
-                if row['구분'] in ['매수', '매도']:
+                if row and row['구분'] in ['매수', '매도']:
                     sec = 0
                     if row['구분'] == '매수':
                         if gm.설정전략['매수취소']: sec = gm.설정전략['매수지연초']
