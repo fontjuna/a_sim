@@ -278,7 +278,7 @@ class Admin:
 
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
             
-            if gm.잔고목록.in_key(code):
+            if gm.잔고목록.in_key(code) and not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))):
                 row = gm.잔고목록.get(key=code)
                 row.update({'현재가': 현재가, '등락율': float(dictFID.get('등락율', 0)), '누적거래량': int(dictFID.get('누적거래량', 0))})
                 if row: gm.price_q.put((code, row)) # PriceUpdater
@@ -590,8 +590,8 @@ class Admin:
             self.send_status_msg('주문내용', {'구분': f'{kind}편입', '종목코드': code, '종목명': 종목명, '메시지': '/ 조건검색'})
 
             key = (code, kind)
-            data={'구분': kind, '상태': '대기', '종목코드': code, '종목명': 종목명, '전략매도': kind=='매도'}
-            gm.주문진행목록.set(key=key, data=data) # 아래 보다 먼저 실행 해야 함
+            data={'구분': kind, '상태': '요청', '종목코드': code, '종목명': 종목명, '전략매도': kind=='매도'}
+            gm.주문진행목록.set(key=key, data=data)
             #gm.set주문종목.add(code)
             if kind == '매수' and self.매수시장가:
                 price = int((gm.dict종목정보.get(code, '현재가') or hoga(gm.dict종목정보.get(code, '전일가'), 99)))
@@ -603,6 +603,8 @@ class Admin:
                 logging.debug(f'{kind} 시장가 주문: {code} {종목명} price={row["현재가"]} qty={row["보유수량"]}')
             else:
                 #gm.dict주문대기종목.set(key=code, value={'kind': kind})
+                data['상태'] = '대기'
+                gm.주문진행목록.set(key=key, data=data)
                 logging.debug(f'{kind} 지정가 주문: {code} {종목명}')
   
             gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{code} {종목명}'}))
@@ -888,20 +890,16 @@ class Admin:
                     if not gm.잔고목록.in_key(code):
                         gm.holdings[code] = data
                         save_json(dc.fp.holdings_file, gm.holdings)
-
-                        # 매수 제한 기록
-                        gm.counter.set_add(code)
-
+                        gm.counter.set_add(code) # 매수 제한 기록
                         logging.debug(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
-
                     gm.잔고목록.set(key=code, data=data)
 
                 except Exception as e:
                     logging.error(f"매수 처리중 오류 발생: {code} {name} ***", exc_info=True)
 
+            if kind == '매수': buy_conclution()
             msg = {'구분': f'{kind}체결', '전략명칭': 전략명칭, '종목코드': code, '종목명': name,\
                     '주문수량': dictFID.get('주문수량', 0), '주문가격': dictFID.get('주문가격', 0), '주문번호': order_no}
-            if kind == '매수': buy_conclution()
             msg.update({'체결수량': 단위체결량, '체결가': 단위체결가, '체결금액': 단위체결가 * 단위체결량})
             self.send_status_msg('체결내용', msg)
             logging.info(f'{kind}주문 정상 체결: order_no={order_no} {code} {name} 체결수량={단위체결량} 체결가={단위체결가} 체결금액={단위체결가 * 단위체결량}')

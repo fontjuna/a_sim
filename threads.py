@@ -7,6 +7,7 @@ import queue
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+import threading
 
 class ProxyAdmin():
     def __init__(self):
@@ -223,6 +224,7 @@ class OrderCommander(QThread):
         rqname = f'{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
         key = (code, 주문유형.lstrip("신규"))
         gm.주문진행목록.set(key=key, data={'상태': '전송', '요청명': rqname})
+        logging.debug(f'{kind}주문 전송: key={key}, rqname={rqname}')
 
         cmd = { 'rqname': rqname, 'screen': screen, 'accno': accno, 'ordtype': ordtype, 'code': code, 'hoga': hoga, 'quantity': quantity, 'price': price, 'ordno': ordno }
         self.prx.order('api', 'SendOrder', **cmd)
@@ -357,15 +359,14 @@ class EvalStrategy(QThread):
         try:
             for key, value in new_dict.items():
                 setattr(self, key, value)
-            self.set_timer()
+            self.set_clear_timer()
         except Exception as e:
             logging.error(f'딕셔너리 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def stop(self):
         self.running = False
         if self.clear_timer:
-            self.clear_timer.stop()
-            self.clear_timer.deleteLater()
+            self.clear_timer.cancel()
             self.clear_timer = None
         self.eval_q.put(None)
         self.sell_executor.shutdown(wait=True)
@@ -532,15 +533,10 @@ class EvalStrategy(QThread):
             code = row.get('종목번호', '')          # 종목번호 ='999999' 일 때 당일청산 매도
             rqname = row.get('rqname', '신규매도')  # 매도 조건 검사 신호 이름
             종목명 = row.get('종목명', '')          # 종목번호 = '999999' 일 때 '당일청산 매도'
-            매입가 = int(row['매입가'])             # 종목번호 = '999999' 일 때 9
-            현재가 = int(row['현재가'])             # 종목번호 = '999999' 일 때 9
-            보유수량 = int(row['보유수량'])         # 종목번호 = '999999' 일 때 9
-
-            수익률 = float(row.get('수익률(%)', 0))
-
-            if not code:
-                logging.warning(f'종목번호가 없습니다. 매도 조건 검사 중단: {rqname} {종목명}')
-                return False, {}, "종목번호없음"
+            매입가 = row.get('매입가', 0)           # 종목번호 = '999999' 일 때 0
+            현재가 = row.get('현재가', 0)           # 종목번호 = '999999' 일 때 0
+            보유수량 = row.get('보유수량', 0)       # gm.잔고목록.get(key=code, column='보유수량')
+            수익율 = float(row.get('수익률(%)', 0))
 
             send_data = {
                 'rqname': rqname,
@@ -620,19 +616,19 @@ class EvalStrategy(QThread):
 
             if self.손실제한:
                 send_data['msg'] = '손실제한'
-                if 수익률 + self.손실제한율 <= 0:
-                    return True, send_data, f"손실제한: 손실제한율={self.손실제한율} 수익률={수익률}  {code} {종목명}"
+                if 수익율 + self.손실제한율 <= 0:
+                    return True, send_data, f"손실제한: 손실제한율={self.손실제한율} 수익율={수익율}  {code} {종목명}"
 
             if self.이익보존:
                 send_data['msg'] = '이익보존'
                 if row.get('보존', 0):
-                    if 수익률 <= self.이익보존율:
-                        return True, send_data, f"이익보존: 이익보존율={self.이익보존율} 수익률={수익률}  {code} {종목명}"
+                    if 수익율 <= self.이익보존율:
+                        return True, send_data, f"이익보존: 이익보존율={self.이익보존율} 수익율={수익율}  {code} {종목명}"
 
             if self.이익실현:
-                if 수익률 >= self.이익실현율:
+                if 수익율 >= self.이익실현율:
                     send_data['msg'] = '이익실현'
-                    return True, send_data, f"이익실현: 이익실현율={self.이익실현율} 수익률={수익률}  {code} {종목명}"
+                    return True, send_data, f"이익실현: 이익실현율={self.이익실현율} 수익율={수익율}  {code} {종목명}"
 
             if self.감시적용:
                 if row.get('감시', 0):  # 감시 시작점 설정
@@ -640,7 +636,7 @@ class EvalStrategy(QThread):
                     고점대비하락률 = ((현재가 - 최고가) / 최고가) * 100
                     if 고점대비하락률 + self.스탑주문율 <= 0:
                         send_data['msg'] = '스탑주문'
-                        return True, send_data, f"스탑주문율: 스탑주문율율={self.스탑주문율} 수익률={수익률}  {code} {종목명}"
+                        return True, send_data, f"스탑주문율: 스탑주문율율={self.스탑주문율} 수익율={수익율}  {code} {종목명}"
 
             return False, {}, "조건없음"
 
@@ -688,21 +684,26 @@ class EvalStrategy(QThread):
         except Exception as e:
             logging.error(f'주문취소 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def set_timer(self):
+    def set_clear_timer(self):
         now = datetime.now()
         current = now.strftime('%H:%M')
         if self.당일청산:
             if self.clear_timer is not None:
-                self.clear_timer.stop()
-                self.clear_timer.deleteLater()
+                self.clear_timer.cancel()
                 self.clear_timer = None
+            start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.청산시간}", '%Y-%m-%d %H:%M')
+            delay_sec = max(0, (start_time - now).total_seconds())
+            self.clear_timer = threading.Timer(delay_sec, self.on_clear_timer)
+            self.clear_timer.start()
+            logging.info(f"당일청산 타이머 설정: {self.청산시간}, {delay_sec}초 후 실행")
+
+    def on_clear_timer(self):
+        """당일청산 타이머 콜백"""
+        try:
             # is_sell을 부르기 위해 더미 데이터로 콜 하고 실제 청산 루틴에서 실 데이터를 처리 함
             row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 9, '매입가': 9, '보유수량': 9, '수익률(%)': 0 }
-            start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.청산시간}", '%Y-%m-%d %H:%M')
-            delay_msec = max(0, (start_time - now).total_seconds() * 1000)
-            self.clear_timer = QTimer()
-            self.clear_timer.setSingleShot(True)
-            self.clear_timer.setInterval(delay_msec)
-            self.clear_timer.timeout.connect(lambda: self.order_sell('999999', row))
-            self.clear_timer.start(delay_msec)
+            logging.info("당일청산 타이머 실행")
+            gm.eval_q.put(('999999', 'sell', {'row': row}))
+        except Exception as e:
+            logging.error(f'당일청산 타이머 콜백 오류: {type(e).__name__} - {e}', exc_info=True)
 
