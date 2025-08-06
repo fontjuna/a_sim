@@ -1325,12 +1325,13 @@ class GUI(QMainWindow, form_class):
 
     def gui_display_script(self, msgs):
         current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        if isinstance(msgs, list):
-            for msg in msgs:
-                self.txtScriptMsg.append(f"[{current_time}] {msg}")
-        else:
-            self.txtScriptMsg.append(f"[{current_time}] {msgs}")
+        msgs = msgs if isinstance(msgs, list) else [msgs]   
+        for msg in msgs:
+            self.txtScriptMsg.append(f"[{current_time}] {msg}")
+            logging.debug(f"{msg}")
+
         self.txtScriptMsg.moveCursor(QTextCursor.End)
+        self.txtScriptMsg.horizontalScrollBar().setValue(0)
 
     def gui_display_conclusion(self, msg):
         current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]

@@ -1312,7 +1312,7 @@ class ChartManager:
                 break
         return bars
 
-    def get_extremes(self, n: int = 130, m: int = 1) -> dict:
+    def get_extremes(self, n: int = 128, m: int = 1) -> dict:
         """
         현재봉 기준 n개 봉에서 각종 극값들을 구함
         
@@ -1392,13 +1392,13 @@ class ChartManager:
         close = self._raw_data[bars].get('현재가', 0)
         return { 'hh': hh, 'hc': hc, 'lc': lc, 'll': ll, 'hv': hv, 'lv': lv, 'ha': ha, 'la': la, 'close': close, 'bars': bars }
 
-    def top_volume_avg(self, n: int = 130, cnt: int = 10, m: int = 1) -> float:
+    def top_volume_avg(self, n: int = 128, cnt: int = 10, m: int = 1) -> float:
         """
         현재봉 기준 m봉 이전부터 n개 봉 중 거래량 상위 cnt개의 평균값
         
         Args:
             m: 현재봉에서 m봉 이전부터 시작 (기본값: 1)
-            n: 검사할 봉 개수 (기본값: 130)
+            n: 검사할 봉 개수 (기본값: 128) 
             cnt: 상위 몇 개를 선택할지 (기본값: 10)
         
         Returns:
@@ -1443,7 +1443,7 @@ class ChartManager:
         # 평균 계산
         return sum(top_volumes) / len(top_volumes)
 
-    def top_amount_avg(self, n: int = 130, cnt: int = 10, m: int = 1) -> float:
+    def top_amount_avg(self, n: int = 128, cnt: int = 10, m: int = 1) -> float:
         """
         현재봉 기준 m봉 이전부터 n개 봉 중 거래대금 상위 cnt개의 평균값
         
@@ -1494,7 +1494,7 @@ class ChartManager:
         # 평균 계산
         return sum(top_amounts) / len(top_amounts)
 
-    def get_close_tops(self, n: int = 130, cnt: int = 80, m: int = 1) -> tuple:
+    def get_close_tops(self, n: int = 128, cnt: int = 80, m: int = 1) -> tuple:
         """
         각 봉이 자신을 포함한 cnt개 봉 중 최고 종가인지 확인하여 인덱스를 수집 분봉만 해당
         
@@ -1559,7 +1559,7 @@ class ChartManager:
         
         return (high_close_indices, today_bars)
 
-    def consecutive_count(self, condition_func, m: int = 0, max_check: int = 130) -> int:
+    def consecutive_count(self, condition_func, m: int = 0, max_check: int = 128) -> int:
         """
         이전 m봉 기준으로 condition이 몇 번 연속으로 발생했는지 계산
         
@@ -1694,7 +1694,7 @@ class ChartManager:
         
         return True
 
-    def find_last_condition_break(self, condition_func, m: int = 0, max_check: int = 130) -> int:
+    def find_last_condition_break(self, condition_func, m: int = 0, max_check: int = 128) -> int:
         """
         m봉부터 시작해서 조건이 마지막으로 깨진 위치 찾기
         

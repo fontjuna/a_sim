@@ -516,11 +516,9 @@ class EvalStrategy(QThread):
         else:
             if '차트미비' not in reason: 
                 logging.info(f'매수안함: {reason}')
-                logging.debug(f'send_data={send_data}')
             key = (code, '매수')
             if gm.주문진행목록.in_key(key):
                 gm.주문진행목록.delete(key=key)
-            #gm.set주문종목.discard(code)
 
         return is_ok, send_data, reason
 
@@ -662,7 +660,6 @@ class EvalStrategy(QThread):
             key = (code, '매도')
             if gm.주문진행목록.in_key(key):
                 gm.주문진행목록.delete(key=key)
-            #gm.set주문종목.discard(code)
 
         return is_ok, send_data, reason
 
@@ -686,7 +683,6 @@ class EvalStrategy(QThread):
 
     def set_clear_timer(self):
         now = datetime.now()
-        current = now.strftime('%H:%M')
         if self.당일청산:
             if self.clear_timer is not None:
                 self.clear_timer.cancel()
@@ -698,7 +694,6 @@ class EvalStrategy(QThread):
             logging.info(f"당일청산 타이머 설정: {self.청산시간}, {delay_sec}초 후 실행")
 
     def on_clear_timer(self):
-        """당일청산 타이머 콜백"""
         try:
             # is_sell을 부르기 위해 더미 데이터로 콜 하고 실제 청산 루틴에서 실 데이터를 처리 함
             row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 9, '매입가': 9, '보유수량': 9, '수익률(%)': 0 }
