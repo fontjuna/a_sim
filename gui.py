@@ -1337,6 +1337,7 @@ class GUI(QMainWindow, form_class):
         current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         self.txtOrder.append(f"[{current_time}] {msg}")
         self.txtOrder.moveCursor(QTextCursor.End)
+        self.txtOrder.horizontalScrollBar().setValue(0)
 
     def gui_display_strategy(self, msg):
         if msg == '':

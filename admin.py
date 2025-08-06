@@ -262,10 +262,11 @@ class Admin:
 
             현재가 = abs(int(dictFID['현재가']))
             updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
+
             if updated:
-                #data = gm.dict주문대기종목.get(code, None)
                 주문 = gm.주문진행목록.get(filter={'종목코드': code, '상태': '대기'})
                 if 주문:
+                    logging.debug(f'종목 가격 업데이트와 주문 처리: {code} {주문[0]["종목명"]} {현재가}')
                     gm.주문진행목록.set(key=(code, 주문[0]["구분"]), data={'상태': '요청'})
                     if 주문[0]['구분'] == '매수':
                         gm.eval_q.put((code, 'buy', {'rqname': '신규매수', 'price': 현재가}))
@@ -273,12 +274,10 @@ class Admin:
                         row = gm.잔고목록.get(key=code)
                         row['현재가'] = 현재가
                         gm.eval_q.put((code, 'sell', {'row': row, 'sell_condition': True}))
-                # if gm.dict주문대기종목.contains(code):
-                #     gm.dict주문대기종목.remove(code)
 
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
             
-            if gm.잔고목록.in_key(code) and not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))):
+            if gm.잔고목록.in_key(code) and (gm.dict종목정보.get(code, '현재가') or 0) > 0:
                 row = gm.잔고목록.get(key=code)
                 row.update({'현재가': 현재가, '등락율': float(dictFID.get('등락율', 0)), '누적거래량': int(dictFID.get('누적거래량', 0))})
                 if row: gm.price_q.put((code, row)) # PriceUpdater
@@ -554,23 +553,15 @@ class Admin:
         try:
             종목명 = gm.prx.answer('api', 'GetMasterCodeName', code)
 
-            #if code in gm.set주문종목: 
-            #    logging.warning(f'주문 중인 종목: {kind} {code} {종목명} {gm.set주문종목.list()} {"*"*5}')
-            #    return
-
-            if gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도')):
-                logging.debug(f'주문 처리 중인 종목: {kind} {code} {종목명}')
-                return
-            
-            #if gm.dict주문대기종목.contains(code):
-            #    logging.debug(f'주문 대기 종목: {kind} {code} {종목명}')
-            #    return
-
             if not gm.dict종목정보.contains(code):
                 전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
                 value={'종목명': 종목명, '전일가': 전일가, '현재가': 0}
                 gm.dict종목정보.set(code, value=value)
 
+            if gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도')):
+                logging.debug(f'주문 처리 중인 종목: {kind} {code} {종목명}')
+                return
+            
             if kind == '매도':
                 if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음 - 매도검색목록에도 추가 하지도 않고 있지도 않음
                 매도목록 = gm.매도검색목록.get(key=code)
@@ -592,7 +583,6 @@ class Admin:
             key = (code, kind)
             data={'구분': kind, '상태': '요청', '종목코드': code, '종목명': 종목명, '전략매도': kind=='매도'}
             gm.주문진행목록.set(key=key, data=data)
-            #gm.set주문종목.add(code)
             if kind == '매수' and self.매수시장가:
                 price = int((gm.dict종목정보.get(code, '현재가') or hoga(gm.dict종목정보.get(code, '전일가'), 99)))
                 gm.eval_q.put((code, 'buy', {'rqname': '신규매수', 'price': price}))
@@ -602,7 +592,6 @@ class Admin:
                 gm.eval_q.put((code, 'sell', {'row': row, 'sell_condition': True}))
                 logging.debug(f'{kind} 시장가 주문: {code} {종목명} price={row["현재가"]} qty={row["보유수량"]}')
             else:
-                #gm.dict주문대기종목.set(key=code, value={'kind': kind})
                 data['상태'] = '대기'
                 gm.주문진행목록.set(key=key, data=data)
                 logging.debug(f'{kind} 지정가 주문: {code} {종목명}')

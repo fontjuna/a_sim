@@ -120,15 +120,12 @@ class PriceUpdater(QThread):
                 '누적거래량': int(row.get('누적거래량', 0)),
             })
 
-            data={'구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
-            row.update({'rqname': '신규매도', 'account': gm.account})
 
-            if not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))): # 이게 필요 없어야 하는데 왜 gm.set주문종목 에서 안 걸러지는지 모르겠음
-                # 부분적으로 매수 중인 경우 매도 사유 발생시 매수 미완료 시에도 매도 처리가 됨 따라서 매수된것만 매도 되고 나머진 계속 매수됨 실제와 프로그램 잔고 불일치
-                #if not code in gm.set주문종목: 
-                #    gm.set주문종목.add(code)
-                    gm.주문진행목록.set(key=(code, '매도'), data=data)
-                    gm.eval_q.put((code, 'sell', {'row': row}))
+            if not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))):
+                data={'구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
+                row.update({'rqname': '신규매도', 'account': gm.account})
+                gm.주문진행목록.set(key=(code, '매도'), data=data)
+                gm.eval_q.put((code, 'sell', {'row': row}))
 
             gm.잔고목록.set(key=code, data=row)
 
