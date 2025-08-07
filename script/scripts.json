@@ -2,67 +2,12 @@
     "돌파매수": {
         "script": "# 스크립트명 : 돌파매수\n#ret(True)\n# 다른코드로 테스트\n#code='018250'\n#echo(f'coide={code}')\n\n# 차트\nm3 = ChartManager(code, 'mi', 3)\ndt = ChartManager(code, 'dy')\n\n# 함수주입\ndh, dc, do, dv = dt.h, dt.c, dt.o, dt.v\nmo, mh, ml, mc, mv = m3.o, m3.h, m3.l, m3.c, m3.v\n\n# 빠른 리턴\n매도조건 = 일반매도(logoff=True)\nif 매도조건:\n    echo(f'[{False}] ({code} {name}) 취소원인=매도조건에 해당')\n    ret(False)\n\n# 전일 종가는 최고가 기준 -5% 이상이 아니면 전일 고가를 넘어야 함\n전일종가율 = div(dc(1) - dh(1), dh(1), 0)\nif dh(1) > mc() and 전일종가율 < -0.05:\n    echo(f'[{False}] ({code} {name}) 취소원인=전일종가율({전일종가율*100:.2f}) 불충족')\n    ret(False)\n\n# 1봉전 128봉중 최고거래량 cnt개의 평균    \n탑텐평균 = m3.top_volume_avg(n=128, m=1, cnt=10) * 0.8\n탑텐평균조건 = mv() >= 탑텐평균\n\n# 최근 n 개봉이 전일 3분봉 평균 거래량의 5배 이상\n최근최고봉 = max(mv(), mv(1), mv(2), mv(3), mv(4), mv(5))\n전일삼분평균 = dv(1) / 128\n삼분평균조건 = 최근최고봉 > 전일삼분평균 * 5\n\n# 이전 n봉부터 m봉까지 이전 cnt봉중 최고종가 얻기 (최고종가, 당일봉수)\ngcts = m3.get_close_tops(n=128, cnt=128, m=1) # 업데이트된 최고종가 리스트와 당일 봉수\n최고종가 = gcts[0] #개장후n봉최고종가\n당일봉수 = gcts[1]\n최고종가_len = len(최고종가) if 최고종가 else 0\n\nif 최고종가_len <= 1 or 최고종가[-1] > 당일봉수: \n    echo(f'[False] ({code} {name}) 취소원인={최고종가} 당일최고종가 1개 이하')\n    ret(False)\necho(f'당일봉수={당일봉수} {최고종가}')\n\nobvs = m3.get_obv_array(최고종가[-1] + 1)\nOBV조건 = obvs[최고종가[-1]] < obvs[0]\n\n# 거래량 판단\nif not (탑텐평균조건 or 삼분평균조건 or OBV조건):\n    msg = ''\n    if not 탑텐평균조건: msg += '탑텐평균조건, '\n    if not 삼분평균조건: msg += '삼분평균조건, '\n    if not OBV조건: msg += 'OBV조건, '\n    echo(f'[{False}] ({code} {name}) 취소원인={msg}조건 불충족')\n    ret(False)\n\n# 마지막 최고종가의 위치까지 각 최고, 최저값 획득\nextr = m3.get_extremes(n=최고종가[-1], m=1)\n\n# 종가 기준 고가보다 저가가 더 큰것만 매수(첫봉 음봉등 배제-아래꼬리가 더 길면 매수)\nloc = 최고종가[-1]\n고저대비 = mc(loc) - ml(loc) > mh(loc) - mc(loc)\n#고저대비 = mc() - extr['ll'] > extr['hh'] - mc()\n\n# 시간조정조건 : 최고종가에서 종가상 5%이상 빠지면 매수 안 함\n하락율 = div(extr['hc'] - extr['lc'], extr['hc'], 0)\n시간조정조건 = 하락율 > -0.05\n현재봉조건 = mc() >= mc(최고종가[-1])\n\n# 로깅\nmsg = ''\nif not 고저대비: msg += f'고저대비, '\nif not 시간조정조건: msg += f'시간조정조건({하락율}>-0.05, '\nif not 현재봉조건: msg += f'현재봉조건({mc():,d}>={mc(최고종가[-1]):,d})'\n\n# 전략평가 결과 전달\nresult = 고저대비 and 시간조정조건 and 현재봉조건\nif msg: msg = '취소원인 = ' + msg +' 불충족'\necho(f'[{result}] ({code} {name}) {msg}')\n\nret(result)",
         "type": "bool",
-        "desc": ""
+        "desc": "[돌파매수]\n1. 일반매도 스크립트 결과가 거짓이고,\n2. 전일종가는 고가 대비 -5%이내이거나 -5%이하의 경우 전일 고가를 넘어야 하고,\n3. 최고종가 갱신봉이 당일 1개 이상이고 전체 2개 이상이어야 하고,\n4. 거래량이 최종종가의 obv가 현재 obv보다 작거나, 현재봉 거래량이 전일 3분봉 평균거래량의 5배이거나, \n이전 128개봉의 최고거래량 10위의 평균의 80%이상이고,\n5. 마지막 최고종가의 봉상태가 고가와 종가 차이가 저가와 종가 차이보다 작아야 하고,\n6. 당일 최고종가 대비 최저 종가는 -5%이상이고,\n7. 마지막 최고 종가를 현재가가 넘어야 함."
     },
     "일반매도": {
-        "script": "# 스크립트명 : 돌파4시간3분5억_매도\n#ret(False)\n# 다른종목으로 테스트\n#code = '131030'\n\n# 전달 값 확인\nlogoff = is_args('logoff', False)\n\n# 차트정의\ndm = ChartManager(code, 'dy')\nm3 = ChartManager(code, 'mi', 3)\n\n#echo(f'code={code} 현재가={일.c()}')\n\n# 함수주입\ndc = dm.c\nmo, mc, ma = m3.o, m3.c, m3.ma\n\n# 미리 계산\nc_limit = hoga(dc(1), 99)\n#echo(f'현재가={dc()}, 상한가={c_limit}')\n\nup_down_rate = div(mc() - mo(), mo(), 0 )\n\n# 조건정의(결과 값이 논리값이 되도록 작성)\n상한가 = c_limit <= dc(0)\n급락 = up_down_rate < -0.03 # 봉하나에 3% 급락\n급등 = up_down_rate > 0.05 # 봉하나에 5% 급등\n하락전환_3분5이평 = ma(5, 3) <= ma(5, 2) and ma(5, 2) > ma(5, 1) and ma(5) > mc()\n이평역전_3분5_10이평 = ma(10) > ma(5)\n현재가10이평아래 = ma(10,1) > mc(1)\n\n# 로깅\nmsg = ''\nif 상한가: \n    msg += f'상한가' #(전일{dc(1)}, 현재가{dc()}, 상한가{c_limit})'\n#elif 급락: \n#    msg += f'급락' #(시가:{mo()}, 현재가:{mc()}, 하락률:{up_down_rate:.2f})'\nelif 급등:\n    msg += f'급등' #(시가:{mo()}, 현재가:{mc()}, 상승률:{up_down_rate:.2f})'\nelif 하락전환_3분5이평: \n    msg += f'하락전환_3분5이평'\nelif 이평역전_3분5_10이평: \n    msg+= f'이평역전_3분5_10이평'\nelif 현재가10이평아래: \n    msg += f'현재가10이평아래'\n\nif not msg: msg = \" 없음\"\n#echo(f\"매도조건: code={code} {name}/{msg}\")\n\n# 전략평가 전송\nresult = 상한가 or 하락전환_3분5이평 or 이평역전_3분5_10이평 or 현재가10이평아래 #or 급등\nif not logoff: echo(f'[{result}] ({code} {name}) 현재가={dc()} / 매도조건: {msg}')\nret(result)",
+        "script": "# 스크립트명 : 돌파4시간3분5억_매도\n#ret(False)\n# 다른종목으로 테스트\n#code = '131030'\n\n# 전달 값 확인\nlogoff = is_args('logoff', False)\n\n# 차트정의\ndm = ChartManager(code, 'dy')\nm3 = ChartManager(code, 'mi', 3)\n\n#echo(f'code={code} 현재가={일.c()}')\n\n# 함수주입\ndc = dm.c\nmo, mc, ma = m3.o, m3.c, m3.ma\n\n# 미리 계산\nc_limit = hoga(dc(1), 99)\n#echo(f'현재가={dc()}, 상한가={c_limit}')\n\nup_down_rate = div(mc() - mo(), mo(), 0 )\n\n# 조건정의(결과 값이 논리값이 되도록 작성)\n상한가 = c_limit <= dc(0)\n급락 = up_down_rate < -0.03 # 봉하나에 3% 급락\n급등 = up_down_rate > 0.05 # 봉하나에 5% 급등\n하락전환_3분5이평 = ma(5, 2) <= ma(5, 1) and ma(5, 1) > ma(5, 0) and ma(5) > mc()\n이평역전_3분5_10이평 = ma(10) > ma(5)\n현재가10이평아래 = ma(10) > mc()\n\n# 로깅\nmsg = ''\nif 상한가: \n    msg += f'상한가' #(전일{dc(1)}, 현재가{dc()}, 상한가{c_limit})'\n#elif 급락: \n#    msg += f'급락' #(시가:{mo()}, 현재가:{mc()}, 하락률:{up_down_rate:.2f})'\nelif 급등:\n    msg += f'급등' #(시가:{mo()}, 현재가:{mc()}, 상승률:{up_down_rate:.2f})'\nelif 하락전환_3분5이평: \n    msg += f'하락전환_3분5이평'\nelif 이평역전_3분5_10이평: \n    msg+= f'이평역전_3분5_10이평'\nelif 현재가10이평아래: \n    msg += f'현재가10이평아래'\n\nif not msg: msg = \" 없음\"\n#echo(f\"매도조건: code={code} {name}/{msg}\")\n\n# 전략평가 전송\nresult = 상한가 or 하락전환_3분5이평 or 이평역전_3분5_10이평 or 현재가10이평아래 #or 급등\nif not logoff: echo(f'[{result}] ({code} {name}) 현재가={dc()} / 매도조건: {msg}')\nret(result)",
         "type": "bool",
-        "desc": "상한가 이거나\n3분봉 5이평이 하락전환 하거나\n3분봉 5이평이 10이평을 하회 하거나\n현재가가 10이평을 하회 하거나\n3분봉에서 3%이상 급락시 매도"
-    },
-    "개장후n봉최고종가": {
-        "script": "# 스크립트명 : 이전n봉최고종가\n\n# 지정 종목\n#code = '005930'\n#echo(f'code={code}')\n# 차트 매니저 생성 (3분봉)\ncm = ChartManager(code, 'mi', 3)\n\n# 넘겨진 인자 있는지 검사\npre_bars = is_args('pre_bars', 60)\ncheck_bars = is_args('check_bars', 130)  # 검사할 봉 개수 (현재봉 이전 n개부터)\n\n# 원본 데이터를 직접 가져오기 (최고 성능)\ndata = cm.get_raw_data()\n\nresult = []\n비교가 = '현재가' # = 종가\nskip = 1 # 제외 할 봉 갯수\n\nif len(data) > skip + check_bars:\n    # 현재봉 이전 check_bars개부터 검사 시작\n    start_check_idx = skip + check_bars\n    \n    # start_check_idx부터 현재봉(skip)까지 역순으로 검사\n    for check_idx in range(start_check_idx, skip - 1, -1):\n        current_close = data[check_idx]['현재가']\n        \n        # 현재봉을 제외한 이전 pre_bars-1개 봉의 최고가 구하기\n        start_idx = check_idx + 1\n        end_idx = min(start_idx + pre_bars - 1, len(data))\n        \n        if start_idx < len(data):\n            high_values = [data[i][비교가] for i in range(start_idx, end_idx)]\n            if high_values:\n                max_high = max(high_values)\n                \n                # 현재 종가가 이전 봉들의 최고가보다 같거나 높으면\n                if current_close >= max_high:\n                    result.append(check_idx)\n\necho(f'({code} {name}) {result}')\nret(result if 'result' in locals() else [])",
-        "type": "list",
-        "desc": "9시 개장 후 종가가 직전봉 부터 그 이전 n-1봉까지의 최고종가를 넘는 봉의 인덱스 리스트를 반환 합. 기본 n = 60"
-    },
-    "n봉중상위m봉평균거래량": {
-        "script": "# 스크립트명 : n봉중상위m봉거래량평균\n\n# 지정 종목\n#code = '005930'\n#echo(f'code={code}')\n# 차트 매니저 생성 (3분봉)\ncm = ChartManager(code, 'mi', 3)\n\n# 넘겨진 인자 있는지 검사\nn_bars = is_args('n_bars', 130)  # 검사할 이전 봉 개수 (기본값 130)\nm_count = is_args('m_count', 10)  # 상위 거래량 m개 (기본값 10)\n\n# 원본 데이터를 직접 가져오기 (최고 성능)\ndata = cm.get_raw_data()\n\nresult = 0\nskip = 1  # 제외 할 봉 갯수\n\nif len(data) > skip + n_bars:\n    # 현재봉 이전 n개 봉의 거래량 수집\n    volumes = []\n    for i in range(skip, skip + n_bars):\n        if i < len(data):\n            volume = data[i].get('거래량', 0)\n            volumes.append(volume)\n    \n    if volumes:\n        # 거래량 많은 순으로 정렬\n        volumes_sorted = sorted(volumes, reverse=True)\n        \n        # 상위 m개 선택 (m이 전체 개수보다 크면 전체 사용)\n        top_volumes = volumes_sorted[:min(m_count, len(volumes_sorted))]\n        \n        # 평균 계산\n        if top_volumes:\n            result = int(sum(top_volumes) / len(top_volumes))\n            #echo(f'이전{n_bars}개 중 상위{len(top_volumes)}개 평균거래량: {result:,.0f}')\n\necho(f'({code} {name}) 결과: {result:,d}')\nret(result)",
-        "type": "int",
-        "desc": ""
-    },
-    "인자받는쪽": {
-        "script": "m3 = ChartManager(code, 'mi', 3)\n\nshort = is_args('short', 5)\nlong = is_args('long', 10)\n\nma5 = m3.ma(short)\nma10 = m3.ma(long)\n\necho(f'{short} {long}')\n\ndn = ma10 > m3.c()\n\nresult = dn or ma5 < ma10\n\nret(result)",
-        "type": "bool",
-        "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
-    },
-    "인자주는쪽": {
-        "script": "result = 인자받는쪽(short=3, long=20)\nret(result)",
-        "type": "bool",
-        "desc": "현재가가 10이평선을 하회하며. 5이평선이 10이평선을 하회할때"
-    },
-    "indicator": {
-        "script": "dy = CM(code, 'dy')\nmi3 = CM(code, 'mi', 3)\n\nma20 = dy.indicator(dy.ma, 20)\necho(f'0={ma20()}, 1={ma20(1)}')\n\nsma5 = mi3.indicator(mi3.ma, 5) # SMA 5 계산 클로저 생성 \nsma10 = mi3.indicator(mi3.ma, 10) \n\ncross = mi3.cross_up(sma5, sma10) # 함수처럼 사용 가능\necho(f'sma5={sma5()}, sma10={sma10()}, cross={cross}')\n\nresult = ma20(0)\n\nret(result)",
-        "type": "float",
-        "desc": "indicator와 offset 사용"
-    },
-    "함수사용": {
-        "script": "dy = CM(code, 'dy')\n\ndc = dy.c\nma = dy.ma\niif = dy.iif\n\n# iif 함수 사용\nresult = iif(dc() > ma(20), \"상승 추세\", \"하락 추세\")\n\nret(result)",
-        "type": "str",
-        "desc": "iif, 사용자 함수"
-    },
-    "보조지표사용": {
-        "script": "cm = ChartManager(code, 'dy')\n\n# RSI (상대강도지수)\nrsi = cm.rsi()                # 기본 14일 RSI\nrsi_9 = cm.rsi(9)             # 9일 RSI\nrsi_prev = cm.rsi(14, 1)      # 1봉 이전의 14일 RSI\n\n# MACD (이동평균수렴확산지수)\nmacd, signal, hist = cm.macd()  # 기본 MACD (12, 26, 9)\nmacd2, signal2, hist2 = cm.macd(5, 35, 5)  # 커스텀 MACD\n\n# 볼린저 밴드\nupper, middle, lower = cm.bollinger_bands()  # 기본 볼린저 밴드 (20일, 2시그마)\nupper2, middle2, lower2 = cm.bollinger_bands(10, 2.5)  # 커스텀 볼린저 밴드\n\n# 스토캐스틱\nk, d = cm.stochastic()  # 기본 스토캐스틱 (14, 3)\nk2, d2 = cm.stochastic(5, 3)  # 커스텀 스토캐스틱\n\n# ATR (평균진폭)\natr = cm.atr()  # 기본 14일 ATR\natr_5 = cm.atr(5)  # 5일 ATR\n\nresult = True\n\nret(result)",
-        "type": "bool",
-        "desc": "RSI, MACD, Bollinger Band, Stochastic, ATR"
-    },
-    "Class설정": {
-        "script": "class FMA:\n    def __init__(self, code, cycle='dy', tick=1, period=20):\n        self.ct = ChartManager(code, cycle, tick)\n        self.period = period\n    \n    def ma(self, n=0):\n        return self.ct.ma(period, n)\n\n# 초기 설정\ncycle = is_args('cycle', 'dy')\ntick = is_args('tick', 1)\nperiod = is_args('period', 20) \n\nresult = FMA(code, cycle, tick, period)\n\nret(result)\n#클래스를 리턴하는 스크립트 - 비추 입니다. (오버해드가 많음)",
-        "type": "FMA",
-        "desc": "클래스를 리턴하는 스크립트 - 비추 입니다. (오버해드가 많음)"
-    },
-    "Class쓰기": {
-        "script": "mi3 = FMA(code, 'mi', 3, 5)\n\nresult = mi3.ma()\nret(result)\n\n#클래스를 리턴하는 스크립트 - 비추 입니다. (오버해드가 많음)",
-        "type": "float",
-        "desc": "클래스를 리턴하는 스크립트 - 비추 입니다. (오버해드가 많음)"
-    },
-    "FMA": {
-        "script": "class MA:\n    def __init__(self, code, cycle='dy', tick=1, period=20):\n        self.ct = ChartManager(code, cycle, tick)\n        self.period = period\n    \n    def ma(self, n=0):\n        return self.ct.ma(period, n)\n\n# 초기 설정\ncycle = is_args('cycle', 'dy')\ntick = is_args('tick', 1)\nperiod = is_args('period', 20) \n\n# 그냥 가능한지 해 본거고 클래스 보단 스크립트로 구현해야 함\n\nresult = MA(code, cycle, tick, period)\nret(result)\n\n#클래스를 리턴하는 스크립트 - 비추 입니다. (오버해드가 많음)",
-        "type": "MA",
-        "desc": "클래스를 리턴하는 스크립트 - 비추 입니다. (오버해드가 많음)"
-    },
-    "def_함수_사용": {
-        "script": "dy = ChartManager(code, 'dy')\n\necho(f'{dy.c()}')\n\n# 그냥 해 본것이고 안 하는것이 좋음 필요하면 스크립트로 작성\ndef current_price(a, b):\n    echo(f'{a} {b}')\n    mul = a * b\n    echo(f'{mul}')\n    return mul\n\nresult = current_price(3, 5)\necho(f'최종 result: {result}')\n\nret(result)",
-        "type": "int",
-        "desc": ""
+        "desc": "[일반매도]\n1. 상한가 이거나,\n2. 현재봉 기준 3분봉 5이평이 하락전환 하거나,\n3. 현재봉 기준 3분봉 5이평이 10이평 이하 이거나,\n4. 현재가가 10이평 이하 이거나,\n5. 3분봉에서 봉 하나에 3%이상 급락 하거나,\n6. 3분봉에서 봉 하나에 7.5%이상 급등시 매도"
     },
     "이동평균_사용예": {
         "script": "ct = ChartManager(code, 'mi', 3)\n\n# 기본사용\nma5 = ct.indicator(ct.avg, ct.c, 5)\necho(f'기본사용: 0={ma5(0)},1={ma5(1)},2={ma5(2)}')\n\n# 주입하여 사용\nma = ct.ma # ma에 주입\necho(f'주입사용: 0={ma(5,0)},1={ma(5,1)},2={ma(5,2)}')\n\n# 리스트로 받아와 사용\nm5 = ct.get_ma(5, 10) # 5이평 10개 받음\necho(f'리스트로: 0={m5[0]},1={m5[1]}, 2={m5[2]}')\n\n# 클래스를 정의하여 이용\nma5 = FMA(code, 'mi', 1, 5)\necho(f'클래스로: 0={m5[0]},1={m5[1]}, 2={m5[2]}')\n\n# 결론\n# 주입사용이 최고 좋다 - 빠르고 메모리 효율 좋고 유연성(동적 기간), 간결\n# 다음이 indicator - 캐싱효과 \n\nresult = True\nret(result)",
