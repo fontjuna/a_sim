@@ -425,7 +425,7 @@ class BaseModel:
         self.my_qes = shared_qes[name]
         self.running = False
         self.answer_timeout = 15
-        self.queue_timeout = dc.INTERVAL_NORMAL  # 큐 대기 시간 설정 가능
+        self.queue_timeout = dc.INTERVAL_FAST  # 큐 대기 시간 설정 가능
         
     def process_q_data(self, q_data):
         if not isinstance(q_data, QData): return None
@@ -463,9 +463,6 @@ class BaseModel:
 
     def _run_loop_iteration(self):
         """각 모델별 특수 처리를 위한 메서드 (오버라이드 가능)"""
-        if hasattr(self.instance, 'loop_worker_model'):
-            self.instance.loop_worker_model()
-        #pass
 
     def _common_run_logic(self):
         """공통 run 로직"""
@@ -474,7 +471,7 @@ class BaseModel:
         
         while self.running:
             try:
-                self._process_queues()
+                self._process_queues()      # 큐 처리 및 각 컴퍼넌트의 루프 처리(run_main_work)
                 self._run_loop_iteration()
             except (EOFError, ConnectionError, BrokenPipeError):
                 break

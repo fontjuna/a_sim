@@ -139,7 +139,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     
     COND_TABLE_NAME = 'real_condition'
     COND_SELECT_DATE = f"SELECT * FROM {COND_TABLE_NAME} WHERE substr(처리일시, 1, 10) = ? ORDER BY 처리일시"
-    COND_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.조건구분, f.조건번호, f.조건식명, f.전략명칭, f.매수전략, f.처리일시, f.sim_no]
+    COND_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.조건구분, f.조건번호, f.조건식명, f.처리일시, f.sim_no]
     COND_COLUMNS = [col.name for col in COND_FIELDS]
     COND_CONFLICT_COLS = ['처리일시']
     COND_INDEXES = {}

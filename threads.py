@@ -26,10 +26,6 @@ class ProxyAdmin():
     def on_receive_real_data(self, code, rtype, dictFID):
         self.emit_real_q.put((code, rtype, dictFID))
 
-    def on_receive_real_bach(self, batch):
-        for code, dictFID in batch.items():
-            self.emit_real_q.put((code, None, dictFID))
-
     def on_receive_chejan_data(self, gubun, dictFID): # 주문체결 결과 수신
         self.emit_chejan_q.put((gubun, dictFID))
 
@@ -211,14 +207,14 @@ class OrderCommander(QThread):
         매수전략 = gm.설정전략['매수전략']
 
         name = self.prx.answer('api', 'GetMasterCodeName', code)
-        logging.debug(f'주문 요청 확인: code={code}, name={name}')
+        #logging.debug(f'주문 요청 확인: code={code}, name={name}')
         주문유형 = dc.fid.주문유형FID[ordtype]
 
         kind = msg if msg else 주문유형
         job = {"구분": kind, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
         gm.admin.send_status_msg('주문내용', job)
 
-        rqname = f'{code}_{rqname}_{datetime.now().strftime("%H%M%S")}'
+        rqname = f'{rqname}_{code}_{name}_{datetime.now().strftime("%H%M%S.%f")}'
         key = (code, 주문유형.lstrip("신규"))
         gm.주문진행목록.set(key=key, data={'상태': '전송', '요청명': rqname})
         logging.debug(f'{kind}주문 전송: key={key}, rqname={rqname}')

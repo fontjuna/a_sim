@@ -222,8 +222,8 @@ class GUI(QMainWindow, form_class):
         self.refresh_data_timer.start(dc.INTERVAL_GUI)
 
         success, gm.json_config = load_json(os.path.join(get_path(dc.fp.LOG_PATH), dc.fp.LOG_JSON), dc.log_config)
-        logging.getLogger().setLevel(gm.json_config['root']['level'])
         self.rbDebug.setChecked(gm.json_config['root']['level'] == logging.DEBUG)
+        #logging.getLogger().setLevel(gm.json_config['root']['level'])
         #logging.debug('prepare : gui 초기화 완료')
 
     # 화면 갱신 ---------------------------------------------------------------------------------------------

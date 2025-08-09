@@ -460,16 +460,9 @@ class OnReceiveRealDataSim1And2(QThread):
 
             # 실시간 데이터 전송
             job = { 'code': code, 'rtype': '주식체결', 'dictFID': dictFID }
-            self.order('prx', 'on_receive_real_data', **job)
+            self.order('prx', 'proxy_method', QWork(method='on_receive_real_data', args=(code, '주식체결', dictFID)))
+            #self.order('prx', 'on_receive_real_data', **job)
             time.sleep(0.005)
-
-            # batch[code] = dictFID
-            # if time.time() - self.start_time > 0.02:
-            #     self.order('prx', 'on_receive_real_bach', batch)
-            #     batch = {}
-            #     self.start_time = time.time()
-            #time.sleep(0.001)
-
 
    def stop(self):
       self.is_running = False
@@ -522,7 +515,8 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               self.order('prx', 'on_receive_real_data', **job)
+               self.order('prx', 'proxy_method', QWork(method='on_receive_real_data', args=(code, '주식체결', dictFID)))
+               #self.order('prx', 'on_receive_real_data', **job)
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -919,8 +913,9 @@ class APIServer:
             try:
                 data = rqname.split('_')
                 code = data[1]
+                name = data[2]  
                 order_no = self.GetCommData(trcode, rqname, 0, '주문번호')
-                name = self.GetMasterCodeName(code)
+                #name = self.GetMasterCodeName(code)
                 # result = {
                 # 'code': code,
                 # 'name': name,
@@ -928,7 +923,7 @@ class APIServer:
                 # 'screen': screen,
                 # 'rqname': rqname,
                 # }
-                self.order('prx', 'proxy_method', QWork(method='on_receive_tr_data', args=(code, name, order_no, screen, rqname)))
+                self.order('prx', 'proxy_method', QWork(method='on_receive_tr_data', args=(code, name, order_no, screen, rqname, trcode)))
 
             except Exception as e:
                 logging.error(f'TR 수신 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -989,7 +984,8 @@ class APIServer:
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    self.order('prx', 'on_receive_real_data', **job)
+                    self.order('prx', 'proxy_method', QWork(method='on_receive_real_data', args=(code, rtype, dictFID)))
+                    #self.order('prx', 'on_receive_real_data', **job)
                 elif rtype == '장시작시간': 
                     self.order('prx', 'proxy_method', QWork(method='on_receive_market_status', args=(code, rtype, dictFID)))
                 #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
@@ -1006,7 +1002,8 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            self.order('prx', 'on_receive_chejan_data', gubun, dictFID)
+            self.order('prx', 'proxy_method', QWork(method='on_receive_chejan_data', args=(gubun, dictFID)))
+            #self.order('prx', 'on_receive_chejan_data', gubun, dictFID)
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1022,7 +1019,7 @@ class APIServer:
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매도/매수구분'] = '1' if order['ordtype'] == 2 else '2'
-                self.order('prx', 'on_receive_chejan_data', '1', dictFID)
+                self.order('prx', 'proxy_method', QWork(method='on_receive_chejan_data', args=('1', dictFID)))
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1060,7 +1057,9 @@ class APIServer:
 
                     portfolio.process_order(dictFID)
 
-                self.order('prx', 'on_receive_chejan_data', '0', dictFID)
+                self.order('prx', 'proxy_method', QWork(method='on_receive_chejan_data', args=('0', dictFID)))
+                #self.order('prx', 'on_receive_chejan_data', '0', dictFID)
+
             time.sleep(0.1)
             
     # 응답 메세지 --------------------------------------------------------------------------------------------------
