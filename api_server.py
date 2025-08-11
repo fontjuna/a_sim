@@ -397,7 +397,7 @@ class OnReceiveRealConditionSim(QThread):
         #     'cond_name': self.cond_name,
         #     'cond_index': int(self.cond_index),
         #  }
-         self.order('prx', 'proxy_method', QWork(method='on_receive_real_condition', args=(code, type, self.cond_name, int(self.cond_index))))
+         self.order('rcv', 'proxy_method', QWork(method='on_receive_real_condition', args=(code, type, self.cond_name, int(self.cond_index))))
 
          if type == 'I':
             self.current_stocks.add(code)
@@ -460,8 +460,8 @@ class OnReceiveRealDataSim1And2(QThread):
 
             # 실시간 데이터 전송
             job = { 'code': code, 'rtype': '주식체결', 'dictFID': dictFID }
-            self.order('prx', 'proxy_method', QWork(method='on_receive_real_data', args=(code, '주식체결', dictFID)))
-            #self.order('prx', 'on_receive_real_data', **job)
+            self.order('rcv', 'proxy_method', QWork(method='on_receive_real_data', args=(code, '주식체결', dictFID)))
+            #self.order('rcv', 'on_receive_real_data', **job)
             time.sleep(0.005)
 
    def stop(self):
@@ -515,8 +515,8 @@ class OnReceiveRealDataSim3(QThread):
                   'rtype': '주식체결',
                   'dictFID': dictFID
                }
-               self.order('prx', 'proxy_method', QWork(method='on_receive_real_data', args=(code, '주식체결', dictFID)))
-               #self.order('prx', 'on_receive_real_data', **job)
+               self.order('rcv', 'proxy_method', QWork(method='on_receive_real_data', args=(code, '주식체결', dictFID)))
+               #self.order('rcv', 'on_receive_real_data', **job)
          
          # 다음 데이터까지 대기
          delay = sim.get_next_data_delay()
@@ -968,7 +968,7 @@ class APIServer:
         #     'cond_index': cond_index
         # }
         #logging.debug(f"Condition: API 서버에서 보냄 {code} {id_type} ({cond_index} : {cond_name})")
-        self.order('prx', 'proxy_method', QWork(method='on_receive_real_condition', args=(code, id_type, cond_name, cond_index)))
+        self.order('rcv', 'proxy_method', QWork(method='on_receive_real_condition', args=(code, id_type, cond_name, cond_index)))
 
     def OnReceiveRealData(self, code, rtype, data):
         # sim_no = 0일 때만 사용 (실제 API 서버)
@@ -984,10 +984,10 @@ class APIServer:
 
                 job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
-                    self.order('prx', 'proxy_method', QWork(method='on_receive_real_data', args=(code, rtype, dictFID)))
-                    #self.order('prx', 'on_receive_real_data', **job)
+                    self.order('rcv', 'proxy_method', QWork(method='on_receive_real_data', args=(code, rtype, dictFID)))
+                    #self.order('rcv', 'on_receive_real_data', **job)
                 elif rtype == '장시작시간': 
-                    self.order('prx', 'proxy_method', QWork(method='on_receive_market_status', args=(code, rtype, dictFID)))
+                    self.order('rcv', 'proxy_method', QWork(method='on_receive_market_status', args=(code, rtype, dictFID)))
                 #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
@@ -1002,8 +1002,8 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            self.order('prx', 'proxy_method', QWork(method='on_receive_chejan_data', args=(gubun, dictFID)))
-            #self.order('prx', 'on_receive_chejan_data', gubun, dictFID)
+            self.order('rcv', 'proxy_method', QWork(method='on_receive_chejan_data', args=(gubun, dictFID)))
+            #self.order('rcv', 'on_receive_chejan_data', gubun, dictFID)
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1019,7 +1019,7 @@ class APIServer:
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매도/매수구분'] = '1' if order['ordtype'] == 2 else '2'
-                self.order('prx', 'proxy_method', QWork(method='on_receive_chejan_data', args=('1', dictFID)))
+                self.order('rcv', 'proxy_method', QWork(method='on_receive_chejan_data', args=('1', dictFID)))
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1057,8 +1057,8 @@ class APIServer:
 
                     portfolio.process_order(dictFID)
 
-                self.order('prx', 'proxy_method', QWork(method='on_receive_chejan_data', args=('0', dictFID)))
-                #self.order('prx', 'on_receive_chejan_data', '0', dictFID)
+                self.order('rcv', 'proxy_method', QWork(method='on_receive_chejan_data', args=('0', dictFID)))
+                #self.order('rcv', 'on_receive_chejan_data', '0', dictFID)
 
             time.sleep(0.1)
             
@@ -1161,7 +1161,12 @@ class APIServer:
         return (dict_mi, dict_dy)
     
     def get_chart_data(self, code, cycle, tick=1, times=1, wt=None, dt=None):
-        """차트 데이터 조회"""
+        """
+            차트 데이터 조회
+            times: 차트 데이터 조회 반복 횟수 (기본 1회)
+            wt: 차트 데이터 조회 대기 시간 (기본 0초) 서버 시간 제한 회피
+            dt: 차트 데이터 비교 기준 일자 (같거나 이전 데이타 까지 받으면 종료)
+        """
         try:
             rqname = f'{dc.scr.차트종류[cycle]}차트'
             trcode = dc.scr.차트TR[cycle]
@@ -1175,13 +1180,13 @@ class APIServer:
                 elif isinstance(tick, int):
                     tick = str(tick)
                 input = {'종목코드':code, '틱범위': tick, '수정주가구분': "1"}
-                output = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
+                output = dc.const.MI_OUTPUT #["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
             else:
                 if cycle == 'dy':
                     input = {'종목코드':code, '기준일자': date, '수정주가구분': "1"}
                 else:
                     input = {'종목코드':code, '기준일자': date, '끝일자': '', '수정주가구분': "1"}
-                output = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
+                output = dc.const.DY_OUTPUT #["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
 
             dict_list = self._fetch_chart_data(rqname, trcode, input, output, screen, times, wt, dt)
             
@@ -1248,4 +1253,5 @@ class APIServer:
                 '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
                 '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
             } for item in dict_list]
+
 

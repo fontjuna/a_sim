@@ -528,23 +528,17 @@ class MainModel(BaseModel):
 
 class QMainModel(BaseModel, QThread):
     receive_signal = pyqtSignal(object)
-    receive_real_data = pyqtSignal(object)
-    receive_chejan_data = pyqtSignal(object)
     
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         QThread.__init__(self)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
         self.emit_q = queue.Queue()
-        self.emit_real_q = queue.Queue()
-        self.emit_chejan_q = queue.Queue()
         self.queue_timeout = dc.INTERVAL_VERY_FAST  # QMainModel은 빠른 반응성 필요
 
     def _initialize_instance(self):
         """QMainModel 전용 인스턴스 초기화"""
         super()._initialize_instance()
         self.instance.emit_q = self.emit_q
-        self.instance.emit_real_q = self.emit_real_q
-        self.instance.emit_chejan_q = self.emit_chejan_q
 
     def _run_loop_iteration(self):
         """QMainModel 전용 emit_q 처리"""
@@ -552,14 +546,6 @@ class QMainModel(BaseModel, QThread):
             data = self.emit_q.get()
             self.receive_signal.emit(data)
         
-        if not self.emit_real_q.empty():
-            data = self.emit_real_q.get()
-            self.receive_real_data.emit(data)
-
-        if not self.emit_chejan_q.empty():
-            data = self.emit_chejan_q.get()
-            self.receive_chejan_data.emit(data)
-
     def stop(self):
         self.running = False
 

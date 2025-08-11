@@ -1,8 +1,8 @@
 from gui import GUI
 from admin import Admin
-from threads import ProxyAdmin
-from public import init_logger, dc, gm, Work, SharedQueue
-from classes import Toast, ProcessModel, QData, QMainModel, KiwoomModel
+from threads import ProxyAdmin, RealReceiver
+from public import init_logger, dc, gm, Work
+from classes import Toast, ProcessModel, QMainModel, KiwoomModel
 from tables import set_tables
 from dbm_server import DBMServer
 from api_server import APIServer
@@ -14,7 +14,6 @@ import time
 import sys
 from datetime import datetime
 import threading
-import inspect
 
 init_logger()
 
@@ -83,6 +82,8 @@ class Main:
             gm.admin = Admin()
             gm.prx = QMainModel('prx', ProxyAdmin, gm.shared_qes)
             gm.prx.start()
+            gm.rcv = QMainModel('rcv', RealReceiver, gm.shared_qes)
+            gm.rcv.start()
             gm.api = KiwoomModel('api', APIServer, gm.shared_qes)
             gm.api.start()
             gm.prx.order('api', 'api_init', gm.sim_no, gm.log_level)
@@ -168,13 +169,13 @@ class Main:
                             logging.debug(f'큐 닫기/종료 실패 : {name} {e}')
 
             # 1. QThread 기반 워커들 종료 (stop/quit/wait)
-            qthreads = ['cts', 'ctu', 'evl', 'odc', 'pri', 'prx']
+            qthreads = ['rcv', 'cts', 'ctu', 'evl', 'odc', 'pri', 'prx']
             for name in qthreads:
                 obj = getattr(gm, name, None)
                 if obj is not None:
                     try:
                         if hasattr(obj, 'stop'): obj.stop()
-                        if name == 'prx': close_queue(name)
+                        if name == 'prx' or name == 'rcv': close_queue(name)
                         if hasattr(obj, 'quit'): obj.quit()
                         if hasattr(obj, 'wait'): obj.wait(1000)
                         logging.debug(f'{name} QThread 종료.')
@@ -219,7 +220,7 @@ class Main:
                 logging.debug(f'Thread: {repr(t)} is_alive={t.is_alive()}')
             qthread_objs = []
             try:
-                qthread_objs += [getattr(gm, name, None) for name in ['cts','ctu','evl','odc','pri','prx','api','dbm']]
+                qthread_objs += [getattr(gm, name, None) for name in ['rcv','cts','ctu','evl','odc','pri','prx','api','dbm']]
                 qthread_objs += [getattr(gm.admin, name, None) for name in ['cancel_timer','start_timer','end_timer']]
             except Exception as e:
                 logging.debug(f'QThread/Timer 객체 수집 오류: {e}')

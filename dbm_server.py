@@ -98,6 +98,8 @@ class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
     현재가 = FieldsAttributes(name='현재가', type='INTEGER', not_null=True, default=0)
     거래량 = FieldsAttributes(name='거래량', type='INTEGER', not_null=True, default=0)
     거래대금 = FieldsAttributes(name='거래대금', type='INTEGER', not_null=True, default=0)
+    누적거래량 = FieldsAttributes(name='누적거래량', type='INTEGER', not_null=True, default=0)
+    누적거래대금 = FieldsAttributes(name='누적거래대금', type='INTEGER', not_null=True, default=0)
     주기 = FieldsAttributes(name='주기', type='TEXT', not_null=True, default="''")
     틱 = FieldsAttributes(name='틱', type='INTEGER', not_null=True, default=1)
     sim_no = FieldsAttributes(name='sim_no', type='INTEGER', not_null=True, default=0)
@@ -105,7 +107,8 @@ class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
 class DataBaseColumns:  # 데이터베이스 테이블 정의
     f = DataBaseFields()
 
-    TRD_TABLE_NAME = 'trades'
+    # 통합 디비 ***************************************************************************************************************************************
+    TRD_TABLE_NAME = 'trades' ## 주문 및 체결 데이터
     TRD_SELECT_DATE = f"SELECT substr(처리일시, 12, 12) AS 처리시간, * FROM {TRD_TABLE_NAME} WHERE DATE(처리일시) = ? AND sim_no = ? ORDER BY 처리일시"
     TRD_FIELDS = [f.id, f.전략명칭, f.주문구분, f.주문상태, f.주문번호, f.종목코드, f.종목명, f.현재가, f.주문수량, f.주문가격, \
                     f.미체결수량, f.매매구분, f.체결량, f.체결가, f.체결누계금액, f.체결번호, f.체결시간, f.단위체결가, f.단위체결량, f.당일매매수수료, \
@@ -117,59 +120,70 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
         'idx_kind_code': f"CREATE INDEX IF NOT EXISTS idx_kind_code ON {TRD_TABLE_NAME}(주문구분, 종목코드)"
     }
 
-    CONC_TABLE_NAME = 'conclusion'
+    CONC_TABLE_NAME = 'conclusion' ## 체결 및 손익  
     CONC_SELECT_DATE = f"SELECT * FROM {CONC_TABLE_NAME} WHERE 매도일자 = ? AND sim_no = ? AND 매도수량 > 0 ORDER BY 매도시간 DESC"
+    CONC_SELECT_SIM = f"SELECT DISTINCT 종목번호, 종목명 FROM {CONC_TABLE_NAME} WHERE 매수일자 = ? AND sim_no = ?"
     CONC_FIELDS = [f.id, f.종목번호, f.종목명, f.손익금액, f.손익율, f.매수일자, f.매수시간,\
                     f.매수수량, f.매수가, f.매수금액, f.매수번호, f.매도일자, f.매도시간, f.매도수량,\
                     f.매도가, f.매도금액, f.매도번호, f.제비용, f.매수전략, f.전략명칭, f.처리일시, f.sim_no]
     CONC_COLUMNS = [col.name for col in CONC_FIELDS]
-    CONC_CONFLICT_COLS = ['매수일자', '매수번호']
+    CONC_KEYS = ['매수일자', '매수번호']
     CONC_INDEXES = {
         'idx_sellorder': f"CREATE INDEX IF NOT EXISTS idx_sellorder ON {CONC_TABLE_NAME}(매도일자, 매도번호)"
     }
     
-    SIM_TABLE_NAME = 'sim_tickers'
-    SIM_SELECT_ONE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND 종목코드 = ? LIMIT 1"
-    SIM_SELECT_SIM = f"SELECT 종목코드 FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND 매수시간 <> '' "
-    SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND 종목코드 = ? ORDER BY 일자, 시간 DESC"
-    SIM_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.종목명, f.매수가, f.매수시간, f.전략명칭, f.매수전략, f.처리일시]
-    SIM_COLUMNS = [col.name for col in SIM_FIELDS]
-    SIM_CONFLICT_COLS = ['일자', '종목코드']
-    SIM_INDEXES = {}
-    
-    COND_TABLE_NAME = 'real_condition'
+    COND_TABLE_NAME = 'real_condition' ## 실시간 조건 검색 종목
     COND_SELECT_DATE = f"SELECT * FROM {COND_TABLE_NAME} WHERE substr(처리일시, 1, 10) = ? ORDER BY 처리일시"
     COND_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.조건구분, f.조건번호, f.조건식명, f.처리일시, f.sim_no]
     COND_COLUMNS = [col.name for col in COND_FIELDS]
-    COND_CONFLICT_COLS = ['처리일시']
-    COND_INDEXES = {}
+    COND_KEYS = ['처리일시']
+    COND_INDEXES = {
+        'idx_date': f"CREATE INDEX IF NOT EXISTS idx_date ON {COND_TABLE_NAME}(일자, 시간)"
+    }
     
-    TICK_TABLE_NAME = 'tick_chart'
+    REAL_TABLE_NAME = 'real_data' ## 실시간 현재가 데이타 : 당일 매수종목들의 틱 데이타
+    REAL_SELECT_DATE = f"SELECT * FROM {REAL_TABLE_NAME} WHERE substr(체결시간, 1, 8) = ?"
+    REAL_FIELDS = [f.id, f.체결시간, f.종목코드, f.현재가, f.거래량, f.거래대금, f.누적거래량, f.누적거래대금, f.처리일시, f.sim_no]
+    REAL_COLUMNS = [col.name for col in REAL_FIELDS]
+    REAL_KEYS = ['체결시간']
+    REAL_INDEXES = {
+        'idx_code_time': f"CREATE INDEX IF NOT EXISTS idx_code_time ON {REAL_TABLE_NAME}(종목코드, 체결시간)"
+    }
+    
+    SIM_TABLE_NAME = 'daily_sim' ## 시뮬레이션 종목 : 당일 매수 종목
+    SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND sim_no = ?"
+    SIM_FIELDS = [f.id, f.일자, f.종목코드, f.종목명, f.구분, f.처리일시, f.sim_no]
+    SIM_COLUMNS = [col.name for col in SIM_FIELDS]
+    SIM_KEYS = ['일자', '종목코드']
+    SIM_INDEXES = {}
+    
+    # 차트 테이블 ***************************************************************************************************************************************
+    TICK_TABLE_NAME = 'tick_chart' ## 틱 차트
     TICK_SELECT_SAMPLE = f"SELECT * FROM {TICK_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 체결시간 DESC LIMIT 1"
     TICK_SELECT_DATE = f"SELECT * FROM {TICK_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
     TICK_SELECT_SIM = f"SELECT * FROM {TICK_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? ORDER BY 체결시간"
     TICK_FIELDS = [f.id, f.종목코드, f.체결시간, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱, f.처리일시]
     TICK_COLUMNS = [col.name for col in TICK_FIELDS]
-    TICK_CONFLICT_COLS = ['주기', '틱', '종목코드', '체결시간']
+    TICK_KEYS = ['주기', '틱', '종목코드', '체결시간']
     TICK_INDEXES = {}
 
-    MIN_TABLE_NAME = 'minute_chart'
+    MIN_TABLE_NAME = 'minute_chart' ## 분 차트
     MIN_SELECT_SAMPLE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 체결시간 DESC LIMIT 1"
     MIN_SELECT_DATE = f"SELECT * FROM {MIN_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? AND 종목코드 = ? ORDER BY 체결시간 DESC"
     MIN_SELECT_SIM = f"SELECT * FROM {MIN_TABLE_NAME} WHERE substr(체결시간, 1, 8) >= ? AND 주기 = ? AND 틱 = ? ORDER BY 체결시간"
     MIN_FIELDS = [f.id, f.종목코드, f.체결시간, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱, f.처리일시]
     MIN_COLUMNS = [col.name for col in MIN_FIELDS]
-    MIN_CONFLICT_COLS = ['주기', '틱', '종목코드', '체결시간']
+    MIN_KEYS = ['주기', '틱', '종목코드', '체결시간']
     MIN_INDEXES = {
         'idx_time_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_time_cycle_tick_code ON {MIN_TABLE_NAME}(체결시간, 주기, 틱, 종목코드)",
     }
 
-    DAY_TABLE_NAME = 'dwm_chart'
+    DAY_TABLE_NAME = 'dwm_chart' ## 일.주.월 차트
     DAY_SELECT_SAMPLE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 종목코드 = ? ORDER BY 일자 DESC LIMIT 1"
     DAY_SELECT_DATE = f"SELECT * FROM {DAY_TABLE_NAME} WHERE 일자 = ? AND 주기 = ?"
     DAY_FIELDS = [f.id, f.종목코드, f.일자, f.시가, f.고가, f.저가, f.현재가, f.거래량, f.거래대금, f.주기, f.틱, f.처리일시]
     DAY_COLUMNS = [col.name for col in DAY_FIELDS]
-    DAY_CONFLICT_COLS = ['주기', '틱', '종목코드', '일자']
+    DAY_KEYS = ['주기', '틱', '종목코드', '일자']
     DAY_INDEXES = {
         'idx_date_cycle_tick_code': f"CREATE INDEX IF NOT EXISTS idx_date_cycle_tick_code ON {DAY_TABLE_NAME}(일자, 주기, 틱, 종목코드)",
     }
@@ -192,8 +206,8 @@ class DBMServer:
 
     def cleanup(self):
         try:
-            db_tables = [db_columns.TRD_TABLE_NAME, db_columns.CONC_TABLE_NAME, db_columns.COND_TABLE_NAME]
-            chart_tables = [db_columns.MIN_TABLE_NAME, db_columns.DAY_TABLE_NAME]
+            db_tables = [db_columns.TRD_TABLE_NAME, db_columns.CONC_TABLE_NAME, db_columns.COND_TABLE_NAME, db_columns.REAL_TABLE_NAME, db_columns.SIM_TABLE_NAME]
+            chart_tables = [db_columns.TICK_TABLE_NAME, db_columns.MIN_TABLE_NAME, db_columns.DAY_TABLE_NAME]
             for table in db_tables:
                 self.cleanup_old_data(db='db', table=table)
             for table in chart_tables:
@@ -255,21 +269,27 @@ class DBMServer:
             db_cursor.execute(index)
 
         # Conclusion Table
-        sql = self.create_table_sql(db_columns.CONC_TABLE_NAME, db_columns.CONC_FIELDS, conflict_cols=db_columns.CONC_CONFLICT_COLS)
+        sql = self.create_table_sql(db_columns.CONC_TABLE_NAME, db_columns.CONC_FIELDS, key=db_columns.CONC_KEYS)
         db_cursor.execute(sql)
         for index in db_columns.CONC_INDEXES.values():
             db_cursor.execute(index)
 
-        # 시뮬레이션 할 종목 테이블
-        sql = self.create_table_sql(db_columns.SIM_TABLE_NAME, db_columns.SIM_FIELDS, conflict_cols=db_columns.SIM_CONFLICT_COLS)
-        db_cursor.execute(sql)
-        for index in db_columns.SIM_INDEXES.values():
-            db_cursor.execute(index)
-
         # 시뮬레이션 할 조건검색된 종목 테이블
-        sql = self.create_table_sql(db_columns.COND_TABLE_NAME, db_columns.COND_FIELDS, conflict_cols=db_columns.COND_CONFLICT_COLS)
+        sql = self.create_table_sql(db_columns.COND_TABLE_NAME, db_columns.COND_FIELDS, key=db_columns.COND_KEYS)
         db_cursor.execute(sql)
         for index in db_columns.COND_INDEXES.values():
+            db_cursor.execute(index)
+
+        # 실시간 현재가 데이타
+        sql = self.create_table_sql(db_columns.REAL_TABLE_NAME, db_columns.REAL_FIELDS, key=db_columns.REAL_KEYS)
+        db_cursor.execute(sql)
+        for index in db_columns.REAL_INDEXES.values():
+            db_cursor.execute(index)
+
+        # 시뮬레이션 할 종목 테이블
+        sql = self.create_table_sql(db_columns.SIM_TABLE_NAME, db_columns.SIM_FIELDS, key=db_columns.SIM_KEYS)
+        db_cursor.execute(sql)
+        for index in db_columns.SIM_INDEXES.values():
             db_cursor.execute(index)
 
         db_conn.commit()
@@ -279,19 +299,19 @@ class DBMServer:
         chart_cursor = chart_conn.cursor()
         
         # 차트 테이블 (틱)
-        sql = self.create_table_sql(db_columns.TICK_TABLE_NAME, db_columns.TICK_FIELDS, conflict_cols=db_columns.TICK_CONFLICT_COLS)
+        sql = self.create_table_sql(db_columns.TICK_TABLE_NAME, db_columns.TICK_FIELDS, key=db_columns.TICK_KEYS)
         chart_cursor.execute(sql)
         for index in db_columns.TICK_INDEXES.values():
             chart_cursor.execute(index)
 
         # 차트 테이블 (분)
-        sql = self.create_table_sql(db_columns.MIN_TABLE_NAME, db_columns.MIN_FIELDS, conflict_cols=db_columns.MIN_CONFLICT_COLS)
+        sql = self.create_table_sql(db_columns.MIN_TABLE_NAME, db_columns.MIN_FIELDS, key=db_columns.MIN_KEYS)
         chart_cursor.execute(sql)
         for index in db_columns.MIN_INDEXES.values():
             chart_cursor.execute(index)
 
         # 차트 테이블 (일, 주, 월)
-        sql = self.create_table_sql(db_columns.DAY_TABLE_NAME, db_columns.DAY_FIELDS, conflict_cols=db_columns.DAY_CONFLICT_COLS)
+        sql = self.create_table_sql(db_columns.DAY_TABLE_NAME, db_columns.DAY_FIELDS, key=db_columns.DAY_KEYS)
         chart_cursor.execute(sql)
         for index in db_columns.DAY_INDEXES.values():
             chart_cursor.execute(index)
@@ -300,14 +320,14 @@ class DBMServer:
 
         logging.debug('dbm_initialize completed')
 
-    def create_table_sql(self, table_name, fields, conflict_cols=None):
+    def create_table_sql(self, table_name, fields, key=None):
         """테이블 생성 SQL문 생성"""
         field_definitions = []
         for field in fields:
             definition = f"{field.name} {field.type}"
             if field.not_null:
                 definition += " NOT NULL"
-            if field.unique and (not conflict_cols or field.name not in conflict_cols):
+            if field.unique and (not key or field.name not in key):
                 definition += " UNIQUE"
             if field.primary:
                 definition += " PRIMARY KEY"
@@ -324,8 +344,8 @@ class DBMServer:
                 definition += f" REFERENCES {fk['table']}({joined_columns})"                
             field_definitions.append(definition)
         # 복합 UPSRERT키 설정
-        if conflict_cols:
-            field_definitions.append(f"UNIQUE ({', '.join(conflict_cols)})")
+        if key:
+            field_definitions.append(f"UNIQUE ({', '.join(key)})")
         return f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(field_definitions)});"
 
     def cleanup_old_data(self, db='db', table=db_columns.TRD_TABLE_NAME):
@@ -346,9 +366,6 @@ class DBMServer:
             
         except Exception as e:
             logging.error(f"오래된 데이터 정리 중 오류 발생: {e}", exc_info=True)
-
-    def loop_worker_model(self):
-        """BaseModel의 워커 루프"""
 
     def execute_query(self, sql, db='chart', params=None):
         """SQL 실행"""
@@ -375,7 +392,7 @@ class DBMServer:
             conn.rollback()
             return None
 
-    def table_upsert(self, db, table, dict_data, conflict_cols=None):
+    def table_upsert(self, db, table, dict_data, key=None):
         """테이블 업서트"""
         try:
             is_list = isinstance(dict_data, list)   
@@ -385,11 +402,11 @@ class DBMServer:
             column_str = ', '.join(['?'] * len(temp))
             params = [tuple(item.values()) for item in dict_data] if is_list else [tuple(dict_data.values())]
 
-            if conflict_cols:
+            if key:
                 # UPDATE 대상 컬럼 정의 (conflict 컬럼 제외)
-                update_columns = [col for col in temp.keys() if col not in conflict_cols]
+                update_columns = [col for col in temp.keys() if col not in key]
                 update_expr = ', '.join([f"{col}=excluded.{col}" for col in update_columns])
-                conflict_target = ', '.join(conflict_cols)
+                conflict_target = ', '.join(key)
 
                 sql = f"""
                 INSERT INTO {table} ({columns})
@@ -427,7 +444,7 @@ class DBMServer:
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
                     record = new_record()
-                    sim_record = {'일자': dt, '종목코드': code, '매수가': price, '매수시간': tm.replace(':', '')}
+                    sim_record = {'일자': dt, '종목코드': code, '종목명': name, 'sim_no': sim_no}
             
             elif kind == '매도':
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
@@ -471,15 +488,10 @@ class DBMServer:
                         '매수수량': qty, '매수가': price, '매수금액': amount
                     })
             
-            self.table_upsert('db', table, record, conflict_cols=db_columns.CONC_CONFLICT_COLS)
-
-            if sim_no==0 and sim_record:
-                sql = f"SELECT * FROM {db_columns.SIM_TABLE_NAME} WHERE 일자 = ? AND 종목코드 = ? LIMIT 1"
-                result = self.execute_query(sql, db='db', params=(dt, code))
-                if result: 
-                    result[0].update(sim_record)
-                    self.table_upsert('db', db_columns.SIM_TABLE_NAME, result[0], conflict_cols=db_columns.SIM_CONFLICT_COLS)
-            sim_record = None
+            self.table_upsert('db', table, record, key=db_columns.CONC_KEYS)
+            if sim_record:
+                self.table_upsert('db', db_columns.SIM_TABLE_NAME, sim_record, key=db_columns.SIM_KEYS)
+                sim_record = None
 
             return True
             
@@ -491,30 +503,9 @@ class DBMServer:
         """차트 데이터 저장"""
         table = db_columns.TICK_TABLE_NAME if cycle=='tk' else db_columns.MIN_TABLE_NAME if cycle=='mi' else db_columns.DAY_TABLE_NAME
         dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
-        self.table_upsert('chart', table, dict_data, conflict_cols=db_columns.TICK_CONFLICT_COLS if cycle=='tk' else db_columns.MIN_CONFLICT_COLS if cycle=='mi' else db_columns.DAY_CONFLICT_COLS)
+        self.table_upsert('chart', table, dict_data, key=db_columns.TICK_KEYS if cycle=='tk' else db_columns.MIN_KEYS if cycle=='mi' else db_columns.DAY_KEYS)
 
-    def insert_sim_ticker(self, code, name, st_name, st_buy):
-        """시뮬레이션 종목 저장"""
-        table = db_columns.SIM_TABLE_NAME
-        find_time = datetime.now().strftime("%Y%m%d%H%M%S")
-        dt = find_time[:8]
-        result = self.execute_query(db_columns.SIM_SELECT_ONE, db='db', params=(dt, code))
-        if result: return
-        record = {
-            '일자': dt, '시간': find_time[8:], '종목코드': code, '종목명': name, '매수시간': '', '전략명칭': st_name, '매수전략': st_buy
-        }
-        self.table_upsert('db', table, record, conflict_cols=db_columns.SIM_CONFLICT_COLS)
-
-    def select_sim_ticker(self, dt):
-        """시뮬레이션 종목 조회"""
-        table = db_columns.SIM_TABLE_NAME
-        result = self.execute_query(db_columns.SIM_SELECT_SIM, db='db', params=(dt,))
-        return result
-
-    def insert_real_condition(self, code, type, cond_name, cond_index, st_name, st_buy, sim_no):
+    def insert_real_condition(self, code, type, cond_name, cond_index, sim_no):
         처리일시 = datetime.now().strftime("%Y%m%d%H%M%S")
-        record = {
-            '일자': 처리일시[:8], '시간': 처리일시[8:], '종목코드': code, '조건구분': type, '조건번호': cond_index, '조건식명': cond_name,
-            '전략명칭': st_name, '매수전략': st_buy, 'sim_no': sim_no
-            }
-        self.table_upsert('db', db_columns.COND_TABLE_NAME, record, conflict_cols=db_columns.COND_CONFLICT_COLS)
+        record = {'일자': 처리일시[:8], '시간': 처리일시[8:], '종목코드': code, '조건구분': type, '조건번호': cond_index, '조건식명': cond_name, 'sim_no': sim_no}
+        self.table_upsert('db', db_columns.COND_TABLE_NAME, record, key=db_columns.COND_KEYS)

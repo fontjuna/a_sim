@@ -506,6 +506,10 @@ class Constants:        # 상수 정의
     list전일가대비 = ['현재가', '시가', '고가', '저가', '등락율']
     list양음가대비 = ['평가손익', '수익률(%)', '전일대비', '손익율', '당일매도손익', '손익금액', '수익률']
 
+    # TR OUTPUT 정의
+    MI_OUTPUT = ["현재가", "거래량", "체결시간", "시가", "고가", "저가"]
+    DY_OUTPUT = ["현재가", "거래량", "거래대금", "일자", "시가", "고가", "저가"]
+
 class SimTicker:
     ticker = {
         "000100": { "종목명": "유한양행", "전일가": 131600 },
@@ -616,6 +620,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
         self.main = None
         self.admin = None
         self.prx = None
+        self.rcv = None # RealDataUpdater
         self.gui = None
         self.pri = None # PriceUpdater
         self.api = None
@@ -651,6 +656,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
             'api': SharedQueue(),
             'dbm': SharedQueue(),
             'prx': SharedQueue(),
+            'rcv': SharedQueue(),
         }
 
         self.잔고합산 = None # TableManager

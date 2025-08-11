@@ -33,7 +33,6 @@ class Admin:
         self.set_real_remove_all()
         self.get_holdings()
         self.json_load_define_sets()
-        self.get_sim_tickers()
         # 쓰레드 준비
         self.set_threads()
         self.start_threads()
@@ -63,8 +62,6 @@ class Admin:
         gm.chart_q = ThreadSafeQueue('chart_q')
         gm.counter = CounterTicker()
         gm.dict종목정보 = ThreadSafeDict()
-        gm.dict주문대기종목 = ThreadSafeDict() # 주문대기종목 = {종목코드: {'idx': 전략번호, 'kind': 구분}}
-        #gm.set주문종목 = ThreadSafeSet()
         gm.scm = ScriptManager()
         gm.prx.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
         gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
@@ -106,17 +103,10 @@ class Admin:
         self.pri_fx얻기_잔고목록()
         self.pri_fx등록_종목감시()
 
-    def get_sim_tickers(self):
-        tickers = gm.prx.answer('dbm', 'select_sim_ticker', dc.ToDay)
-        if tickers:
-            gm.tickers_set = set(row['종목코드'] for row in tickers)
-            logging.info(f'시뮬레이션 종목: {gm.tickers_set}')
-
     # 쓰레드 준비 -------------------------------------------------------------------------------------------
     def start_threads(self):
-        gm.prx.receive_signal.connect(self.run_recesive_signals)
-        gm.prx.receive_real_data.connect(self.on_receive_real_data)
-        gm.prx.receive_chejan_data.connect(self.on_receive_chejan_data)
+        gm.prx.receive_signal.connect(self.run_receive_signals)
+        gm.rcv.receive_signal.connect(self.run_receive_real_signals)
         gm.cts.start()
         gm.ctu.start()
         gm.odc.start()
@@ -141,7 +131,13 @@ class Admin:
         gm.odc = OrderCommander(gm.prx, gm.order_q)
         gm.pri = PriceUpdater(gm.prx, gm.price_q)
 
-    def run_recesive_signals(self, data):
+    def run_receive_signals(self, data):
+        if hasattr(self, data.method):
+            getattr(self, data.method)(*data.args, **data.kwargs)
+        else:
+            logging.error(f'시그널 처리 오류: method={data.method}')
+
+    def run_receive_real_signals(self, data):
         if hasattr(self, data.method):
             getattr(self, data.method)(*data.args, **data.kwargs)
         else:
@@ -237,7 +233,7 @@ class Admin:
         if not gm.ready: return
         if gm.sim_no == 0 and time.time() < 90000: return
         try:
-            gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, self.전략명칭, self.매수전략, gm.sim_no)
+            gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, gm.sim_no)
 
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
             if condition == gm.매수문자열:
@@ -445,10 +441,6 @@ class Admin:
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def stg_tickers_set_and_stop(self):
-        #if gm.sim_no==0: gm.setter_q.put(gm.tickers_set)
-        self.stg_stop()
-
     def stg_fx실행_전략매매(self):
         try:
             msg = self.stg_fx체크_전략매매()
@@ -554,9 +546,7 @@ class Admin:
             if kind == '매수':
                 if gm.잔고목록.in_key(code): return # 기 보유종목
                 gm.매수검색목록.set(key=code, data={'종목명': 종목명, '이탈': ''})
-
                 gm.setter_q.put(code)
-                if gm.sim_no==0: gm.prx.order('dbm', 'insert_sim_ticker', code, 종목명, self.전략명칭, self.매수전략)
 
             elif kind == '매도':
                 if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음 - 매도검색목록에도 추가 하지도 않고 있지도 않음
@@ -678,7 +668,7 @@ class Admin:
                     self.end_timer = QTimer()
                     self.end_timer.setSingleShot(True)
                     self.end_timer.setInterval(int(remain_secs*1000))
-                    self.end_timer.timeout.connect(lambda: self.stg_tickers_set_and_stop())
+                    self.end_timer.timeout.connect(lambda: self.stg_stop())
                     self.end_timer.start()
 
         except Exception as e:
@@ -727,20 +717,17 @@ class Admin:
                 kind = dictFID['주문구분'].lstrip('+-') # +매수, -매도, +매수정정, -매도정정, 매수취소, 매도취소
                 order_no = dictFID['주문번호']
                 주문상태 = dictFID.get('주문상태', '')
-                주문수량 = int(dictFID.get('주문수량', 0) or 0)
-                주문가격 = int(dictFID.get('주문가격', 0) or 0)
-                미체결수량 = int(dictFID.get('미체결수량', 0) or 0)
+                dictFID['주문수량'] = int(dictFID.get('주문수량', 0))
+                dictFID['주문가격'] = int(dictFID.get('주문가격', 0))
+                dictFID['미체결수량'] = int(dictFID.get('미체결수량', 0))
 
                 dictFID['종목코드'] = code
                 dictFID['주문구분'] = kind
                 dictFID['종목명'] = dictFID['종목명'].strip()
-                dictFID['주문수량'] = 주문수량
-                dictFID['주문가격'] = 주문가격
-                dictFID['미체결수량'] = 미체결수량
                 dictFID['체결시간'] = dictFID.get('주문/체결시간', '')
 
                 key = (code, kind)
-                row = gm.주문진행목록.get(key=key)
+                #row = gm.주문진행목록.get(key=key)
                 if gm.주문진행목록.in_key(key): # 정상 주문 처리 상태
                     gm.주문진행목록.set(key=key, data={'상태': 주문상태})
                 else: # 외부 처리 또는 취소주문 처리 상태
@@ -809,7 +796,6 @@ class Admin:
 
                     if code not in gm.set조건감시: self.stg_fx등록_종목감시([code], 1)
 
-                    #gm.set주문종목.add(code)
                     row = {'구분': kind, '상태': '외부접수', '종목코드': code, '종목명': name, '주문번호': order_no, '주문수량': qty, '미체결수량': remain_qty, '주문가격': price}
                     gm.주문진행목록.set(key=key, data=row)
                     logging.info(f'{kind}주문 외부 접수: order_no={order_no} {code} {name} 주문수량={qty} 미체결수량={remain_qty} 주문가격={price}')
@@ -879,6 +865,7 @@ class Admin:
                     logging.error(f"매수 처리중 오류 발생: {code} {name} ***", exc_info=True)
 
             if kind == '매수': buy_conclution()
+
             msg = {'구분': f'{kind}체결', '전략명칭': 전략명칭, '종목코드': code, '종목명': name,\
                     '주문수량': dictFID.get('주문수량', 0), '주문가격': dictFID.get('주문가격', 0), '주문번호': order_no}
             msg.update({'체결수량': 단위체결량, '체결가': 단위체결가, '체결금액': 단위체결가 * 단위체결량})
@@ -886,16 +873,14 @@ class Admin:
             logging.info(f'{kind}주문 정상 체결: order_no={order_no} {code} {name} 체결수량={단위체결량} 체결가={단위체결가} 체결금액={단위체결가 * 단위체결량}')
 
             if remain_qty == 0:
-                # 잔고처리로 이동
-                gm.주문진행목록.set(key=(code, kind), data={'상태': '완료'})
-                # if kind == '매도':
-                #     if not gm.잔고목록.delete(key=code):
-                #         logging.warning(f'잔고목록 삭제 실패: {code} {dictFID["종목명"]}')
-                #     gm.holdings.pop(code, None)
-                #     save_json(dc.fp.holdings_file, gm.holdings)
-                #     if gm.잔고목록.len() == 0: self.pri_fx얻기_잔고합산()
+                if kind == '매도':
+                    if not gm.잔고목록.delete(key=code):
+                        logging.warning(f'잔고목록 삭제 실패: {code} {dictFID["종목명"]}')
+                    gm.holdings.pop(code, None)
+                    save_json(dc.fp.holdings_file, gm.holdings)
+                    if gm.잔고목록.len() == 0: self.pri_fx얻기_잔고합산()
 
-                # gm.주문진행목록.delete(key=(code, kind)) # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
+                gm.주문진행목록.delete(key=(code, kind)) # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
 
         except Exception as e:
             logging.error(f"주문 체결 오류: {kind} {type(e).__name__} - {e}", exc_info=True)
@@ -908,36 +893,18 @@ class Admin:
             매입단가 = abs(int(dictFID.get('매입단가', 0) or 0))
             주문가능수량 = int(dictFID.get('주문가능수량', 0) or 0)
             gm.l2손익합산 = int(dictFID.get('당일총매도손익', 0) or 0)
-            kind = '매수' if dictFID.get('매도/매수구분', '') == '2' else '매도'
             code = dictFID['종목코드']
             name = dictFID['종목명']
+            kind = '매수' if dictFID.get('매도/매수구분', '') == '2' else '매도'
             key = (code, kind)
             주문수량 = gm.주문진행목록.get(key=key, column='주문수량')
             data = {'보유수량': 보유수량, '매입단가': 매입단가, '매입금액': 보유수량 * 매입단가, '주문가능수량': 주문가능수량}
             msg = f'{code} {name} 주문수량={주문수량} 보유수량={보유수량} 매입단가={매입단가} 매입금액={보유수량 * 매입단가} 주문가능수량={주문가능수량}'
-            진행목록 = gm.주문진행목록.get(filter={'종목코드': code, '상태': '완료'})
-            if 진행목록:
-                row =진행목록[0]
-                if 보유수량 == 0:
-                    gm.잔고목록.delete(key=code)
-                    gm.holdings.pop(code, None)
-                    save_json(dc.fp.holdings_file, gm.holdings)
-                    logging.debug(f'잔고목록 체결완료 삭제 ***: {msg}')
-                else:
-                    if gm.잔고목록.in_key(key=code):
-                        logging.debug(f'잔고목록 체결완료 수정 ***: {msg}')
-                        gm.잔고목록.set(key=code, data=data)
-                    else:
-                        logging.warning(f'잔고목록 체결완료 없음 ***: {msg}')
-
-                gm.주문진행목록.delete(key=key)
-                if gm.잔고목록.len() == 0: self.pri_fx얻기_잔고합산()
+            if gm.잔고목록.in_key(key=code):
+                logging.debug(f'잔고목록 업데이트 진행 ***: {msg}')
+                gm.잔고목록.set(key=code, data=data)
             else:
-                if gm.잔고목록.in_key(key=code):
-                    logging.debug(f'잔고목록 업데이트 진행 ***: {msg}')
-                    gm.잔고목록.set(key=code, data=data)
-                else:
-                    logging.warning(f'잔고목록 업데이트 없음 ***: {msg}')
+                logging.warning(f'잔고목록 업데이트 삭제 ***: {msg}')
 
         except Exception as e:
             logging.error(f"잔고 변경 오류: {type(e).__name__} - {e}", exc_info=True)
@@ -957,7 +924,6 @@ class Admin:
                 st_name = dictFID['전략명칭']
                 ordno = dictFID['주문번호']
                 st_buy = dictFID['매수전략']
-                gm.tickers_set.add(code) # 틱차트 가져올 종목들
                 gm.prx.order('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_name, st_buy, gm.sim_no)
                 
         except Exception as e:

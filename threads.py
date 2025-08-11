@@ -23,11 +23,16 @@ class ProxyAdmin():
     def proxy_method(self, qwork):
         self.emit_q.put(qwork) # qwork = QWork()
 
-    def on_receive_real_data(self, code, rtype, dictFID):
-        self.emit_real_q.put((code, rtype, dictFID))
+class RealReceiver():
+    def __init__(self):
+        self.name = 'rcv'
+        self.daemon = True
 
-    def on_receive_chejan_data(self, gubun, dictFID): # 주문체결 결과 수신
-        self.emit_chejan_q.put((gubun, dictFID))
+    def initialize(self):
+        logging.debug('rcv_init completed')
+
+    def proxy_method(self, qwork):
+        self.emit_q.put(qwork) # qwork = QWork()
 
 class PriceUpdater(QThread):
     def __init__(self, prx, price_q):
@@ -117,7 +122,7 @@ class PriceUpdater(QThread):
             })
 
 
-            if not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))):
+            if not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))) and gm.잔고목록.get(key=code, column='보유수량') > 0:
                 data={'구분': '매도', '상태': '요청', '종목코드': code, '종목명': row['종목명'], '전략매도': False, '비고': 'pri'}
                 row.update({'rqname': '신규매도', 'account': gm.account})
                 gm.주문진행목록.set(key=(code, '매도'), data=data)
