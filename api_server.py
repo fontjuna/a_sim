@@ -1213,18 +1213,16 @@ class APIServer:
         while True:
             if wt is not None: time.sleep(wt)
             result = self.api_request(rqname, trcode, input, output, next=next, screen=screen)
-            if result is None:
-                break
+            if result is None: break
             
             data, remain = result
-            if data is None or len(data) == 0: 
-                break
+            if data is None or len(data) == 0: break
                 
             dict_list.extend(data)
             if trcode == dc.scr.차트TR['tk'] and dt is not None and data[-1]['체결시간'] < dt: times = 0
+            
             times -= 1
-            if not remain or times <= 0: 
-                break
+            if not remain or times <= 0: break
             next = '2'
         
         return dict_list

@@ -1220,11 +1220,10 @@ class GUI(QMainWindow, form_class):
 
     def gui_sim_read_tick(self):
         try:
+            self.gui_sim_read_day()
             if gm.당일종목.len() == 0:
-                self.gui_sim_read_day()
-                if gm.당일종목.len() == 0:
-                    gm.toast.toast(f'당일종목이 없습니다.', duration=1000)
-                    return
+                gm.toast.toast(f'당일종목이 없습니다.', duration=1000)
+                return
 
             self.btnSimReadTick.setEnabled(False)
             self.btnSimReadDay.setEnabled(False)

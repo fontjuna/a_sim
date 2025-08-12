@@ -686,7 +686,7 @@ class EvalStrategy(QThread):
                 self.clear_timer.cancel()
                 self.clear_timer = None
             start_time = datetime.strptime(f"{now.strftime('%Y-%m-%d')} {self.청산시간}", '%Y-%m-%d %H:%M')
-            delay_sec = max(0, (start_time - now).total_seconds())
+            delay_sec = max(0, (start_time - now).total_seconds() - 0.1)  # stop()전 실행해야 함
             self.clear_timer = threading.Timer(delay_sec, self.on_clear_timer)
             self.clear_timer.start()
             logging.info(f"당일청산 타이머 설정: {self.청산시간}, {delay_sec}초 후 실행")
