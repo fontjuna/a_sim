@@ -51,15 +51,14 @@ class PriceUpdater(QThread):
     def run(self):
         self.running = True
         while self.running:
-            batch = {}
+            batch = set()
             start_time = time.time()
             while time.time() - start_time < dc.INTERVAL_BATCH:
                 data = self.price_q.get()
                 if data is None: 
                     self.running = False
                     return
-                code, row = data
-                batch[code] = row
+                batch.add(data)
 
             if batch: self.update_batch(batch)
 
@@ -75,19 +74,19 @@ class PriceUpdater(QThread):
             if data is None: 
                 self.running = False
                 return
-            self.executor.submit(self.update_current_price, *data)
+            self.update_current_price(data)
 
             q_len = self.price_q.length()
             if q_len > 30: logging.warning(f'price_q 대기 큐 len={q_len}')
     """
     def update_batch(self, batch):
-        for code, row in batch.items():
-            #self.executor.submit(self.update_current_price, code, price, row, dictFID) # 중복매도 우려
-            self.update_current_price(code, row)
+        for code in batch:
+            self.update_current_price(code)
     
-    def update_current_price(self, code, row):
+    def update_current_price(self, code):
         try:
-            if not gm.잔고목록.in_key(code): return
+            row = gm.잔고목록.get(key=code)
+            if not row: return
             
             현재가 = row['현재가']
             최고가 = row.get('최고가', 0)
@@ -117,8 +116,8 @@ class PriceUpdater(QThread):
                 '최고가': 현재가 if 현재가 > 최고가 else 최고가,
                 '보존': 새보존,
                 '감시': 새감시,
-                '등락율': float(row.get('등락율', 0)),
-                '누적거래량': int(row.get('누적거래량', 0)),
+                '등락율': row.get('등락율', 0),
+                '누적거래량': row.get('누적거래량', 0),
             })
 
 

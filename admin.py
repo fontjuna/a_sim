@@ -273,10 +273,9 @@ class Admin:
 
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
             
-            if gm.잔고목록.in_key(code) and (gm.dict종목정보.get(code, '현재가') or 0) > 0:
-                row = gm.잔고목록.get(key=code)
-                row.update({'현재가': 현재가, '등락율': float(dictFID.get('등락율', 0)), '누적거래량': int(dictFID.get('누적거래량', 0))})
-                if row: gm.price_q.put((code, row)) # PriceUpdater
+            if gm.잔고목록.in_key(code):
+                gm.잔고목록.set(key=code, data={'현재가': 현재가, '등락율': float(dictFID.get('등락율', 0)), '누적거래량': int(dictFID.get('누적거래량', 0))})
+                gm.price_q.put(code) # PriceUpdater
 
         except Exception as e:
             logging.error(f'실시간 주식체결 처리 오류: {type(e).__name__} - {e}', exc_info=True)
