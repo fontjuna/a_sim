@@ -540,6 +540,13 @@ class Admin:
 
             # 주문진행목록 추가는 이렇게 바로 해야 갭 간격을 줄여 그 사이에 이중 주문이 방지 된다.
             if not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))):
+                if kind == '매수':
+                    if gm.잔고목록.in_key(code): return # 기 보유종목
+                    gm.매수검색목록.set(key=code, data={'종목명': 종목명, '이탈': ''})
+                    gm.setter_q.put(code)
+                elif kind == '매도':
+                    if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음 - 매도검색목록에도 추가 하지도 않고 있지도 않음
+                    gm.매도검색목록.set(key=code, data={'종목명': 종목명, '이탈': ''})
                 key = (code, kind)
                 data={'구분': kind, '상태': '요청', '종목코드': code, '종목명': 종목명, '전략매도': True}
                 gm.주문진행목록.set(key=key, data=data)
@@ -547,15 +554,6 @@ class Admin:
                 logging.debug(f'주문 처리 중인 종목: {kind} {code} {종목명}')
                 return
             
-            # 목록에 표시
-            if kind == '매수':
-                if gm.잔고목록.in_key(code): return # 기 보유종목
-                gm.매수검색목록.set(key=code, data={'종목명': 종목명, '이탈': ''})
-                gm.setter_q.put(code)
-            elif kind == '매도':
-                if not gm.잔고목록.in_key(code): return # 매도 할 종목 없음 - 매도검색목록에도 추가 하지도 않고 있지도 않음
-                gm.매도검색목록.set(key=code, data={'종목명': 종목명, '이탈': ''})
-
             # 메세지 순서상 여기에 위치 해야 함
             self.send_status_msg('주문내용', {'구분': f'{kind}편입', '종목코드': code, '종목명': 종목명, '메시지': '/ 조건검색'})
 
