@@ -533,6 +533,11 @@ class Admin:
         try:
             종목명 = gm.prx.answer('api', 'GetMasterCodeName', code)
 
+            if not gm.dict종목정보.contains(code):
+                전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
+                value={'종목명': 종목명, '전일가': 전일가, '현재가': 0}
+                gm.dict종목정보.set(code, value=value)
+
             # 주문진행목록 추가는 이렇게 바로 해야 갭 간격을 줄여 그 사이에 이중 주문이 방지 된다.
             if not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))):
                 key = (code, kind)
@@ -542,11 +547,6 @@ class Admin:
                 logging.debug(f'주문 처리 중인 종목: {kind} {code} {종목명}')
                 return
             
-            if not gm.dict종목정보.contains(code):
-                전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
-                value={'종목명': 종목명, '전일가': 전일가, '현재가': 0}
-                gm.dict종목정보.set(code, value=value)
-
             # 목록에 표시
             if kind == '매수':
                 if gm.잔고목록.in_key(code): return # 기 보유종목
