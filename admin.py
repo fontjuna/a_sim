@@ -794,6 +794,7 @@ class Admin:
                         value={'종목명': 종목명, '전일가': 전일가, '현재가': 0}
                         gm.dict종목정보.set(code, value=value)
 
+                    gm.setter_q.put(code)
                     if code not in gm.set조건감시: self.stg_fx등록_종목감시([code], 1)
 
                     row = {'구분': kind, '상태': '외부접수', '종목코드': code, '종목명': name, '주문번호': order_no, '주문수량': qty, '미체결수량': remain_qty, '주문가격': price}

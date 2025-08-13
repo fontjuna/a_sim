@@ -145,7 +145,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     REAL_SELECT_DATE = f"SELECT * FROM {REAL_TABLE_NAME} WHERE substr(체결시간, 1, 8) = ?"
     REAL_FIELDS = [f.id, f.체결시간, f.종목코드, f.현재가, f.거래량, f.거래대금, f.누적거래량, f.누적거래대금, f.처리일시, f.sim_no]
     REAL_COLUMNS = [col.name for col in REAL_FIELDS]
-    REAL_KEYS = ['체결시간']
+    REAL_KEYS = ['체결시간', '종목코드']
     REAL_INDEXES = {
         'idx_code_time': f"CREATE INDEX IF NOT EXISTS idx_code_time ON {REAL_TABLE_NAME}(종목코드, 체결시간)"
     }

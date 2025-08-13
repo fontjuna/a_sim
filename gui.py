@@ -648,8 +648,8 @@ class GUI(QMainWindow, form_class):
         data={'키': key, '구분': kind, '상태': '요청', '전략': '전략00', '종목코드': code, '종목명': self.leTrName.text(), '전략매도': False}
         gm.주문진행목록.set(key=key, data=data) 
         # 주문 전송
-        gm.order_q.put(send_data)
         gm.setter_q.put(code)
+        gm.order_q.put(send_data)
 
     def gui_tr_cancel(self):
         text = self.leTrCancelKey.text().split('_')
