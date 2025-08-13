@@ -1,4 +1,4 @@
-from public import get_path, gm, dc, save_json, load_json, hoga, com_market_status
+from public import get_path, gm, dc, save_json, load_json, hoga, com_market_status, Work
 from dbm_server import db_columns
 from tables import tbl
 from chart import ChartData
@@ -1198,37 +1198,45 @@ class GUI(QMainWindow, form_class):
             logging.error(f'주문설정 표시 오류: {type(e).__name__} - {e}', exc_info=True)
 
     # 시뮬레이션 데이타 ---------------------------------------------------------------------------------------------
-    def gui_sim_read_day(self):
-        self.btnSimReadDay.setEnabled(False)
-        self.btnSimReadTick.setEnabled(False)
-        date_text = self.dtSimDate.date().toString("yyyyMMdd")
+    def gui_sim_get_data(self, date_text):
         try:
-            gm.당일종목.delete()
             dict_list = gm.prx.answer('dbm', 'execute_query', sql=db_columns.SIM_SELECT_DATE, db='db', params=(date_text, gm.sim_no))
             if dict_list is not None and len(dict_list) > 0:
-                gm.당일종목.set(data=dict_list)
-                logging.info(f"당일종목 얻기 완료: data count={gm.당일종목.len()}")
+                logging.info(f"당일종목 얻기 완료: data count={len(dict_list)}")
+                return dict_list
             else:
                 logging.warning(f'당일종목 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+                return None
 
         except Exception as e:
             logging.error(f'당일종목 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
-
+            return None
+        
+    def gui_sim_read_day(self):
+        self.btnSimReadDay.setEnabled(False)
+        self.btnSimReadTick.setEnabled(False)
+        self.tblSimDaily.clearContents()
+        date_text = self.dtSimDate.date().toString("yyyyMMdd")
+        dict_list = self.gui_sim_get_data(date_text)
+        if dict_list is not None:
+            gm.당일종목.set(data=dict_list)
+        self.tblSimDaily.setRowCount(len(dict_list))
         gm.당일종목.update_table_widget(self.tblSimDaily)
         self.btnSimReadDay.setEnabled(True)
         self.btnSimReadTick.setEnabled(True)
 
     def gui_sim_read_tick(self):
         try:
-            self.gui_sim_read_day()
-            if gm.당일종목.len() == 0:
-                gm.toast.toast(f'당일종목이 없습니다.', duration=1000)
-                return
-
             self.btnSimReadTick.setEnabled(False)
             self.btnSimReadDay.setEnabled(False)
+            date_text = self.dtSimDate.date().toString("yyyyMMdd")
+            dict_list = self.gui_sim_get_data(date_text)
+            if dict_list is not None:
+                self.tblSimDaily.clearContents()
+                gm.당일종목.set(data=dict_list)
+                gm.당일종목.update_table_widget(self.tblSimDaily)
 
-            thread = threading.Thread(target=self.gui_sim_read_tick_worker)
+            thread = threading.Thread(target=self.gui_sim_read_tick_worker, args=(date_text, dict_list))
             thread.daemon = True
             thread.start()
 
@@ -1237,12 +1245,11 @@ class GUI(QMainWindow, form_class):
             self.btnSimReadDay.setEnabled(True)
             self.btnSimReadTick.setEnabled(True)
 
-    def gui_sim_read_tick_worker(self):
+    def gui_sim_read_tick_worker(self, date_text, items):
         try:
-            date_text = self.dtSimDate.date().toString("yyyyMMdd")
             현재시간 = datetime.now().strftime("%H%M%S")
-            구분 = '읽음' if date_text < dc.ToDay or not ('090000' <= 현재시간 <= '153000') else ''
-            items = gm.당일종목.get()
+            구분 = '읽음' if date_text < dc.ToDay or (date_text == dc.ToDay and '153000' <= 현재시간) else ''
+            #items = gm.당일종목.get()
             #logging.info(f"당일종목 차트 데이타 얻기: {len(items)} 개 종목 [구분={구분}]")
             for item in items:
                 if item['구분'] == '읽음': continue
@@ -1258,18 +1265,18 @@ class GUI(QMainWindow, form_class):
                             tickers.insert(0, {'체결시간': record['체결시간'], '종목코드': item['종목코드'], '현재가': record['현재가'], '거래량': record['거래량'], '누적거래량': add_qty, 'sim_no': gm.sim_no})
                         gm.prx.order('dbm', 'table_upsert', 'db', db_columns.REAL_TABLE_NAME, tickers, key=db_columns.REAL_KEYS)
                         gm.prx.order('dbm', 'table_upsert', 'db', db_columns.SIM_TABLE_NAME, {'일자': date_text, '종목코드': item['종목코드'], '구분': 구분}, key=db_columns.SIM_KEYS)
-                        gm.당일종목.set(key='종목코드', data={'구분': 구분})
+                        #gm.당일종목.set(key='종목코드', data={'구분': 구분})
 
         except Exception as e:
             logging.error(f'당일종목 차트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
 
         finally:
-            QTimer.singleShot(0, self.gui_sim_read_tick_done)
+            gm.qwork['gui'].put(Work('gui_sim_read_day', {}))
 
     def gui_sim_read_tick_done(self):
         self.btnSimReadDay.setEnabled(True)
         self.btnSimReadTick.setEnabled(True)
-        gm.당일종목.update_table_widget(self.tblSimDaily)
+        self.gui_sim_read_day()
         logging.info(f"당일종목 차트 데이타 얻기 완료")
 
     def gui_sim_add_day(self):
