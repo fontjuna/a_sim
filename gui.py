@@ -27,6 +27,8 @@ class GUI(QMainWindow, form_class):
         self.refresh_data_timer = QTimer()
         self.refresh_data_timer.timeout.connect(self.gui_refresh_data)
         self.script_edited = False
+        self.sim_date_text = ''
+        self.sim_thread = None
         self.cht_dt = ChartData()
 
         gm.qwork['gui'] = Queue()
@@ -150,8 +152,10 @@ class GUI(QMainWindow, form_class):
             self.btnSimStart.clicked.connect(self.gui_simulation_restart) # 시뮬레이션 재시작
 
             # 시뮬레이션 실행일자 데이타 가져오기
-            self.btnSimReadDay.clicked.connect(self.gui_sim_read_day)
-            self.btnSimReadTick.clicked.connect(self.gui_sim_read_tick)
+            #self.dtSimDate.dateChanged.connect(lambda date: setattr(self, 'sim_date_text', date.toString("yyyyMMdd")))
+            #self.dtSimDate.editingFinished.connect(lambda: setattr(self, 'sim_date_text', self.dtSimDate.date().toString("yyyyMMdd")))
+            self.btnSimReadDay.clicked.connect(lambda: self.gui_sim_read_day(read_chart=False))
+            self.btnSimReadTick.clicked.connect(lambda: self.gui_sim_read_day(read_chart=True))
 
             # 시뮬레이션 차트데이타
             self.btnSimAddDay.clicked.connect(self.gui_sim_add_day)
@@ -1198,86 +1202,74 @@ class GUI(QMainWindow, form_class):
             logging.error(f'주문설정 표시 오류: {type(e).__name__} - {e}', exc_info=True)
 
     # 시뮬레이션 데이타 ---------------------------------------------------------------------------------------------
-    def gui_sim_get_data(self, date_text):
+    def gui_sim_get_data(self):
         try:
-            dict_list = gm.prx.answer('dbm', 'execute_query', sql=db_columns.SIM_SELECT_DATE, db='db', params=(date_text, gm.sim_no))
+            dict_list = gm.prx.answer('dbm', 'execute_query', sql=db_columns.SIM_SELECT_DATE, db='db', params=(self.sim_date_text, gm.sim_no))
             if dict_list is not None and len(dict_list) > 0:
-                logging.info(f"당일종목 얻기 완료: data count={len(dict_list)}")
+                logging.info(f"당일종목 얻기 완료: date={self.sim_date_text} count={len(dict_list)}")
                 return dict_list
             else:
-                logging.warning(f'당일종목 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+                logging.warning(f'당일종목 얻기 실패: date:{self.sim_date_text}, dict_list:{dict_list}')
                 return None
 
         except Exception as e:
             logging.error(f'당일종목 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
             return None
         
-    def gui_sim_read_day(self):
-        self.btnSimReadDay.setEnabled(False)
-        self.btnSimReadTick.setEnabled(False)
-        self.tblSimDaily.clearContents()
-        date_text = self.dtSimDate.date().toString("yyyyMMdd")
-        dict_list = self.gui_sim_get_data(date_text)
-        if dict_list is not None:
-            gm.당일종목.set(data=dict_list)
-        self.tblSimDaily.setRowCount(len(dict_list))
-        gm.당일종목.update_table_widget(self.tblSimDaily)
-        self.btnSimReadDay.setEnabled(True)
-        self.btnSimReadTick.setEnabled(True)
-
-    def gui_sim_read_tick(self):
+    def gui_sim_read_day(self, read_chart=False):
         try:
-            self.btnSimReadTick.setEnabled(False)
+            self.sim_date_text = self.dtSimDate.date().toString("yyyyMMdd")
+            enable = True
+            
             self.btnSimReadDay.setEnabled(False)
-            date_text = self.dtSimDate.date().toString("yyyyMMdd")
-            dict_list = self.gui_sim_get_data(date_text)
-            if dict_list is not None:
-                self.tblSimDaily.clearContents()
-                gm.당일종목.set(data=dict_list)
-                gm.당일종목.update_table_widget(self.tblSimDaily)
+            self.btnSimReadTick.setEnabled(False)
+            gm.당일종목.delete()
+            self.tblSimDaily.clearContents()
+            sim_tickers = self.gui_sim_get_data()
+            if sim_tickers:
+                gm.당일종목.set(data=sim_tickers)
+            else:
+                logging.warning(f'당일종목 없거나 실패 함 : date:{self.sim_date_text} sim_tickers:{sim_tickers}')
+                
+            gm.당일종목.update_table_widget(self.tblSimDaily)
+            if read_chart:
+                if not self.sim_thread or not self.sim_thread.is_alive():
+                    self.sim_thread = threading.Thread(target=self.gui_sim_read_tick_worker, args=(sim_tickers,))
+                    self.sim_thread.daemon = True
+                    self.sim_thread.start()
+                    enable = False
+        finally:
+            if enable:   
+                self.btnSimReadDay.setEnabled(True)
+                self.btnSimReadTick.setEnabled(True)
 
-            thread = threading.Thread(target=self.gui_sim_read_tick_worker, args=(date_text, dict_list))
-            thread.daemon = True
-            thread.start()
-
-        except Exception as e:
-            logging.error(f'당일종목 차트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
-            self.btnSimReadDay.setEnabled(True)
-            self.btnSimReadTick.setEnabled(True)
-
-    def gui_sim_read_tick_worker(self, date_text, items):
+    def gui_sim_read_tick_worker(self, sim_tickers):
         try:
             현재시간 = datetime.now().strftime("%H%M%S")
-            구분 = '읽음' if date_text < dc.ToDay or (date_text == dc.ToDay and '153000' <= 현재시간) else ''
-            #items = gm.당일종목.get()
-            #logging.info(f"당일종목 차트 데이타 얻기: {len(items)} 개 종목 [구분={구분}]")
-            for item in items:
-                if item['구분'] == '읽음': continue
-                dict_list = gm.prx.answer('api', 'get_chart_data', item['종목코드'], cycle='tk', tick=30, times=99, wt=1.67, dt=date_text)
+            구분 = '읽음' if self.sim_date_text < dc.ToDay or (self.sim_date_text == dc.ToDay and '153000' <= 현재시간) else ''
+            logging.info(f"당일종목 차트 데이타 얻기: date={self.sim_date_text} {len(sim_tickers)} 개 종목 [구분={구분}]")
+            for ticker in sim_tickers:
+                if ticker['구분'] == '읽음': continue
+                dict_list = gm.prx.answer('api', 'get_chart_data', ticker['종목코드'], cycle='tk', tick=30, times=99, wt=1.67, dt=self.sim_date_text)
                 if dict_list:
-                    records = [{**row} for row in dict_list if row['체결시간'][:8] == date_text]
-                    #logging.info(f"당일종목 차트 데이타 얻기: {pd.DataFrame(records)}")
+                    records = [{**row} for row in dict_list if row['체결시간'][:8] == self.sim_date_text]
                     if records:
                         tickers = []
                         add_qty = 0
                         for record in reversed(records):
                             add_qty += record['거래량']
-                            tickers.insert(0, {'체결시간': record['체결시간'], '종목코드': item['종목코드'], '현재가': record['현재가'], '거래량': record['거래량'], '누적거래량': add_qty, 'sim_no': gm.sim_no})
+                            tickers.insert(0, {'체결시간': record['체결시간'], '종목코드': ticker['종목코드'], '현재가': record['현재가'], '거래량': record['거래량'], '누적거래량': add_qty, 'sim_no': gm.sim_no})
                         gm.prx.order('dbm', 'table_upsert', 'db', db_columns.REAL_TABLE_NAME, tickers, key=db_columns.REAL_KEYS)
-                        gm.prx.order('dbm', 'table_upsert', 'db', db_columns.SIM_TABLE_NAME, {'일자': date_text, '종목코드': item['종목코드'], '구분': 구분}, key=db_columns.SIM_KEYS)
-                        #gm.당일종목.set(key='종목코드', data={'구분': 구분})
+                        gm.prx.order('dbm', 'table_upsert', 'db', db_columns.SIM_TABLE_NAME, {'일자': self.sim_date_text, '종목코드': ticker['종목코드'], '구분': 구분}, key=db_columns.SIM_KEYS)
+                        #logging.info(f"당일종목 차트 데이타 얻기: {date_text} {len(items)} 개 종목중 \n{pd.DataFrame(tickers)}")
+                        #gm.당일종목.set(key=ticker['종목코드'], data={'구분': 구분})
 
         except Exception as e:
             logging.error(f'당일종목 차트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
-
+        
         finally:
-            gm.qwork['gui'].put(Work('gui_sim_read_day', {}))
-
-    def gui_sim_read_tick_done(self):
-        self.btnSimReadDay.setEnabled(True)
-        self.btnSimReadTick.setEnabled(True)
-        self.gui_sim_read_day()
-        logging.info(f"당일종목 차트 데이타 얻기 완료")
+            self.sim_thread = None
+            gm.qwork['gui'].put(Work('gui_sim_read_day', {'read_chart': False}))
 
     def gui_sim_add_day(self):
         code = self.leSimCodeDay.text()

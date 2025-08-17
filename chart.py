@@ -1961,8 +1961,8 @@ class ScriptManager:
             exec_time = time.time() - start_time
             
             # 실행 시간 경고
-            if exec_time > 0.02:
-                warning_msg = f"스크립트 실행 기준(0.02초) ({script_name}:{code}): {exec_time:.4f}초"
+            if exec_time > 0.05:
+                warning_msg = f"스크립트 실행 기준(0.05초) ({script_name}:{code}): {exec_time:.4f}초"
                 logging.warning(warning_msg)
                 script_logs.append(f'WARNING: {warning_msg}')
             

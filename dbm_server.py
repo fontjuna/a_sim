@@ -374,10 +374,8 @@ class DBMServer:
             conn = self.get_connection(db)
             
             if isinstance(params, list) and params and isinstance(params[0], tuple):
-                #logging.debug(f'execute_many: {sql}')
                 cursor.executemany(sql, params)
             else:
-                #logging.debug(f'execute_query: {sql}')
                 cursor.execute(sql, params if params else ())
             
             if sql.strip().upper().startswith('SELECT'):
