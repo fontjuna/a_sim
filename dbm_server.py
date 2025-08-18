@@ -152,6 +152,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     
     SIM_TABLE_NAME = 'daily_sim' ## 시뮬레이션 종목 : 당일 매수 종목
     SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND sim_no = ?"
+    SIM_SELECT_GUBUN = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND sim_no = ? AND 구분 <> '읽음'"
     SIM_FIELDS = [f.id, f.일자, f.종목코드, f.종목명, f.구분, f.처리일시, f.sim_no]
     SIM_COLUMNS = [col.name for col in SIM_FIELDS]
     SIM_KEYS = ['일자', '종목코드']
