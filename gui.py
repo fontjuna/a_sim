@@ -1202,7 +1202,7 @@ class GUI(QMainWindow, form_class):
             logging.error(f'주문설정 표시 오류: {type(e).__name__} - {e}', exc_info=True)
 
     # 시뮬레이션 데이타 ---------------------------------------------------------------------------------------------
-    def gui_sim_get_tickers(self, date_text, read_chart=False):
+    def gui_get_tickers(self, date_text, read_chart=False):
         try:
             sql = db_columns.SIM_SELECT_GUBUN if read_chart else db_columns.SIM_SELECT_DATE
             dict_list = gm.prx.answer('dbm', 'execute_query', sql=sql, db='db', params=(date_text, gm.sim_no,))
@@ -1227,7 +1227,7 @@ class GUI(QMainWindow, form_class):
 
             gm.당일종목.delete()
             self.tblSimDaily.clearContents()
-            sim_tickers = self.gui_sim_get_tickers(date_text, read_chart=read_chart)
+            sim_tickers = self.gui_get_tickers(date_text, read_chart=read_chart)
 
             if sim_tickers:
                 gm.당일종목.set(data=sim_tickers)
@@ -1237,6 +1237,10 @@ class GUI(QMainWindow, form_class):
             gm.당일종목.update_table_widget(self.tblSimDaily)
 
             if read_chart and sim_tickers is not None:
+                현재시간 = datetime.now().strftime("%H%M%S")
+                if not (date_text < dc.ToDay or (date_text == dc.ToDay and '153000' <= 현재시간)):
+                    logging.warning(f"당일종목 읽기 시간이 아님: date={date_text} 현재시간={현재시간}")
+                    return
                 if self.sim_thread and not self.sim_thread.is_alive():
                     self.sim_thread = None
                 if not self.sim_thread:
@@ -1253,11 +1257,6 @@ class GUI(QMainWindow, form_class):
 
     def gui_sim_read_ticker(self, date_text, sim_tickers):
         try:
-            현재시간 = datetime.now().strftime("%H%M%S")
-            if not (date_text < dc.ToDay or (date_text == dc.ToDay and '153000' <= 현재시간)):
-                logging.warning(f"당일종목 읽기 시간이 맞지 않음: date={date_text} 현재시간={현재시간}")
-                return
-            
             logging.info(f"당일종목 차트 데이타 얻기: date={date_text} {len(sim_tickers)} 개 종목")
             for ticker in sim_tickers:
                 dict_list = gm.prx.answer('api', 'get_chart_data', ticker['종목코드'], cycle='tk', tick=30, times=999, wt=1.67, dt=date_text)
