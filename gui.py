@@ -1259,7 +1259,7 @@ class GUI(QMainWindow, form_class):
         try:
             logging.info(f"당일종목 차트 데이타 얻기: date={date_text} {len(sim_tickers)} 개 종목")
             for ticker in sim_tickers:
-                dict_list = gm.prx.answer('api', 'get_chart_data', ticker['종목코드'], cycle='tk', tick=30, times=999, wt=1.67, dt=date_text, timeout=50)
+                dict_list = gm.prx.answer('api', 'get_chart_data', ticker['종목코드'], cycle='tk', tick=30, times=999, wt=1.67, dt=date_text, timeout=60)
                 if dict_list:
                     records = [{**row} for row in dict_list if row['체결시간'][:8] == date_text]
                     if records:
