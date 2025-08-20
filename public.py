@@ -11,6 +11,7 @@ import os
 import sys
 import json
 import time
+import uuid
 
 def hoga(current_price, position=0):
     # logging.debug(f'hoga : current_price={current_price}, position={position}')
@@ -158,6 +159,7 @@ class QData:
     args : tuple = field(default_factory=tuple)
     kwargs : dict = field(default_factory=dict)
     callback : str = None
+    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))  # 고유 요청 ID
 
 class SharedQueue:
     def __init__(self):

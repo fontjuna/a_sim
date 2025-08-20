@@ -156,80 +156,6 @@ class PriceUpdater(QThread):
         except Exception as e:
             logging.error(f'실시간 배치 오류: {type(e).__name__} - {e}', exc_info=True)
 
-class OrderCommander(QThread):
-    def __init__(self, prx, order_q):
-        super().__init__()
-        self.daemon = True
-        self.prx = prx
-        self.order_q = order_q
-        self.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
-        self.running = False
-
-    def stop(self):
-        self.running = False
-        self.order_q.put(None)
-
-    def run(self):
-        self.running = True
-        while self.running:
-            self.send_order()
-
-    def send_order(self):
-        if not self.com_order_time_check(): return -308 # 5회 제한 초과
-        order = self.order_q.get()
-        if order is None: 
-            self.running = False
-            return
-        self.com_SendOrder(**order)
-
-    def com_order_time_check(self):
-        wait_time = self.ord.check_interval()
-        if wait_time > 1666: # 1.666초 이내 주문 제한
-            msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초'
-            gm.toast.toast(msg, duration=dc.TOAST_TIME)
-            logging.warning(msg)
-            return False
-       
-        elif wait_time > 1000:
-            msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-            gm.toast.toast(msg, duration=wait_time)
-            time.sleep((wait_time-10)/1000) 
-            wait_time = 0
-            logging.info(msg)
-        elif wait_time > 0:
-            msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-            gm.toast.toast(msg, duration=wait_time)
-            logging.info(msg)
-
-        time.sleep((wait_time+100)/1000) 
-        self.ord.update_request_times()
-        return True
-
-    def com_SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno, msg=None):
-
-        전략명칭 = gm.실행전략['전략명칭']
-        매수전략 = gm.설정전략['매수전략']
-
-        name = self.prx.answer('api', 'GetMasterCodeName', code)
-        #logging.debug(f'주문 요청 확인: code={code}, name={name}')
-        주문유형 = dc.fid.주문유형FID[ordtype]
-
-        kind = msg if msg else 주문유형
-        job = {"구분": kind, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
-        gm.admin.send_status_msg('주문내용', job)
-
-        rqname = f'{rqname}_{code}_{name}_{datetime.now().strftime("%H%M%S.%f")}'
-        key = (code, 주문유형.lstrip("신규"))
-        gm.주문진행목록.set(key=key, data={'상태': '전송', '요청명': rqname})
-        logging.debug(f'{kind}주문 전송: key={key}, rqname={rqname}')
-
-        cmd = { 'rqname': rqname, 'screen': screen, 'accno': accno, 'ordtype': ordtype, 'code': code, 'hoga': hoga, 'quantity': quantity, 'price': price, 'ordno': ordno }
-        self.prx.order('api', 'SendOrder', **cmd)
-
-        dict_data = {'전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
-                     '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, 'sim_no': gm.sim_no}
-        self.prx.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
-
 class ChartUpdater(QThread):
     def __init__(self, prx, chart_q):
         super().__init__()
@@ -335,6 +261,80 @@ class ChartSetter(QThread):
         dict_list = self.prx.answer('api', 'get_chart_data', code, cycle, tick, times, wt, dt)
         if not dict_list: return
         self.prx.order('dbm', 'upsert_chart', dict_list, cycle, tick)
+
+class OrderCommander(QThread):
+    def __init__(self, prx, order_q):
+        super().__init__()
+        self.daemon = True
+        self.prx = prx
+        self.order_q = order_q
+        self.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
+        self.running = False
+
+    def stop(self):
+        self.running = False
+        self.order_q.put(None)
+
+    def run(self):
+        self.running = True
+        while self.running:
+            self.send_order()
+
+    def send_order(self):
+        if not self.com_order_time_check(): return -308 # 5회 제한 초과
+        order = self.order_q.get()
+        if order is None: 
+            self.running = False
+            return
+        self.com_SendOrder(**order)
+
+    def com_order_time_check(self):
+        wait_time = self.ord.check_interval()
+        if wait_time > 1666: # 1.666초 이내 주문 제한
+            msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초'
+            gm.toast.toast(msg, duration=dc.TOAST_TIME)
+            logging.warning(msg)
+            return False
+       
+        elif wait_time > 1000:
+            msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
+            gm.toast.toast(msg, duration=wait_time)
+            time.sleep((wait_time-10)/1000) 
+            wait_time = 0
+            logging.info(msg)
+        elif wait_time > 0:
+            msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
+            gm.toast.toast(msg, duration=wait_time)
+            logging.info(msg)
+
+        time.sleep((wait_time+100)/1000) 
+        self.ord.update_request_times()
+        return True
+
+    def com_SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno, msg=None):
+
+        전략명칭 = gm.실행전략['전략명칭']
+        매수전략 = gm.설정전략['매수전략']
+
+        name = self.prx.answer('api', 'GetMasterCodeName', code)
+        #logging.debug(f'주문 요청 확인: code={code}, name={name}')
+        주문유형 = dc.fid.주문유형FID[ordtype]
+
+        kind = msg if msg else 주문유형
+        job = {"구분": kind, "전략명칭": 전략명칭, "종목코드": code, "종목명": name, "주문수량": quantity, "주문가격": price}
+        gm.admin.send_status_msg('주문내용', job)
+
+        rqname = f'{rqname}_{code}_{name}_{datetime.now().strftime("%H%M%S.%f")}'
+        key = (code, 주문유형.lstrip("신규"))
+        gm.주문진행목록.set(key=key, data={'상태': '전송', '요청명': rqname})
+        logging.debug(f'{kind}주문 전송: key={key}, rqname={rqname}')
+
+        cmd = { 'rqname': rqname, 'screen': screen, 'accno': accno, 'ordtype': ordtype, 'code': code, 'hoga': hoga, 'quantity': quantity, 'price': price, 'ordno': ordno }
+        self.prx.order('api', 'SendOrder', **cmd)
+
+        dict_data = {'전략명칭': 전략명칭, '주문구분': 주문유형, '주문상태': '주문', '종목코드': code, '종목명': name, \
+                     '주문수량': quantity, '주문가격': price, '매매구분': '지정가' if hoga == '00' else '시장가', '원주문번호': ordno, 'sim_no': gm.sim_no}
+        self.prx.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
 
 class EvalStrategy(QThread):
     def __init__(self, prx, eval_q):

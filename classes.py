@@ -1,11 +1,9 @@
 from public import dc, gm, get_path, save_json, load_json, QData
-from dataclasses import dataclass, field
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal    
 from multiprocessing import Process
 from PyQt5.QtCore import QThread
-from multiprocessing import Process
-from dataclasses import dataclass, field
+import multiprocessing
 import pythoncom
 import queue
 import threading
@@ -425,20 +423,61 @@ class BaseModel:
         self.my_qes = shared_qes[name]
         self.running = False
         self.answer_timeout = 15
-        self.queue_timeout = dc.INTERVAL_FAST  # 큐 대기 시간 설정 가능
+        self.queue_timeout = dc.INTERVAL_FAST
+        self.pending_requests = {}  # 대기 중인 요청들 관리
         
+        # 프로세스/스레드 환경 자동 감지
+        if isinstance(self, Process):
+            self.pending_lock = multiprocessing.Lock()
+            self.is_process = True
+        else:
+            self.pending_lock = threading.RLock()
+            self.is_process = False
+
     def process_q_data(self, q_data):
-        if not isinstance(q_data, QData): return None
-        if q_data.method == 'stop': self.stop()
+        if not isinstance(q_data, QData): 
+            return None
+        if q_data.method == 'stop': 
+            self.stop()
         if hasattr(self.instance, q_data.method):
             if q_data.answer:
                 result = getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
-                self.shared_qes[q_data.sender].result.put(result)
+                # 응답에 request_id 포함하여 전송
+                response_data = QData(
+                    sender=self.name, 
+                    method='_handle_response', 
+                    answer=False, 
+                    args=(q_data.request_id, result),
+                    request_id=q_data.request_id
+                )
+                self.shared_qes[q_data.sender].request.put(response_data)
             else:
                 result = getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
                 if q_data.callback:
-                    callback_data = QData(sender=self.name, method=q_data.callback, answer=False, args=(result,))
+                    callback_data = QData(
+                        sender=self.name, 
+                        method=q_data.callback, 
+                        answer=False, 
+                        args=(result,)
+                    )
                     self.shared_qes[q_data.sender].request.put(callback_data)
+
+    def _handle_response(self, request_id, result):
+        """응답 처리 전용 메서드"""
+        with self.pending_lock:
+            if request_id in self.pending_requests:
+                self.pending_requests[request_id] = result
+
+    def _wait_for_response(self, request_id, timeout):
+        """응답 대기 (폴링 최소화)"""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            with self.pending_lock:
+                result = self.pending_requests.get(request_id)
+                if result is not None:
+                    return result
+            time.sleep(0.001)  # 1ms 대기
+        return None
 
     def _initialize_instance(self):
         """인스턴스 초기화 공통 로직"""
@@ -451,10 +490,15 @@ class BaseModel:
             self.instance.initialize()
 
     def _process_queues(self):
-        """큐 처리 공통 로직"""
+        """큐 처리 공통 로직 - _handle_response 처리 추가"""
         if not self.my_qes.request.empty():
             q_data = self.my_qes.request.get()
-            self.process_q_data(q_data)
+            
+            # 응답 처리 전용 메서드인 경우 직접 처리
+            if q_data.method == '_handle_response':
+                self._handle_response(*q_data.args)
+            else:
+                self.process_q_data(q_data)
         else:
             time.sleep(self.queue_timeout)
             
@@ -463,6 +507,7 @@ class BaseModel:
 
     def _run_loop_iteration(self):
         """각 모델별 특수 처리를 위한 메서드 (오버라이드 가능)"""
+        pass
 
     def _common_run_logic(self):
         """공통 run 로직"""
@@ -471,7 +516,7 @@ class BaseModel:
         
         while self.running:
             try:
-                self._process_queues()      # 큐 처리 및 각 컴퍼넌트의 루프 처리(run_main_work)
+                self._process_queues()      # 큐 처리 및 각 컴포넌트의 루프 처리(run_main_work)
                 self._run_loop_iteration()
             except (EOFError, ConnectionError, BrokenPipeError):
                 break
@@ -494,20 +539,29 @@ class BaseModel:
         self.shared_qes[target].request.put(q_data)
 
     def answer(self, target, method, *args, **kwargs):
-        """응답이 필요한 요청 (answer=True)"""
+        """응답이 필요한 요청 (answer=True) - 프로세스/스레드 통합 안전 보장"""
+        timeout = kwargs.pop('timeout', self.answer_timeout)
         q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs)
-        self.shared_qes[target].request.put(q_data)
+        
+        # 요청 ID로 응답 매칭
+        with self.pending_lock:
+            self.pending_requests[q_data.request_id] = None
+        
         try:
-            return self.my_qes.result.get(timeout=self.answer_timeout)
-        except queue.Empty:
-            pass
-        except TimeoutError:
-            logging.error(f"answer() 타임아웃:{self.name}의 요청 : {target}.{method}", exc_info=True)
-            return None
+            # 요청 전송
+            self.shared_qes[target].request.put(q_data)
+            
+            # 응답 대기
+            return self._wait_for_response(q_data.request_id, timeout)
+            
         except Exception as e:
             logging.error(f"answer() 오류:{self.name}의 요청 : {target}.{method} - {e}", exc_info=True)
             return None
-                
+        finally:
+            # 응답 정리
+            with self.pending_lock:
+                self.pending_requests.pop(q_data.request_id, None)
+
 class MainModel(BaseModel):
     """메인 쓰레드나 키움API 등을 위한 모델 (별도 쓰레드에서 run 실행)"""
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
