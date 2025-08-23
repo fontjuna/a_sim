@@ -545,7 +545,6 @@ class EvalStrategy(QThread):
             }
 
             script_or = self.매도스크립트적용 and self.매도스크립트OR
-            script_and = self.매도스크립트적용 and self.매도스크립트AND
 
             if gm.sim_no == 0:
                 if self.당일청산 and datetime.now().strftime('%H:%M') >= self.청산시간:
