@@ -59,7 +59,7 @@ class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
     매매구분 = FieldsAttributes(name='매매구분', type='TEXT', not_null=True, default="''")
     미체결수량 = FieldsAttributes(name='미체결수량', type='INTEGER', not_null=True, default=0)
     보유수량 = FieldsAttributes(name='보유수량', type='INTEGER', not_null=True, default=0)
-    상태 = FieldsAttributes(name='상태', type='TEXT', not_null=True, default="'보유중'")
+    상태 = FieldsAttributes(name='상태', type='TEXT', not_null=True, default="''")
     손익금액 = FieldsAttributes(name='손익금액', type='INTEGER', not_null=True, default=0)
     손익율 = FieldsAttributes(name='손익율', type='REAL', not_null=True, default=0.0)
     수수료율 = FieldsAttributes(name='수수료율', type='REAL', not_null=True, default=0.0)
@@ -153,7 +153,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     SIM_TABLE_NAME = 'daily_sim' ## 시뮬레이션 종목 : 당일 매수 종목
     SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND sim_no = ?"
     SIM_SELECT_GUBUN = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND sim_no = ? AND 구분 <> '읽음'"
-    SIM_FIELDS = [f.id, f.일자, f.종목코드, f.종목명, f.구분, f.처리일시, f.sim_no]
+    SIM_FIELDS = [f.id, f.일자, f.종목코드, f.종목명, f.구분, f.상태, f.처리일시, f.sim_no]
     SIM_COLUMNS = [col.name for col in SIM_FIELDS]
     SIM_KEYS = ['일자', '종목코드']
     SIM_INDEXES = {}
@@ -443,7 +443,7 @@ class DBMServer:
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
                     record = new_record()
-                    sim_record = {'일자': dt, '종목코드': code, '종목명': name, 'sim_no': sim_no}
+                    # sim_record = {'일자': dt, '종목코드': code, '종목명': name, 'sim_no': sim_no}
             
             elif kind == '매도':
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
@@ -488,9 +488,9 @@ class DBMServer:
                     })
             
             self.table_upsert('db', table, record, key=db_columns.CONC_KEYS)
-            if sim_record:
-                self.table_upsert('db', db_columns.SIM_TABLE_NAME, sim_record, key=db_columns.SIM_KEYS)
-                sim_record = None
+            # if sim_record:
+            #     self.table_upsert('db', db_columns.SIM_TABLE_NAME, sim_record, key=db_columns.SIM_KEYS)
+            #     sim_record = None
 
             return True
             

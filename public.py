@@ -364,7 +364,7 @@ class FilePath:         # 파일 경로
 
 class Constants:        # 상수 정의
     tax_rate = 0.0015
-    fee_real = 0.0015
+    fee_real = 0.00015
     fee_sim = 0.0035
 
     NON_STRATEGY = '000 : 선택없음'
