@@ -491,7 +491,7 @@ class EvalStrategy(QThread):
             if self.투자금:
                 if self.투자금액 > 0 and price > 0:
                     send_data['quantity'] = int((self.투자금액 + price) / price) # 최소 1주 매수는 int((투자금액 + price) / price)
-            elif self.매수량:
+            else: # self.매수량:
                 send_data['quantity'] = self.매수수량
 
             if send_data['quantity'] > 0:
@@ -546,8 +546,8 @@ class EvalStrategy(QThread):
 
             script_or = self.매도스크립트적용 and self.매도스크립트OR
 
-            if gm.sim_no == 0:
-                if self.당일청산 and datetime.now().strftime('%H:%M') >= self.청산시간:
+            if code == '999999' and gm.sim_no == 0:
+                #if self.당일청산 and datetime.now().strftime('%H:%M') >= self.청산시간:
                     send_list = []
                     rows = gm.잔고목록.get()
                     logging.info(f'당일청산: {rows}')
@@ -693,8 +693,9 @@ class EvalStrategy(QThread):
         try:
             # is_sell을 부르기 위해 더미 데이터로 콜 하고 실제 청산 루틴에서 실 데이터를 처리 함
             row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 9, '매입가': 9, '보유수량': 9, '수익률(%)': 0 }
+            self.order_sell('999999', row)
+            #gm.eval_q.put(('999999', 'sell', {'row': row}))
             logging.info("당일청산 타이머 실행")
-            gm.eval_q.put(('999999', 'sell', {'row': row}))
         except Exception as e:
             logging.error(f'당일청산 타이머 콜백 오류: {type(e).__name__} - {e}', exc_info=True)
 
