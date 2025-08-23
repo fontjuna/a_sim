@@ -410,8 +410,8 @@ class Constants:        # 상수 정의
         '매수호가': 'spbBuyHoga',
         '투자금': 'rbMoney',
         '투자금액': 'spbMoney',
-        '예수금': 'rbDeposit',
-        '예수금율': 'dsbDeposit',
+        '매수량': 'rbQuantity',
+        '매수수량': 'spbQuantity',
 
         # 매도 설정
         '매도시장가': 'rbSellMarket',
@@ -476,8 +476,8 @@ class Constants:        # 상수 정의
         '매수호가': 0,
         '투자금': True,
         '투자금액': 100000,
-        '예수금': False,
-        '예수금율': 0.0,
+        '매수량': False,
+        '매수수량': 1,
 
         '매도시장가': True,
         '매도지정가': False,

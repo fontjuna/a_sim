@@ -541,7 +541,7 @@ class BaseModel:
     def answer(self, target, method, *args, **kwargs):
         """응답이 필요한 요청 (answer=True) - 프로세스/스레드 통합 안전 보장"""
         timeout = kwargs.pop('timeout', self.answer_timeout)
-        q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs)
+        q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs) # request_id 는 디폴트에의해 자동 생성
         
         # 요청 ID로 응답 매칭
         with self.pending_lock:

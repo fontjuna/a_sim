@@ -490,10 +490,9 @@ class EvalStrategy(QThread):
             # 수량 계산
             if self.투자금:
                 if self.투자금액 > 0 and price > 0:
-                    send_data['quantity'] = 1 #int((self.투자금액)/ price) # 최소 1주 매수는 int((투자금액 + price) / price)
-
-            elif self.예수금:
-                pass
+                    send_data['quantity'] = int((self.투자금액 + price) / price) # 최소 1주 매수는 int((투자금액 + price) / price)
+            elif self.매수량:
+                send_data['quantity'] = self.매수수량
 
             if send_data['quantity'] > 0:
                 return True, send_data, f"매수신호 : {code} {name} quantity={send_data['quantity']} price={send_data['price']}"

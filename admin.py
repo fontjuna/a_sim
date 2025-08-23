@@ -297,7 +297,7 @@ class Admin:
                 for i, item in enumerate(dict_list):
                     item.update({'순번':i})
                 gm.잔고합산.set(data=dict_list)
-                logging.info(f"잔고합산 얻기 완료: data=\n{gm.잔고합산.get(type='df')}")
+                logging.info(f"잔고합산 얻기 완료: data=\n{tabulate(gm.잔고합산.get(type='df'), headers='keys', numalign='right')}")
                 gm.l2잔고합산_copy = gm.잔고합산.get(key=0) # dict
             else:
                 logging.info(f"잔고합산 얻기 실패")
@@ -317,7 +317,7 @@ class Admin:
             screen = dc.scr.화면[rqname]
             while True:
                 data, remain = gm.prx.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
-                logging.debug(f'잔고목록 얻기: data count={len(data)}, remain={remain}')
+                #logging.debug(f'잔고목록 얻기: data count={len(data)}, remain={remain}')
                 dict_list.extend(data)
                 if not remain: break
                 next = '2'
@@ -391,6 +391,7 @@ class Admin:
             gm.setter_q.put('005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
+            logging.debug(f'잔고목록: \n{tabulate(gm.잔고목록.get(type="df"), headers="keys", numalign="right")}')
 
         except Exception as e:
             logging.error(f'pri_fx얻기_잔고목록 오류: {e}', exc_info=True)
@@ -427,18 +428,37 @@ class Admin:
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def stg_stop(self):
+    def stg_stop(self, timeout=None):
         try:
             if not (gm.매수문자열 or  gm.매도문자열): return
-            self.stg_fx중지_전략매매()
             gm.매수문자열 = ""
             gm.매도문자열 = ""
+            self.stg_fx중지_전략매매(timeout)
             gm.매수검색목록.delete()
             gm.매도검색목록.delete()
             gm.주문진행목록.delete()
             self.send_status_msg('검색내용', args='')
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def stg_run_trade(self, trade_type):
+        try:
+            condition = self.매수전략 if trade_type == '매수' else self.매도전략
+            cond_name = condition.split(' : ')[1]
+            cond_index = int(condition.split(' : ')[0])
+            condition_list, bool_ok = self.stg_fx등록_조건검색(trade_type, cond_name, cond_index) #-------------------- 조건 검색 실행
+            if bool_ok:
+                if trade_type == '매수': gm.매수문자열 = condition
+                elif trade_type == '매도': gm.매도문자열 = condition
+                for code in condition_list:
+                    self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
+                logging.info(f'전략 실행 - {self.전략명칭} {trade_type}전략={condition}')
+                self.send_status_msg('검색내용', f'{trade_type} {condition}')
+            else:
+                logging.warning(f'전략 실행 실패 - 전략명칭={self.전략명칭} {trade_type}전략={condition}') # 같은 조건 1분 제한 조건 위반
+
+        except Exception as e:
+            logging.error(f'전략 매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def stg_fx실행_전략매매(self):
         try:
@@ -449,8 +469,10 @@ class Admin:
             
             gm.evl.start()
             gm.evl.set_dict(gm.설정전략)
+            if self.매수적용: self.stg_run_trade('매수')
+            if self.매도적용: self.stg_run_trade('매도')
+            #self.stg_fx실행_매매시작()
             self.stg_ready = True
-            self.stg_fx실행_매매시작()
 
             gm.counter.set_strategy(self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
@@ -468,11 +490,13 @@ class Admin:
                 cond_index = int(condition.split(' : ')[0])
                 condition_list, bool_ok = self.stg_fx등록_조건검색(trade_type, cond_name, cond_index) #-------------------- 조건 검색 실행
                 if bool_ok:
+                    for code in condition_list:
+                        self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
                     if trade_type == '매수':
-                        self.stg_fx등록_종목감시(condition_list, 0) # ------------------------------- 조건 만족 종목 실시간 감시
+                        # self.stg_fx등록_종목감시(condition_list, 0) # ------------------------------- 조건 만족 종목 실시간 감시
                         gm.매수문자열 = condition
-                        for code in condition_list:
-                            self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
+                        # for code in condition_list:
+                        #     self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
                     elif trade_type == '매도':
                         gm.매도문자열 = condition
                     logging.info(f'전략 실행 - {self.전략명칭} {trade_type}전략={condition}')
@@ -486,8 +510,12 @@ class Admin:
         except Exception as e:
             logging.error(f'전략 매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def stg_fx중지_전략매매(self):
+    def stg_fx중지_전략매매(self, timeout=None):
         try:
+            if timeout is not None:
+                logging.debug(f'전략 매매 종료 시간: {timeout}')
+                if gm.gui_on: gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': False}))
+
             if self.end_timer is not None:
                 self.end_timer.stop()
                 self.end_timer.deleteLater()
@@ -611,6 +639,8 @@ class Admin:
 
     def stg_fx등록_종목감시(self, condition_list, search_flag):
         try:
+            if len(gm.set조건감시) < 1: search_flag = 0
+
             # 종목 실시간 감시 요청
             if len(condition_list) == 1 and search_flag == 1:
                 if condition_list[0] in gm.set조건감시: return
@@ -620,6 +650,12 @@ class Admin:
             gm.prx.order('api', 'SetRealReg', dc.scr.화면['조건감시'], codes, fids, search_flag)
             gm.set조건감시.update(condition_list)
             logging.debug(f'실시간 감시 요청: {gm.set조건감시}')
+
+            # gm.set조건감시.update(condition_list)
+            # codes = ",".join(list(gm.set조건감시))
+            # fids = "10"  # 현재가
+            # gm.prx.order('api', 'SetRealReg', dc.scr.화면['조건감시'], codes, fids, 0)
+
         except Exception as e:
             logging.error(f'종목 검색 요청 오류: {type(e).__name__} - {e}', exc_info=True)
 
@@ -637,9 +673,9 @@ class Admin:
             if self.투자금:
                 if self.투자금액 == 0:
                     return f'투자금액이 0 입니다.'
-            if self.예수금:
-                if self.예수금율 == 0.0:
-                    return f'예수금율이 0.0 입니다.'
+            if self.매수량:
+                if self.매수수량 == 0:
+                    return f'매수수량이 0 입니다.'
             if self.이익실현:
                 if self.이익실현율 == 0.0:
                     return f'이익실현율이 0.0 입니다.'
@@ -657,7 +693,7 @@ class Admin:
                 self.start_time = self.시작시간.strip()
                 self.stop_time = self.종료시간.strip()
 
-            if not gm.sim_on: # 시뮬레이션 모드 아니면 시간 체크
+            if gm.sim_no == 0: # 시뮬레이션 모드 아니면 시간 체크
                 now = datetime.now()
                 current = now.strftime('%H:%M')
                 if "15:30" > current > self.stop_time:
@@ -672,7 +708,7 @@ class Admin:
                     self.end_timer = QTimer()
                     self.end_timer.setSingleShot(True)
                     self.end_timer.setInterval(int(remain_secs*1000))
-                    self.end_timer.timeout.connect(lambda: self.stg_stop())
+                    self.end_timer.timeout.connect(lambda timeout=self.stop_time: self.stg_stop(timeout))
                     self.end_timer.start()
 
         except Exception as e:
@@ -866,6 +902,9 @@ class Admin:
                         save_json(dc.fp.holdings_file, gm.holdings)
                         gm.counter.set_add(code) # 매수 제한 기록
                         logging.debug(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
+
+                        if self.매도적용 and not gm.매도문자열: self.stg_run_trade('매도') # 실매매시 보유종목이 없는경우 보유종목에서 조건검색시 실패 함. 매도 전략 실행
+
                     gm.잔고목록.set(key=code, data=data)
 
                 except Exception as e:
