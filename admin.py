@@ -460,6 +460,23 @@ class Admin:
         except Exception as e:
             logging.error(f'전략 매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)
 
+    def stg_stop_trade(self, trade_type):
+        try:
+            condition = self.매수전략 if trade_type == '매수' else self.매도전략
+            cond_name = condition.split(' : ')[1]
+            cond_index = int(condition.split(' : ')[0])
+            if cond_name:
+                screen = f'2{"1" if trade_type == "매수" else "2"}00'
+                gm.prx.order('api', 'SendConditionStop', screen, cond_name, cond_index)
+            else:
+                raise Exception(f'{trade_type} 조건이 없습니다.')
+            logging.info(f'{trade_type} 전략 중지 - {cond_index:03d} : {cond_name}')
+        except Exception as e:
+            logging.error(f'전략 매매 중지 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def stg_timeout_trade(self):
+        self.stg_ready = False
+
     def stg_fx실행_전략매매(self):
         try:
             msg = self.stg_fx체크_전략매매()
@@ -482,34 +499,6 @@ class Admin:
         except Exception as e:
             logging.error(f'전략 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def stg_fx실행_매매시작(self):
-        try:
-            def run_trade(trade_type):
-                condition = self.매수전략 if trade_type == '매수' else self.매도전략
-                cond_name = condition.split(' : ')[1]
-                cond_index = int(condition.split(' : ')[0])
-                condition_list, bool_ok = self.stg_fx등록_조건검색(trade_type, cond_name, cond_index) #-------------------- 조건 검색 실행
-                if bool_ok:
-                    for code in condition_list:
-                        self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
-                    if trade_type == '매수':
-                        # self.stg_fx등록_종목감시(condition_list, 0) # ------------------------------- 조건 만족 종목 실시간 감시
-                        gm.매수문자열 = condition
-                        # for code in condition_list:
-                        #     self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
-                    elif trade_type == '매도':
-                        gm.매도문자열 = condition
-                    logging.info(f'전략 실행 - {self.전략명칭} {trade_type}전략={condition}')
-                    self.send_status_msg('검색내용', f'{trade_type} {condition}')
-                else:
-                    logging.warning(f'전략 실행 실패 - 전략명칭={self.전략명칭} {trade_type}전략={condition}') # 같은 조건 1분 제한 조건 위반
-
-            if self.매수적용: run_trade('매수')
-            if self.매도적용: run_trade('매도')
-
-        except Exception as e:
-            logging.error(f'전략 매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)
-
     def stg_fx중지_전략매매(self, timeout=None):
         try:
             if timeout is not None:
@@ -521,19 +510,20 @@ class Admin:
                 self.end_timer.deleteLater()
                 self.end_timer = None
 
-            def stop_trade(trade_type):
-                condition = self.매수전략 if trade_type == '매수' else self.매도전략
-                cond_name = condition.split(' : ')[1]
-                cond_index = int(condition.split(' : ')[0])
-                if cond_name:
-                    screen = f'2{"1" if trade_type == "매수" else "2"}00'
-                    gm.prx.order('api', 'SendConditionStop', screen, cond_name, cond_index)
-                else:
-                    raise Exception(f'{trade_type} 조건이 없습니다.')
-                logging.info(f'{trade_type} 전략 중지 - {cond_index:03d} : {cond_name}')
+            # def stop_trade(trade_type):
+            #     condition = self.매수전략 if trade_type == '매수' else self.매도전략
+            #     cond_name = condition.split(' : ')[1]
+            #     cond_index = int(condition.split(' : ')[0])
+            #     if cond_name:
+            #         screen = f'2{"1" if trade_type == "매수" else "2"}00'
+            #         gm.prx.order('api', 'SendConditionStop', screen, cond_name, cond_index)
+            #     else:
+            #         raise Exception(f'{trade_type} 조건이 없습니다.')
+            #     logging.info(f'{trade_type} 전략 중지 - {cond_index:03d} : {cond_name}')
+
             self.stg_ready = False # 현재가 업데이트 후 매도조건 검사 중지
-            if self.매수적용: stop_trade('매수')
-            if self.매도적용: stop_trade('매도')
+            if self.매수적용: self.stg_stop_trade('매수')
+            if self.매도적용: self.stg_stop_trade('매도')
             gm.evl.stop()
             gm.evl.wait(2000)
             gm.evl.deleteLater()
@@ -542,6 +532,36 @@ class Admin:
 
         except Exception as e:
             logging.error(f'전략 중지 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    """
+    # def stg_fx실행_매매시작(self):
+    #     try:
+    #         def run_trade(trade_type):
+    #             condition = self.매수전략 if trade_type == '매수' else self.매도전략
+    #             cond_name = condition.split(' : ')[1]
+    #             cond_index = int(condition.split(' : ')[0])
+    #             condition_list, bool_ok = self.stg_fx등록_조건검색(trade_type, cond_name, cond_index) #-------------------- 조건 검색 실행
+    #             if bool_ok:
+    #                 for code in condition_list:
+    #                     self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
+    #                 if trade_type == '매수':
+    #                     # self.stg_fx등록_종목감시(condition_list, 0) # ------------------------------- 조건 만족 종목 실시간 감시
+    #                     gm.매수문자열 = condition
+    #                     # for code in condition_list:
+    #                     #     self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
+    #                 elif trade_type == '매도':
+    #                     gm.매도문자열 = condition
+    #                 logging.info(f'전략 실행 - {self.전략명칭} {trade_type}전략={condition}')
+    #                 self.send_status_msg('검색내용', f'{trade_type} {condition}')
+    #             else:
+    #                 logging.warning(f'전략 실행 실패 - 전략명칭={self.전략명칭} {trade_type}전략={condition}') # 같은 조건 1분 제한 조건 위반
+
+    #         if self.매수적용: run_trade('매수')
+    #         if self.매도적용: run_trade('매도')
+
+    #     except Exception as e:
+    #         logging.error(f'전략 매매 실행 오류: {type(e).__name__} - {e}', exc_info=True)
+    """
 
     def stg_fx등록_조건검색(self, trade_type, cond_name, cond_index):
         screen = f'2{"1" if trade_type == "매수" else "2"}00'
@@ -570,6 +590,7 @@ class Admin:
             if not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))):
                 if kind == '매수':
                     if gm.잔고목록.in_key(code): return # 기 보유종목
+                    if not self.stg_ready: return # 매수 전략 실행 중지 되었음
                     gm.매수검색목록.set(key=code, data={'종목명': 종목명, '이탈': ''})
                     gm.setter_q.put(code)
                 elif kind == '매도':
@@ -708,7 +729,7 @@ class Admin:
                     self.end_timer = QTimer()
                     self.end_timer.setSingleShot(True)
                     self.end_timer.setInterval(int(remain_secs*1000))
-                    self.end_timer.timeout.connect(lambda timeout=self.stop_time: self.stg_stop(timeout))
+                    self.end_timer.timeout.connect(self.stg_timeout_trade)
                     self.end_timer.start()
 
         except Exception as e:

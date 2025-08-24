@@ -3964,7 +3964,7 @@
            </rect>
           </property>
           <property name="text">
-           <string>전략운영</string>
+           <string>전략매수</string>
           </property>
          </widget>
          <widget class="QRadioButton" name="rbUseTime">
@@ -4173,7 +4173,7 @@
            <string>매도도 같이적용</string>
           </property>
           <property name="checked">
-           <bool>true</bool>
+           <bool>false</bool>
           </property>
          </widget>
         </widget>

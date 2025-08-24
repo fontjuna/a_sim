@@ -568,7 +568,7 @@ class EvalStrategy(QThread):
                     send_data['msg'] = '검색매도'
                     return True, send_data,  f"검색매도: {code} {종목명}"
             # not sell_condition or not script_or
-            elif self.매도스크립트적용 and gm.sim_no != 1 and code != '999999':
+            elif self.매도스크립트적용 and gm.sim_no != 1:
                 if self.cht_dt.is_code_registered(code):
                     result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
                     if not result['error']:
@@ -692,7 +692,7 @@ class EvalStrategy(QThread):
     def on_clear_timer(self):
         try:
             # is_sell을 부르기 위해 더미 데이터로 콜 하고 실제 청산 루틴에서 실 데이터를 처리 함
-            row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 9, '매입가': 9, '보유수량': 9, '수익률(%)': 0 }
+            row = {'종목번호': '999999', '종목명': '당일청산매도', '현재가': 9, '매입가': 9, '보유수량': 9, '수익률(%)': 0}
             self.order_sell('999999', row)
             #gm.eval_q.put(('999999', 'sell', {'row': row}))
             logging.info("당일청산 타이머 실행")
