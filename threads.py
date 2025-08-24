@@ -567,6 +567,7 @@ class EvalStrategy(QThread):
             if sell_condition and script_or: # self.매도적용 조건
                     send_data['msg'] = '검색매도'
                     return True, send_data,  f"검색매도: {code} {종목명}"
+            
             # not sell_condition or not script_or
             elif self.매도스크립트적용 and gm.sim_no != 1:
                 if self.cht_dt.is_code_registered(code):

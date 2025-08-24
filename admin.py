@@ -17,6 +17,7 @@ class Admin:
     def __init__(self):
         self.name = 'admin'
         self.stg_ready = False
+        self.stg_buy_timeout = False
         self.cancel_timer = None
         self.start_timer = None
         self.end_timer = None
@@ -230,7 +231,7 @@ class Admin:
                 gm.주문진행목록.delete(filter={'요청명': rqname})
 
     def on_receive_real_condition(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
-        if not gm.ready: return
+        if not gm.ready or not self.stg_ready: return
         if gm.sim_no == 0 and time.time() < 90000: return
         try:
             gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, gm.sim_no)
@@ -273,7 +274,7 @@ class Admin:
 
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
             
-            if gm.잔고목록.in_key(code):
+            if gm.잔고목록.in_key(code) and self.stg_ready:
                 gm.잔고목록.set(key=code, data={'현재가': 현재가, '등락율': float(dictFID.get('등락율', 0)), '누적거래량': int(dictFID.get('누적거래량', 0))})
                 gm.price_q.put(code) # PriceUpdater
 
@@ -433,7 +434,7 @@ class Admin:
             if not (gm.매수문자열 or  gm.매도문자열): return
             gm.매수문자열 = ""
             gm.매도문자열 = ""
-            self.stg_fx중지_전략매매(timeout)
+            self.stg_fx중지_전략매매()
             gm.매수검색목록.delete()
             gm.매도검색목록.delete()
             gm.주문진행목록.delete()
@@ -475,7 +476,7 @@ class Admin:
             logging.error(f'전략 매매 중지 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def stg_timeout_trade(self):
-        self.stg_ready = False
+        self.stg_buy_timeout = True
 
     def stg_fx실행_전략매매(self):
         try:
@@ -499,17 +500,15 @@ class Admin:
         except Exception as e:
             logging.error(f'전략 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def stg_fx중지_전략매매(self, timeout=None):
+    def stg_fx중지_전략매매(self):
         try:
-            if timeout is not None:
-                logging.debug(f'전략 매매 종료 시간: {timeout}')
-                if gm.gui_on: gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': False}))
+            self.stg_ready = False # 현재가 업데이트 후 매도조건 검사 중지
 
             if self.end_timer is not None:
                 self.end_timer.stop()
                 self.end_timer.deleteLater()
                 self.end_timer = None
-
+            """
             # def stop_trade(trade_type):
             #     condition = self.매수전략 if trade_type == '매수' else self.매도전략
             #     cond_name = condition.split(' : ')[1]
@@ -520,8 +519,8 @@ class Admin:
             #     else:
             #         raise Exception(f'{trade_type} 조건이 없습니다.')
             #     logging.info(f'{trade_type} 전략 중지 - {cond_index:03d} : {cond_name}')
+            """
 
-            self.stg_ready = False # 현재가 업데이트 후 매도조건 검사 중지
             if self.매수적용: self.stg_stop_trade('매수')
             if self.매도적용: self.stg_stop_trade('매도')
             gm.evl.stop()
@@ -590,7 +589,7 @@ class Admin:
             if not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))):
                 if kind == '매수':
                     if gm.잔고목록.in_key(code): return # 기 보유종목
-                    if not self.stg_ready: return # 매수 전략 실행 중지 되었음
+                    if self.stg_buy_timeout: return # 매수 전략 실행 중지 되었음
                     gm.매수검색목록.set(key=code, data={'종목명': 종목명, '이탈': ''})
                     gm.setter_q.put(code)
                 elif kind == '매도':
