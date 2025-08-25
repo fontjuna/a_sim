@@ -442,7 +442,7 @@ class Admin:
         except Exception as e:  
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def stg_run_trade(self, trade_type):
+    def stg_run_trade(self, trade_type, recall=False):
         try:
             condition = self.매수전략 if trade_type == '매수' else self.매도전략
             cond_name = condition.split(' : ')[1]
@@ -454,7 +454,7 @@ class Admin:
                 for code in condition_list:
                     self.stg_fx편입_실시간조건감시(trade_type, code, 'I', cond_name, cond_index)
                 logging.info(f'전략 실행 - {self.전략명칭} {trade_type}전략={condition}')
-                self.send_status_msg('검색내용', f'{trade_type} {condition}')
+                if not recall: self.send_status_msg('검색내용', f'{trade_type} {condition}')
             else:
                 logging.warning(f'전략 실행 실패 - 전략명칭={self.전략명칭} {trade_type}전략={condition}') # 같은 조건 1분 제한 조건 위반
 
@@ -669,12 +669,14 @@ class Admin:
             fids = "10"  # 현재가
             gm.prx.order('api', 'SetRealReg', dc.scr.화면['조건감시'], codes, fids, search_flag)
             gm.set조건감시.update(condition_list)
-            logging.debug(f'실시간 감시 요청: {gm.set조건감시}')
 
+            # if len(condition_list) == 1: 
+            #     if condition_list[0] in gm.set조건감시: return
             # gm.set조건감시.update(condition_list)
             # codes = ",".join(list(gm.set조건감시))
-            # fids = "10"  # 현재가
-            # gm.prx.order('api', 'SetRealReg', dc.scr.화면['조건감시'], codes, fids, 0)
+            # gm.prx.order('api', 'SetRealReg', dc.scr.화면['조건감시'], codes, '10', 0)
+            
+            logging.debug(f'실시간 감시 요청: {gm.set조건감시}')
 
         except Exception as e:
             logging.error(f'종목 검색 요청 오류: {type(e).__name__} - {e}', exc_info=True)
@@ -725,6 +727,7 @@ class Admin:
                     if self.end_timer is not None:
                         self.end_timer.stop()
                         self.end_timer.deleteLater()
+                    self.stg_buy_timeout = False
                     self.end_timer = QTimer()
                     self.end_timer.setSingleShot(True)
                     self.end_timer.setInterval(int(remain_secs*1000))
@@ -923,7 +926,7 @@ class Admin:
                         gm.counter.set_add(code) # 매수 제한 기록
                         logging.debug(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
 
-                        if self.매도적용 and not gm.매도문자열: self.stg_run_trade('매도') # 실매매시 보유종목이 없는경우 보유종목에서 조건검색시 실패 함. 매도 전략 실행
+                        if self.매도적용: self.stg_run_trade('매도', recall=True) # 실매매시 보유종목이 없는경우 보유종목에서 조건검색시 실패 함. 매도 전략 실행
 
                     gm.잔고목록.set(key=code, data=data)
 

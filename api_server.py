@@ -772,6 +772,7 @@ class APIServer:
 
     def SendCondition(self, screen, cond_name, cond_index, search, block=True, timeout=15):
         cond_text = f'{cond_index:03d} : {cond_name.strip()}'
+        wait_time = req.check_condition_interval(cond_text)
         if not com_request_time_check(kind='request', cond_text=cond_text): return [], False
 
         if self.sim_no == 0:  # 실제 API 서버
@@ -780,11 +781,10 @@ class APIServer:
                 if block is True:
                     self.tr_condition_loaded = False
 
-                success = self.ocx.dynamicCall("SendCondition(QString, QString, int, int)", screen, cond_name, cond_index, search)
+                success = self.ocx.dynamicCall("SendCondition(QString, QString, int, int)", screen, cond_name, cond_index, search) # 1: 성공, 0: 실패
                 logging.debug(f'전략 요청: screen={screen}, name={cond_name}, index={cond_index}, search={search}, 결과={"성공" if success else "실패"}')
 
-                if not success:
-                    return False
+                if not success: return False
                 
                 if block is True:
                     start_time = time.time()
