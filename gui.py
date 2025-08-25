@@ -468,9 +468,9 @@ class GUI(QMainWindow, form_class):
         if response:
             gm.admin.stg_start()
             if not any([gm.매수문자열, gm.매도문자열]):
-                gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
+                gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
                 return
-            gm.toast.toast('전략매매를 실행했습니다.', duration=3000)
+            gm.toast.toast('전략매매를 실행했습니다.', duration=2000)
             self.set_strategy_toggle(run=True)
         else:
             logging.debug('전략매매 시작 취소')
@@ -482,7 +482,7 @@ class GUI(QMainWindow, form_class):
         if response:
             gm.admin.stg_stop()
             self.set_strategy_toggle(run=False)
-            gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
+            gm.toast.toast('전략매매를 중지했습니다.', duration=2000)
         else:
             logging.debug('전략매매 중지 취소')
 
@@ -500,16 +500,16 @@ class GUI(QMainWindow, form_class):
         gm.admin.restart()
         gm.admin.stg_start()
         if not any([gm.매수문자열, gm.매도문자열]):
-            gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=3000)
+            gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
             return
-        gm.toast.toast('전략매매를 실행했습니다.', duration=3000)
+        gm.toast.toast('전략매매를 실행했습니다.', duration=2000)
         self.set_strategy_toggle(run=True)
             
     def gui_simulation_stop(self):
         gm.admin.stg_stop()
         gm.prx.order('api', 'thread_cleanup')
         self.set_strategy_toggle(run=False)
-        gm.toast.toast('전략매매를 중지했습니다.', duration=3000)
+        gm.toast.toast('전략매매를 중지했습니다.', duration=2000)
 
     def gui_strategy_changed(self):
         pass
@@ -518,7 +518,7 @@ class GUI(QMainWindow, form_class):
         logging.debug('get_conditions: 요청_서버전략')
         gm.admin.get_conditions()
         self.gui_fx채움_조건콤보()
-        gm.toast.toast('매매전략을 다시 읽어 왔습니다.', duration=3000)
+        gm.toast.toast('매매전략을 다시 읽어 왔습니다.', duration=2000)
 
     def gui_chart_cycle_changed(self, item):
         self.cbChartTick.clear()
@@ -915,7 +915,7 @@ class GUI(QMainWindow, form_class):
             gm.admin.json_save_strategy_sets()
             self.gui_fx채움_전략정의()
             #logging.debug(f'전략정의 {gm.전략정의.get()}')
-            gm.toast.toast(f'주문설정 "{name}"을 저장 했습니다.', duration=4000)
+            gm.toast.toast(f'주문설정 "{name}"을 저장 했습니다.', duration=2000)
             # return dict주문설정
 
         except Exception as e:
@@ -1259,7 +1259,7 @@ class GUI(QMainWindow, form_class):
         try:
             logging.info(f"당일종목 차트 데이타 얻기: date={date_text} {len(sim_tickers)} 개 종목")
             for ticker in sim_tickers:
-                dict_list = gm.prx.answer('api', 'get_chart_data', ticker['종목코드'], cycle='tk', tick=30, times=999, wt=1.67, dt=date_text, timeout=60)
+                dict_list = gm.prx.answer('api', 'get_chart_data', ticker['종목코드'], cycle='tk', tick=30, times=999, wt=1.67, dt=date_text, wait=60)
                 if dict_list:
                     records = [{**row} for row in dict_list if row['체결시간'][:8] == date_text]
                     if records:

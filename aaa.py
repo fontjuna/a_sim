@@ -42,7 +42,7 @@ class Main:
     def show_splash(self):
         if not gm.gui_on: return
         gm.gui = GUI()
-        if datetime.now() < datetime(2025, 9, 1):
+        if datetime.now() < datetime(2025, 10, 1):
             splash_pix = QPixmap(dc.fp.image_file)
             screen_width = 800
             screen_height = 400

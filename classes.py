@@ -468,10 +468,10 @@ class BaseModel:
             if request_id in self.pending_requests:
                 self.pending_requests[request_id] = result
 
-    def _wait_for_response(self, request_id, timeout):
+    def _wait_for_response(self, request_id, wait):
         """응답 대기 (폴링 최소화)"""
         start_time = time.time()
-        while time.time() - start_time < timeout:
+        while time.time() - start_time < wait:
             with self.pending_lock:
                 result = self.pending_requests.get(request_id)
                 if result is not None:
@@ -540,7 +540,7 @@ class BaseModel:
 
     def answer(self, target, method, *args, **kwargs):
         """응답이 필요한 요청 (answer=True) - 프로세스/스레드 통합 안전 보장"""
-        timeout = kwargs.pop('timeout', self.answer_timeout)
+        wait = kwargs.pop('wait', self.answer_timeout)
         q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs) # request_id 는 디폴트에의해 자동 생성
         
         # 요청 ID로 응답 매칭
@@ -552,7 +552,7 @@ class BaseModel:
             self.shared_qes[target].request.put(q_data)
             
             # 응답 대기
-            return self._wait_for_response(q_data.request_id, timeout)
+            return self._wait_for_response(q_data.request_id, wait)
             
         except Exception as e:
             logging.error(f"answer() 오류:{self.name}의 요청 : {target}.{method} - {e}", exc_info=True)

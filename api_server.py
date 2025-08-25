@@ -661,8 +661,8 @@ class APIServer:
                     logging.error(f"조건검색 스레드 정리 오류: {e}")
 
     # 추가 메서드 --------------------------------------------------------------------------------------------------
-    def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', timeout=5):
-        #logging.debug(f'api_request: rqname={rqname}, trcode={trcode}, input={input}, next={next}, screen={screen}, form={form}, timeout={timeout}')
+    def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', wait=5):
+        #logging.debug(f'api_request: rqname={rqname}, trcode={trcode}, input={input}, next={next}, screen={screen}, form={form}, wait={wait}')
         try:
             if not com_request_time_check(kind='request'): return [], False
 
@@ -688,7 +688,7 @@ class APIServer:
             start_time = time.time()
             while not self.tr_received:
                 pythoncom.PumpWaitingMessages()
-                if time.time() - start_time > timeout:
+                if time.time() - start_time > wait:
                     logging.warning(f"Timeout while waiting for {rqname} data")
                     return [], False
 
@@ -770,27 +770,25 @@ class APIServer:
         if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
             self.ocx.dynamicCall("SetInputValue(QString, QString)", id, value)
 
-    def SendCondition(self, screen, cond_name, cond_index, search, block=True, timeout=15):
+    def SendCondition(self, screen, cond_name, cond_index, search, block=True, wait=15):
         cond_text = f'{cond_index:03d} : {cond_name.strip()}'
-        wait_time = req.check_condition_interval(cond_text)
-        if not com_request_time_check(kind='request', cond_text=cond_text): return [], False
+        if not com_request_time_check(kind='request', cond_text=cond_text): return False
 
         if self.sim_no == 0:  # 실제 API 서버
             try:
-                data = False
                 if block is True:
                     self.tr_condition_loaded = False
 
                 success = self.ocx.dynamicCall("SendCondition(QString, QString, int, int)", screen, cond_name, cond_index, search) # 1: 성공, 0: 실패
                 logging.debug(f'전략 요청: screen={screen}, name={cond_name}, index={cond_index}, search={search}, 결과={"성공" if success else "실패"}')
-
                 if not success: return False
                 
+                data = False
                 if block is True:
                     start_time = time.time()
                     while not self.tr_condition_loaded:
                         pythoncom.PumpWaitingMessages()
-                        if time.time() - start_time > timeout:
+                        if time.time() - start_time > wait:
                             logging.warning(f'조건 검색 시간 초과: {screen} {cond_name} {cond_index} {search}')
                             return False
                     data = self.tr_condition_list
@@ -861,7 +859,7 @@ class APIServer:
         return result
 
     def SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno):
-        if not com_request_time_check(kind='order'): return -308 # 5회 제한 초과
+        #if not com_request_time_check(kind='order'): return -308 # 5회 제한 초과
         if self.sim_no == 0:  # 실제 API 서버
             #logging.debug(f'api 내부 SendOrder 호출전')
             ret = self.ocx.dynamicCall("SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)",
@@ -1153,6 +1151,9 @@ class APIServer:
             data = self.ocx.dynamicCall("GetCommDataEx(QString, QString)", trcode, rqname)
             return data
         return None
+
+    def GetConditionInterval(self, cond_text):
+        return req.check_condition_interval(cond_text)
 
     #@profile_operation
     def get_first_chart_data(self, code, times=1, wt=None, dt=None):
