@@ -9,10 +9,10 @@ from api_server import APIServer
 from PyQt5.QtWidgets import QApplication, QSplashScreen
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QPixmap, QGuiApplication
+from datetime import datetime
 import logging
 import time
 import sys
-from datetime import datetime
 import threading
 
 init_logger()
