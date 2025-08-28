@@ -907,7 +907,7 @@ from datetime import datetime
 import numpy as np
 from datetime import datetime
 
-class ChartManager:
+class NumChartManager:
     """고성능 차트 매니저 - 완전 최적화 버전"""
     
     def __init__(self, code, cycle='mi', tick=3):
@@ -2314,7 +2314,7 @@ class ChartManager:
         self._update_numpy_cache()
         return self._data_length
                 
-class OldChartManager:
+class ChartManager:
     """고성능 차트 매니저 - 속도 최적화 버전"""
     
     def __init__(self, code, cycle='mi', tick=3):
@@ -3669,8 +3669,8 @@ class ScriptManager:
             exec_time = time.time() - start_time
             
             # 실행 시간 경고
-            if exec_time > 0.015:
-                warning_msg = f"스크립트 실행 기준(0.015초) ({script_name}:{code}): {exec_time:.4f}초"
+            if exec_time > 0.03:
+                warning_msg = f"스크립트 실행 기준(0.03초) ({script_name}:{code}): {exec_time:.4f}초"
                 logging.warning(warning_msg)
                 script_logs.append(f'WARNING: {warning_msg}')
             

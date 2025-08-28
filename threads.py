@@ -680,7 +680,7 @@ class EvalStrategy(QThread):
 
     def set_clear_timer(self):
         now = datetime.now()
-        if self.당일청산:
+        if self.당일청산 and gm.sim_no == 0:
             if self.clear_timer is not None:
                 self.clear_timer.cancel()
                 self.clear_timer = None
