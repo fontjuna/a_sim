@@ -136,41 +136,41 @@ def _rsi_calculation(closes, period, m):
 
 @njit
 def _obv_calculation(closes, volumes, count):
-    """JIT 최적화된 OBV 계산 - 기존과 정확히 일치하도록 수정"""
+    """JIT 최적화된 OBV 계산 - OldChartManager와 정확히 일치"""
     if len(closes) < 2:
         return np.zeros(count, dtype=np.float64)
     
-    actual_count = min(count, len(closes))
-    obv_values = np.zeros(actual_count, dtype=np.float64)
+    # 전체 데이터에 대해 OBV 계산
+    obv_values = np.zeros(len(closes), dtype=np.float64)
+    running_obv = 0.0
     
-    # 기존 로직과 동일하게 첫 번째 값을 설정
+    # 첫 번째 봉은 기준점 (0.0)
     obv_values[0] = 0.0
     
-    # 누적 계산 (기존과 동일한 방식)
-    running_obv = 0.0
-    for i in range(1, actual_count):
-        if i >= len(closes):
-            break
-            
+    # 시간 순서대로 처리 (과거 → 최신)
+    for i in range(1, len(closes)):
         current_close = closes[i]
         prev_close = closes[i - 1]
         volume = volumes[i]
         
         if current_close > prev_close:
+            # 상승일: 거래량을 더함
             running_obv += volume
         elif current_close < prev_close:
+            # 하락일: 거래량을 뺌
             running_obv -= volume
         # 보합일: 변화 없음
         
         obv_values[i] = running_obv
     
-    # count만큼 맞춤
-    if len(obv_values) < count:
+    # count만큼 반환 (최신 데이터부터)
+    if len(obv_values) >= count:
+        return obv_values[-count:]
+    else:
+        # count보다 적으면 전체 반환
         result = np.zeros(count, dtype=np.float64)
         result[:len(obv_values)] = obv_values
         return result
-    
-    return obv_values[:count]
 
 @njit
 def _ma_calculation(closes, period, before):
@@ -1470,7 +1470,7 @@ class ChartManager:
             'bars': m + 1
         }
         
-        # 당일 봉수 계산 (분봉인 경우) - 기존과 동일한 로직
+        # 당일 봉수 계산 (분봉인 경우) - OldChartManager와 동일한 로직
         if self.cycle == 'mi':
             today = datetime.now().strftime('%Y%m%d')
             raw_data = self.cht_dt._chart_data.get(self.code, {}).get(f'mi{self.tick}', [])
@@ -1482,9 +1482,6 @@ class ChartManager:
                 else:
                     break
             result['bars'] = bars
-        else:
-            # 기존 로직과 동일하게 m + 1 설정
-            result['bars'] = m + 1
         
         return result
 
