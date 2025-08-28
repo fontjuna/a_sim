@@ -28,5 +28,25 @@
         "script": "ct = ChartManager(code, 'dy', 3)\n\n# 최근 종가가 60000 미만인 봉 이후로 몇 봉이 지났는지 알고 싶을 때\nbars = ct.bars_since(lambda i: ct.c(i) < 60000)\necho(f'지난봉수: {bars}')\n\n# 최근 2번째로 종가가 60000 미만 이후부터 현재까지 고가의 최고값\nhigh = ct.highest_since(2, lambda i: ct.c(i) < 60000, ct.h)\necho(f'최고가: {high}')\n\n#최근 3번째로 종가가 60000을 넘은 시점의 시가:\nopen_price = ct.value_when(3, lambda i: ct.c(i) > 60000, ct.o)\necho(f'세번째: {open_price}')\n\n#시간이 '090000'이후로 지나간 봉수:\nmt = ChartManager(code, 'mi', 3)\npast_bars = mt.bars_since(lambda x: mt.bar_time(x) <= '090000')\necho(f'시작시간: 현재봉:{mt.bar_time()} 지난봉:{past_bars}')\n\nresult = True\nret(result)",
         "type": "bool",
         "desc": ""
+    },
+    "test_kwargs": {
+        "script": "\n# 테스트 스크립트\necho(f\"종목코드: {code}\")\necho(f\"종목명: {name}\")\necho(f\"수량: {qty}\")\necho(f\"가격: {price}\")\necho(f\"전체 kwargs: {kwargs}\")\n\n# 사용자 정의 변수 테스트\nif 'test_var' in kwargs:\n    echo(f\"사용자 변수: {test_var}\")\n\n# 결과 반환\nret(True)\n",
+        "type": "bool",
+        "desc": "kwargs 전달 테스트"
+    },
+    "script_a": {
+        "script": "\n# 스크립트 A\necho(\"스크립트 A 실행\")\nresult = run_script('script_b', kwargs={'code': code, 'name': name})\necho(f\"스크립트 B 결과: {result}\")\nret(True)\n",
+        "type": "bool",
+        "desc": "스크립트 A"
+    },
+    "script_b": {
+        "script": "\n# 스크립트 B\necho(\"스크립트 B 실행\")\nresult = run_script('script_c', kwargs={'code': code, 'name': name})\necho(f\"스크립트 C 결과: {result}\")\nret(True)\n",
+        "type": "bool",
+        "desc": "스크립트 B"
+    },
+    "script_c": {
+        "script": "\n# 스크립트 C\necho(\"스크립트 C 실행\")\n# 여기서 A를 호출하면 순환 참조!\nresult = run_script('script_a', kwargs={'code': code, 'name': name})\necho(f\"스크립트 A 결과: {result}\")\nret(True)\n",
+        "type": "bool",
+        "desc": "스크립트 C"
     }
 }

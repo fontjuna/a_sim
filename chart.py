@@ -3517,6 +3517,11 @@ class ScriptManager:
         
         # 스레드별 컨텍스트 관리
         self._thread_local = threading.local()
+        
+        # 🚀 성능 최적화를 위한 캐시들
+        self._module_cache = {}  # 모듈 캐시
+        self._script_wrapper_cache = {}  # 스크립트 래퍼 캐시
+        self._compiled_script_cache = {}  # 컴파일된 스크립트 캐시
 
         # 파일에서 스크립트 로드
         self._load_scripts()
@@ -3620,22 +3625,28 @@ class ScriptManager:
             'logs': [],         # 실행 로그 (성공/실패 관계없이 수집)
         }
         
-        # 종목코드 검증
-        code = kwargs.get('code')
-        if code is None:
-            result_dict['error'] = "종목코드가 지정되지 않았습니다."
-            result_dict['logs'].append('ERROR: 종목코드가 지정되지 않았습니다.')
-            return result_dict
+        # 종목코드 검증 (check_only=True일 때는 건너뛰기)
+        if not hasattr(self, '_check_only') or not self._check_only:
+            code = kwargs.get('code')
+            if code is None:
+                result_dict['error'] = "종목코드가 지정되지 않았습니다."
+                result_dict['logs'].append('ERROR: 종목코드가 지정되지 않았습니다.')
+                return result_dict
+        else:
+            # check_only=True일 때는 임시 코드 사용
+            code = 'CHECK_ONLY'
         
-        # 순환 참조 방지
-        script_key = f"{script_name}:{code}"
-        if script_key in self._running_scripts:
-            result_dict['error'] = f"순환 참조 감지: {script_name}"
-            result_dict['logs'].append(f'ERROR: 순환 참조 감지: {script_name}')
-            return result_dict
-        
-        # 실행 중인 스크립트에 추가
-        self._running_scripts.add(script_key)
+        # 순환 참조 방지 (check_only=True일 때는 건너뛰기)
+        if not hasattr(self, '_check_only') or not self._check_only:
+            # 호출 스택 기반 순환 참조 감지
+            current_stack = self._get_current_call_stack()
+            if script_name in current_stack:
+                result_dict['error'] = f"순환 참조 감지: {script_name} → {' → '.join(current_stack)}"
+                result_dict['logs'].append(f'ERROR: 순환 참조 감지: {script_name} → {" → ".join(current_stack)}')
+                return result_dict
+            
+            # 실행 중인 스크립트에 추가 (스택 기반)
+            self._add_to_running_stack(script_name)
         
         # 현재 컨텍스트 설정
         self._set_current_context(kwargs)
@@ -3645,14 +3656,24 @@ class ScriptManager:
             globals_dict, script_logs = self._prepare_execution_globals(script_name)
             locals_dict = {}
             
-            # 래퍼 스크립트 생성
-            wrapped_script = self._make_wrapped_script(script, kwargs)
+            # 🚀 스크립트 컴파일 캐싱 - 스크립트 내용만으로 키 생성
+            script_key = f"{script_name}:{hash(script)}"
             
-            # 컴파일 및 실행
-            code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
+            if script_key not in self._compiled_script_cache:
+                logging.debug(f"🔄 {script_name} 컴파일 중... (첫 실행)")
+                # 스크립트 내용만으로 래퍼 생성 (kwargs 제외)
+                wrapped_script = self._make_wrapped_script(script)
+                code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
+                self._compiled_script_cache[script_key] = code_obj
+            # else:
+            #     logging.debug(f"⚡ {script_name} 캐시 사용 (재실행)")
             
-            # kwargs 변수 설정
+            # ✅ 캐시된 코드 사용, kwargs는 실행 시점에 전달
+            code_obj = self._compiled_script_cache[script_key]
+            
+            # 🚀 kwargs 변수 설정 - 실행 시점에 전달
             locals_dict['kwargs'] = kwargs
+            globals_dict['kwargs'] = kwargs  # 래퍼 스크립트에서 접근할 수 있도록
             globals_dict['_current_kwargs'] = kwargs
             
             # 코드 실행
@@ -3669,8 +3690,8 @@ class ScriptManager:
             exec_time = time.time() - start_time
             
             # 실행 시간 경고
-            if exec_time > 0.03:
-                warning_msg = f"스크립트 실행 기준(0.03초) ({script_name}:{code}): {exec_time:.4f}초"
+            if exec_time > 0.002:
+                warning_msg = f"스크립트 실행 기준(0.002초) ({script_name}:{code}): {exec_time:.4f}초"
                 logging.warning(warning_msg)
                 script_logs.append(f'WARNING: {warning_msg}')
             
@@ -3698,9 +3719,14 @@ class ScriptManager:
             return result_dict
             
         finally:
-            # 실행 완료 후 추적 목록에서 제거
-            if script_key in self._running_scripts:
-                self._running_scripts.remove(script_key)
+            # 실행 완료 후 추적 목록에서 제거 (check_only=True일 때는 건너뛰기)
+            if not hasattr(self, '_check_only') or not self._check_only:
+                # 기존 방식 제거
+                if hasattr(self, '_running_scripts') and script_key in self._running_scripts:
+                    self._running_scripts.remove(script_key)
+                
+                # 새로운 스택 방식 제거
+                self._remove_from_running_stack(script_name)
 
     def run_script(self, script_name, script_contents=None, check_only=False, kwargs=None):
         """스크립트 검사 및 실행"""
@@ -3731,7 +3757,11 @@ class ScriptManager:
             return result_dict
         
         # 실행
+        if check_only:
+            self._check_only = True
         exec_result = self._execute_validated_script(script_name, script_contents, kwargs)
+        if check_only:
+            self._check_only = False
         
         # 결과 복사
         result_dict['result'] = exec_result['result']
@@ -3749,6 +3779,9 @@ class ScriptManager:
         if kwargs is None:
             kwargs = {}
         
+        # 🚀 스크립트 변경 시 캐시 무효화
+        self._invalidate_script_cache(script_name)
+        
         # 결과 초기화
         result_dict = {
             'result': None,
@@ -3757,8 +3790,8 @@ class ScriptManager:
             'logs': [],
         }
         
-        # 검사 실행
-        check_result = self.run_script(script_name, check_only=True, script_contents=script, kwargs=kwargs)
+        # 검사 실행 (check_only=True일 때는 kwargs 검증 건너뛰기)
+        check_result = self.run_script(script_name, check_only=True, script_contents=script, kwargs={})
         
         # 결과 복사
         result_dict['logs'] = check_result['logs'].copy()
@@ -3918,14 +3951,16 @@ class ScriptManager:
                     else:
                         restricted_builtins[name] = getattr(__builtins__, name)
             
-            # 모듈 로드
-            modules = {}
-            for module_name in self.ALLOWED_MODULES:
-                try:
-                    module = __import__(module_name)
-                    modules[module_name] = module
-                except ImportError:
-                    logging.warning(f"모듈 로드 실패: {module_name}")
+            # 🚀 모듈 캐싱 - 한 번만 로드
+            if not self._module_cache:
+                for module_name in self.ALLOWED_MODULES:
+                    try:
+                        self._module_cache[module_name] = __import__(module_name)
+                    except ImportError:
+                        logging.warning(f"모듈 로드 실패: {module_name}")
+            
+            # ✅ 캐시된 모듈 사용
+            modules = self._module_cache.copy()
             
             # 유틸리티 함수들
             def echo(msg):
@@ -3979,16 +4014,23 @@ class ScriptManager:
             
             script_return.caller_globals = globals_dict
             
-            # 모든 스크립트를 함수로 등록
-            for script_name, script_data in self.scripts.items():
-                wrapper_code = f"""
+            # 🚀 스크립트 래퍼 캐싱 - 한 번만 생성
+            if not self._script_wrapper_cache:
+                for script_name, script_data in self.scripts.items():
+                    wrapper_code = f"""
 def {script_name}(*args, **kwargs):
     return run_script('{script_name}', args, kwargs)
 """
-                try:
-                    exec(wrapper_code, globals_dict, globals_dict)
-                except Exception as e:
-                    logging.error(f"스크립트 래퍼 생성 오류 ({script_name}): {e}")
+                    try:
+                        # 래퍼 함수를 미리 컴파일하여 캐시
+                        compiled_wrapper = compile(wrapper_code, f"<wrapper_{script_name}>", 'exec')
+                        self._script_wrapper_cache[script_name] = compiled_wrapper
+                    except Exception as e:
+                        logging.error(f"스크립트 래퍼 생성 오류 ({script_name}): {e}")
+            
+            # ✅ 캐시된 래퍼 실행
+            for script_name, compiled_wrapper in self._script_wrapper_cache.items():
+                exec(compiled_wrapper, globals_dict, globals_dict)
             
             return globals_dict, script_logs
             
@@ -4076,18 +4118,74 @@ def {script_name}(*args, **kwargs):
             pass
         
         return result['result'] if result['error'] is None else False  # 실행 성공시 result, 실패시 False 반환
+    
+    def _invalidate_script_cache(self, script_name: str):
+        """스크립트 변경 시 캐시 무효화"""
+        # 컴파일된 스크립트 캐시에서 해당 스크립트 제거
+        keys_to_remove = [key for key in self._compiled_script_cache.keys() if key.startswith(f"{script_name}:")]
+        for key in keys_to_remove:
+            del self._compiled_script_cache[key]
+        
+        # 스크립트 래퍼 캐시에서도 제거
+        if script_name in self._script_wrapper_cache:
+            del self._script_wrapper_cache[script_name]
+        
+        logging.debug(f"🗑️ {script_name} 캐시 무효화 완료")
+    
+    def get_cache_status(self):
+        """캐시 상태 확인"""
+        return {
+            'module_cache': len(self._module_cache),
+            'script_wrapper_cache': len(self._script_wrapper_cache),
+            'compiled_script_cache': len(self._compiled_script_cache),
+            'total_scripts': len(self.scripts)
+        }
+    
+    def clear_all_caches(self):
+        """모든 캐시 초기화"""
+        self._module_cache.clear()
+        self._script_wrapper_cache.clear()
+        self._compiled_script_cache.clear()
+        logging.debug("🧹 모든 캐시 초기화 완료")
+    
+    def _get_current_call_stack(self):
+        """현재 호출 스택 반환"""
+        if not hasattr(self, '_call_stack'):
+            self._call_stack = []
+        return self._call_stack.copy()
+    
+    def _add_to_running_stack(self, script_name):
+        """실행 중인 스크립트 스택에 추가"""
+        if not hasattr(self, '_call_stack'):
+            self._call_stack = []
+        self._call_stack.append(script_name)
+    
+    def _remove_from_running_stack(self, script_name):
+        """실행 중인 스크립트 스택에서 제거"""
+        if hasattr(self, '_call_stack') and script_name in self._call_stack:
+            self._call_stack.remove(script_name)
 
-    def _make_wrapped_script(self, script, kwargs):
-        """래퍼 스크립트 생성"""
+    def _make_wrapped_script(self, script):
+        """kwargs를 제외한 순수 스크립트 래퍼 생성"""
         indented_script = '\n'.join(' ' * 8 + line if line.strip() else line for line in script.split('\n'))
         
         return f"""
-def execute_script(kwargs):
+def execute_script():
     def user_script():
-        code = kwargs.get('code')
+        # kwargs는 실행 시점에 globals에서 가져옴
+        kwargs = globals().get('kwargs', {{}})
+        
+        # 기본 변수들 설정
+        code = kwargs.get('code', '')
         name = kwargs.get('name', '')
         qty = kwargs.get('qty', 0)
         price = kwargs.get('price', 0)
+        
+        # 전역 변수로 설정하여 사용자 스크립트에서 접근 가능하게
+        globals()['code'] = code
+        globals()['name'] = name
+        globals()['qty'] = qty
+        globals()['price'] = price
         
         # 사용자 정의 변수들 추출
         for key, value in kwargs.items():
@@ -4116,19 +4214,19 @@ def execute_script(kwargs):
         tb = traceback.format_exc()
         raise
 
-# 스크립트 실행
-result = execute_script({repr(kwargs)})
+# 스크립트 실행 (kwargs는 실행 시점에 설정됨)
+result = execute_script()
 """
                     
 # 예제 실행
 if __name__ == '__main__':
     ct = ChartManager('005930', 'mi', 3)
 
-    print(f'{ct.c()}')
+    logging.debug(f'{ct.c()}')
 
     c1 = ct.ma(5) > ct.ma(20) and ct.c > ct.ma(5)
     c2 = ct.ma(5) < ct.ma(5) and ct.ma(20) < ct.ma(20)
 
     result = c1 and c2
 
-    print(result)
+    logging.debug(result)
