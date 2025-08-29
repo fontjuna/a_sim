@@ -1939,15 +1939,15 @@ class ScriptManager:
         
         # 순환 참조 방지 (check_only=True일 때는 건너뛰기)
         if not hasattr(self, '_check_only') or not self._check_only:
-            # 호출 스택 기반 순환 참조 감지
-            current_stack = self._get_current_call_stack()
-            if script_name in current_stack:
-                result_dict['error'] = f"순환 참조 감지: {script_name} → {' → '.join(current_stack)}"
-                result_dict['logs'].append(f'ERROR: 순환 참조 감지: {script_name} → {" → ".join(current_stack)}')
+            # 새로운 호출 스택 기반 순환 참조 감지
+            if self._is_circular_reference(script_name, code):
+                current_stack = self._get_call_stack_info()
+                result_dict['error'] = f"순환 참조 감지: {script_name} → {current_stack}"
+                result_dict['logs'].append(f'ERROR: 순환 참조 감지: {script_name} → {current_stack}')
                 return result_dict
             
-            # 실행 중인 스크립트에 추가 (스택 기반)
-            self._add_to_running_stack(script_name)
+            # 호출 스택에 추가
+            self._add_to_call_stack(script_name, code)
         
         # 현재 컨텍스트 설정
         self._set_current_context(kwargs)
@@ -2022,12 +2022,8 @@ class ScriptManager:
         finally:
             # 실행 완료 후 추적 목록에서 제거 (check_only=True일 때는 건너뛰기)
             if not hasattr(self, '_check_only') or not self._check_only:
-                # 기존 방식 제거
-                if hasattr(self, '_running_scripts') and script_key in self._running_scripts:
-                    self._running_scripts.remove(script_key)
-                
-                # 새로운 스택 방식 제거
-                self._remove_from_running_stack(script_name)
+                # 호출 스택에서 제거
+                self._remove_from_call_stack(script_name, code)
 
     def run_script(self, script_name, script_contents=None, check_only=False, kwargs=None):
         """스크립트 검사 및 실행"""
@@ -2117,6 +2113,23 @@ class ScriptManager:
         }
         
         self.scripts[script_name] = script_data
+        
+        # 🚀 저장 시 즉시 컴파일하여 캐시에 저장 (실행 최적화)
+        script_key = f"{script_name}:{hash(script)}"
+        wrapped_script = self._make_wrapped_script(script)
+        code_obj = compile(wrapped_script, f"<{script_name}>", 'exec')
+        self._compiled_script_cache[script_key] = code_obj
+        
+        # 🚀 스크립트 래퍼도 즉시 생성하여 캐시에 저장
+        wrapper_code = f"""
+def {script_name}(*args, **kwargs):
+    return run_script('{script_name}', args, kwargs)
+"""
+        try:
+            compiled_wrapper = compile(wrapper_code, f"<wrapper_{script_name}>", 'exec')
+            self._script_wrapper_cache[script_name] = compiled_wrapper
+        except Exception as e:
+            logging.error(f"스크립트 래퍼 생성 오류 ({script_name}): {e}")
         
         # 파일 저장
         save_result = self._save_scripts()
@@ -2449,22 +2462,57 @@ def {script_name}(*args, **kwargs):
         self._compiled_script_cache.clear()
         logging.debug("🧹 모든 캐시 초기화 완료")
     
-    def _get_current_call_stack(self):
-        """현재 호출 스택 반환"""
+    def _add_to_call_stack(self, script_name, code):
+        """호출 스택에 추가"""
         if not hasattr(self, '_call_stack'):
             self._call_stack = []
-        return self._call_stack.copy()
+        self._call_stack.append((script_name, code))
     
-    def _add_to_running_stack(self, script_name):
-        """실행 중인 스크립트 스택에 추가"""
+    def _remove_from_call_stack(self, script_name, code):
+        """호출 스택에서 제거 (LIFO 방식)"""
+        if hasattr(self, '_call_stack') and self._call_stack:
+            # 마지막에 추가된 같은 스크립트:종목 조합 제거
+            for i in range(len(self._call_stack) - 1, -1, -1):
+                if self._call_stack[i] == (script_name, code):
+                    del self._call_stack[i]
+                    break
+    
+    def _is_circular_reference(self, script_name, code):
+        """정확한 순환 참조 감지"""
         if not hasattr(self, '_call_stack'):
-            self._call_stack = []
-        self._call_stack.append(script_name)
+            return False
+        
+        # 같은 스크립트:종목 조합의 위치들 찾기
+        same_script_positions = []
+        for i, (stack_script, stack_code) in enumerate(self._call_stack):
+            if stack_script == script_name and stack_code == code:
+                same_script_positions.append(i)
+        
+        # 같은 스크립트가 2번 이상 호출되면 순환 참조 가능성
+        if len(same_script_positions) >= 2:
+            # 마지막 호출과 첫 호출 사이에 다른 스크립트가 있는지 확인
+            first_pos = same_script_positions[0]
+            last_pos = same_script_positions[-1]
+            
+            # 중간에 다른 스크립트가 있으면 순환 참조
+            for i in range(first_pos + 1, last_pos):
+                if self._call_stack[i][0] != script_name:
+                    return True  # 순환 참조!
+        
+        return False  # 순환 참조 아님
     
-    def _remove_from_running_stack(self, script_name):
-        """실행 중인 스크립트 스택에서 제거"""
-        if hasattr(self, '_call_stack') and script_name in self._call_stack:
-            self._call_stack.remove(script_name)
+    def _get_call_stack_info(self):
+        """호출 스택 정보를 문자열로 반환"""
+        if not hasattr(self, '_call_stack'):
+            return ""
+        
+        stack_info = []
+        for script_name, code in self._call_stack:
+            stack_info.append(f"{script_name}({code})")
+        
+        return " → ".join(stack_info)
+    
+
 
     def _make_wrapped_script(self, script):
         """kwargs를 제외한 순수 스크립트 래퍼 생성"""
