@@ -10,8 +10,6 @@ import re
 import logging
 import threading
 import traceback
-import numpy as np
-from numba import jit, njit, prange
 
 class ChartData:
     """
@@ -1061,199 +1059,156 @@ class ChartManager:
         return sum(tr_values) / len(tr_values) if tr_values else 0.0
     
     # 캔들패턴 인식 함수들
-    def is_doji(self, n: int = 0, threshold: float = 0.1) -> bool:
-        """도지 캔들 확인 (시가와 종가의 차이가 매우 작은 캔들)"""
-        o = self.o(n)
-        c = self.c(n)
-        h = self.h(n)
-        l = self.l(n)
-        
-        # 몸통 크기
-        body = abs(o - c)
-        # 전체 캔들 크기
-        candle_range = h - l
-        
-        if candle_range == 0:
-            return False
-            
-        # 몸통이 전체 캔들의 threshold% 이하이면 도지로 간주
-        return body / candle_range <= threshold
-
-    def is_shooting_star(self, n: int = 0, upper_ratio: float = 2.0, body_ratio: float = 0.3) -> bool:
+    def get_candle_data(self, n: int = 0) -> dict:
         """
-        유성형(슈팅스타) 캔들 패턴 판단
+        기본 캔들 데이터 추출 함수
         
         Args:
             n: 검사할 봉 인덱스 (0=현재봉)
-            upper_ratio: 위꼬리가 몸통의 몇 배 이상이어야 하는지 (기본값: 2.0)
-            body_ratio: 몸통이 전체 캔들의 몇 % 이하여야 하는지 (기본값: 0.3)
-        
-        Returns:
-            bool: 유성형 캔들이면 True
             
-        유성형 조건:
-        1. 위꼬리가 몸통보다 현저히 길어야 함 (upper_ratio배 이상)
-        2. 아래꼬리는 짧거나 없어야 함 (몸통의 50% 이하)
-        3. 몸통은 전체 캔들 대비 작아야 함 (body_ratio 이하)
-        4. 상승 추세에서 나타나는 하락 반전 신호
-        """
-        self._ensure_data_cache()
-        if not self._raw_data or n >= self._data_length: return False
-        
-        candle = self._raw_data[n]
-        
-        o = candle.get('시가', 0)
-        h = candle.get('고가', 0) 
-        l = candle.get('저가', 0)
-        c = candle.get('현재가', 0)
-        
-        # 기본 검증
-        if h <= l or o <= 0 or c <= 0: return False
-        
-        # 몸통, 위꼬리, 아래꼬리 크기 계산
-        body = abs(c - o)                    # 몸통 크기
-        upper_shadow = h - max(o, c)         # 위꼬리 크기  
-        lower_shadow = min(o, c) - l         # 아래꼬리 크기
-        total_range = h - l                  # 전체 캔들 크기
-        
-        # 전체 캔들 크기가 0이면 판단 불가
-        if total_range == 0: return False
-        
-        # 조건 1: 위꼬리가 몸통의 upper_ratio배 이상
-        if body > 0:
-            upper_body_ratio = upper_shadow / body
-            if upper_body_ratio < upper_ratio:
-                return False
-        else:
-            # 몸통이 0이면 위꼬리만 있어도 유성형으로 간주
-            if upper_shadow == 0:
-                return False
-        
-        # 조건 2: 아래꼬리는 몸통의 50% 이하 (짧아야 함)
-        if body > 0 and lower_shadow > body * 0.5:
-            return False
-        
-        # 조건 3: 몸통이 전체 캔들의 body_ratio 이하 (작아야 함)
-        body_percentage = body / total_range
-        if body_percentage > body_ratio:
-            return False
-        
-        # 조건 4: 위꼬리가 전체 캔들의 상당 부분을 차지해야 함 (50% 이상)
-        upper_percentage = upper_shadow / total_range
-        if upper_percentage < 0.5:
-            return False
-        
-        return True
-
-    def is_inverted_hammer(self, n: int = 0, upper_ratio: float = 2.0, body_ratio: float = 0.3) -> bool:
-        """
-        역망치형(역해머) 캔들 패턴 판단 - 하락 추세에서의 상승 반전 신호
-        
-        Args:
-            n: 검사할 봉 인덱스 (0=현재봉)
-            upper_ratio: 위꼬리가 몸통의 몇 배 이상이어야 하는지
-            body_ratio: 몸통이 전체 캔들의 몇 % 이하여야 하는지
-        
         Returns:
-            bool: 역망치형 캔들이면 True
-            
-        Note: 유성형과 모양은 같지만 나타나는 위치(하락 추세)에 따라 의미가 다름
-        """
-        # 캔들 모양은 유성형과 동일
-        return self.is_shooting_star(n, upper_ratio, body_ratio)
-
-    def is_hanging_man(self, n: int = 0, lower_ratio: float = 2.0, body_ratio: float = 0.3) -> bool:
-        """
-        교수형(행잉맨) 캔들 패턴 판단 - 상승 추세에서의 하락 반전 신호
-        
-        Args:
-            n: 검사할 봉 인덱스 (0=현재봉)
-            lower_ratio: 아래꼬리가 몸통의 몇 배 이상이어야 하는지
-            body_ratio: 몸통이 전체 캔들의 몇 % 이하여야 하는지
-        
-        Returns:
-            bool: 교수형 캔들이면 True
+            dict: {
+                'o': 시가, 'h': 고가, 'l': 저가, 'c': 종가,
+                'body': 몸통크기, 'up': 위꼬리, 'down': 아래꼬리,
+                'size': 전체캔들크기, 'is_valid': 유효성여부,
+                'body_pct': 몸통크기(시가대비%), 'up_pct': 위꼬리(시가대비%),
+                'down_pct': 아래꼬리(시가대비%), 'size_pct': 전체캔들크기(시가대비%)
+            }
         """
         self._ensure_data_cache()
         if not self._raw_data or n >= self._data_length:
-            return False
+            return {'is_valid': False}
         
         candle = self._raw_data[n]
-        
         o = candle.get('시가', 0)
         h = candle.get('고가', 0)
         l = candle.get('저가', 0)
         c = candle.get('현재가', 0)
         
+        # 기본 유효성 검사
         if h <= l or o <= 0 or c <= 0:
-            return False
+            return {'is_valid': False}
         
+        # 캔들 구성 요소 계산
         body = abs(c - o)
-        upper_shadow = h - max(o, c)
-        lower_shadow = min(o, c) - l
-        total_range = h - l
+        up = h - max(o, c)
+        down = min(o, c) - l
+        size = h - l
         
-        if total_range == 0:
-            return False
-        
-        # 조건 1: 아래꼬리가 몸통의 lower_ratio배 이상
-        if body > 0:
-            lower_body_ratio = lower_shadow / body
-            if lower_body_ratio < lower_ratio:
-                return False
+        # 시가 대비 퍼센트 계산 (0으로 나누기 방지)
+        if o > 0:
+            body_pct = (body / o) * 100
+            up_pct = (up / o) * 100
+            down_pct = (down / o) * 100
+            size_pct = (size / o) * 100
         else:
-            if lower_shadow == 0:
-                return False
+            body_pct = up_pct = down_pct = size_pct = 0
         
-        # 조건 2: 위꼬리는 몸통의 50% 이하 (짧아야 함)
-        if body > 0 and upper_shadow > body * 0.5:
+        return {
+            'o': o, 'h': h, 'l': l, 'c': c,
+            'body': body, 'up': up, 'down': down,
+            'size': size, 'is_valid': True,
+            'body_pct': body_pct, 'up_pct': up_pct,
+            'down_pct': down_pct, 'size_pct': size_pct
+        }
+    
+    def is_doji(self, n: int = 0, threshold: float = 0.1) -> bool:
+        """도지 캔들 확인 (시가와 종가의 차이가 매우 작은 캔들)"""
+        candle_data = self.get_candle_data(n)
+        if not candle_data['is_valid'] or candle_data['size'] == 0:
+            return False
+            
+        # 몸통이 전체 캔들의 threshold% 이하이면 도지로 간주
+        return (candle_data['body_pct'] / candle_data['size_pct']) <= threshold
+
+    def is_shooting_star(self, n: int = 0, length: float = 2.0, up: float = 2.0, down: float = None ) -> bool:
+        """
+        유성형 캔들 판단
+        
+        Args:
+            n: 검사할 봉 인덱스 (0=현재봉)
+            length: 위꼬리가 현재가 대비 몇 % 이상
+            up: 위꼬리가 몸통의 몇 배 이상
+            down: 아래꼬리가 몸통의 몇 배 이하
+        """
+        candle_data = self.get_candle_data(n)
+        if not candle_data['is_valid']:
             return False
         
-        # 조건 3: 몸통이 전체 캔들의 body_ratio 이하
-        body_percentage = body / total_range
-        if body_percentage > body_ratio:
+        # 조건 1: 위꼬리가 몸통의 up배 이상
+        if candle_data['body_pct'] > 0 and candle_data['up_pct'] / candle_data['body_pct'] < up:
             return False
         
-        # 조건 4: 아래꼬리가 전체 캔들의 상당 부분을 차지해야 함
-        lower_percentage = lower_shadow / total_range
-        if lower_percentage < 0.5:
+        # 조건 2: 위꼬리가 현재가 대비 length% 이상
+        if candle_data['up_pct'] < length:
+            return False
+        
+        # 조건 3: 아래꼬리가 몸통의 down배 이하 (down이 None이면 검사하지 않음)
+        if down is not None and candle_data['body_pct'] > 0 and candle_data['down_pct'] / candle_data['body_pct'] > down:
             return False
         
         return True
-    
+
+    def is_hanging_man(self, n: int = 0, length: float = 2.0, down: float = 2.0, up: float = None ) -> bool:
+        """
+        교수형(행잉맨) 캔들 패턴 판단
+        
+        Args:
+            n: 검사할 봉 인덱스 (0=현재봉)
+            down: 아래꼬리가 몸통의 몇 배 이상
+            length: 아래꼬리가 현재가 대비 몇 % 이상
+            up: 위꼬리가 몸통의 몇 배 이하
+        
+        Returns:
+            bool: 교수형 캔들이면 True
+            
+        사용예:
+            # 상승추세에서 교수형 확인
+            if cm.c() > cm.ma(20) and cm.is_hanging_man():
+                echo("상승추세 중 교수형!")
+        """
+        candle_data = self.get_candle_data(n)
+        if not candle_data['is_valid']:
+            return False
+        
+        # 조건 1: 아래꼬리가 몸통의 down배 이상
+        if candle_data['body_pct'] > 0 and candle_data['down_pct'] / candle_data['body_pct'] < down:
+            return False
+        elif candle_data['body_pct'] == 0 and candle_data['down_pct'] == 0:
+            return False
+        
+        # 조건 2: 아래꼬리가 현재가 대비 length% 이상
+        if candle_data['down_pct'] < length:
+            return False
+        
+        # 조건 3: 위꼬리가 몸통의 up배 이하 (up이 None이면 검사하지 않음)
+        if up is not None and candle_data['body_pct'] > 0 and candle_data['up_pct'] / candle_data['body_pct'] > up:
+            return False
+        
+        return True
+
     def is_hammer(self, n: int = 0) -> bool:
         """망치형 캔들 확인 (아래 꼬리가 긴 캔들)"""
-        o = self.o(n)
-        c = self.c(n)
-        h = self.h(n)
-        l = self.l(n)
-        
-        # 시가/종가 중 낮은 값
-        lower_val = min(o, c)
-        # 몸통 크기
-        body = abs(o - c)
-        # 아래 꼬리 크기
-        lower_shadow = lower_val - l
-        
-        # 전체 캔들 크기
-        candle_range = h - l
-        
-        if candle_range == 0 or body == 0: return False
+        candle_data = self.get_candle_data(n)
+        if not candle_data['is_valid'] or candle_data['size_pct'] == 0 or candle_data['body_pct'] == 0:
+            return False
             
         # 아래 꼬리가 몸통의 2배 이상이고, 전체 캔들의 1/3 이상이면 망치형으로 간주
-        return (lower_shadow >= 2 * body) and (lower_shadow / candle_range >= 0.33)
+        return (candle_data['down_pct'] >= 2 * candle_data['body_pct']) and (candle_data['down_pct'] / candle_data['size_pct'] >= 33.33)
     
     def is_engulfing(self, n: int = 0, bullish: bool = True) -> bool:
         """포괄 패턴 확인 (이전 캔들을 완전히 덮는 형태)
         bullish=True: 상승 포괄 패턴, bullish=False: 하락 포괄 패턴
         """
-        self._ensure_data_cache()
-        if not self._raw_data or n + 1 >= self._data_length: return False
-            
-        curr_o = self.o(n)
-        curr_c = self.c(n)
-        prev_o = self.o(n + 1)
-        prev_c = self.c(n + 1)
+        # 현재 캔들과 이전 캔들 데이터 가져오기
+        curr_data = self.get_candle_data(n)
+        prev_data = self.get_candle_data(n + 1)
+        
+        if not curr_data['is_valid'] or not prev_data['is_valid']:
+            return False
+        
+        curr_o, curr_c = curr_data['o'], curr_data['c']
+        prev_o, prev_c = prev_data['o'], prev_data['c']
         
         if bullish:
             # 상승 포괄 패턴: 현재 캔들이 상승이고, 이전 캔들은 하락이며
@@ -1269,7 +1224,7 @@ class ChartManager:
                     prev_c > prev_o and   # 이전 캔들이 상승
                     curr_o >= prev_c and   # 현재 시가가 이전 종가보다 높거나 같음
                     curr_c <= prev_o)      # 현재 종가가 이전 시가보다 낮거나 같음
-        
+    
     # 스크립트 함수들
     def bar(self, n: int = 0) -> int:
         self._ensure_data_cache()
@@ -1302,6 +1257,124 @@ class ChartManager:
             self._raw_data[pos].get('거래대금', 0)
 
         return (pos, time, open, high, low, close, volume, amount)
+
+    def get_highest_candle(self, n: int = 128, m: int = 0) -> tuple:
+        """
+        n개 봉 중에서 가장 긴 봉(고가-저가 차이가 가장 큰 봉) 찾기
+        
+        Args:
+            n: 검사할 봉 개수 (기본값: 128)
+            m: 시작 봉 인덱스 (기본값: 0=현재봉)
+            
+        Returns:
+            tuple: (인덱스, 시간/일자, 시가, 고가, 저가, 종가, 거래량, 거래대금)
+                   찾지 못하면 (0, '', 0, 0, 0, 0, 0, 0) 반환
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n <= 0:
+            return (0, '', 0, 0, 0, 0, 0, 0)
+        
+        # 검사 범위 설정
+        start_idx = m
+        end_idx = min(start_idx + n, self._data_length)
+        
+        if start_idx >= end_idx:
+            return (0, '', 0, 0, 0, 0, 0, 0)
+        
+        max_range = 0
+        max_range_idx = start_idx
+        
+        # n개 봉 중에서 가장 긴 봉 찾기
+        for i in range(start_idx, end_idx):
+            candle = self._raw_data[i]
+            high = candle.get('고가', 0)
+            low = candle.get('저가', 0)
+            candle_range = high - low
+            
+            if candle_range > max_range:
+                max_range = candle_range
+                max_range_idx = i
+        
+        # 최고 긴봉 데이터 반환
+        if max_range > 0:
+            candle = self._raw_data[max_range_idx]
+            
+            # 시간/일자 필드 결정
+            if self.cycle == 'mi':
+                time_str = candle.get('체결시간', '')
+            else:
+                time_str = candle.get('일자', '')
+            
+            return (
+                max_range_idx,
+                time_str,
+                candle.get('시가', 0),
+                candle.get('고가', 0),
+                candle.get('저가', 0),
+                candle.get('현재가', 0),
+                candle.get('거래량', 0),
+                candle.get('거래대금', 0)
+            )
+        
+        return (0, '', 0, 0, 0, 0, 0, 0)
+
+    def get_highest_volume(self, n: int = 128, m: int = 0) -> tuple:
+        """
+        n개 봉 중에서 가장 거래량이 많은 봉 찾기
+        
+        Args:
+            n: 검사할 봉 개수 (기본값: 128)
+            m: 시작 봉 인덱스 (기본값: 0=현재봉)
+            
+        Returns:
+            tuple: (인덱스, 시간/일자, 시가, 고가, 저가, 종가, 거래량, 거래대금)
+                   찾지 못하면 (0, '', 0, 0, 0, 0, 0, 0) 반환
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n <= 0:
+            return (0, '', 0, 0, 0, 0, 0, 0)
+        
+        # 검사 범위 설정
+        start_idx = m
+        end_idx = min(start_idx + n, self._data_length)
+        
+        if start_idx >= end_idx:
+            return (0, '', 0, 0, 0, 0, 0, 0)
+        
+        max_volume = 0
+        max_volume_idx = start_idx
+        
+        # n개 봉 중에서 가장 거래량이 많은 봉 찾기
+        for i in range(start_idx, end_idx):
+            candle = self._raw_data[i]
+            volume = candle.get('거래량', 0)
+            
+            if volume > max_volume:
+                max_volume = volume
+                max_volume_idx = i
+        
+        # 최고 거래량 봉 데이터 반환
+        if max_volume > 0:
+            candle = self._raw_data[max_volume_idx]
+            
+            # 시간/일자 필드 결정
+            if self.cycle == 'mi':
+                time_str = candle.get('체결시간', '')
+            else:
+                time_str = candle.get('일자', '')
+            
+            return (
+                max_volume_idx,
+                time_str,
+                candle.get('시가', 0),
+                candle.get('고가', 0),
+                candle.get('저가', 0),
+                candle.get('현재가', 0),
+                candle.get('거래량', 0),
+                candle.get('거래대금', 0)
+            )
+        
+        return (0, '', 0, 0, 0, 0, 0, 0)
 
     def past_bars(self, dt: str = None) -> int:
         """당일 분봉 개수 반환"""
@@ -2328,15 +2401,14 @@ def {script_name}(*args, **kwargs):
             
             script_return.caller_globals = globals_dict
             
-            # 🚀 스크립트 래퍼 캐싱 - 한 번만 생성
-            if not self._script_wrapper_cache:
-                for script_name, script_data in self.scripts.items():
+            # 누락된 스크립트 래퍼 자동 생성
+            for script_name, script_data in self.scripts.items():
+                if script_name not in self._script_wrapper_cache:
                     wrapper_code = f"""
 def {script_name}(*args, **kwargs):
     return run_script('{script_name}', args, kwargs)
 """
                     try:
-                        # 래퍼 함수를 미리 컴파일하여 캐시
                         compiled_wrapper = compile(wrapper_code, f"<wrapper_{script_name}>", 'exec')
                         self._script_wrapper_cache[script_name] = compiled_wrapper
                     except Exception as e:
@@ -2444,6 +2516,8 @@ def {script_name}(*args, **kwargs):
         if script_name in self._script_wrapper_cache:
             del self._script_wrapper_cache[script_name]
         
+
+        
         logging.debug(f"🗑️ {script_name} 캐시 무효화 완료")
     
     def get_cache_status(self):
@@ -2461,6 +2535,8 @@ def {script_name}(*args, **kwargs):
         self._script_wrapper_cache.clear()
         self._compiled_script_cache.clear()
         logging.debug("🧹 모든 캐시 초기화 완료")
+    
+
     
     def _add_to_call_stack(self, script_name, code):
         """호출 스택에 추가"""
@@ -2572,6 +2648,14 @@ if __name__ == '__main__':
     ct = ChartManager('005930', 'mi', 3)
 
     logging.debug(f'{ct.c()}')
+
+    c1 = ct.ma(5) > ct.ma(20) and ct.c > ct.ma(5)
+    c2 = ct.ma(5) < ct.ma(5) and ct.ma(20) < ct.ma(20)
+
+    result = c1 and c2
+
+    logging.debug(result)
+
 
     c1 = ct.ma(5) > ct.ma(20) and ct.c > ct.ma(5)
     c2 = ct.ma(5) < ct.ma(5) and ct.ma(20) < ct.ma(20)

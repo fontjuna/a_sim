@@ -608,6 +608,126 @@ result = {
 }
 ```
 
+### C.4 5이평 쌍바닥 찾기
+
+```python
+# 스크립트명: 쌍바닥_탐지
+# 3분봉 5이평선으로 W형 쌍바닥 패턴 탐지
+
+# 차트 매니저 설정 (3분봉)
+m3 = ChartManager(code, 'mi', 3)
+
+# 5이평선이 충분한 데이터가 있는지 확인
+if m3.get_data_length() < 128:
+    echo(f'[False] ({code} {name}) 데이터 부족 (길이: {m3.get_data_length()})')
+    ret(False)
+
+# 128봉 구간에서 5이평선 계산
+ma5_values = []
+for i in range(128):
+    ma5_val = m3.avg(m3.c, 5, i)
+    if ma5_val == 0:  # 데이터 부족으로 계산 못함
+        break
+    ma5_values.append((i, ma5_val))
+
+if len(ma5_values) < 50:  # 최소 50봉은 있어야 패턴 판단 가능
+    echo(f'[False] ({code} {name}) 5이평 계산 데이터 부족')
+    ret(False)
+
+# 5이평선에서 극값 찾기 (고점과 저점)
+def find_extremes(values, min_distance=3):
+    """
+    5이평선에서 고점과 저점을 찾음
+    min_distance: 극값 사이 최소 거리 (봉 단위)
+    """
+    peaks = []  # 고점들 (인덱스, 값)
+    bottoms = []  # 저점들 (인덱스, 값)
+    
+    for i in range(1, len(values) - 1):
+        idx, val = values[i]
+        prev_val = values[i-1][1]
+        next_val = values[i+1][1]
+        
+        # 고점 조건: 이전보다 높고 다음보다 높음
+        if val > prev_val and val > next_val:
+            # 최소 거리 확인
+            if not peaks or abs(idx - peaks[-1][0]) >= min_distance:
+                peaks.append((idx, val))
+        
+        # 저점 조건: 이전보다 낮고 다음보다 낮음  
+        elif val < prev_val and val < next_val:
+            # 최소 거리 확인
+            if not bottoms or abs(idx - bottoms[-1][0]) >= min_distance:
+                bottoms.append((idx, val))
+    
+    return peaks, bottoms
+
+peaks, bottoms = find_extremes(ma5_values)
+
+# 쌍바닥 패턴 검증
+def validate_double_bottom():
+    """쌍바닥 패턴 조건 검증"""
+    
+    if len(bottoms) < 2:
+        return False, "저점이 2개 미만"
+    
+    if len(peaks) < 1:
+        return False, "고점이 없음"
+    
+    # 최근 2개 저점 (인덱스가 작을수록 최신)
+    bottom1_idx, bottom1_val = bottoms[0]  # 첫 번째 저점 (더 최신)
+    bottom2_idx, bottom2_val = bottoms[1]  # 두 번째 저점 (더 과거)
+    
+    # 조건 1: 2번째 저점이 128봉 중 최저값인지 확인
+    all_ma5_values = [val for _, val in ma5_values]
+    lowest_in_128 = min(all_ma5_values)
+    
+    if abs(bottom2_val - lowest_in_128) > 1:  # 약간의 오차 허용
+        return False, f"2번째 저점이 최저값 아님 ({bottom2_val} vs {lowest_in_128})"
+    
+    # 조건 2: 1번째 저점이 2번째 저점보다 높아야 함
+    if bottom1_val <= bottom2_val:
+        return False, f"1번째 저점이 2번째보다 낮음 ({bottom1_val} <= {bottom2_val})"
+    
+    # 조건 3: 두 저점 사이에 고점이 있어야 함 (W 형태)
+    middle_peaks = [p for p in peaks if bottom2_idx < p[0] < bottom1_idx]
+    if not middle_peaks:
+        return False, "두 저점 사이에 고점 없음"
+    
+    # 가장 높은 중간 고점 찾기
+    highest_middle_peak = max(middle_peaks, key=lambda x: x[1])
+    middle_peak_val = highest_middle_peak[1]
+    
+    # 조건 4: 현재 5이평이 중간 고점을 넘어야 함 (돌파 조건)
+    current_ma5 = m3.avg(m3.c, 5, 0)
+    if current_ma5 <= middle_peak_val:
+        return False, f"현재 5이평이 중간 고점 미돌파 ({current_ma5} <= {middle_peak_val})"
+    
+    return True, {
+        'bottom1': (bottom1_idx, bottom1_val),
+        'bottom2': (bottom2_idx, bottom2_val), 
+        'middle_peak': highest_middle_peak,
+        'current_ma5': current_ma5,
+        'breakout_ratio': (current_ma5 - middle_peak_val) / middle_peak_val * 100
+    }
+
+# 쌍바닥 패턴 검증 실행
+is_double_bottom, result = validate_double_bottom()
+
+if is_double_bottom:
+    info = result
+    echo(f'[True] ({code} {name}) 쌍바닥 돌파!')
+    echo(f'  2번째바닥: {info["bottom2"][1]:.0f} ({info["bottom2"][0]}봉전)')
+    echo(f'  1번째바닥: {info["bottom1"][1]:.0f} ({info["bottom1"][0]}봉전)')  
+    echo(f'  중간고점: {info["middle_peak"][1]:.0f} ({info["middle_peak"][0]}봉전)')
+    echo(f'  현재5이평: {info["current_ma5"]:.0f}')
+    echo(f'  돌파율: {info["breakout_ratio"]:.2f}%')
+    ret(True)
+else:
+    echo(f'[False] ({code} {name}) 쌍바닥 조건 미충족: {result}')
+    ret(False)
+```
+
 ## D. 스크립트 성능 최적화 팁
 
 ### D.1 계산 재사용

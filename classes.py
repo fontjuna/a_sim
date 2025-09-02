@@ -587,7 +587,7 @@ class QMainModel(BaseModel, QThread):
         QThread.__init__(self)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
         self.emit_q = queue.Queue()
-        self.queue_timeout = dc.INTERVAL_VERY_FAST  # QMainModel은 빠른 반응성 필요
+        self.queue_timeout = dc.INTERVAL_FAST  # QMainModel은 빠른 반응성 필요
 
     def _initialize_instance(self):
         """QMainModel 전용 인스턴스 초기화"""
@@ -623,7 +623,7 @@ class KiwoomModel(BaseModel, Process):
     def __init__(self, name, cls, shared_qes, *args, **kwargs):
         Process.__init__(self, name=name)
         BaseModel.__init__(self, name, cls, shared_qes, *args, **kwargs)
-        self.queue_timeout = dc.INTERVAL_VERY_FAST  # 실시간 데이터 처리 위해 빠르게
+        self.queue_timeout = dc.INTERVAL_FAST  # 실시간 데이터 처리 위해 빠르게
 
     def _run_loop_iteration(self):
         """Kiwoom 전용 ActiveX 이벤트 처리"""
