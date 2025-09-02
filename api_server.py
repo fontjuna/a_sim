@@ -980,13 +980,10 @@ class APIServer:
                     data = self.GetCommRealData(code, value)
                     dictFID[key] = data.strip() if type(data) == str else data
 
-                job = { 'code': code, 'rtype': rtype, 'dictFID': dictFID }
                 if rtype == '주식체결': 
                     self.order('rcv', 'proxy_method', QWork(method='on_receive_real_data', args=(code, rtype, dictFID)))
-                    #self.order('rcv', 'on_receive_real_data', **job)
                 elif rtype == '장시작시간': 
                     self.order('rcv', 'proxy_method', QWork(method='on_receive_market_status', args=(code, rtype, dictFID)))
-                #logging.debug(f"RealData: API 서버에서 보냄 {rtype} {code}")
         except Exception as e:
             logging.error(f"OnReceiveRealData error: {e}", exc_info=True)
             

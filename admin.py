@@ -258,7 +258,7 @@ class Admin:
         if not gm.ready: return
         try:
 
-            현재가 = abs(int(dictFID['현재가']))
+            현재가 = abs(int(dictFID.get('현재가')))
             updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
 
             if updated:
@@ -407,7 +407,7 @@ class Admin:
                 전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
                 value = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
                 # 락 획득시간 최소화
-                gm.dict종목정보.set(code, value=value)
+                gm.dict종목정보.set(code, value)
 
             logging.debug(f'실시간 시세 요청: codes={gm.set종목감시}')
             codes = ";".join(gm.set종목감시)
@@ -549,7 +549,7 @@ class Admin:
             if not gm.dict종목정보.contains(code):
                 전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
                 value={'종목명': 종목명, '전일가': 전일가, '현재가': 0}
-                gm.dict종목정보.set(code, value=value)
+                gm.dict종목정보.set(code, value)
 
             # 주문진행목록 추가는 이렇게 바로 해야 갭 간격을 줄여 그 사이에 이중 주문이 방지 된다.
             if not (gm.주문진행목록.in_key((code, '매수')) or gm.주문진행목록.in_key((code, '매도'))):
@@ -821,7 +821,7 @@ class Admin:
                     if not gm.dict종목정보.contains(code):
                         전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
                         value={'종목명': 종목명, '전일가': 전일가, '현재가': 0}
-                        gm.dict종목정보.set(code, value=value)
+                        gm.dict종목정보.set(code, value)
 
                     gm.setter_q.put(code)
                     if code not in gm.set조건감시: self.stg_fx등록_종목감시([code], 1)

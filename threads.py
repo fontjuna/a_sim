@@ -418,7 +418,7 @@ class EvalStrategy(QThread):
 
     def is_buy(self, code, rqname, price=0) -> tuple[bool, dict, str]:
         """매수 조건 충족 여부를 확인하는 메소드"""
-        name = gm.dict종목정보.get(code, next='종목명')
+        name = gm.dict종목정보.get(code, sub_key='종목명')
 
         if not gm.sim_on:
             status_market = com_market_status()

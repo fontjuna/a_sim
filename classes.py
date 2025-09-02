@@ -55,61 +55,93 @@ class ThreadSafeDict:
         self.dict = {}
         self.lock = threading.RLock()
 
-    def set(self, key, value=None, next=None):
+    def set(self, key, value=None, sub_key=None):
+        """단일 값 설정"""
         with self.lock:
-            if next is None:
+            if sub_key is None:
                 self.dict[key] = copy.deepcopy(value) if value is not None else {}
             else:
                 if key not in self.dict:
                     self.dict[key] = {}
-                self.dict[key][next] = copy.deepcopy(value) if value is not None else {}
+                self.dict[key][sub_key] = copy.deepcopy(value) if value is not None else {}
 
-    def get(self, key, next=None):
+    def get(self, key, sub_key=None):
+        """단일 값 조회"""
         with self.lock:
-            if next is None:
+            if sub_key is None:
                 value = self.dict.get(key)
                 return copy.deepcopy(value) if value is not None else None
             else:
                 if key not in self.dict:
                     return None
-                value = self.dict[key].get(next)
+                value = self.dict[key].get(sub_key)
                 return copy.deepcopy(value) if value is not None else None
 
-    def contains(self, item):
+    def contains(self, key, sub_key=None):
+        """키 존재 여부 확인"""
         with self.lock:
-            return item in self.dict
+            if sub_key is None:
+                return key in self.dict
+            else:
+                return key in self.dict and sub_key in self.dict[key]
 
-    def remove(self, key, next=None):
+    def remove(self, key, sub_key=None):
+        """항목 제거"""
         with self.lock:
-            if next is None:
+            if sub_key is None:
                 return copy.deepcopy(self.dict.pop(key, None))
             elif key in self.dict:
-                return copy.deepcopy(self.dict[key].pop(next, None))
+                return copy.deepcopy(self.dict[key].pop(sub_key, None))
             return None
-            
+
+    def update_if_exists(self, key, sub_key, value):
+        """
+        존재하는 경우에만 업데이트
+        1. 단일 항목 업데이트 (기존 방식)
+        thread_safe_dict.update_if_exists("user_001", "age", 31)
+
+        2. 여러 항목 업데이트 (새로운 방식)
+        thread_safe_dict.update_if_exists("user_001", {"age": 31, "email": "new@email.com"})
+
+        3. 전체 값 업데이트
+        thread_safe_dict.update_if_exists("user_001", None, {"name": "홍길동", "age": 30})
+        """
+        with self.lock:
+            if key in self.dict:
+                if sub_key is None:
+                    self.dict[key] = copy.deepcopy(value) if value is not None else {}
+                    return True
+                elif isinstance(sub_key, dict):
+                    # 여러 항목 업데이트
+                    updated_count = 0
+                    for k, v in sub_key.items():
+                        if k in self.dict[key]:
+                            self.dict[key][k] = copy.deepcopy(v) if v is not None else {}
+                            updated_count += 1
+                    return updated_count > 0
+                else:
+                    # 단일 항목 업데이트
+                    if sub_key in self.dict[key]:
+                        self.dict[key][sub_key] = copy.deepcopy(value) if value is not None else {}
+                        return True
+            return False
+
     def items(self):
         with self.lock:
-            return list(self.dict.items())  # 복사본 반환
+            return list(self.dict.items())
 
     def keys(self):
         with self.lock:
-            return list(self.dict.keys())  # 복사본 반환
+            return list(self.dict.keys())
 
     def values(self):
         with self.lock:
-            return list(self.dict.values())  # 복사본 반환
+            return list(self.dict.values())
 
-    def update_if_exists(self, key, next, value):
-        """존재하는 경우에만 업데이트 (contains + set을 원자적으로 수행)"""
+    def clear(self):
+        """전체 사전 초기화"""
         with self.lock:
-            if key in self.dict:
-                if next is None:
-                    self.dict[key] = copy.deepcopy(value) if value is not None else {}
-                    return True
-                else:
-                    self.dict[key][next] = copy.deepcopy(value) if value is not None else {}
-                    return True
-            return False
+            self.dict.clear()
 
 class ThreadSafeSet:
     """쓰레드 안전한 set 클래스"""
