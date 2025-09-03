@@ -10,6 +10,7 @@ import re
 import logging
 import threading
 import traceback
+import math
 
 class ChartData:
     """
@@ -1389,6 +1390,72 @@ class ChartManager:
             else:
                 break
         return bars
+
+    def segment_angle_slope(self, n: int, m: int, max_daily_pct: float = 0.30):
+        """
+        (m+n)봉전 시가 → m봉전 종가 구간의 각도(°)와 기울기(%) 계산
+        
+        정의
+        - X축 정규화: elapsed_minutes/380 (분봉/일봉/주봉/월봉 환산)
+        - Y축 정규화: pct_change/max_daily_pct (기본 max_daily_pct=0.30 → 30%)
+        - 각도(°): atan2(Y, X) in degrees
+        - 기울기(%): (Y/X)×100  → 100%는 1:1 (상승:시간) 기울기
+        
+        해석 예시
+        - 38분에 +3%: X=0.1, Y=0.1 → 각도=45°, 기울기=100%
+        - 12분(3분×4봉)에 각도 45°: 상승률 ≈ 12/380×30% ≈ 0.95%
+        - 80°의 기울기 ≈ tan(80°)×100 ≈ 567%
+        
+        참조 표 (기울기를 정수 비율로 본 각도)
+        - 0:1 → 0.00°
+        - 1:10 → 5.71°
+        - 1:8 → 7.13°
+        - 1:6 → 9.46°
+        - 1:5 → 11.31°
+        - 1:4 → 14.04°
+        - 1:3 → 18.43°
+        - 1:2 → 26.57°
+        - 2:3 → 33.69°
+        - 1:1 → 45.00°
+        - 3:2 → 56.31°
+        - 2:1 → 63.43°
+        - 3:1 → 71.57°
+        - 4:1 → 75.96°
+        - 5:1 → 78.69°
+        - 6:1 → 80.54°
+        - 8:1 → 82.87°
+        - 10:1 → 84.29°
+        
+        Returns: (angle_deg, slope_percent, pct_change, elapsed_minutes)
+        """
+        # 바 하나의 분 단위 환산
+        if self.cycle == 'mi':
+            minutes_per_bar = int(self.tick)
+        elif self.cycle == 'dy':
+            minutes_per_bar = 380
+        elif self.cycle == 'wk':
+            minutes_per_bar = 5 * 380
+        elif self.cycle == 'mo':
+            minutes_per_bar = 20 * 380
+        else:
+            minutes_per_bar = 1
+
+        start_idx = m + n
+        if start_idx >= self.get_data_length():
+            return 0.0, 0.0, 0.0, 0
+
+        start_open = self.o(start_idx)
+        end_close = self.c(m)
+        pct = (end_close - start_open) / start_open if start_open > 0 else 0
+
+        elapsed_minutes = max(1, n * minutes_per_bar)
+        x = elapsed_minutes / 380.0
+        y = pct / max_daily_pct
+
+        angle_deg = math.degrees(math.atan2(y, x))
+        slope_percent = (y / x) * 100.0 if x > 0 else 0.0
+
+        return angle_deg, slope_percent, pct, elapsed_minutes
 
     def get_extremes(self, n: int = 128, m: int = 1) -> dict:
         """
