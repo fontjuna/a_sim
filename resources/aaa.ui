@@ -4529,7 +4529,7 @@
           <property name="geometry">
            <rect>
             <x>10</x>
-            <y>30</y>
+            <y>20</y>
             <width>211</width>
             <height>16</height>
            </rect>
@@ -4544,8 +4544,8 @@
          <widget class="QCheckBox" name="chkBuyCancel">
           <property name="geometry">
            <rect>
-            <x>80</x>
-            <y>60</y>
+            <x>370</x>
+            <y>50</y>
             <width>51</width>
             <height>16</height>
            </rect>
@@ -4557,8 +4557,8 @@
          <widget class="QSpinBox" name="spbBuyCancel">
           <property name="geometry">
            <rect>
-            <x>130</x>
-            <y>60</y>
+            <x>420</x>
+            <y>50</y>
             <width>51</width>
             <height>22</height>
            </rect>
@@ -4582,8 +4582,8 @@
          <widget class="QLabel" name="label_10">
           <property name="geometry">
            <rect>
-            <x>180</x>
-            <y>60</y>
+            <x>480</x>
+            <y>50</y>
             <width>31</width>
             <height>16</height>
            </rect>
@@ -4595,8 +4595,8 @@
          <widget class="QSpinBox" name="spbSellCancel">
           <property name="geometry">
            <rect>
-            <x>280</x>
-            <y>60</y>
+            <x>420</x>
+            <y>80</y>
             <width>51</width>
             <height>22</height>
            </rect>
@@ -4620,8 +4620,8 @@
          <widget class="QLabel" name="label_16">
           <property name="geometry">
            <rect>
-            <x>330</x>
-            <y>60</y>
+            <x>480</x>
+            <y>80</y>
             <width>31</width>
             <height>16</height>
            </rect>
@@ -4633,8 +4633,8 @@
          <widget class="QCheckBox" name="chkSellCancel">
           <property name="geometry">
            <rect>
-            <x>230</x>
-            <y>60</y>
+            <x>370</x>
+            <y>80</y>
             <width>51</width>
             <height>16</height>
            </rect>
@@ -4646,8 +4646,8 @@
          <widget class="QLabel" name="label_58">
           <property name="geometry">
            <rect>
-            <x>10</x>
-            <y>60</y>
+            <x>370</x>
+            <y>20</y>
             <width>71</width>
             <height>20</height>
            </rect>
@@ -4657,6 +4657,123 @@
           </property>
           <property name="alignment">
            <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+         <widget class="QCheckBox" name="chkCancleRate">
+          <property name="geometry">
+           <rect>
+            <x>10</x>
+            <y>50</y>
+            <width>41</width>
+            <height>16</height>
+           </rect>
+          </property>
+          <property name="text">
+           <string>당일</string>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+         </widget>
+         <widget class="QLabel" name="label_50">
+          <property name="geometry">
+           <rect>
+            <x>120</x>
+            <y>50</y>
+            <width>171</width>
+            <height>16</height>
+           </rect>
+          </property>
+          <property name="text">
+           <string>% 이상 손실 종목 재매수 안함</string>
+          </property>
+         </widget>
+         <widget class="QDoubleSpinBox" name="dsbCancelRate">
+          <property name="geometry">
+           <rect>
+            <x>60</x>
+            <y>50</y>
+            <width>51</width>
+            <height>22</height>
+           </rect>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          </property>
+          <property name="showGroupSeparator" stdset="0">
+           <bool>true</bool>
+          </property>
+          <property name="decimals">
+           <number>2</number>
+          </property>
+          <property name="minimum">
+           <double>0.000000000000000</double>
+          </property>
+          <property name="maximum">
+           <double>30.000000000000000</double>
+          </property>
+          <property name="singleStep">
+           <double>0.500000000000000</double>
+          </property>
+          <property name="value">
+           <double>2.000000000000000</double>
+          </property>
+         </widget>
+         <widget class="QLabel" name="label_51">
+          <property name="geometry">
+           <rect>
+            <x>120</x>
+            <y>80</y>
+            <width>171</width>
+            <height>16</height>
+           </rect>
+          </property>
+          <property name="text">
+           <string>회 이상 손실 종목 재매수 안함</string>
+          </property>
+         </widget>
+         <widget class="QCheckBox" name="chkCancleTimes">
+          <property name="geometry">
+           <rect>
+            <x>10</x>
+            <y>80</y>
+            <width>41</width>
+            <height>16</height>
+           </rect>
+          </property>
+          <property name="text">
+           <string>당일</string>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+         </widget>
+         <widget class="QSpinBox" name="spbCancelTimes">
+          <property name="geometry">
+           <rect>
+            <x>60</x>
+            <y>80</y>
+            <width>51</width>
+            <height>22</height>
+           </rect>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          </property>
+          <property name="showGroupSeparator" stdset="0">
+           <bool>true</bool>
+          </property>
+          <property name="minimum">
+           <number>0</number>
+          </property>
+          <property name="maximum">
+           <number>10</number>
+          </property>
+          <property name="singleStep">
+           <number>1</number>
+          </property>
+          <property name="value">
+           <number>2</number>
           </property>
          </widget>
         </widget>

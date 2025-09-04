@@ -142,6 +142,19 @@ ret(False)
 
 # 스크립트명 : 일반매도
 
+"""
+<검색식에서 구현: 보유종목대상>
+- 없음.
+
+<스크립트에서 구현>
+1. 상한가 이거나
+2. 3분봉 5이평이 하락전환 하거나
+3. 3분봉 5이평이 10이평 이하 이거나
+4. 현재가가 10이평 이하 이거나
+5. 유성형(전봉 위꼬리는 1.5%이상 몸통의 2.5배 이상이고 max(전봉시가, 종가) 보다 현재가 낮음) 이거나
+6. 막다른 골목(상승중 장대양봉이 서고 그 종가보다 낮은 시가로 양봉마감 했지만 고가 돌파 못함) 이거나
+7. 상승장 갭 상승 음봉(현재봉 시가가 이전봉 종가보다 낮고 종가가 이전봉 시가보다 낮음) 이거나
+"""
 dm = ChartManager(code, 'dy')
 m3 = ChartManager(code, 'mi', 3)
 logoff = is_args('logoff', False)
@@ -165,10 +178,17 @@ elif ma(10) > ma(5):
 elif ma(10) > mc():
     msg += f'현재가10이평아래'
 elif not logoff:
-    if m3.is_shooting_star(n=1, length=1.5, up=2.5) and max(mo(1), mc(1)) > mc() and 최고종가[-1] == 1:
-        msg += f'유성형 캔들 발생'
-    # elif (mh(0) - max(mo(0), mc(0))) / mo(0) >= 0.02 and mc(최고종가[-1]) > mc(0):
-    #     msg += f'긴 윗꼬리 달고 최고종가 이하로 하락'
+    if m3.is_shooting_star(m=1, length=1.5, up=2.5) and max(mo(1), mc(1)) > mc(0):
+        msg += f'유성형 캔들'
+    elif mo(2) < mc(3) and mh(3) > mh(2):
+        꼬리 = div(mh(3) - mc(3), mc(3), 0)
+        몸통 = div(abs(mc(3) - mo(3)), mo(3), 0)
+        if 꼬리 >= 0.06 and 몸통 >= 0.01:
+            msg += f'막다른 골목 패턴'
+    elif mo(2) < mc(2) and mc(2) < mo(1) and mc(1) < mo(1):
+        몸통 = div(abs(mc(2) - mo(2)), mo(2), 0)
+        if 몸통 >= 0.015:
+            msg += f'상승장 갭 상승 음봉'
 
 if msg: 
     if not logoff:

@@ -1122,17 +1122,17 @@ class ChartManager:
         # 몸통이 전체 캔들의 threshold% 이하이면 도지로 간주
         return (candle_data['body_pct'] / candle_data['size_pct']) <= threshold
 
-    def is_shooting_star(self, n: int = 0, length: float = 2.0, up: float = 2.0, down: float = None ) -> bool:
+    def is_shooting_star(self, m: int = 0, length: float = 2.0, up: float = 2.0, down: float = None ) -> bool:
         """
         유성형 캔들 판단
         
         Args:
-            n: 검사할 봉 인덱스 (0=현재봉)
+            m: 검사할 봉 인덱스 (0=현재봉)
             length: 위꼬리가 현재가 대비 몇 % 이상
             up: 위꼬리가 몸통의 몇 배 이상
             down: 아래꼬리가 몸통의 몇 배 이하
         """
-        candle_data = self.get_candle_data(n)
+        candle_data = self.get_candle_data(m)
         if not candle_data['is_valid']:
             return False
         
