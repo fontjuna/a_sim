@@ -1150,12 +1150,12 @@ class ChartManager:
         
         return True
 
-    def is_hanging_man(self, n: int = 0, length: float = 2.0, down: float = 2.0, up: float = None ) -> bool:
+    def is_hanging_man(self, m: int = 0, length: float = 2.0, down: float = 2.0, up: float = None ) -> bool:
         """
         교수형(행잉맨) 캔들 패턴 판단
         
         Args:
-            n: 검사할 봉 인덱스 (0=현재봉)
+            m: 검사할 봉 인덱스 (0=현재봉)
             down: 아래꼬리가 몸통의 몇 배 이상
             length: 아래꼬리가 현재가 대비 몇 % 이상
             up: 위꼬리가 몸통의 몇 배 이하
@@ -1168,7 +1168,7 @@ class ChartManager:
             if cm.c() > cm.ma(20) and cm.is_hanging_man():
                 echo("상승추세 중 교수형!")
         """
-        candle_data = self.get_candle_data(n)
+        candle_data = self.get_candle_data(m)
         if not candle_data['is_valid']:
             return False
         
@@ -1197,13 +1197,13 @@ class ChartManager:
         # 아래 꼬리가 몸통의 2배 이상이고, 전체 캔들의 1/3 이상이면 망치형으로 간주
         return (candle_data['down_pct'] >= 2 * candle_data['body_pct']) and (candle_data['down_pct'] / candle_data['size_pct'] >= 33.33)
     
-    def is_engulfing(self, n: int = 0, bullish: bool = True) -> bool:
+    def is_engulfing(self, m: int = 0, bullish: bool = True) -> bool:
         """포괄 패턴 확인 (이전 캔들을 완전히 덮는 형태)
         bullish=True: 상승 포괄 패턴, bullish=False: 하락 포괄 패턴
         """
         # 현재 캔들과 이전 캔들 데이터 가져오기
-        curr_data = self.get_candle_data(n)
-        prev_data = self.get_candle_data(n + 1)
+        curr_data = self.get_candle_data(m)
+        prev_data = self.get_candle_data(m + 1)
         
         if not curr_data['is_valid'] or not prev_data['is_valid']:
             return False
@@ -1407,24 +1407,33 @@ class ChartManager:
         - 80°의 기울기 ≈ tan(80°)×100 ≈ 567%
         
         참조 표 (기울기를 정수 비율로 본 각도)
-        - 0:1 → 0.00°
-        - 1:10 → 5.71°
-        - 1:8 → 7.13°
-        - 1:6 → 9.46°
-        - 1:5 → 11.31°
-        - 1:4 → 14.04°
-        - 1:3 → 18.43°
-        - 1:2 → 26.57°
-        - 2:3 → 33.69°
-        - 1:1 → 45.00°
-        - 3:2 → 56.31°
-        - 2:1 → 63.43°
-        - 3:1 → 71.57°
-        - 4:1 → 75.96°
-        - 5:1 → 78.69°
-        - 6:1 → 80.54°
-        - 8:1 → 82.87°
-        - 10:1 → 84.29°
+        (상승률 예시: X=경과시간/380=0.1 기준, 상승률≈ 기울기비×X×30% = 비율×3%)
+        - 0:1 → 0.00° (상승률≈ 0.0%)
+        - 1:10 → 5.71° (상승률≈ 0.3%)
+        - 1:8 → 7.13° (상승률≈ 0.4%)
+        - 1:6 → 9.46° (상승률≈ 0.5%)
+        - 1:5 → 11.31° (상승률≈ 0.6%)
+        - 1:4 → 14.04° (상승률≈ 0.8%)
+        - 1:3 → 18.43° (상승률≈ 1.0%)
+        - 1:2 → 26.57° (상승률≈ 1.5%)
+        - 2:3 → 33.69° (상승률≈ 2.0%)
+        - 1:1 → 45.00° (상승률≈ 3.0%)
+        - 3:2 → 56.31° (상승률≈ 4.5%)
+        - 2:1 → 63.43° (상승률≈ 6.0%)
+        - 3:1 → 71.57° (상승률≈ 9.0%)
+        - 4:1 → 75.96° (상승률≈ 12.0%)
+        - 5:1 → 78.69° (상승률≈ 15.0%)
+        - 6:1 → 80.54° (상승률≈ 18.0%)
+        - 8:1 → 82.87° (상승률≈ 24.0%)
+        - 10:1 → 84.29° (상승률≈ 30.0%)
+        
+        참조 표 (기울기-각도-상승률, 예: 경과시간=38분 → X=0.1, max_daily_pct=30%)
+        - 관계식: rise_pct ≈ (slope_percent/100) × X × 30%
+        - slope 50%  → 각도≈26.6° → 상승률≈1.5%
+        - slope 100% → 각도≈45.0° → 상승률≈3.0%
+        - slope 150% → 각도≈56.3° → 상승률≈4.5%
+        - slope 200% → 각도≈63.4° → 상승률≈6.0%
+        - slope 300% → 각도≈71.6° → 상승률≈9.0%
         
         Returns: (angle_deg, slope_percent, pct_change, elapsed_minutes)
         """
@@ -1662,13 +1671,17 @@ class ChartManager:
         if not self._raw_data or m < 0 or n <= 0 or cnt <= 0:
             return ([], 0)
         
+        # 스냅샷: 연산 중 데이터 변동 방지 (일관성 확보)
+        data = list(self._raw_data)
+        data_length = len(data)
+        
         high_close_indices = []
         
         # 당일 봉 개수 계산
         today_bars = 0
         today = datetime.now().strftime('%Y%m%d')
-        for i in range(self._data_length):
-            if self._raw_data[i].get('체결시간', '')[:8] == today:
+        for i in range(data_length):
+            if data[i].get('체결시간', '')[:8] == today:
                 today_bars += 1
             else:
                 break
@@ -1678,32 +1691,30 @@ class ChartManager:
         end_idx = m            # m=0이면 0까지, m=3이면 3까지
         
         for current_idx in range(start_idx, end_idx - 1, -1):  # 역순
-            if current_idx >= self._data_length:
+            if current_idx >= data_length:
                 continue
             
             # 현재 검사 중인 봉의 종가
-            current_close = self._raw_data[current_idx].get('현재가', 0)
+            current_close = data[current_idx].get('현재가', 0)
             
-            # 비교 범위: current_idx부터 current_idx + cnt - 1까지
-            compare_start = current_idx
-            compare_end = current_idx + cnt
-            
-            # 데이터 길이 체크
-            if compare_end > self._data_length:
-                compare_end = self._data_length
+            # 비교 범위: current_idx 이후(cnt-1개)만 비교하여 동률은 제외
+            compare_start = current_idx + 1  # 자신 제외
+            compare_end = min(current_idx + cnt, data_length)
             
             if compare_start >= compare_end:
+                # 비교 대상이 없으면 최고로 간주
+                high_close_indices.append(current_idx)
                 continue
             
-            # 비교 범위에서 최고 종가 찾기
+            # 비교 범위에서 최고 종가 찾기 (자신 제외)
             max_close = 0
             for i in range(compare_start, compare_end):
-                close = self._raw_data[i].get('현재가', 0)
+                close = data[i].get('현재가', 0)
                 if close > max_close:
                     max_close = close
             
-            # 현재 봉의 종가가 비교 범위의 최고 종가 이상이면 인덱스 추가
-            if current_close >= max_close and max_close > 0:
+            # 이전 최고종가보다 "엄격히 더 높을 때만" 인덱스 추가
+            if current_close > max_close:
                 high_close_indices.append(current_idx)
         
         return (high_close_indices, today_bars)

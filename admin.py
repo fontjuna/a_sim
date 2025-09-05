@@ -379,7 +379,7 @@ class Admin:
 
                     gm.setter_q.put(item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
-                gm.counter.set_batch(data)
+                gm.counter.register_tickers(data)
 
             #logging.debug(f'dict_list ={dict_list}')
             if dict_list:
@@ -500,7 +500,7 @@ class Admin:
             if self.매수적용: self.stg_run_trade('매수')
             if self.매도적용: self.stg_run_trade('매도')
             self.stg_ready = True
-            gm.counter.set_strategy(self.매수전략, strategy_limit=self.체결횟수, ticker_limit=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
+            gm.counter.set_strategy(self.매수전략, group=self.체결횟수, ticker=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
             if gm.gui_on: 
                 gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
@@ -889,7 +889,7 @@ class Admin:
                         gm.prx.order('dbm', 'table_upsert', 'db', db_columns.SIM_TABLE_NAME, sim_record, key=db_columns.SIM_KEYS)
                         gm.holdings[code] = data
                         save_json(dc.fp.holdings_file, gm.holdings)
-                        gm.counter.set_add(code) # 매수 제한 기록
+                        gm.counter.record_buy(code) # 매수 제한 기록
                         logging.debug(f'잔고목록 추가: {code} {name} 보유수량={qty} 매입가={price} 매입금액={amount} 미체결수량={dictFID.get("미체결수량", 0)}')
 
                         if self.매도적용: self.stg_run_trade('매도', recall=True) # 실매매시 보유종목이 없는경우 보유종목에서 조건검색시 실패 함. 매도 전략 실행

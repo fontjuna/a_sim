@@ -252,91 +252,154 @@ class Toast(QWidget):
         self.hide()
 
 class CounterTicker:
-    DEFAULT_STRATEGY_LIMIT = 1000   # 전략 자체 기본 제한
-    DEFAULT_TICKER_LIMIT = 10       # 종목 기본 제한
-    DEFAULT_DATA = { "date": dc.ToDay, "data": {} } # data = { code: { name: "", limit: 0, count: 0 }, ... } 
+    DEFAULT_NAME = ""
+    DEFAULT_GROUP_LIMIT = 1000   # 그룹 전체 매수 한도 (저장만 함)
+    DEFAULT_TICKER_LIMIT = 10    # 개별 종목 매수 한도 (저장만 함)
+    DEFAULT_MAX_RATE = 30.0     # 개별 종목 최대 손실율(%) 한도 (저장만 함)
+    DEFAULT_MAX_TIMES = 10     # 개별 종목 최대 손실 횟수 한도 (저장만 함)
+    DEFAULT_DATA = { "date": dc.ToDay, "name": DEFAULT_NAME, "group": DEFAULT_GROUP_LIMIT, "count": 0, "ticker": DEFAULT_TICKER_LIMIT, "max_rate": DEFAULT_MAX_RATE, "max_times": DEFAULT_MAX_TIMES, "data": {} }
    
     def __init__(self, file_name="counter_data.json"):
         data_path = get_path('db')
         self.file_path = os.path.join(data_path, file_name)
         self.lock = threading.RLock()
+        self.name = self.DEFAULT_NAME
+        self.group = self.DEFAULT_GROUP_LIMIT
+        self.ticker = self.DEFAULT_TICKER_LIMIT
+        self.max_rate = self.DEFAULT_MAX_RATE
+        self.max_times = self.DEFAULT_MAX_TIMES
+        self.count = 0
         self.data = {}
-        self.whole_count = self.DEFAULT_STRATEGY_LIMIT
         self.load_data()
     
     def load_data(self):
         with self.lock:
-            success, loaded_data = load_json(self.file_path, self.DEFAULT_DATA)
-            if success:
-                saved_date = loaded_data.get("date", "")
-                self.data = loaded_data.get("data", {})
-                if saved_date != dc.ToDay: self.data = {}
+            success, loaded = load_json(self.file_path, self.DEFAULT_DATA)
+            if not success:
+                return
+            saved_date = loaded.get("date", "")
+            self.name = loaded.get("name", self.DEFAULT_NAME)
+            self.group = loaded.get("group", self.DEFAULT_GROUP_LIMIT)
+            self.ticker = loaded.get("ticker", self.DEFAULT_TICKER_LIMIT)
+            self.max_rate = loaded.get("max_rate", self.DEFAULT_MAX_RATE)
+            self.max_times = loaded.get("max_times", self.DEFAULT_MAX_TIMES)
+            # 날짜가 바뀌면 하루 단위 초기화: data={}, count=0 유지 규칙
+            if saved_date != dc.ToDay:
+                self.count = 0
+                self.data = {}
+            else:
+                self.count = int(loaded.get("count", 0) or 0)
+                self.data = loaded.get("data", {}) or {}
     
     def save_data(self):
         with self.lock:
-            save_obj = { "date": dc.ToDay, "data": self.data }
+            save_obj = { "date": dc.ToDay, "name": self.name, "group": self.group, "count": self.count, "ticker": self.ticker, "max_rate": self.max_rate, "max_times": self.max_times, "data": self.data }
             success, _ = save_json(self.file_path, save_obj)
             return success
     
-    def set_strategy(self, name, strategy_limit=None, ticker_limit=None):
+    def set_strategy(self, name, group=None, ticker=None, max_rate=None, max_times=None):
         with self.lock:
-            update = False
-            if "000000" not in self.data: 
-                self.data["000000"] = { 
-                    "name": name, 
-                    "all": ticker_limit if ticker_limit is not None else self.DEFAULT_TICKER_LIMIT, 
-                    "limit": strategy_limit if strategy_limit is not None else self.DEFAULT_STRATEGY_LIMIT, 
-                    "count": 0 }
-                update = True
-
-            if self.data["000000"]["name"] != name:
-                self.data["000000"]["name"] = name
-                update = True
-
-            if strategy_limit is not None:
-                if self.data["000000"]["limit"] != strategy_limit:
-                    self.data["000000"].update({ "limit": strategy_limit, "count": 0 })
-                    update = True
-
-            if ticker_limit is not None:
-                if self.data["000000"]["all"] != ticker_limit:
-                    self.data["000000"].update({ "all": ticker_limit, "count": 0 })
-                    update = True
-
-            if update: self.save_data()
-    
-    def set_batch(self, data):
-        with self.lock:
-            for code, name in data.items():
-                self.set(code, name)
-            self.save_data()
-
-    def set(self, code, name, limit=0, count=0):
-        with self.lock:
-            self.data[code] = { "name": name, "limit": limit, "count": count }
-            self.save_data()
-
-    def set_add(self, code):
-        try:
-            with self.lock:
-                self.data[code]["count"] += 1
-                self.data["000000"]["count"] += 1
+            updated = False
+            if name is not None and self.name != name:
+                self.name = name
+                updated = True
+            if group is not None and self.group != group:
+                self.group = int(group)
+                updated = True
+            if ticker is not None and self.ticker != ticker:
+                self.ticker = int(ticker)
+                updated = True
+            if max_rate is not None and self.max_rate != max_rate:
+                self.max_rate = float(max_rate)
+                updated = True
+            if max_times is not None and self.max_times != max_times:
+                self.max_times = int(max_times)
+                updated = True
+            if updated:
                 self.save_data()
-        except KeyError:
-            name = gm.prx.answer('api', 'GetMasterCodeName', code)
-            self.set(code, name, 0, 1)
-        except Exception as e:
-            logging.error(f"CounterTicker set_add 오류: {code} {e}", exc_info=True)
     
-    def get(self, code, name=""):
+    def ensure_ticker(self, code, name=None):
+        if code not in self.data:
+            if name is None or name == "":
+                try:
+                    name = gm.prx.answer('api', 'GetMasterCodeName', code)
+                except Exception:
+                    name = code
+            self.data[code] = { "name": name, "rate": 0.0, "times": 0, "count": 0 }
+    
+    def register_tickers(self, code_to_name: dict):
+        with self.lock:
+            for code, name in code_to_name.items():
+                self.ensure_ticker(code, name)
+            self.save_data()
+
+    def record_buy(self, code, name=None):
+        with self.lock:
+            self.ensure_ticker(code, name)
+            self.data[code]["count"] = int(self.data[code].get("count", 0) or 0) + 1
+            self.count = int(self.count or 0) + 1
+            self.save_data()
+
+    def record_loss(self, code, loss_rate, name=None):
+        with self.lock:
+            self.ensure_ticker(code, name)
+            rate = float(abs(loss_rate) if loss_rate is not None else 0.0)
+            current = float(self.data[code].get("rate", 0.0) or 0.0)
+            self.data[code]["rate"] = max(current, rate)
+            self.data[code]["times"] = int(self.data[code].get("times", 0) or 0) + 1
+            self.save_data()
+
+    def update_loss_rate(self, code, loss_rate, name=None):
+        with self.lock:
+            self.ensure_ticker(code, name)
+            rate = float(abs(loss_rate) if loss_rate is not None else 0.0)
+            current = float(self.data[code].get("rate", 0.0) or 0.0)
+            if rate > current:
+                self.data[code]["rate"] = rate
+                self.save_data()
+
+    def increment_loss_times(self, code, inc=1, name=None):
+        with self.lock:
+            self.ensure_ticker(code, name)
+            self.data[code]["times"] = int(self.data[code].get("times", 0) or 0) + int(inc)
+            self.save_data()
+
+    def get_group_count(self) -> int:
+        with self.lock:
+            return int(self.count or 0)
+
+    def get_ticker_count(self, code) -> int:
         with self.lock:
             if code not in self.data:
-                self.set(code, name)
-            if self.data["000000"]["count"] >= self.data["000000"]["limit"]:
-                return False
-            ticker_info = self.data[code]
-            ticker_limit = ticker_info["limit"] if ticker_info["limit"] > 0 else self.data["000000"]["all"]
-            return ticker_info["count"] < ticker_limit
+                return 0
+            return int(self.data[code].get("count", 0) or 0)
+
+    def can_buy_group(self, limit: int) -> bool:
+        with self.lock:
+            return int(self.count or 0) < int(limit)
+
+    def can_buy_ticker(self, code: str, limit: int) -> bool:
+        with self.lock:
+            self.ensure_ticker(code)
+            return int(self.data[code].get("count", 0) or 0) < int(limit)
+
+    def can_buy_loss_rate(self, code: str, max_rate=None) -> bool:
+        with self.lock:
+            self.ensure_ticker(code)
+            limit = float(self.max_rate if max_rate is None else max_rate)
+            current = float(self.data[code].get("rate", 0.0) or 0.0)
+            return current <= limit
+
+    def can_buy_loss_times(self, code: str, max_times=None) -> bool:
+        with self.lock:
+            self.ensure_ticker(code)
+            limit = int(self.max_times if max_times is None else max_times)
+            current = int(self.data[code].get("times", 0) or 0)
+            return current <= limit
+
+    def can_buy_ticker_with_constraints(self, code: str, ticker_limit: int, max_rate=None, max_times=None) -> bool:
+        with self.lock:
+            return self.can_buy_ticker(code, ticker_limit) and self.can_buy_loss_rate(code, max_rate) and self.can_buy_loss_times(code, max_times)
 
 class TimeLimiter:
     def __init__(self, name, second=5, minute=100, hour=1000):

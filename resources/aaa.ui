@@ -4672,7 +4672,7 @@
            <string>당일</string>
           </property>
           <property name="checked">
-           <bool>true</bool>
+           <bool>false</bool>
           </property>
          </widget>
          <widget class="QLabel" name="label_50">
@@ -4745,7 +4745,7 @@
            <string>당일</string>
           </property>
           <property name="checked">
-           <bool>true</bool>
+           <bool>false</bool>
           </property>
          </widget>
          <widget class="QSpinBox" name="spbCancelTimes">

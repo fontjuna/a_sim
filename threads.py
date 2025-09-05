@@ -424,10 +424,10 @@ class EvalStrategy(QThread):
             status_market = com_market_status()
             if status_market not in dc.ms.장운영시간: return False, {}, "장 운영시간이 아님"
 
-        if gm.counter.get("000000", name) >= self.체결횟수: 
+        if not gm.counter.can_buy_group(self.체결횟수): 
             return False, {}, f"전략별 매수 횟수 제한 {code} {name} 매수횟수={self.체결횟수} 회 초과"
 
-        if gm.counter.get(code, name) >= self.종목제한: 
+        if not gm.counter.can_buy_ticker(code, self.종목제한): 
             return False, {}, f"종목별 매수 횟수 제한 {code} {name} 종목제한{self.종목제한} 회 초과"
 
         if self.중복매수금지 and gm.잔고목록.in_key(code): return False, {}, f"보유 종목 재매수 금지 ({code} {name})"
