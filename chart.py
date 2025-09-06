@@ -11,6 +11,7 @@ import logging
 import threading
 import traceback
 import math
+from contextlib import contextmanager
 
 class ChartData:
     """
@@ -628,8 +629,31 @@ class ChartManager:
         self._cache_version = -1
         self._data_length = 0
         
+        # ensure 일시 중지 카운터 (중첩 안전)
+        self._ensure_suspended = 0
+        
+    def __enter__(self):
+        """with ChartManager(...) as cm: 사용 시 시작에 보장할 작업이 있으면 여기에 추가"""
+        return self
+    
+    def __exit__(self, exc_type, exc, tb):
+        """with 블록 종료 시 상태 복구 (ensure 중지 카운터 클린업)"""
+        self._ensure_suspended = 0
+        return False  # 예외 전파
+    
+    @contextmanager
+    def suspend_ensure(self):
+        """블록 내부에서 _ensure_data_cache()를 일시 중지 (중첩 안전)"""
+        self._ensure_suspended += 1
+        try:
+            yield
+        finally:
+            self._ensure_suspended -= 1
+
     def _ensure_data_cache(self):
         """데이터 캐시 확인 및 업데이트 (최적화)"""
+        if getattr(self, '_ensure_suspended', 0) > 0:
+            return
         current_version = self.cht_dt._data_versions.get(self.code, 0)
         
         # 버전이 같으면 즉시 리턴
@@ -648,7 +672,7 @@ class ChartManager:
         self._cache_version = current_version
         self._data_length = len(self._raw_data) if self._raw_data else 0
 
-    # 고속 기본값 반환 함수들 (직접 접근)
+    # 기본값 반환 함수들 (직접 접근)
     def c(self, n: int = 0) -> float:
         """종가 반환 - 고속 버전"""
         self._ensure_data_cache()
@@ -697,6 +721,403 @@ class ChartManager:
         
         return self._raw_data[n].get('거래대금', 0)
 
+    # 캔들 특성 함수들
+    def red(self, n: int = 0) -> bool:
+        """음봉 여부 반환"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return False
+        
+        return self._raw_data[n].get('현재가', 0) >= self._raw_data[n].get('시가', 0)
+    
+    def blue(self, n: int = 0) -> bool:
+        """양봉 여부 반환"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return False
+        
+        return self._raw_data[n].get('현재가', 0) < self._raw_data[n].get('시가', 0)
+    
+    def doji(self, n: int = 0) -> bool:
+        """당일 도지 봉 여부 반환"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return False
+        
+        return self._raw_data[n].get('현재가', 0) == self._raw_data[n].get('시가', 0)
+    
+    def marubozu(self, n: int = 0) -> bool:
+        """n봉전의 마루보즈 여부"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return False
+        with self.suspend_ensure():
+            return self.body(n) > 0 and self.up_tail(n) == 0 and self.down_tail(n) == 0
+    
+    def body(self, n: int = 0) -> float:
+        """몸통 길이 반환 (abs(c-o))"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        o = self._raw_data[n].get('시가', 0)
+        c = self._raw_data[n].get('현재가', 0)
+        return abs(c - o)
+    
+    def body_top(self, n: int = 0) -> float:
+        """몸통 상단값 반환 (max(o,c))"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        o = self._raw_data[n].get('시가', 0)
+        c = self._raw_data[n].get('현재가', 0)
+        return max(o, c)
+    
+    def body_bottom(self, n: int = 0) -> float:
+        """몸통 하단값 반환 (min(o,c))"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        o = self._raw_data[n].get('시가', 0)
+        c = self._raw_data[n].get('현재가', 0)
+        return min(o, c)
+    
+    def body_center(self, n: int = 0) -> float:
+        """몸통 중앙값 반환 ((max(o,c)+min(o,c))/2)"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        with self.suspend_ensure():
+            top = self.body_top(n)
+            bottom = self.body_bottom(n)
+            if top == 0.0 and bottom == 0.0:
+                return 0.0
+            return (top + bottom) / 2.0
+
+    def up_tail(self, n: int = 0) -> float:
+        """윗꼬리 길이 반환 (h-max(o,c))"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        h = self._raw_data[n].get('고가', 0)
+        o = self._raw_data[n].get('시가', 0)
+        c = self._raw_data[n].get('현재가', 0)
+        return h - max(o, c)
+    
+    def down_tail(self, n: int = 0) -> float:
+        """아랫꼬리 길이 반환 (min(o,c)-l)"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        l = self._raw_data[n].get('저가', 0)
+        o = self._raw_data[n].get('시가', 0)
+        c = self._raw_data[n].get('현재가', 0)
+        return min(o, c) - l
+    
+    def length(self, n: int = 0) -> float:
+        """캔들 전체 길이 반환 (h-l)"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        h = self._raw_data[n].get('고가', 0)
+        l = self._raw_data[n].get('저가', 0)
+        return h - l
+    
+    def body_pct(self, n: int = 0) -> float:
+        """몸통 길이(시가 대비 %)"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        o = self._raw_data[n].get('시가', 0)
+        if o == 0:
+            return 0.0
+        with self.suspend_ensure():
+            b = self.body(n)
+        return (b / o) * 100.0 if o != 0 else 0.0
+    
+    def up_tail_pct(self, n: int = 0) -> float:
+        """윗꼬리 길이(시가 대비 %)"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        o = self._raw_data[n].get('시가', 0)
+        if o == 0:
+            return 0.0
+        with self.suspend_ensure():
+            up = self.up_tail(n)
+        return (up / o) * 100.0 if o != 0 else 0.0
+    
+    def down_tail_pct(self, n: int = 0) -> float:
+        """아랫꼬리 길이(시가 대비 %)"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        o = self._raw_data[n].get('시가', 0)
+        if o == 0:
+            return 0.0
+        with self.suspend_ensure():
+            dn = self.down_tail(n)
+        return (dn / o) * 100.0 if o != 0 else 0.0
+    
+    def length_pct(self, n: int = 0) -> float:
+        """캔들 전체 길이(시가 대비 %)"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return 0.0
+        o = self._raw_data[n].get('시가', 0)
+        if o == 0:
+            return 0.0
+        with self.suspend_ensure():
+            L = self.length(n)
+        return (L / o) * 100.0 if o != 0 else 0.0
+
+    def long_body(self, n: int = 0, m: int = 10, k: float = 2.0) -> bool:
+        """n봉전의 몸통 길이가 직전 m개 몸통 평균의 k배 이상인지"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length or m <= 0:
+            return False
+        start = n + 1
+        end = min(n + 1 + m, self._data_length)
+        if start >= end:
+            return False
+        total = 0.0
+        cnt = 0
+        for i in range(start, end):
+            total += self.body(i)
+            cnt += 1
+        if cnt == 0:
+            return False
+        avg = total / cnt
+        if avg <= 0:
+            return False
+        return self.body(n) >= avg * k
+    
+    def short_body(self, n: int = 0, m: int = 10, k: float = 0.5) -> bool:
+        """n봉전의 몸통 길이가 직전 m개 몸통 평균의 k배 이하인지"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length or m <= 0:
+            return False
+        start = n + 1
+        end = min(n + 1 + m, self._data_length)
+        if start >= end:
+            return False
+        total = 0.0
+        cnt = 0
+        for i in range(start, end):
+            total += self.body(i)
+            cnt += 1
+        if cnt == 0:
+            return False
+        avg = total / cnt
+        if avg <= 0:
+            return False
+        return self.body(n) <= avg * k
+
+    # 캔들 패턴 함수들
+    def get_candle_data(self, n: int = 0) -> dict:
+        """
+        기본 캔들 데이터 추출 함수
+        
+        Args:
+            n: 검사할 봉 인덱스 (0=현재봉)
+            
+        Returns:
+            dict: {
+                'o': 시가, 'h': 고가, 'l': 저가, 'c': 종가,
+                'body': 몸통크기, 'up_tail': 위꼬리, 'down_tail': 아래꼬리,
+                'length': 전체캔들크기, 'is_valid': 유효성여부,
+                'body_pct': 몸통크기(시가대비%), 'up_tail_pct': 위꼬리(시가대비%),
+                'down_tail_pct': 아래꼬리(시가대비%), 'length_pct': 전체캔들크기(시가대비%),
+                'red': 상승캔들, 'blue': 하락캔들, 'doji': 도지캔들,
+                'body_top': 몸통상단, 'body_bottom': 몸통하단, 'body_center': 몸통중앙
+            }
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return {'is_valid': False}
+        
+        candle = self._raw_data[n]
+        o = candle.get('시가', 0)
+        h = candle.get('고가', 0)
+        l = candle.get('저가', 0)
+        c = candle.get('현재가', 0)
+        
+        # 기본 유효성 검사
+        if h <= l or o <= 0 or c <= 0:
+            return {'is_valid': False}
+        
+        # 캔들 구성 요소 계산
+        body = abs(c - o)
+        body_top = max(o, c)
+        body_bottom = min(o, c)
+        body_center = (body_top + body_bottom) / 2
+        up_tail = h - body_top
+        down_tail = body_bottom - l
+        length = h - l
+        
+        # 시가 대비 퍼센트 계산 (0으로 나누기 방지)
+        if o > 0:
+            body_pct = (body / o) * 100
+            up_tail_pct = (up_tail / o) * 100
+            down_tail_pct = (down_tail / o) * 100
+            length_pct = (length / o) * 100
+        else:
+            body_pct = up_tail_pct = down_tail_pct = length_pct = 0
+        
+        return {
+            'o': o, 'h': h, 'l': l, 'c': c,
+            'body': body, 'up_tail': up_tail, 'down': down_tail,
+            'length': length, 'is_valid': True,
+            'body_pct': body_pct, 'up_tail_pct': up_tail_pct,
+            'down_tail_pct': down_tail_pct, 'length_pct': length_pct,
+            'red': c >= o, 'blue': c < o, 'doji': c == o,
+            'body_top': body_top, 'body_bottom': body_bottom, 'body_center': body_center
+        }
+    
+    def gap_up(self, n: int = 0) -> bool:
+        """상승 갭 확인: n봉전 시가 > (n+1)봉전 몸통 상단"""
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            return self.o(n) > self.body_top(n + 1)
+    
+    def gap_down(self, n: int = 0) -> bool:
+        """하락 갭 확인: n봉전 시가 < (n+1)봉전 몸통 하단"""
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            return self.o(n) < self.body_bottom(n + 1)
+    
+    def is_doji(self, n: int = 0, threshold: float = 0.1) -> bool:
+        """도지 캔들 확인 (몸통/전체길이 비율이 threshold 이하)"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return False
+        with self.suspend_ensure():
+            total_len = self.length(n)
+            if total_len <= 0:
+                return False
+            return (self.body(n) / total_len) <= threshold
+
+    def is_shooting_star(self, m: int = 0, length: float = 2.0, up: float = 2.0, down: float = None ) -> bool:
+        """
+        유성형 캔들 판단
+        
+        Args:
+            m: 검사할 봉 인덱스 (0=현재봉)
+            length: 위꼬리가 현재가 대비 몇 % 이상
+            up: 위꼬리가 몸통의 몇 배 이상
+            down: 아래꼬리가 몸통의 몇 배 이하
+        """
+        # 스냅샷 없이 헬퍼로 계산 (성능/일관성 균형)
+        self._ensure_data_cache()
+        if not self._raw_data or m >= self._data_length:
+            return False
+        with self.suspend_ensure():
+            b = self.body(m)
+            up_tail_pct = self.up_tail_pct(m)
+            
+            # 조건 1: 위꼬리가 몸통의 up배 이상
+            if b > 0 and (self.up_tail(m) / b) < up: return False
+            
+            # 조건 2: 위꼬리가 현재가 대비 length% 이상
+            if up_tail_pct < length: return False
+            
+            # 조건 3: 아래꼬리가 몸통의 down배 이하 (down이 None이면 검사하지 않음)
+            if down is not None and b > 0 and (self.down_tail(m) / b) > down: return False
+        
+        return True
+
+    def is_hanging_man(self, m: int = 0, length: float = 2.0, down: float = 2.0, up: float = None ) -> bool:
+        """
+        교수형(행잉맨) 캔들 패턴 판단
+        
+        Args:
+            m: 검사할 봉 인덱스 (0=현재봉)
+            down: 아래꼬리가 몸통의 몇 배 이상
+            length: 아래꼬리가 현재가 대비 몇 % 이상
+            up: 위꼬리가 몸통의 몇 배 이하
+        
+        Returns:
+            bool: 교수형 캔들이면 True
+            
+        사용예:
+            # 상승추세에서 교수형 확인
+            if cm.c() > cm.ma(20) and cm.is_hanging_man():
+                echo("상승추세 중 교수형!")
+        """
+        # 스냅샷 없이 헬퍼로 계산
+        self._ensure_data_cache()
+        if not self._raw_data or m >= self._data_length:
+            return False
+        with self.suspend_ensure():
+            b = self.body(m)
+            
+            # 조건 1: 아래꼬리가 몸통의 down배 이상
+            if b > 0 and (self.down_tail(m) / b) < down:
+                return False
+            elif b == 0 and self.down_tail(m) == 0:
+                return False
+            
+            # 조건 2: 아래꼬리가 현재가 대비 length% 이상
+            if self.down_tail_pct(m) < length:
+                return False
+            
+            # 조건 3: 위꼬리가 몸통의 up배 이하 (up이 None이면 검사하지 않음)
+            if up is not None and b > 0 and (self.up_tail(m) / b) > up:
+                return False
+        
+        return True
+
+    def is_hammer(self, n: int = 0) -> bool:
+        """망치형 캔들 확인 (아래 꼬리가 긴 캔들)"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return False
+        with self.suspend_ensure():
+            total_len = self.length(n)
+            b = self.body(n)
+            if total_len <= 0 or b <= 0:
+                return False
+            down = self.down_tail(n)
+            # 아래 꼬리가 몸통의 2배 이상이고, 전체 길이의 1/3 이상
+            return (down >= 2 * b) and ((down / total_len) >= (1/3))
+    
+    def is_engulfing(self, m: int = 0, k: float = 1.0, bullish: bool = True) -> tuple:
+        """장악형 패턴 확인 (이전 캔들을 완전히 덮는 형태)
+        Returns: (match: bool, ratio_pct: float)
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or m+1 >= self._data_length:
+            return (False, 0.0)
+        with self.suspend_ensure():
+            if self.body_pct(m) < k:
+                return (False, 0.0)
+            # 상승 장악: 현재 양, 이전 음 / 하락 장악: 현재 음, 이전 양
+            if bullish and (self.red(m+1) or self.blue(m)):
+                return (False, 0.0)
+            if (not bullish) and (self.blue(m+1) or self.red(m)):
+                return (False, 0.0)
+            ok = self.body_top(m) > self.body_top(m+1) and self.body_bottom(m) < self.body_bottom(m+1)
+            ratio = self.body(m+1) / self.body(m) * 100 if self.body(m) > 0 else 0.0
+            return (ok, ratio)
+    
+    def is_harami(self, m: int = 0, k: float = 1.0, bullish: bool = True) -> tuple:
+        """잉태형 패턴 확인 (이전 캔들에 포함되는 형태)
+        Returns: (match: bool, ratio_pct: float)
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or m+1 >= self._data_length:
+            return (False, 0.0)
+        with self.suspend_ensure():
+            if self.body_pct(m) < k:
+                return (False, 0.0)
+            if bullish and (self.red(m+1) or self.blue(m)):
+                return (False, 0.0)
+            if (not bullish) and (self.blue(m+1) or self.red(m)):
+                return (False, 0.0)
+            ok = self.body_top(m) < self.body_top(m+1) and self.body_bottom(m) > self.body_bottom(m+1)
+            ratio = self.body(m) / self.body(m+1) * 100 if self.body(m+1) > 0 else 0.0
+            return (ok, ratio)
+    
+    #  지표 함수들                
     def bar_time(self, n: int = 0) -> str:
         """시간 반환 - 고속 버전"""
         if self.cycle != 'mi': return ''
@@ -720,7 +1141,6 @@ class ChartManager:
         else:
             return self._raw_data[n].get('일자', '')
 
-    # 고속 계산 함수들
     def ma(self, period: int = 20, before: int = 0) -> float:
         """이동평균 - 고속 버전"""
         self._ensure_data_cache()
@@ -734,6 +1154,32 @@ class ChartManager:
         
         return total / period
     
+    def get_ma(self, period: int = 20, count: int = 1) -> list:
+        """이동평균 리스트 반환"""
+        self._ensure_data_cache()
+        if not self._raw_data or self._data_length < period:
+            return []
+        
+        ma_list = []
+        for i in range(count):
+            if i + period > len(self._raw_data):
+                break
+            total = 0.0
+            for j in range(i, i + period):
+                total += self._raw_data[j].get('현재가', 0)
+            ma_list.append(total / period)
+        
+        return ma_list
+
+    def trend_up(self, n: int = 0, m: int = 20) -> bool:
+        """n봉전의 종가가 m이평 위에 있는지"""
+        return self.c(n) > self.ma(m, n)
+    
+    def trend_down(self, n: int = 0, m: int = 20) -> bool:
+        """n봉전의 종가가 m이평 아래에 있는지"""
+        return self.c(n) < self.ma(m, n)
+    
+    # 계산 함수들
     def avg(self, value_func, n: int, m: int = 0) -> float:
         """단순이동평균 - 고속 버전"""
         if not callable(value_func):
@@ -782,7 +1228,6 @@ class ChartManager:
         
         return total
     
-    # 계산 함수들 (호환성 유지)
     def eavg(self, value_func, n: int, m: int = 0) -> float:
         """지수이동평균"""
         if not callable(value_func):
@@ -835,96 +1280,144 @@ class ChartManager:
         
         return variance ** 0.5
     
+    def percent(self, a: float, b: float, c: float = None, default: float = 0) -> float:
+        c = b if c is None else c
+        return (a - b) / c *100 if c != 0 else default
+    
     # 신호 함수들
     def cross_up(self, a_func, b_func) -> bool:
-        """상향돌파"""
+        """상향돌파
+        사용법:
+        - a_func, b_func는 인덱스를 인자로 받아 값을 반환하는 호출가능 객체여야 함
+        예시:
+          # 5이평이 10이평 상향돌파 여부 (현재봉 기준)
+          cm.cross_up(lambda i: cm.ma(5, i), lambda i: cm.ma(10, i))
+          
+          # 종가가 특정 값 10000을 상향돌파
+          cm.cross_up(cm.c, lambda i: 10000)
+        조건:
+          a_prev<=b_prev 이고 a_curr>b_curr 이면 True
+        """
         if not (callable(a_func) and callable(b_func)): return False
-        
-        a_prev, a_curr = a_func(1), a_func(0)
-        b_prev, b_curr = b_func(1), b_func(0)
-        return a_prev <= b_prev and a_curr > b_curr
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            a_prev, a_curr = a_func(1), a_func(0)
+            b_prev, b_curr = b_func(1), b_func(0)
+            return a_prev <= b_prev and a_curr > b_curr
     
     def cross_down(self, a_func, b_func) -> bool:
-        """하향돌파"""
+        """하향돌파
+        사용법/예시:
+          cm.cross_down(lambda i: cm.ma(5, i), lambda i: cm.ma(10, i))
+          cm.cross_down(cm.c, lambda i: 10000)
+        조건:
+          a_prev>=b_prev 이고 a_curr<b_curr 이면 True
+        """
         if not (callable(a_func) and callable(b_func)): return False
-        
-        a_prev, a_curr = a_func(1), a_func(0)
-        b_prev, b_curr = b_func(1), b_func(0)
-        return a_prev >= b_prev and a_curr < b_curr
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            a_prev, a_curr = a_func(1), a_func(0)
+            b_prev, b_curr = b_func(1), b_func(0)
+            return a_prev >= b_prev and a_curr < b_curr
 
     def bars_since(self, condition_func) -> int:
-        """조건이 만족된 이후 지나간 봉 개수"""
+        """조건이 만족된 이후 지나간 봉 개수
+        사용법:
+          # 최근 "양봉" 이후 경과봉
+          cm.bars_since(lambda i: cm.c(i) > cm.o(i))
+        반환:
+          처음 True가 발생한 인덱스를 반환(현재=0). 없으면 데이터 길이.
+        """
         self._ensure_data_cache()
         if not self._raw_data: return 0
-        
-        for i in range(self._data_length):
-            if condition_func(i):
-                return i
-        return self._data_length
+        with self.suspend_ensure():
+            for i in range(self._data_length):
+                if condition_func(i):
+                    return i
+            return self._data_length
 
     def highest_since(self, nth: int, condition_func, data_func) -> float:
-        """조건이 nth번째 만족된 이후 data_func의 최고값"""
+        """조건이 nth번째 만족된 이후 data_func의 최고값
+        사용법:
+          # 최근(또는 n번째) 양봉 이후 최고가
+          cm.highest_since(1, lambda i: cm.c(i) > cm.o(i), cm.h)
+        반환:
+          조건 성립 지점부터 현재까지 data_func의 최고값
+        """
         self._ensure_data_cache()
         if not self._raw_data:
             return 0.0
         
         condition_met = 0
         highest_val = float('-inf')
-        
-        for i in range(self._data_length):
-            if condition_func(i):
-                condition_met += 1
-                if condition_met == nth:
-                    # 이 지점부터 현재까지의 최고값 계산
-                    for j in range(i, -1, -1):
-                        val = data_func(j)
-                        highest_val = max(highest_val, val)
-                    break
+        with self.suspend_ensure():
+            for i in range(self._data_length):
+                if condition_func(i):
+                    condition_met += 1
+                    if condition_met == nth:
+                        # 이 지점부터 현재까지의 최고값 계산
+                        for j in range(i, -1, -1):
+                            val = data_func(j)
+                            highest_val = max(highest_val, val)
+                        break
         
         return highest_val if highest_val != float('-inf') else 0.0
 
     def lowest_since(self, nth: int, condition_func, data_func) -> float:
-        """조건이 nth번째 만족된 이후 data_func의 최저값"""
+        """조건이 nth번째 만족된 이후 data_func의 최저값
+        사용법:
+          # 최근(또는 n번째) 양봉 이후 최저가
+          cm.lowest_since(1, lambda i: cm.c(i) > cm.o(i), cm.l)
+        반환:
+          조건 성립 지점부터 현재까지 data_func의 최저값
+        """
         self._ensure_data_cache()
         if not self._raw_data:
             return 0.0
         
         condition_met = 0
         lowest_val = float('inf')
-        
-        for i in range(self._data_length):
-            if condition_func(i):
-                condition_met += 1
-                if condition_met == nth:
-                    # 이 지점부터 현재까지의 최저값 계산
-                    for j in range(i, -1, -1):
-                        val = data_func(j)
-                        lowest_val = min(lowest_val, val)
-                    break
+        with self.suspend_ensure():
+            for i in range(self._data_length):
+                if condition_func(i):
+                    condition_met += 1
+                    if condition_met == nth:
+                        # 이 지점부터 현재까지의 최저값 계산
+                        for j in range(i, -1, -1):
+                            val = data_func(j)
+                            lowest_val = min(lowest_val, val)
+                        break
         
         return lowest_val if lowest_val != float('inf') else 0.0
 
     def value_when(self, nth: int, condition_func, data_func) -> float:
-        """조건이 nth번째 만족된 시점의 data_func 값"""
+        """조건이 nth번째 만족된 시점의 data_func 값
+        사용법:
+          # 최근 양봉이었던 시점의 종가
+          cm.value_when(1, lambda i: cm.c(i) > cm.o(i), cm.c)
+        반환:
+          조건이 nth번째로 True였던 시점의 data_func 결과값
+        """
         self._ensure_data_cache()
         if not self._raw_data: return 0.0
-        
-        condition_met = 0
-        
-        for i in range(self._data_length):
-            if condition_func(i):
-                condition_met += 1
-                if condition_met == nth:
-                    return data_func(i)
+        with self.suspend_ensure():
+            condition_met = 0
+            
+            for i in range(self._data_length):
+                if condition_func(i):
+                    condition_met += 1
+                    if condition_met == nth:
+                        return data_func(i)
         
         return 0.0
     
-    # ChartManager에 추가할 메소드
     def indicator(self, func, *args):
         """지표 계산 결과를 함수처럼 사용 가능한 객체 반환"""
         # 내부 함수 생성 (클로저)
         def callable_indicator(offset=0):
-            return func(*args, offset)
+            self._ensure_data_cache()
+            with self.suspend_ensure():
+                return func(*args, offset)
         
         # 함수 반환
         return callable_indicator
@@ -995,45 +1488,51 @@ class ChartManager:
         """MACD(Moving Average Convergence Divergence) 계산
         Returns: (MACD 라인, 시그널 라인, 히스토그램)
         """
-        fast_ema = self.eavg(self.c, fast, m)
-        slow_ema = self.eavg(self.c, slow, m)
-        macd_line = fast_ema - slow_ema
-        
-        # 간단한 시그널 라인 (실제로는 MACD 값들의 EMA가 필요)
-        signal_line = self.eavg(self.c, signal, m)
-        histogram = macd_line - signal_line
-        
-        return (macd_line, signal_line, histogram)
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            fast_ema = self.eavg(self.c, fast, m)
+            slow_ema = self.eavg(self.c, slow, m)
+            macd_line = fast_ema - slow_ema
+            
+            # 간단한 시그널 라인 (실제로는 MACD 값들의 EMA가 필요)
+            signal_line = self.eavg(self.c, signal, m)
+            histogram = macd_line - signal_line
+            
+            return (macd_line, signal_line, histogram)
     
     def bollinger_bands(self, period: int = 20, std_dev: float = 2, m: int = 0) -> tuple:
         """볼린저 밴드 계산
         Returns: (상단 밴드, 중간 밴드(SMA), 하단 밴드)
         """
-        middle_band = self.avg(self.c, period, m)
-        stdev = self.stdev(self.c, period, m)
-        
-        upper_band = middle_band + (stdev * std_dev)
-        lower_band = middle_band - (stdev * std_dev)
-        
-        return (upper_band, middle_band, lower_band)
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            middle_band = self.avg(self.c, period, m)
+            stdev = self.stdev(self.c, period, m)
+            
+            upper_band = middle_band + (stdev * std_dev)
+            lower_band = middle_band - (stdev * std_dev)
+            
+            return (upper_band, middle_band, lower_band)
     
     def stochastic(self, k_period: int = 14, d_period: int = 3, m: int = 0) -> tuple:
         """스토캐스틱 오실레이터 계산
         Returns: (%K, %D)
         """
-        hh = self.highest(self.h, k_period, m)
-        ll = self.lowest(self.l, k_period, m)
-        current_close = self.c(m)
-        
-        # %K 계산
-        percent_k = 0
-        if hh != ll:
-            percent_k = 100 * ((current_close - ll) / (hh - ll))
-        
-        # %D 계산 (간단한 이동평균 사용)
-        percent_d = self.avg(self.c, d_period, m)
-        
-        return (percent_k, percent_d)
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            hh = self.highest(self.h, k_period, m)
+            ll = self.lowest(self.l, k_period, m)
+            current_close = self.c(m)
+            
+            # %K 계산
+            percent_k = 0
+            if hh != ll:
+                percent_k = 100 * ((current_close - ll) / (hh - ll))
+            
+            # %D 계산 (간단한 이동평균 사용)
+            percent_d = self.avg(self.c, d_period, m)
+            
+            return (percent_k, percent_d)
     
     def atr(self, period: int = 14, m: int = 0) -> float:
         """평균 실제 범위(ATR) 계산"""
@@ -1042,191 +1541,37 @@ class ChartManager:
             return 0.0
         
         tr_values = []
-        for i in range(m, m + period):
-            if i + 1 >= len(self._raw_data):
-                break
+        with self.suspend_ensure():
+            for i in range(m, m + period):
+                if i + 1 >= len(self._raw_data):
+                    break 
+                    
+                high = self._raw_data[i].get('고가', 0)
+                low = self._raw_data[i].get('저가', 0)
+                prev_close = self._raw_data[i+1].get('현재가', 0)
                 
-            high = self._raw_data[i].get('고가', 0)
-            low = self._raw_data[i].get('저가', 0)
-            prev_close = self._raw_data[i+1].get('현재가', 0)
-            
-            tr1 = high - low
-            tr2 = abs(high - prev_close)
-            tr3 = abs(low - prev_close)
-            
-            tr = max(tr1, tr2, tr3)
-            tr_values.append(tr)
+                tr1 = high - low
+                tr2 = abs(high - prev_close)
+                tr3 = abs(low - prev_close)
+                
+                tr = max(tr1, tr2, tr3)
+                tr_values.append(tr)
         
         return sum(tr_values) / len(tr_values) if tr_values else 0.0
     
-    # 캔들패턴 인식 함수들
-    def get_candle_data(self, n: int = 0) -> dict:
-        """
-        기본 캔들 데이터 추출 함수
-        
-        Args:
-            n: 검사할 봉 인덱스 (0=현재봉)
-            
-        Returns:
-            dict: {
-                'o': 시가, 'h': 고가, 'l': 저가, 'c': 종가,
-                'body': 몸통크기, 'up': 위꼬리, 'down': 아래꼬리,
-                'size': 전체캔들크기, 'is_valid': 유효성여부,
-                'body_pct': 몸통크기(시가대비%), 'up_pct': 위꼬리(시가대비%),
-                'down_pct': 아래꼬리(시가대비%), 'size_pct': 전체캔들크기(시가대비%)
-            }
-        """
-        self._ensure_data_cache()
-        if not self._raw_data or n >= self._data_length:
-            return {'is_valid': False}
-        
-        candle = self._raw_data[n]
-        o = candle.get('시가', 0)
-        h = candle.get('고가', 0)
-        l = candle.get('저가', 0)
-        c = candle.get('현재가', 0)
-        
-        # 기본 유효성 검사
-        if h <= l or o <= 0 or c <= 0:
-            return {'is_valid': False}
-        
-        # 캔들 구성 요소 계산
-        body = abs(c - o)
-        up = h - max(o, c)
-        down = min(o, c) - l
-        size = h - l
-        
-        # 시가 대비 퍼센트 계산 (0으로 나누기 방지)
-        if o > 0:
-            body_pct = (body / o) * 100
-            up_pct = (up / o) * 100
-            down_pct = (down / o) * 100
-            size_pct = (size / o) * 100
-        else:
-            body_pct = up_pct = down_pct = size_pct = 0
-        
-        return {
-            'o': o, 'h': h, 'l': l, 'c': c,
-            'body': body, 'up': up, 'down': down,
-            'size': size, 'is_valid': True,
-            'body_pct': body_pct, 'up_pct': up_pct,
-            'down_pct': down_pct, 'size_pct': size_pct
-        }
-    
-    def is_doji(self, n: int = 0, threshold: float = 0.1) -> bool:
-        """도지 캔들 확인 (시가와 종가의 차이가 매우 작은 캔들)"""
-        candle_data = self.get_candle_data(n)
-        if not candle_data['is_valid'] or candle_data['size'] == 0:
-            return False
-            
-        # 몸통이 전체 캔들의 threshold% 이하이면 도지로 간주
-        return (candle_data['body_pct'] / candle_data['size_pct']) <= threshold
-
-    def is_shooting_star(self, m: int = 0, length: float = 2.0, up: float = 2.0, down: float = None ) -> bool:
-        """
-        유성형 캔들 판단
-        
-        Args:
-            m: 검사할 봉 인덱스 (0=현재봉)
-            length: 위꼬리가 현재가 대비 몇 % 이상
-            up: 위꼬리가 몸통의 몇 배 이상
-            down: 아래꼬리가 몸통의 몇 배 이하
-        """
-        candle_data = self.get_candle_data(m)
-        if not candle_data['is_valid']:
-            return False
-        
-        # 조건 1: 위꼬리가 몸통의 up배 이상
-        if candle_data['body_pct'] > 0 and candle_data['up_pct'] / candle_data['body_pct'] < up:
-            return False
-        
-        # 조건 2: 위꼬리가 현재가 대비 length% 이상
-        if candle_data['up_pct'] < length:
-            return False
-        
-        # 조건 3: 아래꼬리가 몸통의 down배 이하 (down이 None이면 검사하지 않음)
-        if down is not None and candle_data['body_pct'] > 0 and candle_data['down_pct'] / candle_data['body_pct'] > down:
-            return False
-        
-        return True
-
-    def is_hanging_man(self, m: int = 0, length: float = 2.0, down: float = 2.0, up: float = None ) -> bool:
-        """
-        교수형(행잉맨) 캔들 패턴 판단
-        
-        Args:
-            m: 검사할 봉 인덱스 (0=현재봉)
-            down: 아래꼬리가 몸통의 몇 배 이상
-            length: 아래꼬리가 현재가 대비 몇 % 이상
-            up: 위꼬리가 몸통의 몇 배 이하
-        
-        Returns:
-            bool: 교수형 캔들이면 True
-            
-        사용예:
-            # 상승추세에서 교수형 확인
-            if cm.c() > cm.ma(20) and cm.is_hanging_man():
-                echo("상승추세 중 교수형!")
-        """
-        candle_data = self.get_candle_data(m)
-        if not candle_data['is_valid']:
-            return False
-        
-        # 조건 1: 아래꼬리가 몸통의 down배 이상
-        if candle_data['body_pct'] > 0 and candle_data['down_pct'] / candle_data['body_pct'] < down:
-            return False
-        elif candle_data['body_pct'] == 0 and candle_data['down_pct'] == 0:
-            return False
-        
-        # 조건 2: 아래꼬리가 현재가 대비 length% 이상
-        if candle_data['down_pct'] < length:
-            return False
-        
-        # 조건 3: 위꼬리가 몸통의 up배 이하 (up이 None이면 검사하지 않음)
-        if up is not None and candle_data['body_pct'] > 0 and candle_data['up_pct'] / candle_data['body_pct'] > up:
-            return False
-        
-        return True
-
-    def is_hammer(self, n: int = 0) -> bool:
-        """망치형 캔들 확인 (아래 꼬리가 긴 캔들)"""
-        candle_data = self.get_candle_data(n)
-        if not candle_data['is_valid'] or candle_data['size_pct'] == 0 or candle_data['body_pct'] == 0:
-            return False
-            
-        # 아래 꼬리가 몸통의 2배 이상이고, 전체 캔들의 1/3 이상이면 망치형으로 간주
-        return (candle_data['down_pct'] >= 2 * candle_data['body_pct']) and (candle_data['down_pct'] / candle_data['size_pct'] >= 33.33)
-    
-    def is_engulfing(self, m: int = 0, bullish: bool = True) -> bool:
-        """포괄 패턴 확인 (이전 캔들을 완전히 덮는 형태)
-        bullish=True: 상승 포괄 패턴, bullish=False: 하락 포괄 패턴
-        """
-        # 현재 캔들과 이전 캔들 데이터 가져오기
-        curr_data = self.get_candle_data(m)
-        prev_data = self.get_candle_data(m + 1)
-        
-        if not curr_data['is_valid'] or not prev_data['is_valid']:
-            return False
-        
-        curr_o, curr_c = curr_data['o'], curr_data['c']
-        prev_o, prev_c = prev_data['o'], prev_data['c']
-        
-        if bullish:
-            # 상승 포괄 패턴: 현재 캔들이 상승이고, 이전 캔들은 하락이며
-            # 현재 캔들이 이전 캔들의 시가/종가 범위를 모두 포함
-            return (curr_c > curr_o and  # 현재 캔들이 상승
-                    prev_c < prev_o and  # 이전 캔들이 하락
-                    curr_o <= prev_c and  # 현재 시가가 이전 종가보다 낮거나 같음
-                    curr_c >= prev_o)     # 현재 종가가 이전 시가보다 높거나 같음
-        else:
-            # 하락 포괄 패턴: 현재 캔들이 하락이고, 이전 캔들은 상승이며
-            # 현재 캔들이 이전 캔들의 시가/종가 범위를 모두 포함
-            return (curr_c < curr_o and   # 현재 캔들이 하락
-                    prev_c > prev_o and   # 이전 캔들이 상승
-                    curr_o >= prev_c and   # 현재 시가가 이전 종가보다 높거나 같음
-                    curr_c <= prev_o)      # 현재 종가가 이전 시가보다 낮거나 같음
-    
     # 스크립트 함수들
+    def up_start(self, n: int = 0) -> bool:
+        """상승 시작 확인"""
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            return self.o(n) > self.c(n+1)
+    
+    def down_start(self, n: int = 0) -> bool:
+        """하락 시작 확인"""
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            return self.o(n) < self.c(n+1)
+    
     def bar(self, n: int = 0) -> int:
         self._ensure_data_cache()
         if not self._raw_data or n >= self._data_length: return (0, 0, 0, 0, 0, 0)
@@ -1448,23 +1793,24 @@ class ChartManager:
             minutes_per_bar = 20 * 380
         else:
             minutes_per_bar = 1
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            start_idx = m + n
+            if start_idx >= self._data_length:
+                return 0.0, 0.0, 0.0, 0
 
-        start_idx = m + n
-        if start_idx >= self.get_data_length():
-            return 0.0, 0.0, 0.0, 0
+            start_open = self.o(start_idx)
+            end_close = self.c(m)
+            pct = (end_close - start_open) / start_open if start_open > 0 else 0
 
-        start_open = self.o(start_idx)
-        end_close = self.c(m)
-        pct = (end_close - start_open) / start_open if start_open > 0 else 0
+            elapsed_minutes = max(1, n * minutes_per_bar)
+            x = elapsed_minutes / 380.0
+            y = pct / max_daily_pct
 
-        elapsed_minutes = max(1, n * minutes_per_bar)
-        x = elapsed_minutes / 380.0
-        y = pct / max_daily_pct
+            angle_deg = math.degrees(math.atan2(y, x))
+            slope_percent = (y / x) * 100.0 if x > 0 else 0.0
 
-        angle_deg = math.degrees(math.atan2(y, x))
-        slope_percent = (y / x) * 100.0 if x > 0 else 0.0
-
-        return angle_deg, slope_percent, pct, elapsed_minutes
+            return angle_deg, slope_percent, pct, elapsed_minutes
 
     def get_extremes(self, n: int = 128, m: int = 1) -> dict:
         """
@@ -1702,8 +2048,6 @@ class ChartManager:
             compare_end = min(current_idx + cnt, data_length)
             
             if compare_start >= compare_end:
-                # 비교 대상이 없으면 최고로 간주
-                high_close_indices.append(current_idx)
                 continue
             
             # 비교 범위에서 최고 종가 찾기 (자신 제외)
@@ -1744,20 +2088,20 @@ class ChartManager:
         
         count = 0
         current_idx = m
-        
-        # m봉부터 시작해서 조건이 만족되는 동안 계속 확인
-        while current_idx < self._data_length and count < max_check:
-            try:
-                # 조건 함수 호출하여 확인
-                if condition_func(current_idx):
-                    count += 1
-                    current_idx += 1
-                else:
-                    # 조건이 만족되지 않으면 중단
+        with self.suspend_ensure():
+            # m봉부터 시작해서 조건이 만족되는 동안 계속 확인
+            while current_idx < self._data_length and count < max_check:
+                try:
+                    # 조건 함수 호출하여 확인
+                    if condition_func(current_idx):
+                        count += 1
+                        current_idx += 1
+                    else:
+                        # 조건이 만족되지 않으면 중단
+                        break
+                except (IndexError, TypeError, ValueError):
+                    # 조건 함수에서 오류 발생시 중단
                     break
-            except (IndexError, TypeError, ValueError):
-                # 조건 함수에서 오류 발생시 중단
-                break
         
         return count
 
@@ -1782,28 +2126,29 @@ class ChartManager:
         current_idx = m
         checking_true = True  # 처음에는 True 개수를 세는 중
         
-        while current_idx < self._data_length and (true_count + false_count) < max_check:
-            try:
-                result = condition_func(current_idx)
-                
-                if checking_true:
-                    if result:
-                        true_count += 1
+        with self.suspend_ensure():
+            while current_idx < self._data_length and (true_count + false_count) < max_check:
+                try:
+                    result = condition_func(current_idx)
+                    
+                    if checking_true:
+                        if result:
+                            true_count += 1
+                        else:
+                            # True에서 False로 전환
+                            checking_true = False
+                            false_count += 1
                     else:
-                        # True에서 False로 전환
-                        checking_true = False
-                        false_count += 1
-                else:
-                    if not result:
-                        false_count += 1
-                    else:
-                        # False에서 True로 전환되면 중단
-                        break
-                
-                current_idx += 1
-                
-            except (IndexError, TypeError, ValueError):
-                break
+                        if not result:
+                            false_count += 1
+                        else:
+                            # False에서 True로 전환되면 중단
+                            break
+                    
+                    current_idx += 1
+                    
+                except (IndexError, TypeError, ValueError):
+                    break
         
         return (true_count, false_count)
 
@@ -1836,21 +2181,22 @@ class ChartManager:
         if pattern_length > max_check:
             return False
         
-        for i, expected in enumerate(pattern):
-            current_idx = m + i
-            
-            if current_idx >= self._data_length:
-                return False
-            
-            try:
-                actual = condition_func(current_idx)
-                expected_bool = (expected.upper() == 'T')
+        with self.suspend_ensure():
+            for i, expected in enumerate(pattern):
+                current_idx = m + i
                 
-                if actual != expected_bool:
+                if current_idx >= self._data_length:
                     return False
+                
+                try:
+                    actual = condition_func(current_idx)
+                    expected_bool = (expected.upper() == 'T')
                     
-            except (IndexError, TypeError, ValueError):
-                return False
+                    if actual != expected_bool:
+                        return False
+                        
+                except (IndexError, TypeError, ValueError):
+                    return False
         
         return True
 
@@ -1872,15 +2218,15 @@ class ChartManager:
         
         last_break_idx = -1
         current_idx = m
-        
-        while current_idx < self._data_length and (current_idx - m) < max_check:
-            try:
-                if not condition_func(current_idx):
-                    last_break_idx = current_idx
-                current_idx += 1
-            except (IndexError, TypeError, ValueError):
-                break
-        
+        with self.suspend_ensure():
+            while current_idx < self._data_length and (current_idx - m) < max_check:
+                try:
+                    if not condition_func(current_idx):
+                        last_break_idx = current_idx
+                    current_idx += 1
+                except (IndexError, TypeError, ValueError):
+                    break
+            
         return last_break_idx
 
     # 캐시 관리 함수들
@@ -1899,35 +2245,45 @@ class ChartManager:
             if hasattr(self, '_raw_data'):
                 self._raw_data = None
 
-    def get_ma(self, period: int = 20, count: int = 1) -> list:
-        """이동평균 리스트 반환"""
-        self._ensure_data_cache()
-        if not self._raw_data or self._data_length < period:
-            return []
-        
-        ma_list = []
-        for i in range(count):
-            if i + period > len(self._raw_data):
-                break
-            total = 0.0
-            for j in range(i, i + period):
-                total += self._raw_data[j].get('현재가', 0)
-            ma_list.append(total / period)
-        
-        return ma_list
-    
     # 원본 데이터 직접 접근 함수
     def get_raw_data(self):
         """원본 데이터 직접 반환 (최고 성능)"""
         self._ensure_data_cache()
         return self._raw_data
     
-    def get_data_length(self) -> int:
-        """데이터 길이 반환"""
-        self._ensure_data_cache()
-        return self._data_length
-                
 class ScriptManager:
+    """
+    스크립트 호출/인수 전파 원칙 요약 (A→B→C 예시)
+    
+    기본 개념
+    - 최상위 실행 시 전달된 kwargs는 "현재 컨텍스트"(context)로 저장됨.
+    - 하위 스크립트 호출 시: (현재 컨텍스트) + (호출자가 명시 전달한 인수)를 병합하여 자식의 kwargs를 구성.
+      동일 키 충돌 시 "이번 호출에서 명시 전달한 인수"가 우선.
+    - is_args() 우선순위: ① 이번 호출에서 명시 전달한 인수(_call_kwargs) → ② 병합된 현재 컨텍스트(context).
+    - 컨텍스트는 현재 호출 체인 내부에서만 유효(체인 밖으로 누수 없음).
+    
+    단계별 예시
+    1) A가 시작됨
+       - A의 kwargs = { a1, a2, ... } 가 컨텍스트로 저장됨.
+       - A 내부에서 is_args('a1')는 A의 kwargs를 읽음.
+    
+    2) A가 B를 호출 (명시 인수 bX만 전달)
+       run_script('B', kwargs={ bX })
+       - B의 kwargs = (A의 컨텍스트) ∪ { bX }
+       - is_args() in B: ① bX(명시 인수) 우선, 없으면 ② A에서 온 컨텍스트 값 활용
+       - B에서 값을 바꿔 전달하면, 그 병합 결과가 이후 단계의 새로운 컨텍스트가 됨.
+    
+    3) B가 C를 호출 (명시 인수 cY만 전달)
+       run_script('C', kwargs={ cY })
+       - C의 kwargs = (B 단계 병합 컨텍스트) ∪ { cY }
+       - 즉, 최상위 A의 값들은 B에서 덮어쓰지 않았다면 C까지 전파됨.
+       - C의 is_args(): ① cY → ② B 병합 컨텍스트(=A의 값 포함 가능)
+    
+    정리
+    - 상위 컨텍스트는 누적 전파되고, 각 단계의 명시 인수가 해당 키를 덮어씀.
+    - 동일 키에 대해 가장 최근 호출에서 명시 전달된 인수가 최우선.
+    - is_args()는 "이번 호출 명시 인수"를 먼저 보고, 없으면 병합 컨텍스트를 참조.
+    """
     # 허용된 Python 기능 목록 (whitelist 방식)
     ALLOWED_MODULES = [
         're', 'math', 'datetime', 'random', 'logging', 'json', 'collections',
@@ -2741,3 +3097,4 @@ if __name__ == '__main__':
     result = c1 and c2
 
     logging.debug(result)
+

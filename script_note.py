@@ -39,15 +39,20 @@ if 매도조건:
     echo(f'[{False}] ({code} {name}) / 매도조건에 해당')
     ret(False)
 
-if m3.is_shooting_star(m=1, length=1.5, up=2.5):
+bars = [m3.get_candle_data(i) for i in range(5)]
+if not any( d['body_pct'] >= 1.2 for d in bars ):
+    echo(f'[False] ({code} {name}) / 5봉중 1.2% 이상 상승 없으면 매수 안함')
+    ret(False)
+
+if bars[1]['up_tail_pct'] >= 1.2 and bars[1]['up_tail_pct'] >= bars[1]['body_pct'] * 2.5:
     echo(f'[False] ({code} {name}) / 유성형 캔들 다음 매수 안함')
     ret(False)
 
-if m3.is_hanging_man(m=1, length=1, down=5):
+if bars[1]['down_tail_pct'] >= 1 and bars[1]['down_tail_pct'] >= bars[1]['body_pct'] * 5:
     echo(f'[False] ({code} {name}) / 교수형 캔들 다음 매수 안함')
     ret(False)
 
-if div(mc(1) - mo(1), mo(1), 0) < -0.02 and mh(1) > mc(0):
+if bars[1]['blue'] and bars[1]['body_pct'] > 2 and mh(1) > mc(0):
     echo(f'[False] ({code} {name}) / 긴 음봉 다음 매수 안함')
     ret(False)
 
@@ -69,10 +74,10 @@ if 당일봉수 == 1:
 if 최고종가_len >= 2:
     연속갯수 = 0
     for i in range(최고종가_len):
-        봉위치 = 최고종가[-(i+1)]  # 뒤에서부터 읽기 (현재봉부터)
-        if i > 0 and 봉위치 != 최고종가[-(i)] - 1:  # 연속되지 않으면 종료
+        pos = 최고종가[-(i+1)]  # 뒤에서부터 읽기 (현재봉부터)
+        if i > 0 and pos != 최고종가[-(i)] - 1:  # 연속되지 않으면 종료
             break
-        상승률 = div(mc(봉위치) - mc(봉위치 + 1), mc(봉위치 + 1), 0)
+        상승률 = m3.percent(mc(pos), mc(pos + 1))
         if 상승률 > 0.005:  # 양봉이면서 0.5% 초과
             연속갯수 += 1
             if 연속갯수 >= 3:  # 3개 이상이면 즉시 종료
@@ -84,10 +89,9 @@ if 최고종가_len >= 2:
         ret(False)
 
 loc = 최고종가[-1]
-
 extr = m3.get_extremes(n=loc-1, m=1)
-하락률 = div(extr['hh'] - extr['lc'], extr['hc'], 0)
-if not (하락률 > -0.05 or 하락률 < -0.05 and extr['hh'] < mo(0)):
+하락률 = m3.percent(extr['hh'], extr['lc'], extr['hc'])
+if not (하락률 > -5.0 or 하락률 < -5.0 and extr['hh'] < mo(0)):
     echo(f'[False] ({code} {name}) / 당일 하락율 조건 불충족 : ({당일봉수}) {최고종가}')
     ret(False)
 
@@ -96,7 +100,7 @@ if mc(loc) - ml(loc) < mh(loc) - mc(loc) and mh(loc) > mc(0):
     ret(False)
 
 idx, date, o, h, l, c, v, a = dt.get_highest_volume(119, 1)
-diff = div(l - mo(0), mo(0), 0) >= 0.20
+diff = m3.percent(l, mo(0)) > 20.0
 if not (h <= mo(0) or diff or dv(0) >= v * 0.67):
     echo(f'[False] ({code} {name}) / 최고거래량 조건 불충족 : ({당일봉수}) {최고종가}')
     ret(False)
@@ -129,48 +133,46 @@ logoff = is_args('logoff', False)
 dc = dm.c
 mo, mc, ml, mh, ma = m3.o, m3.c, m3.l, m3.h, m3.ma
 
-if not logoff:
-    # 이전 n봉부터 m봉까지 이전 cnt봉중 최고종가 얻기 (최고종가, 당일봉수)
-    tops = m3.get_close_tops(n=128, cnt=128, m=1) # 업데이트된 최고종가 리스트와 당일 봉수
-    최고종가 = tops[0]
-    당일봉수 = tops[1]
+#if not logoff:
+# 이전 n봉부터 m봉까지 이전 cnt봉중 최고종가 얻기 (최고종가, 당일봉수)
+tops = m3.get_close_tops(n=128, cnt=128, m=1) # 업데이트된 최고종가 리스트와 당일 봉수
+최고종가 = tops[0]
+당일봉수 = tops[1]
+if len(최고종가) < 1: pos = 1
+else: pos = 최고종가[-1]
 
 msg = ''
 c_limit = hoga(dc(1), 99)
 if c_limit <= dc(0):
     msg += f'상한가'
-elif div(mh(1) - mo(1), mo(1), 0) >= 0.02 and mo(1) > mc(1): #2% 이상 상승해서 시가 밑으로 하락(음봉)
+elif m3.percent(mh(1), mo(1)) >= 2.0 and mo(1) > mc(1): #2% 이상 상승해서 시가 밑으로 하락(음봉)
     msg += f'윗꼬리 긴 음봉으로 급락'
-elif ma(5, 2) <= ma(5, 1) and ma(5, 1) > ma(5, 0) and ma(5) > mc():
+elif ma(5, 3) <= ma(5, 2) and ma(5, 2) > ma(5, 1) and ma(5, 1) > mc(1):
     msg += f'3분 5이평 하락 전환'
-elif ma(10) > ma(5):
+elif ma(10, 1) > ma(5, 1):
     msg += f'3분 5, 10이평 역전'
-elif ma(10) > mc():
+elif ma(10, 1) > mc(1):
     msg += f'현재가 10이평 아래'
-elif not logoff:
-    if len(최고종가) < 1: pos = 1
-    else: pos = 최고종가[-1]
-    if mc(pos) > mo(1) > mc(1) > mo(pos): # 최고종가 보다 낮게 시작한 음봉이 최고종가 시가를 깨진 않았으나,
-        # 최고종가봉은 1.5%이상이며 전봉이 고가 갱신을 못함
-        if div(mc(pos) - mo(pos), mo(pos), 0) >= 0.015 and mh(pos) > mh(1):
-            msg += f'하락 잉태형'
-    elif div(mh(pos) - mc(pos), mc(pos), 0) >= 0.01 and mh(pos) > mh(1) > mo(1) > mc(pos) > mc(1):
-        # 긴 윗꼬리의 최고종가봉의 고가를 갱신 못한 음봉 발생
-        msg += f'긴 윗꼬리 최고종가봉 돌파 못하고 음봉 하락'
-    elif m3.is_shooting_star(m=2, length=1.5, up=2.5) and mc(pos) <= mc(1):
-        msg += f'유성형 캔들'
-    if m3.is_hanging_man(m=2, length=1, down=5) and mh(pos) > mh(1):
-        msg += f'교수형 캔들'
-    elif mc(pos)<= mo(0) and mo(pos) >= mc(0):  # 하락 포괄 패턴
-        if div(mc(pos) - mo(pos), mo(pos), 0) >= 0.015:
-            msg += f'하락 포괄 패턴'
-    elif mo(3) > mc(2) and mh(3) > mh(2):
-        꼬리 = div(mh(3) - mc(3), mc(3), 0)
-        몸통 = div(abs(mc(3) - mo(3)), mo(3), 0)
-        if 꼬리 >= 0.06 and 몸통 >= 0.01:
-            msg += f'막다른 골목 패턴'
-    elif mo(2) < mc(2) < mc(1) < mo(1):
-        msg += f'상승장 갭 상승 음봉'
+elif mc(pos) > mo(1) > mc(1) > mo(pos): # 최고종가 보다 낮게 시작한 음봉이 최고종가 시가를 깨진 않았으나,
+    # 최고종가봉은 1.5%이상이며 전봉이 고가 갱신을 못함
+    if m3.percent(mc(pos), mo(pos)) >= 1.5 and mh(pos) > mh(1):
+        msg += f'하락 잉태형'
+elif m3.percent(mh(pos), mc(pos)) >= 1.0 and mh(pos) > mh(1) > mo(1) > mc(pos) > mc(1):
+    # 긴 윗꼬리의 최고종가봉의 고가를 갱신 못한 음봉 발생
+    msg += f'긴 윗꼬리 최고종가봉 돌파 못하고 음봉 하락'
+elif m3.is_shooting_star(m=2, length=1.5, up=2.5) and mc(pos) <= mc(1):
+    msg += f'유성형 캔들'
+if m3.is_hanging_man(m=2, length=1, down=5) and mh(pos) > mh(1):
+    msg += f'교수형 캔들'
+elif mc(pos)<= mo(1) and mo(pos) >= mc(1):  # 하락 포괄 패턴
+    if m3.percent(mc(pos), mo(pos)) >= 1.5:
+        msg += f'하락 포괄 패턴'
+elif mo(3) > mc(2) and mh(3) > mh(2):
+    bar = m3.get_candle_data(3)
+    if bar['up_pct'] >= 6.0 and bar['body_pct'] >= 1.0:
+        msg += f'막다른 골목 패턴'
+elif mo(2) < mc(2) < mc(1) < mo(1):
+    msg += f'상승장 갭 상승 음봉'
 
 if msg: 
     if not logoff:
