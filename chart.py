@@ -652,8 +652,8 @@ class ChartManager:
 
     def _ensure_data_cache(self):
         """데이터 캐시 확인 및 업데이트 (최적화)"""
-        if getattr(self, '_ensure_suspended', 0) > 0:
-            return
+        if getattr(self, '_ensure_suspended', 0) > 0: return
+
         current_version = self.cht_dt._data_versions.get(self.code, 0)
         
         # 버전이 같으면 즉시 리턴
@@ -996,44 +996,44 @@ class ChartManager:
                 return False
             return (self.body(n) / total_len) <= threshold
 
-    def is_shooting_star(self, m: int = 0, length: float = 2.0, up: float = 2.0, down: float = None ) -> bool:
+    def is_shooting_star(self, n: int = 0, length: float = 2.0, up: float = 2.0, down: float = None ) -> bool:
         """
         유성형 캔들 판단
         
         Args:
-            m: 검사할 봉 인덱스 (0=현재봉)
+            n: 검사할 봉 인덱스 (0=현재봉)
             length: 위꼬리가 현재가 대비 몇 % 이상
             up: 위꼬리가 몸통의 몇 배 이상
-            down: 아래꼬리가 몸통의 몇 배 이하
+            down: 아래꼬리가 위꼬리의 몇 배 이하
         """
         # 스냅샷 없이 헬퍼로 계산 (성능/일관성 균형)
         self._ensure_data_cache()
-        if not self._raw_data or m >= self._data_length:
+        if not self._raw_data or n >= self._data_length:
             return False
         with self.suspend_ensure():
-            b = self.body(m)
-            up_tail_pct = self.up_tail_pct(m)
+            b = self.body(n)
+            up_tail_pct = self.up_tail_pct(n)
             
             # 조건 1: 위꼬리가 몸통의 up배 이상
-            if b > 0 and (self.up_tail(m) / b) < up: return False
+            if b > 0 and (self.up_tail(n) / b) < up: return False
             
             # 조건 2: 위꼬리가 현재가 대비 length% 이상
             if up_tail_pct < length: return False
             
-            # 조건 3: 아래꼬리가 몸통의 down배 이하 (down이 None이면 검사하지 않음)
-            if down is not None and b > 0 and (self.down_tail(m) / b) > down: return False
+            # 조건 3: 아래꼬리가 위꼬리의 down배 이하 (down이 None이면 검사하지 않음)
+            if down is not None and b > 0 and (self.down_tail(n) / self.up_tail(n)) > down: return False
         
         return True
 
-    def is_hanging_man(self, m: int = 0, length: float = 2.0, down: float = 2.0, up: float = None ) -> bool:
+    def is_hanging_man(self, n: int = 0, length: float = 2.0, down: float = 2.0, up: float = None ) -> bool:
         """
         교수형(행잉맨) 캔들 패턴 판단
         
         Args:
-            m: 검사할 봉 인덱스 (0=현재봉)
+            n: 검사할 봉 인덱스 (0=현재봉)
             down: 아래꼬리가 몸통의 몇 배 이상
             length: 아래꼬리가 현재가 대비 몇 % 이상
-            up: 위꼬리가 몸통의 몇 배 이하
+            up: 위꼬리가 아랫꼬리의 몇 배 이하
         
         Returns:
             bool: 교수형 캔들이면 True
@@ -1045,23 +1045,22 @@ class ChartManager:
         """
         # 스냅샷 없이 헬퍼로 계산
         self._ensure_data_cache()
-        if not self._raw_data or m >= self._data_length:
-            return False
+        if not self._raw_data or n >= self._data_length: return False
         with self.suspend_ensure():
-            b = self.body(m)
+            b = self.body(n)
             
             # 조건 1: 아래꼬리가 몸통의 down배 이상
-            if b > 0 and (self.down_tail(m) / b) < down:
+            if b > 0 and (self.down_tail(n) / b) < down:
                 return False
-            elif b == 0 and self.down_tail(m) == 0:
+            elif b == 0 and self.down_tail(n) == 0:
                 return False
             
             # 조건 2: 아래꼬리가 현재가 대비 length% 이상
-            if self.down_tail_pct(m) < length:
+            if self.down_tail_pct(n) < length:
                 return False
             
-            # 조건 3: 위꼬리가 몸통의 up배 이하 (up이 None이면 검사하지 않음)
-            if up is not None and b > 0 and (self.up_tail(m) / b) > up:
+            # 조건 3: 위꼬리가 아랫꼬리의 up배 이하 (up이 None이면 검사하지 않음)
+            if up is not None and b > 0 and (self.up_tail(n) / self.down_tail(n)) > up:
                 return False
         
         return True
@@ -1080,42 +1079,30 @@ class ChartManager:
             # 아래 꼬리가 몸통의 2배 이상이고, 전체 길이의 1/3 이상
             return (down >= 2 * b) and ((down / total_len) >= (1/3))
     
-    def is_engulfing(self, m: int = 0, k: float = 1.0, bullish: bool = True) -> tuple:
+    def is_engulfing(self, n: int = 0, body_pct: float = 1.0, bullish: bool = True) -> tuple:
         """장악형 패턴 확인 (이전 캔들을 완전히 덮는 형태)
         Returns: (match: bool, ratio_pct: float)
         """
         self._ensure_data_cache()
-        if not self._raw_data or m+1 >= self._data_length:
-            return (False, 0.0)
+        if not self._raw_data or n + 1 >= self._data_length: return (False, 0.0)
         with self.suspend_ensure():
-            if self.body_pct(m) < k:
-                return (False, 0.0)
+            if self.body_pct(n) < body_pct: return (False, 0.0)
             # 상승 장악: 현재 양, 이전 음 / 하락 장악: 현재 음, 이전 양
-            if bullish and (self.red(m+1) or self.blue(m)):
-                return (False, 0.0)
-            if (not bullish) and (self.blue(m+1) or self.red(m)):
-                return (False, 0.0)
-            ok = self.body_top(m) > self.body_top(m+1) and self.body_bottom(m) < self.body_bottom(m+1)
-            ratio = self.body(m+1) / self.body(m) * 100 if self.body(m) > 0 else 0.0
-            return (ok, ratio)
+            if bullish and (self.red(n + 1) or self.blue(n)): return (False, 0.0)
+            if (not bullish) and (self.blue(n + 1) or self.red(n)): return (False, 0.0)
+            return self.body_top(n) > self.body_top(n + 1) and self.body_bottom(n) < self.body_bottom(n + 1)
     
-    def is_harami(self, m: int = 0, k: float = 1.0, bullish: bool = True) -> tuple:
+    def is_harami(self, n: int = 0, body_pct: float = 1.0, bullish: bool = True) -> tuple:
         """잉태형 패턴 확인 (이전 캔들에 포함되는 형태)
         Returns: (match: bool, ratio_pct: float)
         """
         self._ensure_data_cache()
-        if not self._raw_data or m+1 >= self._data_length:
-            return (False, 0.0)
+        if not self._raw_data or n + 1 >= self._data_length: return (False, 0.0)
         with self.suspend_ensure():
-            if self.body_pct(m) < k:
-                return (False, 0.0)
-            if bullish and (self.red(m+1) or self.blue(m)):
-                return (False, 0.0)
-            if (not bullish) and (self.blue(m+1) or self.red(m)):
-                return (False, 0.0)
-            ok = self.body_top(m) < self.body_top(m+1) and self.body_bottom(m) > self.body_bottom(m+1)
-            ratio = self.body(m) / self.body(m+1) * 100 if self.body(m+1) > 0 else 0.0
-            return (ok, ratio)
+            if self.body_pct(n) < body_pct: return (False, 0.0)
+            if bullish and (self.red(n + 1) or self.blue(n)): return (False, 0.0)
+            if (not bullish) and (self.blue(n + 1) or self.red(n)): return (False, 0.0)
+            return self.body_top(n) < self.body_top(n + 1) and self.body_bottom(n) > self.body_bottom(n + 1)
     
     #  지표 함수들                
     def bar_time(self, n: int = 0) -> str:
@@ -1171,14 +1158,6 @@ class ChartManager:
         
         return ma_list
 
-    def trend_up(self, n: int = 0, m: int = 20) -> bool:
-        """n봉전의 종가가 m이평 위에 있는지"""
-        return self.c(n) > self.ma(m, n)
-    
-    def trend_down(self, n: int = 0, m: int = 20) -> bool:
-        """n봉전의 종가가 m이평 아래에 있는지"""
-        return self.c(n) < self.ma(m, n)
-    
     # 계산 함수들
     def avg(self, value_func, n: int, m: int = 0) -> float:
         """단순이동평균 - 고속 버전"""
@@ -1285,6 +1264,30 @@ class ChartManager:
         return (a - b) / c *100 if c != 0 else default
     
     # 신호 함수들
+    def trend_up(self, n: int = 0, m: int = 20) -> bool:
+        """n봉전의 종가가 m이평 위에 있는지"""
+        return self.c(n) > self.ma(m, n)
+    
+    def trend_down(self, n: int = 0, m: int = 20) -> bool:
+        """n봉전의 종가가 m이평 아래에 있는지"""
+        return self.c(n) < self.ma(m, n)
+    
+    def reverse_up(self, k: int = 5, n: int = 0) -> bool:
+        """상승 반전"""
+        self._ensure_data_cache()
+        if not self._raw_data or n + 2 >= self._data_length: return False
+        with self.suspend_ensure():
+            ma2, ma1, ma0 = self.ma(k, n+2), self.ma(k, n+1), self.ma(k, n)
+            return ma2 >= ma1 and ma1 < ma0
+    
+    def reverse_down(self, k: int = 5, n: int = 0) -> bool:
+        """하락 반전"""
+        self._ensure_data_cache()
+        if not self._raw_data or n + 2 >= self._data_length: return False
+        with self.suspend_ensure():
+            ma2, ma1, ma0 = self.ma(k, n+2), self.ma(k, n+1), self.ma(k, n)
+            return ma2 <= ma1 and ma1 > ma0
+        
     def cross_up(self, a_func, b_func) -> bool:
         """상향돌파
         사용법:
@@ -2228,6 +2231,27 @@ class ChartManager:
                     break
             
         return last_break_idx
+
+    def rise_pct_since_ma_cross_up(self, n: int = 0, period: int = 5) -> float:
+        """가장 최근 MA(period) 상향 돌파 이후 현재가 상승률(%)
+        Args:
+            n: 기준 현재 봉 오프셋 (0=현재봉)
+            period: 이동평균 기간 (기본 5)
+        Returns:
+            float: 돌파 당시 종가 대비 현재가 상승률(%)
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length: return 0.0
+        def crossed_up(i: int) -> bool:
+            if i + 1 >= self._data_length: return False
+            with self.suspend_ensure():
+                return self.c(i) > self.ma(period, i) and self.c(i + 1) <= self.ma(period, i + 1)
+        k = self.bars_since(crossed_up)
+        if k == self._data_length: return 0.0
+        with self.suspend_ensure():
+            base = self.c(k)
+            curr = self.c(n)
+        return ((curr - base) / base * 100.0) if base > 0 else 0.0
 
     # 캐시 관리 함수들
     def clear_cache(self, code=None):

@@ -133,46 +133,43 @@ logoff = is_args('logoff', False)
 dc = dm.c
 mo, mc, ml, mh, ma = m3.o, m3.c, m3.l, m3.h, m3.ma
 
-#if not logoff:
-# 이전 n봉부터 m봉까지 이전 cnt봉중 최고종가 얻기 (최고종가, 당일봉수)
-tops = m3.get_close_tops(n=128, cnt=128, m=1) # 업데이트된 최고종가 리스트와 당일 봉수
+tops = m3.get_close_tops(n=128, cnt=128, m=1)
 최고종가 = tops[0]
 당일봉수 = tops[1]
+
 if len(최고종가) < 1: pos = 1
 else: pos = 최고종가[-1]
 
+상승율 = m3.rise_pct_since_ma_cross_up(pos, 5)
+
 msg = ''
-c_limit = hoga(dc(1), 99)
-if c_limit <= dc(0):
-    msg += f'상한가'
-elif m3.percent(mh(1), mo(1)) >= 2.0 and mo(1) > mc(1): #2% 이상 상승해서 시가 밑으로 하락(음봉)
-    msg += f'윗꼬리 긴 음봉으로 급락'
-elif ma(5, 3) <= ma(5, 2) and ma(5, 2) > ma(5, 1) and ma(5, 1) > mc(1):
-    msg += f'3분 5이평 하락 전환'
-elif ma(10, 1) > ma(5, 1):
-    msg += f'3분 5, 10이평 역전'
-elif ma(10, 1) > mc(1):
-    msg += f'현재가 10이평 아래'
-elif mc(pos) > mo(1) > mc(1) > mo(pos): # 최고종가 보다 낮게 시작한 음봉이 최고종가 시가를 깨진 않았으나,
-    # 최고종가봉은 1.5%이상이며 전봉이 고가 갱신을 못함
-    if m3.percent(mc(pos), mo(pos)) >= 1.5 and mh(pos) > mh(1):
-        msg += f'하락 잉태형'
-elif m3.percent(mh(pos), mc(pos)) >= 1.0 and mh(pos) > mh(1) > mo(1) > mc(pos) > mc(1):
-    # 긴 윗꼬리의 최고종가봉의 고가를 갱신 못한 음봉 발생
-    msg += f'긴 윗꼬리 최고종가봉 돌파 못하고 음봉 하락'
-elif m3.is_shooting_star(m=2, length=1.5, up=2.5) and mc(pos) <= mc(1):
-    msg += f'유성형 캔들'
-if m3.is_hanging_man(m=2, length=1, down=5) and mh(pos) > mh(1):
-    msg += f'교수형 캔들'
-elif mc(pos)<= mo(1) and mo(pos) >= mc(1):  # 하락 포괄 패턴
-    if m3.percent(mc(pos), mo(pos)) >= 1.5:
-        msg += f'하락 포괄 패턴'
-elif mo(3) > mc(2) and mh(3) > mh(2):
-    bar = m3.get_candle_data(3)
-    if bar['up_pct'] >= 6.0 and bar['body_pct'] >= 1.0:
-        msg += f'막다른 골목 패턴'
-elif mo(2) < mc(2) < mc(1) < mo(1):
-    msg += f'상승장 갭 상승 음봉'
+if hoga(dc(1), 99) <= dc(0):
+    msg = f'상한가'
+elif 상승율 <= 3.0:
+    if ma(10, 1) > mc(1):
+        msg = f'전봉 종가가 10이평 아래'
+elif 상승율 <= 5.0:
+    if msg: pass
+    elif ma(10, 1) > ma(5, 1):
+        msg = f'전봉 5, 10이평 역전'
+    elif m3.reverse_down(5, 1) and m3.trend_down(1, 5):
+        msg = f'전봉 5이평 하락 전환'
+elif 상승율 <= 30.0:
+    if msg: pass
+    elif mc(pos) > mo(1) > mc(1) > mo(pos): # 최고종가 보다 낮게 시작한 음봉이 최고종가 시가를 깨진 않았으나,
+        # 최고종가봉은 1.5%이상이며 전봉이 고가 갱신을 못함
+        if m3.percent(mc(pos), mo(pos)) >= 1.5 and mh(pos) > mh(1):
+            msg = f'하락 잉태형'
+    elif m3.percent(mh(1), mo(1)) >= 2.0 and m3.blue(1): #2% 이상 상승해서 시가 밑으로 하락(음봉)
+        msg = f'윗꼬리 긴 음봉으로 급락'
+    elif m3.percent(mh(pos), mc(pos)) >= 1.0 and mh(pos) > mh(1) > mo(1) > mc(pos) > mc(1):
+        msg = f'긴 윗꼬리 최고종가봉 미 돌파 음봉 하락'
+    elif m3.is_shooting_star(n=1, length=1.5, up=2.5, down=0.2) and mc(pos) <= mc(1):
+        msg = f'유성형 캔들'
+    elif m3.is_hanging_man(n=1, length=1, down=5, up=0.2) and mh(pos) > mh(1):
+        msg = f'교수형 캔들'
+    elif m3.is_engulfing(1, 1, False):
+        msg = f'하락 장악형 패턴'
 
 if msg: 
     if not logoff:
