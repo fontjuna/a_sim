@@ -1406,7 +1406,9 @@ class GUI(QMainWindow, form_class):
         current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         msgs = msgs if isinstance(msgs, list) else [msgs]   
         for msg in msgs:
-            self.txtScriptMsg.append(f"[{current_time}] {msg}")
+            line = f"[{current_time}] {msg}"
+            self.txtScriptMsg.append(line)
+            self.gui_write_replay(msg)
             logging.debug(f"{msg}")
 
         self.txtScriptMsg.moveCursor(QTextCursor.End)
@@ -1414,7 +1416,9 @@ class GUI(QMainWindow, form_class):
 
     def gui_display_conclusion(self, msg):
         current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        self.txtOrder.append(f"[{current_time}] {msg}")
+        line = f"[{current_time}] {msg}"
+        self.txtOrder.append(line)
+        self.gui_write_replay(msg)
         self.txtOrder.moveCursor(QTextCursor.End)
         self.txtOrder.horizontalScrollBar().setValue(0)
 
@@ -1423,6 +1427,13 @@ class GUI(QMainWindow, form_class):
             self.txtCondition.clear()
             return
         current_time = datetime.now().strftime("%H:%M:%S")
-        self.txtCondition.append(f"{current_time} {msg}")
+        line = f"{current_time} {msg}"
+        self.txtCondition.append(line)
+        self.gui_write_replay(msg)
         self.txtCondition.moveCursor(QTextCursor.End)
 
+    def gui_write_replay(self, msg):
+        try:
+            logging.getLogger('replay').info(msg)
+        except Exception as e:
+            logging.error(f'전략복기 로그 기록 오류: {type(e).__name__} - {e}', exc_info=True)

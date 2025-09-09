@@ -716,13 +716,40 @@ def init_logger(log_path=dc.fp.LOG_PATH, filename=dc.fp.LOG_FILE):
     message_file = os.path.join(full_path, dc.fp.LOG_FILE)
     gm.json_config['handlers']['file']['filename'] = message_file
 
-    # 외부 라이브러리 활용 가능 여부 확인 및 적용
+    # 외부 라이브러리 활용 가능 여부 확인 및 적용 및 공통 클래스 선택
     try:
         from concurrent_log_handler import ConcurrentRotatingFileHandler # pip install concurrent-log-handler
-        gm.json_config['handlers']['file']['class'] = "concurrent_log_handler.ConcurrentRotatingFileHandler"
+        selected_handler_class = "concurrent_log_handler.ConcurrentRotatingFileHandler"
     except ImportError:
         # 외부 라이브러리가 없으면 기본 RotatingFileHandler 사용
-        gm.json_config['handlers']['file']['class'] = "logging.handlers.RotatingFileHandler"
+        selected_handler_class = "logging.handlers.RotatingFileHandler"
+
+    gm.json_config['handlers']['file']['class'] = selected_handler_class
+
+    # 전략복기 전용 핸들러/로거 보장 및 설정
+    gm.json_config.setdefault('handlers', {})
+    gm.json_config.setdefault('loggers', {})
+
+    if 'replay_file' not in gm.json_config['handlers']:
+        gm.json_config['handlers']['replay_file'] = {
+            'class': selected_handler_class,
+            'filename': "",
+            'formatter': 'detailed',
+            'maxBytes': gm.json_config['handlers']['file'].get('maxBytes', 1024 * 1024 * 1),
+            'backupCount': gm.json_config['handlers']['file'].get('backupCount', 9),
+            'encoding': 'utf-8'
+        }
+
+    replay_file = os.path.join(full_path, "script_log")
+    gm.json_config['handlers']['replay_file']['filename'] = replay_file
+    gm.json_config['handlers']['replay_file']['class'] = selected_handler_class
+
+    if 'replay' not in gm.json_config['loggers']:
+        gm.json_config['loggers']['replay'] = {
+            'handlers': ['replay_file'],
+            'level': 'INFO',
+            'propagate': False
+        }
 
     # 업데이트된 설정 저장
     save_json(config_file, gm.json_config)
