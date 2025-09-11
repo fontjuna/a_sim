@@ -702,7 +702,6 @@ class GUI(QMainWindow, form_class):
             self.ledScriptName.setText(name)
             self.txtScript.setText(script)
             self.txtScriptDesc.setText(desc)
-            #self.txtScriptText.clear()
             self.script_edited = False
 
         except Exception as e:
@@ -712,7 +711,6 @@ class GUI(QMainWindow, form_class):
         self.ledScriptName.setText('')
         self.txtScript.setText('')
         self.txtScriptDesc.setText('')
-        #self.txtScriptText.clear()
 
     def gui_script_delete(self):
         try:
@@ -739,7 +737,6 @@ class GUI(QMainWindow, form_class):
                     self.txtScript.setText('')
                     self.txtScriptDesc.setText('')
                     gm.scm.delete_script(name)
-                    #self.txtScriptText.clear()
                     gm.list스크립트 = gm.스크립트.get(column='스크립트명')
                     self.gui_fx채움_스크립트콤보()
 
@@ -774,7 +771,7 @@ class GUI(QMainWindow, form_class):
                 save_msg = ""
                 if save:
                     save_msg = "검사 후 저장 되었습니다.\n"
-                    gm.스크립트.set(key=script_name, data={'스크립트': script, '타입': result['type'], '설명': desc})
+                    gm.스크립트.set(key=script_name, data={'스크립트': script, '설명': desc})
                     gm.스크립트.update_table_widget(self.tblScript)
                     gm.list스크립트 = gm.스크립트.get(column='스크립트명')
                     self.gui_fx채움_스크립트콤보()
@@ -782,8 +779,7 @@ class GUI(QMainWindow, form_class):
                 QMessageBox.information(self, '알림', f'스크립트에 이상이 없습니다.\n{save_msg}(걸린시간={exec_time:.5f}초)\n반환값={result["result"]}')
             else:
                 QMessageBox.critical(self, '에러', result['error'])
-                #self.txtScriptText.append(result['error'])
-                #self.txtScriptText.moveCursor(QTextCursor.End)
+                
         except Exception as e:
             logging.error(f'스크립트 확인 오류: {type(e).__name__} - {e}', exc_info=True)
 

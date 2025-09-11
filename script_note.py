@@ -4,7 +4,7 @@ code = '005930'
 name = '삼성전자'
 price = 100000
 qty = 100
-
+result_cache = {}
 
 # =============================================================================================
 
@@ -47,8 +47,12 @@ m3._ensure_data_cache()
 with m3.suspend_ensure():
     최고종가, 당일봉수 = m3.get_close_tops( k=1, w=128, m=128, n=1 )
 
-종가수 = len(최고종가) if 최고종가 else 0
-pos = 최고종가[0]
+if len(최고종가) > 0:
+    종가수 = len(최고종가)
+    pos = 최고종가[0]
+else:
+    종가수 = 0
+    pos = 1
 
 if 종가수 == 0:
     echo(f'[False] ({code} {name}) / 최고종가 0개')
@@ -61,33 +65,39 @@ if 당일봉수 == 1:
 # 최고거래량 조건 찾기 ========================================================================
 dt._ensure_data_cache()
 with dt.suspend_ensure():
-    max_vol = 0
-    max_idx = 1
-    for i in range(1, 120):
-        vol = dt.v(i)
-        if vol > max_vol:
-            max_vol = vol
-            max_idx = i
-    
-    # 필요한 데이터만 개별 접근
-    hv_h = dt.h(max_idx)
-    hv_l = dt.l(max_idx)
-    current_v = dt.v(0)
-    current_o = o(0)
-    
-    diff = percent(hv_l, current_o) > 20.0
+    cache_key = f'{code}_dt_volume'
+    if cache_key not in result_cache:
+        max_vol = 0
+        max_idx = 1
+        for i in range(1, 120):
+            vol = dt.v(i)
+            if vol > max_vol:
+                max_vol = vol
+                max_idx = i
+        
+        # 필요한 데이터만 개별 접근
+        hv_h = dt.h(max_idx)
+        hv_l = dt.l(max_idx)
+        result_cache[cache_key] = {'v': max_vol, 'h': hv_h, 'l': hv_l}
 
-if not (hv_h <= current_o or diff or current_v >= max_vol * 0.67):
+    dt_v = dt.v(0)
+    m3_o = o(0)
+    hv_l = result_cache[cache_key]['l']
+    hv_h = result_cache[cache_key]['h']
+    hv_v = result_cache[cache_key]['v']
+    diff = percent(hv_l, m3_o) > 20.0
+
+if not (hv_h <= m3_o or diff or dt_v >= hv_v * 0.67):
     echo(f'[False] ({code} {name}) / 최고거래량 조건 불충족')
     ret(False)
 
 # 상승율 조건 찾기 ========================================================================
 with m3.suspend_ensure():
     pcts = [(c(i + 1) - c(i)) / c(i + 1) * 100 for i in range(5)]
-    more_than = sum(pct >= 1.2 for pct in pcts)
+    more_than = sum(pct < 1.2 for pct in pcts)
     less_than = sum(pct >= 5.0 for pct in pcts)
 
-if more_than > 0 or less_than > 0:
+if more_than == 0 or less_than > 0:
     echo(f'[False] ({code} {name}) / 5봉중 1.2% ~ 5%  상승 여부 불충족')
     ret(False)
 
@@ -201,7 +211,7 @@ logoff = is_args('logoff', False)
 
 최고종가, 당일봉수 = m3.get_close_tops(k=1, w=128, m=128, n=1)
 
-if len(최고종가) < 1: pos = 1
+if len(최고종가) == 0: pos = 1
 else: pos = 최고종가[0]
 
 o, h, l, c, ma = m3.o, m3.h, m3.l, m3.c, m3.ma
@@ -313,7 +323,7 @@ logoff = is_args('logoff', False)
 
 최고종가, 당일봉수 = m3.get_close_tops(k=1, w=128, m=128, n=1)
 
-if len(최고종가) < 1: pos = 1
+if len(최고종가) == 0: pos = 1
 else: pos = 최고종가[0]
 
 o, h, l, c, ma = m3.o, m3.h, m3.l, m3.c, m3.ma
