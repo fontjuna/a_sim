@@ -2093,18 +2093,18 @@ class ChartManager:
         # 평균 계산
         return sum(top_amounts) / len(top_amounts)
 
-    def get_close_tops(self, w: int = 80, m: int = 128, n: int = 1) -> tuple:
+    def get_close_tops(self, k: int = 1, w: int = 80, m: int = 128, n: int = 1) -> tuple:
         """
-        각 봉이 자신을 포함한 w개 봉 중 최고 종가인지 확인하여 인덱스를 수집 분봉만 해당
+        각 봉이 자신을 포함한 w개 봉 중 최고 종가인지 확인하여 인덱스를 수집 (분봉만 해당)
         
         Args:
-            n: 검사 종료 인덱스 (0=현재봉까지, 1=1봉까지, 3=3봉까지...)
-            m: 검사 시작 기준 (m이면 m-1+n부터 시작)
+            k: 필요한 최고종가 인덱스 개수 (가까운 것부터 찾고 k개 채우면 즉시 종료; None이면 전체)
             w: 비교할 봉 개수 (자신 포함)
+            m: 검사 시작 기준 (m이면 m-1+n부터 시작)
+            n: 검사 종료 인덱스 (0=현재봉까지, 1=1봉까지, 3=3봉까지...)
         
         Returns:
             tuple: (최고종가_인덱스_리스트, 당일_봉_개수)
-            
         """
         if self.cycle != 'mi': return ([], 0)
 
@@ -2127,13 +2127,13 @@ class ChartManager:
             else:
                 break
         
-        # m-1+n부터 n까지 역순으로 검사
-        start_idx = m - 1 + n
-        end_idx = n            
+        # 검사 범위 설정 (최근→과거 순으로 탐색하여 k개 찾으면 조기 종료)
+        start_idx = max(0, min(m - 1 + n, data_length - 1))
+        end_idx = n
         
-        for current_idx in range(start_idx, end_idx - 1, -1):  # 역순
+        for current_idx in range(end_idx, start_idx + 1):  # 최근(n) → 과거(start_idx)
             if current_idx >= data_length:
-                continue
+                break
             
             # 현재 검사 중인 봉의 종가
             current_close = data[current_idx].get('현재가', 0)
@@ -2141,20 +2141,20 @@ class ChartManager:
             # 비교 범위: current_idx 이후(w-1개)만 비교하여 동률은 제외
             compare_start = current_idx + 1  # 자신 제외
             compare_end = min(current_idx + w, data_length)
-            
             if compare_start >= compare_end:
                 continue
             
-            # 비교 범위에서 최고 종가 찾기 (자신 제외)
             max_close = 0
-            for i in range(compare_start, compare_end):
-                close = data[i].get('현재가', 0)
+            for j in range(compare_start, compare_end):
+                close = data[j].get('현재가', 0)
                 if close > max_close:
                     max_close = close
             
-            # 이전 최고종가보다 "엄격히 더 높을 때만" 인덱스 추가
+            # 이전 최고종가보다 엄격히 더 높을 때만 인덱스 추가
             if current_close > max_close:
                 high_close_indices.append(current_idx)
+                if len(high_close_indices) >= k:
+                    break
         
         return (high_close_indices, today_bars)
 
@@ -2844,31 +2844,106 @@ def {script_name}(*args, **kwargs):
         for item in iterable:
             results.append(func(item))
         return results
-    
+
+    """
+    # def _get_script_error_location(self, tb_str, script):
+    #     '''스크립트 에러 위치 추출하여 한 줄 에러 메시지 반환'''
+    #     try:
+    #         lines = tb_str.splitlines()
+    #         error_line_num = None
+    #         error_msg = "알 수 없는 오류"
+            
+    #         for line in lines:
+    #             if "File \"<string>\"" in line and ", line " in line:
+    #                 match = re.search(r", line (\d+)", line)
+    #                 if match:
+    #                     wrapper_offset = 13
+    #                     error_line_num = int(match.group(1)) - wrapper_offset
+    #             elif any(err_type in line for err_type in ["TypeError:", "NameError:", "SyntaxError:", "ValueError:", "AttributeError:", "IndexError:"]):
+    #                 error_msg = line.strip()
+            
+    #         if error_line_num and error_line_num > 0:
+    #             script_lines = script.splitlines()
+    #             if error_line_num <= len(script_lines):
+    #                 error_line = script_lines[error_line_num-1].strip()
+    #                 return f"실행 오류 (행 {error_line_num}): {error_msg} → 수정: {error_line}"
+            
+    #         return f"실행 오류: {error_msg}"
+            
+    #     except Exception as e:
+    #         logging.error(f"에러 위치 파악 오류: {e}")
+    #         return f"실행 오류: {error_msg}"
+    """
+
     def _get_script_error_location(self, tb_str, script):
-        """스크립트 에러 위치 추출하여 한 줄 에러 메시지 반환"""
+        """스크립트 에러 위치 추출하여 상세한 에러 메시지 반환"""
         try:
             lines = tb_str.splitlines()
             error_line_num = None
             error_msg = "알 수 없는 오류"
+            script_name = "스크립트"
             
+            # 스크립트 이름 추출
             for line in lines:
-                if "File \"<string>\"" in line and ", line " in line:
+                if "File \"<" in line and ">\"" in line:
+                    match = re.search(r"File \"<([^>]+)>\"", line)
+                    if match:
+                        script_name = match.group(1)
+                        break
+            
+            # 에러 라인 번호 추출 (래퍼 스크립트 구조 고려)
+            for line in lines:
+                if f"File \"<{script_name}>\"" in line and ", line " in line:
                     match = re.search(r", line (\d+)", line)
                     if match:
-                        wrapper_offset = 13
-                        error_line_num = int(match.group(1)) - wrapper_offset
-                elif any(err_type in line for err_type in ["TypeError:", "NameError:", "SyntaxError:", "ValueError:", "AttributeError:", "IndexError:"]):
-                    error_msg = line.strip()
+                        wrapper_line = int(match.group(1))
+                        # 래퍼 스크립트에서 실제 사용자 스크립트 라인으로 변환
+                        # 래퍼 구조: def execute_script() (1줄) + def user_script() (1줄) + 주석들 (4줄) + 변수설정 (8줄) + 사용자스크립트
+                        # 사용자 스크립트는 15번째 라인부터 시작 (1+1+4+8+1 = 15)
+                        if wrapper_line >= 15:
+                            error_line_num = wrapper_line - 14  # 15번째 라인이 사용자 스크립트 1번째 라인
+                        break
             
+            # 에러 메시지 추출
+            for line in lines:
+                if any(err_type in line for err_type in [
+                    "TypeError:", "NameError:", "SyntaxError:", "ValueError:", 
+                    "AttributeError:", "IndexError:", "KeyError:", "ZeroDivisionError:",
+                    "RuntimeError:", "ImportError:", "ModuleNotFoundError:"
+                ]):
+                    error_msg = line.strip()
+                    break
+            
+            # 상세한 에러 정보 생성
             if error_line_num and error_line_num > 0:
                 script_lines = script.splitlines()
                 if error_line_num <= len(script_lines):
                     error_line = script_lines[error_line_num-1].strip()
-                    return f"실행 오류 (행 {error_line_num}): {error_msg} → 수정: {error_line}"
-            
-            return f"실행 오류: {error_msg}"
-            
+                    
+                    # 에러 라인 주변 컨텍스트 추가 (최대 3줄씩)
+                    context_lines = []
+                    start_idx = max(0, error_line_num - 4)  # 에러 라인 앞 3줄
+                    end_idx = min(len(script_lines), error_line_num + 2)  # 에러 라인 뒤 1줄
+                    
+                    for i in range(start_idx, end_idx):
+                        line_num = i + 1
+                        line_content = script_lines[i].rstrip()
+                        if line_num == error_line_num:
+                            context_lines.append(f"  {line_num:3d}: >>> {line_content} <<< (에러 발생)")
+                        else:
+                            context_lines.append(f"  {line_num:3d}:    {line_content}")
+                    
+                    context_str = "\n".join(context_lines)
+                    
+                    return f"""실행 오류 ({script_name} 라인 {error_line_num}):
+에러: {error_msg}
+코드:
+{context_str}"""
+                else:
+                    return f"실행 오류 ({script_name}): {error_msg} (라인 {error_line_num}이 스크립트 범위를 벗어남)"
+            else:
+                return f"실행 오류 ({script_name}): {error_msg}"
+                
         except Exception as e:
             logging.error(f"에러 위치 파악 오류: {e}")
             return f"실행 오류: {error_msg}"

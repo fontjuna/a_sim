@@ -217,7 +217,9 @@ class Admin:
         if fid215 == '0': msg = f'장 시작{분}{초} 전'
         if fid215 == '0': msg = f'장 시작{분}{초} 전'
         elif fid215 == '2': msg = f'장 마감{분}{초} 전'
-        elif fid215 == '3': msg = f'장이 시작 되었습니다.'
+        elif fid215 == '3': 
+            msg = f'장이 시작 되었습니다.'
+            if gm.gui_on: gm.qwork['gui'].put(Work('gui_write_replay', {'msg': '*' * 150}))
         elif fid215 == '4': msg = f'장이 마감 되었습니다.'
         if msg:
             gm.toast.toast(msg, 3000)
