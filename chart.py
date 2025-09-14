@@ -1073,12 +1073,10 @@ class ChartManager:
     def is_doji(self, threshold: float = 0.1, n: int = 0) -> bool:
         """도지 캔들 확인 (몸통/전체길이 비율이 threshold 이하)"""
         self._ensure_data_cache()
-        if not self._raw_data or n >= self._data_length:
-            return False
+        if not self._raw_data or n >= self._data_length: return False
         with self.suspend_ensure():
             total_len = self.length(n)
-            if total_len <= 0:
-                return False
+            if total_len <= 0: return False
             return (self.body(n) / total_len) <= threshold
 
     def is_shooting_star(self, length: float = 2.0, up: float = 2.0, down: float = None, n: int = 0) -> bool:
@@ -1350,10 +1348,6 @@ class ChartManager:
         variance /= m
         
         return variance ** 0.5
-    
-    def _percent(self, a: float, b: float, c: float = None, default: float = 0) -> float:
-        c = b if c is None else c
-        return (a - b) / c * 100 if c != 0 else default
     
     # 신호 함수들
     def trend_up(self, mp: int = 20, n: int = 0) -> bool:
@@ -1708,20 +1702,19 @@ class ChartManager:
             n: 시작 봉 인덱스 (기본값: 0=현재봉)
             
         Returns:
-            tuple: (인덱스, 시간/일자, 시가, 고가, 저가, 종가, 거래량, 거래대금)
-                   찾지 못하면 (0, '', 0, 0, 0, 0, 0, 0) 반환
+            tuple: (인덱스, 봉데이터)
+                   찾지 못하면 (0, {}) 반환
         """
         self._ensure_data_cache()
-        if not self._raw_data or m <= 0:
-            return (0, '', 0, 0, 0, 0, 0, 0)
+        if not self._raw_data or m <= 0: return (0, {})
         
         # 검사 범위 설정
         start_idx = n
         end_idx = min(start_idx + m, self._data_length)
         
-        if start_idx >= end_idx:
-            return (0, '', 0, 0, 0, 0, 0, 0)
+        if start_idx >= end_idx: return (0, {})
         
+        candle = {}
         max_range = 0
         max_range_idx = start_idx
         
@@ -1737,27 +1730,9 @@ class ChartManager:
                 max_range_idx = i
         
         # 최고 긴봉 데이터 반환
-        if max_range > 0:
-            candle = self._raw_data[max_range_idx]
+        if max_range > 0: candle = self._raw_data[max_range_idx]
             
-            # 시간/일자 필드 결정
-            if self.cycle == 'mi':
-                time_str = candle.get('체결시간', '')
-            else:
-                time_str = candle.get('일자', '')
-            
-            return (
-                max_range_idx,
-                time_str,
-                candle.get('시가', 0),
-                candle.get('고가', 0),
-                candle.get('저가', 0),
-                candle.get('현재가', 0),
-                candle.get('거래량', 0),
-                candle.get('거래대금', 0)
-            )
-        
-        return (0, '', 0, 0, 0, 0, 0, 0)
+        return (max_range_idx, candle)
 
     def get_highest_volume(self, m: int = 128, n: int = 0) -> tuple:
         """
@@ -1768,19 +1743,18 @@ class ChartManager:
             n: 시작 봉 인덱스 (기본값: 0=현재봉)
             
         Returns:
-            tuple: (인덱스, 시간/일자, 시가, 고가, 저가, 종가, 거래량, 거래대금)
-                   찾지 못하면 (0, '', 0, 0, 0, 0, 0, 0) 반환
+            tuple: (인덱스, 봉데이터)
+                   찾지 못하면 (0, {}) 반환
         """
         self._ensure_data_cache()
-        if not self._raw_data or m <= 0:
-            return (0, '', 0, 0, 0, 0, 0, 0)
+        if not self._raw_data or m <= 0: return (0, {})
         
         # 검사 범위 설정
+        candle = {}
         start_idx = n
         end_idx = min(start_idx + m, self._data_length)
         
-        if start_idx >= end_idx:
-            return (0, '', 0, 0, 0, 0, 0, 0)
+        if start_idx >= end_idx: return (0, {})
         
         max_volume = 0
         max_volume_idx = start_idx
@@ -1795,27 +1769,9 @@ class ChartManager:
                 max_volume_idx = i
         
         # 최고 거래량 봉 데이터 반환
-        if max_volume > 0:
-            candle = self._raw_data[max_volume_idx]
+        if max_volume > 0: candle = self._raw_data[max_volume_idx]
             
-            # 시간/일자 필드 결정
-            if self.cycle == 'mi':
-                time_str = candle.get('체결시간', '')
-            else:
-                time_str = candle.get('일자', '')
-            
-            return (
-                max_volume_idx,
-                time_str,
-                candle.get('시가', 0),
-                candle.get('고가', 0),
-                candle.get('저가', 0),
-                candle.get('현재가', 0),
-                candle.get('거래량', 0),
-                candle.get('거래대금', 0)
-            )
-        
-        return (0, '', 0, 0, 0, 0, 0, 0)
+        return (max_volume_idx, candle)
 
     def past_bars(self, dt: str = None) -> int:
         """당일 분봉 개수 반환"""

@@ -1,4 +1,5 @@
 from chart import ChartManager, echo, is_args, ret, div, percent, ma, hoga, 일반매도
+import math
 
 code = '005930'
 name = '삼성전자'
@@ -33,33 +34,31 @@ result_cache = {}
 m3 = ChartManager(code, 'mi', 3)
 dt = ChartManager(code, 'dy')
 
+# 기본 값 접근자 별칭
+o, h, l, c, v, ma = m3.o, m3.h, m3.l, m3.c, m3.v, m3.ma
+
+# 최고종가 조건 찾기 ========================================================================
+m3._ensure_data_cache()
+with m3.suspend_ensure():
+    최고종가, 당일봉수 = m3.get_close_tops( k=1, w=128, m=128, n=1 )
+    첫봉위치 = 당일봉수 - 1
+
+if len(최고종가) == 0 or 첫봉위치 == 0: # 현재봉이 첫봉
+    echo(f'[False] ({code} {name}) / 최고종가 0개 또는 당일 첫봉 매수 안함 : ({당일봉수}) {최고종가})')
+    ret(False)
+
+pos = 최고종가[0]
+
+# 당일 첫봉이 음봉이면 그 봉 고가 밑에서 매수 안 함 =========================================
+with m3.suspend_ensure():
+    if o(첫봉위치) > c(첫봉위치) and h(첫봉위치) > c():
+        echo(f'[False] ({code} {name}) / 당일 첫봉이 음봉이고 그 고가를 돌파 못함 : ({당일봉수}) {최고종가})')
+        ret(False)
+
 # 일반매도 조건 찾기 ========================================================================
 reason = 일반매도(logoff=True)
 if reason:
     echo(f'[False] ({code} {name}) / {reason}')
-    ret(False)
-
-# 기본 값 접근자 별칭
-o, h, l, c, v, ma = m3.o, m3.h, m3.l, m3.c, m3.v, m3.ma
-m3._ensure_data_cache()
-
-# 최고종가 조건 찾기 ========================================================================
-with m3.suspend_ensure():
-    최고종가, 당일봉수 = m3.get_close_tops( k=1, w=128, m=128, n=1 )
-
-if len(최고종가) > 0:
-    종가수 = len(최고종가)
-    pos = 최고종가[0]
-else:
-    종가수 = 0
-    pos = 1
-
-if 종가수 == 0:
-    echo(f'[False] ({code} {name}) / 최고종가 0개')
-    ret(False)
-
-if 당일봉수 == 1: 
-    echo(f'[False] ({code} {name}) / 당일 첫봉 매수 안함 : ({당일봉수}) {최고종가}')
     ret(False)
 
 # 최고거래량 조건 찾기 ========================================================================
@@ -69,7 +68,7 @@ with dt.suspend_ensure():
     if cache_key not in result_cache:
         max_vol = 0
         max_idx = 1
-        for i in range(1, 120):
+        for i in range(1, 119):
             vol = dt.v(i)
             if vol > max_vol:
                 max_vol = vol
@@ -81,24 +80,24 @@ with dt.suspend_ensure():
         result_cache[cache_key] = {'v': max_vol, 'h': hv_h, 'l': hv_l}
 
     dt_v = dt.v(0)
-    m3_o = o(0)
     hv_l = result_cache[cache_key]['l']
     hv_h = result_cache[cache_key]['h']
     hv_v = result_cache[cache_key]['v']
-    diff = percent(hv_l, m3_o) > 20.0
 
-if not (hv_h <= m3_o or diff or dt_v >= hv_v * 0.67):
+if not (hv_h <= o(0) or hv_l > h(1) and max_idx > 1 or dt_v >= hv_v * 0.67):
     echo(f'[False] ({code} {name}) / 최고거래량 조건 불충족')
     ret(False)
 
 # 상승율 조건 찾기 ========================================================================
 with m3.suspend_ensure():
-    pcts = [(c(i + 1) - c(i)) / c(i + 1) * 100 for i in range(5)]
-    more_than = sum(pct < 1.2 for pct in pcts)
-    less_than = sum(pct >= 5.0 for pct in pcts)
+    more_than = 0
+    for i in range(5):
+        if percent(c(i), c(i + 1)) >= 0.5: 
+            more_than += 1
+            break
 
-if more_than == 0 or less_than > 0:
-    echo(f'[False] ({code} {name}) / 5봉중 1.2% ~ 5%  상승 여부 불충족')
+if more_than == 0: # or less_than > 0:
+    echo(f'[False] ({code} {name}) / 5봉중 0.5% 상승 여부 불충족')
     ret(False)
 
 # 연속봉수 조건 찾기 ========================================================================
@@ -129,7 +128,7 @@ if 연속갯수 >= 3:
 # 전 최고종가의 고가 아래이면 다음을 만족 해야 함 ========================================================================
 with m3.suspend_ensure():
     if c(0) < h(pos):
-        if h(pos) - c(pos) > c(pos) - l(pos) and h(pos) > o(0):
+        if h(pos) - c(pos) > c(pos) - l(pos) and h(pos) > c(0):
             echo(f'[False] ({code} {name}) / 최고종가봉이 하락 우세임 : ({당일봉수}) {최고종가}')
             ret(False)
 
@@ -153,15 +152,17 @@ with m3.suspend_ensure():
                 echo(f'[False] ({code} {name}) / 최고종가 고점을 넘지 못함 : ({당일봉수}) {최고종가}')
                 ret(False)
 
-        extr = m3.get_extremes(m=pos, n=1)
-        하락률 = percent(extr['hh'], extr['ll'])
-        if 하락률 > 5.0:
-            echo(f'[False] ({code} {name}) / 당일 하락율 조건 불충족 : ({당일봉수}) {최고종가}')
-            ret(False)
+        if pos > 1:
+            extr = m3.get_extremes(m=pos, n=1)
+            하락률 = percent(extr['hh'], extr['ll'])
+            시작위치 = percent(extr['ll'], o(0))
+            if 하락률 > 5.0 and 시작위치 < 80.0 and not (l(pos) <= extr['ll'] and h(pos) >= extr['hh']):
+                echo(f'[False] ({code} {name}) / 당일 하락율 조건 불충족 : ({당일봉수}) {최고종가}')
+                ret(False)
 
-        if not (extr['hv'] > v(pos) or v(pos) * 0.8 < v(0)):
-            echo(f'[False] ({code} {name}) / 전고돌파 수급 조건 불충족 : ({당일봉수}) {최고종가}')
-            ret(False)
+        # if not (extr['hv'] > v(pos) or v(pos) * 0.8 < v(0)):
+        #     echo(f'[False] ({code} {name}) / 전고돌파 수급 조건 불충족 : ({당일봉수}) {최고종가}')
+        #     ret(False)
 
         # 일봉상 긴 윗꼬리가 달린 봉이 많이 나타나는 종목은 털리기 쉽다.
         윗꼬리_많은종목 = 0
@@ -185,13 +186,12 @@ ret(True)
 
 
 
-
 # =============================================================================================
 
 # 스크립트명 : 일반매도
 
 """
-<검색식에서 구현: 보유종목대상>
+<검색식에서 구현: >
 - 없음.
 
 <스크립트에서 구현>
@@ -224,70 +224,78 @@ length_pct = m3.length_pct
 up_tail_pct = m3.up_tail_pct
 down_tail_pct = m3.down_tail_pct
 
-dm._ensure_data_cache()
-m3._ensure_data_cache()
-
 msg = ''
+m3._ensure_data_cache()
 with m3.suspend_ensure():
     # 최상위: 매우 가벼운 판정들
     if hoga(dm.c(1), 99) <= dm.c(0):
         msg = f'상한가'
+    elif ma(5, 2) > ma(5, 1):
+        msg = f'전봉 5이평 하락 중'
     elif ma(10, 1) > ma(5, 1):
-        msg = f'전봉 5, 10이평 역전'
+        msg = f'전봉 5, 10이평 역전 상태'
     elif c(1) < ma(10, 1):
-        msg = f'종가가 10이평 아래'
+        msg = f'전봉 종가, 10이평 역전 상태'
     else:
-        if not msg and c(2) > o(2) > c(1):
-            idx, date, hv_o, hv_h, hv_l, hv_c, hv_v, hv_a = m3.get_highest_volume(m=10, n=1)
-            if min(hv_o, hv_c) > c(1):
+        # 현재봉으로 판단
+        if c() > o():
+            idx, candle = m3.get_highest_volume(m=10, n=1)
+            if min(candle['o'], candle['c']) > c():
                 msg = f'10봉중 최고거래량봉 아래로 이탈'
 
+        if not msg and c() <= h(1):
+            if down_tail_pct(1) >= 1.0 and (o(1) == c(1) or down_tail(1) > body(1) * 5) and up_tail(1) < down_tail(1) * 0.2:
+                msg = f'교수형 캔들의 고가 갱신 못함'
+
+        # 이하 전봉으로 판단
         if not msg and (h(2) > h(1) and bottom(1) >= top(2)):
             if up_tail(1) > down_tail(1):
                 msg = f'전봉 고가 갱신 불발후 위꼬리 내부에서 마감'
 
         if not msg and up_tail_pct(1) >= 2.0:
-            if bottom(1) == l(1) or up_tail(1) > (c(1) - l(1)) * 2.5:
-                msg = f'윗꼬리 2%이상 유성형 패턴으로 급락'
+            if o(1) == c(1) or up_tail(1) > body(1) * 3:
+                msg = f'전봉 윗꼬리 2%이상 유성형 패턴으로 급락'
 
         # 음봉 패턴군 (blue)
         if not msg and (c(1) < o(1)):
             if up_tail_pct(1) >= 1.0:
                 if top(2) < bottom(1):
-                    msg = f'윗꼬리 1%이상 음봉 갭 상승 마감'
-                elif up_tail(1) >= body(1) * 2.5 and up_tail(1) * 0.2 > down_tail(1):
-                    msg = f'윗꼬리 1%이상 유성형 음봉'
+                    msg = f'전봉 `윗꼬리 1%이상 음봉 갭 상승 마감'
+                elif (o(1) == c(1) or up_tail(1) >= body(1) * 2.5) and up_tail(1) * 0.2 > down_tail(1):
+                    msg = f'전봉 윗꼬리 1%이상 유성형 음봉'
                 elif body(1) >= up_tail(1) * 0.8:
-                    msg = f'윗꼬리 1%이상 떨어지는 칼날'
+                    msg = f'전봉 윗꼬리 1%이상 떨어지는 칼날'
             elif up_tail_pct(2) >= 1.0 and up_tail(2) > down_tail(2):
                 if h(2) >= h(1) and (h(1) - c(1)) / o(1) > 0.01:
-                    msg = f'윗꼬리 1%이상 연속 고가 저항'
-            elif (c(2) >= o(2)) and (body_pct(2) > 1):
-                if top(2) >= top(1) and bottom(2) < bottom(1) and length_pct(1) < 1:
-                    msg = f'하락 잉태형 패턴'
-                elif top(2) <= top(1) and bottom(2) > bottom(1):
-                    msg = f'하락 장악형 패턴'
+                    msg = f'전봉 윗꼬리 1%이상 연속 고가 저항'
+            elif (c(2) >= o(2)):
+                if body_pct(2) > 1:
+                    if top(2) >= top(1) and bottom(2) < bottom(1) and length_pct(1) < 1:
+                        msg = f'전봉 하락 잉태형 패턴'
+                    elif top(2) <= top(1) and bottom(2) > bottom(1):
+                        msg = f'전봉 하락 장악형 패턴'
+            elif c(3) >= o(3) and c(3) > c(1):
+                if body_pct(3) > 2 and v(3) > v(2) * 2:
+                    if m3.is_doji(0.2, 2) and c(1) < o(1) and v(3) > v(1) * 2:
+                        msg = f'하락 전환 석별형 패턴'
 
         # 양봉 패턴군 (red)
-        if not msg and (c(1) >= o(1)):
-            if up_tail_pct(1) >= 1.5 and (o(1) == l(1) or (up_tail(1) >= body(1) * 3 and up_tail(1) * 0.2 > down_tail(1))):
-                msg = f'윗꼬리 1.5% 이상 몸통의 3배 유성형 양봉'
-            elif (c(2) >= o(2)) and (body_pct(2) > 1):
+        if not msg and c(2) >= o(2):
+            if up_tail_pct(2) >= 1.5:
+                up = up_tail(2)
+                if c(2) > c(1) and (o(2) == c(2) or (up >= body(2) * 3 and up * 0.2 > down_tail(2))):
+                    msg = f'전전봉 윗꼬리 1.5% 이상 몸통의 3배 유성형 양봉'
+            elif body_pct(2) > 1:
                 if top(2) >= top(1) and bottom(2) < bottom(1) and length_pct(1) < 0.5:
-                    msg = f'하락 잉태형 패턴'
+                    msg = f'전봉 하락 잉태형 패턴'
 
         # 최고종가 봉 패턴군 (pos)
         if not msg and pos > 2:
             if h(pos) > h(1) and bottom(1) >= top(pos):
-                msg = f'최고종가봉 고가 갱신 불발후 위꼬리 내부에서 마감'
-            elif (c(pos) >= o(pos)) and (((c(pos) - o(pos)) / o(pos) * 100.0) if o(pos) else 0.0) > 1:
-                if top(pos) >= top(1) and bottom(pos) < bottom(1) and length_pct(1) < 1:
-                    msg = f'최고종가 하락 잉태형 패턴'
-                elif top(pos) <= top(1) and bottom(pos) > bottom(1):
-                    msg = f'최고종가 하락 장악형 패턴'
-
-    if not msg and down_tail_pct(1) >= 1.0 and down_tail(1) > body(1) * 5 and up_tail(1) < down_tail(1) * 0.2:
-        msg = f'교수형 캔들'
+                msg = f'전봉 최고종가봉 고가 갱신 불발후 위꼬리 내부에서 마감'
+            elif (c(pos) >= o(pos)) and body_pct(pos) > 1:
+                if top(pos) <= top(1) and bottom(pos) > bottom(1):
+                    msg = f'전봉 최고종가 하락 장악형 패턴'
 
 if msg: 
     if logoff:
@@ -350,8 +358,8 @@ with m3.suspend_ensure():
         msg = f'종가가 10이평 아래'
     else:
         if not msg and c(2) > o(2) > c(1):
-            idx, date, hv_o, hv_h, hv_l, hv_c, hv_v, hv_a = m3.get_highest_volume(m=10, n=1)
-            if min(hv_o, hv_c) > c(1):
+            idx, candle = m3.get_highest_volume(m=10, n=1)
+            if min(candle['o'], candle['c']) > c(1):
                 msg = f'10봉중 최고거래량봉 아래로 이탈'
 
         if not msg and (h(2) > h(1) and bottom(1) >= top(2)):
@@ -367,7 +375,7 @@ with m3.suspend_ensure():
             if up_tail_pct(1) >= 1.0:
                 if top(2) < bottom(1):
                     msg = f'윗꼬리 1%이상 음봉 갭 상승 마감'
-                elif up_tail(1) >= body(1) * 2.5 and up_tail(1) * 0.2 > down_tail(1):
+                elif (o(1) == c(1) or up_tail(1) >= body(1) * 2.5) and up_tail(1) * 0.2 > down_tail(1):
                     msg = f'윗꼬리 1%이상 유성형 음봉'
                 elif body(1) >= up_tail(1) * 0.8:
                     msg = f'윗꼬리 1%이상 떨어지는 칼날'
@@ -382,7 +390,7 @@ with m3.suspend_ensure():
 
         # 양봉 패턴군 (red)
         if not msg and (c(1) >= o(1)):
-            if up_tail_pct(1) >= 1.5 and (o(1) == l(1) or (up_tail(1) >= body(1) * 3 and up_tail(1) * 0.2 > down_tail(1))):
+            if up_tail_pct(1) >= 1.5 and (o(1) == c(1) or (up_tail(1) >= body(1) * 3 and up_tail(1) * 0.2 > down_tail(1))):
                 msg = f'윗꼬리 1.5% 이상 몸통의 3배 유성형 양봉'
             elif (c(2) >= o(2)) and (body_pct(2) > 1):
                 if top(2) >= top(1) and bottom(2) < bottom(1) and length_pct(1) < 0.5:
@@ -398,7 +406,7 @@ with m3.suspend_ensure():
                 elif top(pos) <= top(1) and bottom(pos) > bottom(1):
                     msg = f'최고종가 하락 장악형 패턴'
 
-    if not msg and down_tail_pct(1) >= 1.0 and down_tail(1) > body(1) * 5 and up_tail(1) < down_tail(1) * 0.2:
+    if not msg and down_tail_pct(1) >= 1.0 and (o(1) == c(1) or down_tail(1) > body(1) * 5) and up_tail(1) < down_tail(1) * 0.2:
         msg = f'교수형 캔들'
 
 if msg: 

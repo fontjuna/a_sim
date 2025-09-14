@@ -4551,7 +4551,7 @@
            </rect>
           </property>
           <property name="text">
-           <string>매수=</string>
+           <string>매수</string>
           </property>
          </widget>
          <widget class="QSpinBox" name="spbBuyCancel">
@@ -4640,7 +4640,7 @@
            </rect>
           </property>
           <property name="text">
-           <string>매도=</string>
+           <string>매도</string>
           </property>
          </widget>
          <widget class="QLabel" name="label_58">
