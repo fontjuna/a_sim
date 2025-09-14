@@ -888,7 +888,7 @@ class ChartManager:
             L = self.length(n)
         return (L / o) * 100.0 if o != 0 else 0.0
 
-    def long_body(self, n: int = 0, m: int = 10, k: float = 2.0) -> bool:
+    def long_body(self, k: float = 2.0, m: int = 10, n: int = 0) -> bool:
         """n봉전의 몸통 길이가 직전 m개 몸통 평균의 k배 이상인지"""
         self._ensure_data_cache()
         if not self._raw_data or n >= self._data_length or m <= 0:
@@ -909,7 +909,7 @@ class ChartManager:
             return False
         return self.body(n) >= avg * k
     
-    def short_body(self, n: int = 0, m: int = 10, k: float = 0.5) -> bool:
+    def short_body(self, k: float = 0.5, m: int = 10, n: int = 0) -> bool:
         """n봉전의 몸통 길이가 직전 m개 몸통 평균의 k배 이하인지"""
         self._ensure_data_cache()
         if not self._raw_data or n >= self._data_length or m <= 0:
@@ -930,7 +930,7 @@ class ChartManager:
             return False
         return self.body(n) <= avg * k
 
-    def price_position(self, n: int = 0, price: int = 0) -> tuple:
+    def price_position(self, price: int = 0, n: int = 0) -> tuple:
         """
         시가(o) 기준 라벨과 시가대비 OHLC/price 퍼센트를 반환
         (n=0 and price=0 일 때 라벨이 'bottom'이면 음봉, 'top'이면 양봉 또는 price_pct 부호로 판단)
