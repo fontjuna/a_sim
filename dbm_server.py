@@ -133,7 +133,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     }
     
     COND_TABLE_NAME = 'real_condition' ## 실시간 조건 검색 종목
-    COND_SELECT_DATE = f"SELECT * FROM {COND_TABLE_NAME} WHERE substr(처리일시, 1, 10) = ? ORDER BY 처리일시"
+    COND_SELECT_DATE = f"SELECT * FROM {COND_TABLE_NAME} WHERE substr(처리일시, 1, 10) = ? AND sim_no = 0 ORDER BY 처리일시"
     COND_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.조건구분, f.조건번호, f.조건식명, f.처리일시, f.sim_no]
     COND_COLUMNS = [col.name for col in COND_FIELDS]
     COND_KEYS = ['처리일시']
@@ -142,7 +142,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     }
     
     REAL_TABLE_NAME = 'real_data' ## 실시간 현재가 데이타 : 당일 매수종목들의 틱 데이타
-    REAL_SELECT_DATE = f"SELECT * FROM {REAL_TABLE_NAME} WHERE substr(체결시간, 1, 8) = ?"
+    REAL_SELECT_DATE = f"SELECT * FROM {REAL_TABLE_NAME} WHERE substr(체결시간, 1, 8) = ? AND sim_no = 0"
     REAL_FIELDS = [f.id, f.체결시간, f.종목코드, f.현재가, f.거래량, f.거래대금, f.누적거래량, f.누적거래대금, f.처리일시, f.sim_no]
     REAL_COLUMNS = [col.name for col in REAL_FIELDS]
     REAL_KEYS = ['체결시간', '종목코드']

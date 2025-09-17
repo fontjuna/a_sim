@@ -164,13 +164,6 @@ class GUI(QMainWindow, form_class):
             self.leSimCodeDay.editingFinished.connect(lambda: self.gui_tr_code_changed(kind='day'))             # 종목코드 변경
             self.tblSimDaily.clicked.connect(lambda x: self.gui_sim_daily_select(x.row()))  
 
-            # 시뮬레이션 수동데이타
-            self.btnSimAddMan.clicked.connect(self.gui_sim_add_manual)
-            self.btnSimDelMan.clicked.connect(self.gui_sim_del_manual)
-            self.btnSimClearMan.clicked.connect(self.gui_sim_clear_manual)
-            self.leSimCode.editingFinished.connect(lambda: self.gui_tr_code_changed(kind='man'))             # 종목코드 변경
-            self.tblSimManual.clicked.connect(lambda x: self.gui_sim_manual_select(x.row()))  # 수동데이타 선택
-
             # 스크립트
             self.tblScript.clicked.connect(lambda x: self.gui_script_select(x.row()))  # 스크립트 선택
             self.btnScriptNew.clicked.connect(self.gui_script_new)
@@ -585,12 +578,11 @@ class GUI(QMainWindow, form_class):
 
     # 수동 주문 ---------------------------------------------------------------------------------------------
     def gui_tr_code_changed(self, kind='tr'):
-        code = self.leTrCode.text() if kind == 'tr' else self.leSimCodeDay.text() if kind == 'day' else self.leSimCode.text() if kind == 'man' else None
+        code = self.leTrCode.text() if kind == 'tr' else self.leSimCodeDay.text() if kind == 'day' else None
         if code:
             name = gm.prx.answer('api', 'GetMasterCodeName', code)
             if kind == 'tr': self.leTrName.setText(name)
             elif kind == 'day': self.leSimNameDay.setText(name)
-            elif kind == 'man': self.leSimName.setText(name)
             
     def gui_tr_order(self):
         kind = '매수' if self.rbTrBuy.isChecked() else '매도'
@@ -1321,55 +1313,6 @@ class GUI(QMainWindow, form_class):
             if data:
                 self.leSimCodeDay.setText(data['종목코드'])
                 self.leSimNameDay.setText(data['종목명'])
-
-    def gui_sim_add_manual(self):
-        code = self.leSimCode.text()
-        name = self.leSimName.text()
-        if code:
-            name = gm.prx.answer('api', 'GetMasterCodeName', code)
-            if name:
-                self.leSimName.setText(name)
-        if name:
-            gm.수동종목.set(key='종목코드', data={'종목코드':code, '종목명':name})
-            gm.수동종목.update_table_widget(self.tblSimManual)
-
-    def gui_sim_del_manual(self):
-        try:
-            code = self.leSimCode.text()
-            name = self.leSimName.text()
-            if not name:
-                QMessageBox.warning(self, '알림', '삭제할 종목을 확인 하세요.')
-                return
-            
-            if not gm.수동종목.in_key(code):
-                QMessageBox.warning(self, '알림', f'{code} {name} 종목이 존재하지 않습니다.')
-                return
-
-            reply = QMessageBox.question(self, '삭제 확인',
-                                        f'{code} {name} 종목을 삭제하시겠습니까?',
-                                        QMessageBox.Yes | QMessageBox.No,
-                                        QMessageBox.No)
-
-            if reply == QMessageBox.Yes:
-                # 설정 삭제
-                result = gm.수동종목.delete(key=code)
-                if result:
-                    gm.수동종목.update_table_widget(self.tblSimManual)
-                    self.gui_sim_clear_manual()
-
-        except Exception as e:
-            logging.error(f'수동종목 삭제 오류: {type(e).__name__} - {e}', exc_info=True)
-
-    def gui_sim_clear_manual(self):
-        self.leSimCode.setText('')
-        self.leSimName.setText('')
-
-    def gui_sim_manual_select(self, row_index):
-        if row_index >= 0:
-            data = gm.수동종목.get(row_index)
-            if data:
-                self.leSimCode.setText(data['종목코드'])
-                self.leSimName.setText(data['종목명'])
 
     # 상태 표시 -------------------------------------------------------------------------------------
     def gui_display_status(self, data=None):
