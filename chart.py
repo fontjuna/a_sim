@@ -1647,6 +1647,14 @@ class ChartManager:
                 tr_values.append(tr)
         
         return sum(tr_values) / len(tr_values) if tr_values else 0.0
+
+    def base_line(self, m: int = 26, n: int = 0) -> float:
+        """기준선 계산"""
+        self._ensure_data_cache()
+        if not self._raw_data or n + m + 1 > self._data_length:
+            return 0.0
+        
+        return (self.highest(self.h, m, n) + self.lowest(self.l, m, n)) / 2
     
     # 스크립트 함수들
     def up_start(self, n: int = 0) -> bool:
@@ -2301,6 +2309,104 @@ class ChartManager:
             base = self.c(k)
             curr = self.c(n)
         return ((curr - base) / base * 100.0) if base > 0 else 0.0
+
+    def ma_breakdown_analysis(self, n: int = 0, m: int = 128) -> dict:
+        """
+        이동평균선(5, 10, 20) 위에서 시작하여 각 이평선 이하로 떨어진 시가/종가 분석
+        
+        Args:
+            n: 시작 봉 인덱스 (0=현재봉에서 시작)
+            m: 검사할 봉 개수 (기본값: 128, 시작봉부터 m개의 봉 중 종가가 하나라도 이평 밑에 있는 봉 직전까지 검사)
+            
+        Returns:
+            dict: {
+                'max_body_pct': 최고 몸통길이 시가대비 퍼센트,
+                'ma5': {'open_count': 시가가 5이평 이하인 횟수, 'close_count': 종가가 5이평 이하인 횟수},
+                'ma10': {'open_count': 시가가 10이평 이하인 횟수, 'close_count': 종가가 10이평 이하인 횟수},
+                'ma20': {'open_count': 시가가 20이평 이하인 횟수, 'close_count': 종가가 20이평 이하인 횟수},
+                'start_idx': 시작봉 인덱스
+            }
+            
+        검사 범위:
+            - m=128: 시작점(n)부터 종가가 하나라도 이평 밑에 있는 봉 직전까지 검사
+            - m=10: 시작점부터 10개 봉 검사 (n, n+1, n+2, ..., n+9)
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return {
+                'max_body_pct': 0.0,
+                'ma5': {'open_count': 0, 'close_count': 0},
+                'ma10': {'open_count': 0, 'close_count': 0},
+                'ma20': {'open_count': 0, 'close_count': 0},
+                'start_idx': -1
+            }
+        
+        # 시작점 확인: n봉에서 5, 10, 20 이평선 위에 시가가 있는지 확인
+        with self.suspend_ensure():
+            ma5 = self.ma(5, n)
+            ma10 = self.ma(10, n)
+            ma20 = self.ma(20, n)
+            open_price = self.o(n)
+            
+            # 시작점에서 모든 이평선 위에 시가가 없으면 분석 불가
+            if not (open_price > ma5 and open_price > ma10 and open_price > ma20):
+                return {
+                    'max_body_pct': 0.0,
+                    'ma5': {'open_count': 0, 'close_count': 0},
+                    'ma10': {'open_count': 0, 'close_count': 0},
+                    'ma20': {'open_count': 0, 'close_count': 0},
+                    'start_idx': -1
+                }
+        
+        # 분석 시작
+        ma5_open_count = 0
+        ma5_close_count = 0
+        ma10_open_count = 0
+        ma10_close_count = 0
+        ma20_open_count = 0
+        ma20_close_count = 0
+        max_body_pct = 0.0
+        
+        # 검사 범위 결정
+        end_idx = n + m
+        
+        with self.suspend_ensure():
+            # 시작점(n)부터 검사하면서 종료점도 동시에 찾기
+            for i in range(n, end_idx):
+                ma5 = self.ma(5, i)
+                ma10 = self.ma(10, i)
+                ma20 = self.ma(20, i)
+                open_price = self.o(i)
+                close_price = self.c(i)
+                
+                # m=None인 경우 종료점 확인: 종가가 하나라도 이평 밑에 있는 봉 직전까지
+                if i > n:
+                    # 종가가 하나라도 이평 밑에 있는지 확인
+                    if close_price < ma5 or close_price < ma10 or close_price < ma20:
+                        end_idx = i
+                        break
+                
+                # 각 이평선 이하로 떨어진 시가/종가 카운트
+                if open_price <= ma5: ma5_open_count += 1
+                if close_price <= ma5: ma5_close_count += 1
+                    
+                if open_price <= ma10: ma10_open_count += 1
+                if close_price <= ma10: ma10_close_count += 1
+                    
+                if open_price <= ma20: ma20_open_count += 1
+                if close_price <= ma20: ma20_close_count += 1
+                
+                # 최고 몸통 비율 계산
+                body_pct = self.body_pct(i)
+                if body_pct > max_body_pct: max_body_pct = body_pct
+        
+        return {
+            'max_body_pct': max_body_pct,
+            'ma5': {'open_count': ma5_open_count, 'close_count': ma5_close_count},
+            'ma10': {'open_count': ma10_open_count, 'close_count': ma10_close_count},
+            'ma20': {'open_count': ma20_open_count, 'close_count': ma20_close_count},
+            'start_idx': n
+        }
 
     # 캐시 관리 함수들
     def clear_cache(self, code=None):

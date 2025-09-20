@@ -1,4 +1,4 @@
-from chart import ChartManager, echo, is_args, ret, div, percent, ma, hoga, 일반매도
+from chart import ChartManager, echo, is_args, ret, div, percent, ma, hoga, 일반매도, 거래량매도
 import math
 
 code = '005930'
@@ -46,24 +46,31 @@ o, h, l, c, v, ma = m3.o, m3.h, m3.l, m3.c, m3.v, m3.ma
 m3._ensure_data_cache()
 with m3.suspend_ensure():
     최고종가, 당일봉수 = m3.get_close_tops( k=1, w=128, m=128, n=1 )
-    첫봉위치 = 당일봉수 - 1
+    첫봉 = 당일봉수 - 1
 
-if len(최고종가) == 0 or 첫봉위치 == 0: # 현재봉이 첫봉
-    echo(f'[False] ({code} {name}) / 최고종가 0개 또는 당일 첫봉 매수 안함 : ({당일봉수}) {최고종가})')
+if len(최고종가) == 0 or 첫봉 == 0: # 현재봉이 첫봉
+    echo(f'[False] ({code} {name}) / 최고종가 0개 또는 당일 첫봉 매수 안함 : ({당일봉수}) {최고종가}')
     ret(False)
 
 pos = 최고종가[0]
 
 # 당일 첫봉이 음봉이면 그 봉 고가 밑에서 매수 안 함 =========================================
 with m3.suspend_ensure():
-    if o(첫봉위치) > c(첫봉위치) and h(첫봉위치) > c() or percent(c(첫봉위치), o(첫봉위치)) <= -5.0:
-        echo(f'[False] ({code} {name}) / 당일 첫봉이 음봉이고 하락율 -5.0% 이하거나 그 고가를 돌파 못함 : ({당일봉수}) {최고종가})')
-        ret(False)
+    if o(첫봉) > c(첫봉):
+        if h(첫봉) > c():
+            echo(f'[False] ({code} {name}) / 당일 첫봉이 음봉이고 그 고가를 돌파 못함 : ({당일봉수}) {최고종가})')
+            ret(False)
+        elif percent(h(첫봉), c(첫봉)) >= 5.0:
+            echo(f'[False] ({code} {name}) / 당일 첫봉이 음봉이고 고가 대비 5%이상 하락 : ({당일봉수}) {최고종가})')
+            ret(False)
+        elif percent(h(첫봉), o(첫봉)) > 3.0:
+            echo(f'[False] ({code} {name}) / 당일 첫봉이 음봉이고 윗꼬리 3% 이상 발생 : ({당일봉수}) {최고종가})')
+            ret(False)
 
-# 당일 첫봉이 음봉이면 그 봉 고가 밑에서 매수 안 함 =========================================
+# 현재봉이 5%이상 상승 중이면 매수 안 함 =========================================
 with m3.suspend_ensure():
-    if o(첫봉위치) > c(첫봉위치) and h(첫봉위치) > c() or percent(h(첫봉위치), c(첫봉위치)) >= 5.0:
-        echo(f'[False] ({code} {name}) / 당일 첫봉이 음봉이고 그 고가를 돌파 못함 또는 고가 대비 5%이상 하락 : ({당일봉수}) {최고종가})')
+    if percent(c(0), o(0)) > 5.0:
+        echo(f'[False] ({code} {name}) / 현재봉이 5%이상 상승 중이면 매수 안 함 : ({당일봉수}) {최고종가})')
         ret(False)
 
 # 일반매도 조건 찾기 ========================================================================
@@ -239,7 +246,7 @@ logoff = is_args('logoff', False)
 
 최고종가, 당일봉수 = m3.get_close_tops(k=1, w=128, m=128, n=1)
 
-if len(최고종가) == 0: pos = 1
+if len(최고종가) == 0: pos = 0
 else: pos = 최고종가[0]
 
 o, h, l, c, v, ma = m3.o, m3.h, m3.l, m3.c, m3.v, m3.ma
@@ -251,6 +258,8 @@ body_pct = m3.body_pct
 length_pct = m3.length_pct
 up_tail_pct = m3.up_tail_pct
 down_tail_pct = m3.down_tail_pct
+red = m3.red
+blue = m3.blue
 
 msg = ''
 m3._ensure_data_cache()
@@ -262,27 +271,35 @@ with m3.suspend_ensure():
         msg = f'현재봉 고가 대비 -5% 이하 하락 중'
     elif ma(5, 1) > ma(5, 0):
         msg = f'현재 5이평 하락 중'
-    elif ma(10, 1) > ma(5, 1):
-        msg = f'전봉 5, 10이평 역전 상태'
+    elif ma(10, 0) > ma(5, 0):
+        msg = f'현재 5, 10이평 역전 상태'
     elif c(1) < ma(10, 1):
         msg = f'전봉 종가, 10이평 역전 상태'
     else:
         # 현재봉으로 판단
-        idx, candle = m3.get_highest_volume(m=10, n=1)
-        if candle['현재가'] > candle['시가'] >= candle['저가'] > c():
-            msg = f'10봉중 최고거래량봉 아래로 이탈'
+        if c(1) < o(0):
+            if percent(o(0), c(1)) > 1.0 and c(1) > c(0):
+                msg = f'1% 이상 갭 상승 시작 후 전봉 종가 이하로 하락'
+        elif o(0) < c(1):
+            msg = f'현재봉 갭 하락 시작 음봉'
+
+        if not msg:
+            idx, candle = m3.get_highest_volume(m=10, n=1)
+            if candle['현재가'] > candle['시가'] >= candle['저가'] > c():
+                msg = f'10봉중 최고거래량봉 아래로 이탈'
 
         if not msg and h(1) >= c():
             if down_tail_pct(1) >= 1.0 and (o(1) == c(1) or down_tail(1) > body(1) * 5) and up_tail(1) < down_tail(1) * 0.2:
                 msg = f'교수형 캔들의 고가 갱신 못함'
 
-        if not msg and c(3) < c(2) < c(1):
-            if o() > c() and body(3) > body(2) > body(1):
-                msg = f'상승 체력 소진으로 3연속 몸통이 작아 지면서 전봉 시가 이하로 하락 음봉'
+        if not msg and blue(0) and all([red(3), red(2), red(1)]) and c(3) < c(2) < c(1):
+            min_body = hoga(o(1), 5) - o(1)
+            if not (body(1) < min_body or body(3) < min_body):
+                if body(3) > body(2) > body(1) and c(1) - (c(1) - o(1)) / 2 > c():
+                    msg = f'상승 체력 소진으로 3연속 몸통이 작아 지면서 전봉 중간 이하로 하락'
 
-            elif min(o(1), c(1)) > c():
-                if o() > c() and (3) < c(2) < c(1) and body(1) > body(2) > body(3) and h(1) > h():
-                    msg = f'3연속 몸통이 커졌으나 체력 소진으로 고가 돌파 못한 전봉 시가 이하로 하락 음봉 발생'
+                elif body(1) > body(2) > body(3) and c(1) - (c(1) - o(1)) / 3 > c():
+                    msg = f'3연속 몸통이 커졌으나 체력 소진으로 고가 돌파 못한 전봉 1/3 이하로 하락'
 
         # 이하 전봉으로 판단
         if not msg and (h(2) > h(1) and bottom(1) >= top(2)):
@@ -356,3 +373,60 @@ if reason:
     ret(False)
 
 ret(True)
+
+
+# =============================================================================================
+# 스크립트명 : 거래량매수 v20250920.170345
+
+dm = ChartManager(code, 'dy')
+m3 = ChartManager(code, 'mi', 3)
+
+c, ma, base_line = m3.c, m3.ma, m3.base_line
+
+reason = ''
+m3._ensure_data_cache()
+with m3.suspend_ensure():
+    if m3.base_line(n=0) > c(0):
+        reason = f'3분봉 일목 기준선 밑에서 매수 하지 않음'
+    elif ma(20, 0) > c(0):
+        reason = f'3분봉 20이평 밑에서 매수 하지 않음'
+#if not reason:
+#    reason = 거래량매도(logoff=True)
+
+if not reason: ret(True)
+echo(f'[False] ({code} {name}) / {reason}')
+ret(False)
+
+# =============================================================================================
+# 스크립트명 : 거래량매도 v20250920.170415
+
+"""
+<키움 검색식에 구현해야 할 조건들>
+- 없음.
+
+<이 스크립트에서 적용한 조건들>
+1. 상한가 이거나
+2. 3분봉 20이평이나 일목 기준선을 이탈 한 경우
+"""
+dm = ChartManager(code, 'dy')
+m3 = ChartManager(code, 'mi', 3)
+logoff = is_args('logoff', False)
+
+c, ma = m3.c, m3.ma
+
+msg = ''
+m3._ensure_data_cache()
+with m3.suspend_ensure():
+    if hoga(dm.c(1), 99) <= dm.c(0):
+        msg = f'상한가'
+    elif m3.base_line(n=0) > c(0) and m3.base_line(n=1) < c(1):
+        msg = f'3분봉 일목 기준선 데드크로스'
+    elif ma(20, 0) > c(0) and ma(20, 1) < c(1):
+        msg = f'3분봉 20이평 데드크로스'
+
+if not msg: ret(False)
+if logoff:
+    ret(msg)
+else:
+    echo(f'[{True}] ({code} {name}) 현재가={dm.c()} / {msg}')
+    ret(True)
