@@ -2446,7 +2446,7 @@
      <enum>QTabWidget::Triangular</enum>
     </property>
     <property name="currentIndex">
-     <number>0</number>
+     <number>4</number>
     </property>
     <widget class="QWidget" name="tab_6">
      <attribute name="title">
@@ -3828,7 +3828,7 @@
         </rect>
        </property>
        <property name="currentIndex">
-        <number>0</number>
+        <number>2</number>
        </property>
        <widget class="QWidget" name="tab_8">
         <attribute name="title">
@@ -5706,15 +5706,15 @@
        </rect>
       </property>
       <property name="title">
-       <string>모의실행 3 (서버에서 가져 온 1분봉차트 데이터로 스크립트 테스트를 함)</string>
+       <string>모의실행 3 (서버연결하고 실행 됐던 지난 데이타로 스크립트 테스트를 함)</string>
       </property>
       <widget class="QGroupBox" name="groupBox_25">
        <property name="geometry">
         <rect>
-         <x>0</x>
-         <y>70</y>
-         <width>311</width>
-         <height>591</height>
+         <x>260</x>
+         <y>30</y>
+         <width>351</width>
+         <height>621</height>
         </rect>
        </property>
        <property name="title">
@@ -5723,10 +5723,10 @@
        <widget class="QTableWidget" name="tblSimDaily">
         <property name="geometry">
          <rect>
-          <x>0</x>
+          <x>10</x>
           <y>60</y>
-          <width>301</width>
-          <height>451</height>
+          <width>331</width>
+          <height>551</height>
          </rect>
         </property>
         <property name="sizeAdjustPolicy">
@@ -5739,11 +5739,128 @@
          <bool>false</bool>
         </property>
        </widget>
+       <widget class="QPushButton" name="btnSimReadDay">
+        <property name="geometry">
+         <rect>
+          <x>120</x>
+          <y>20</y>
+          <width>101</width>
+          <height>31</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>종목가져오기</string>
+        </property>
+       </widget>
+       <widget class="QPushButton" name="btnSimReadTick">
+        <property name="geometry">
+         <rect>
+          <x>230</x>
+          <y>20</y>
+          <width>101</width>
+          <height>31</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>데이타읽어오기</string>
+        </property>
+       </widget>
+       <widget class="QDateEdit" name="dtSimDate">
+        <property name="geometry">
+         <rect>
+          <x>10</x>
+          <y>24</y>
+          <width>101</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+        <property name="calendarPopup">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </widget>
+      <widget class="QGroupBox" name="groupBox_16">
+       <property name="geometry">
+        <rect>
+         <x>10</x>
+         <y>470</y>
+         <width>241</width>
+         <height>171</height>
+        </rect>
+       </property>
+       <property name="title">
+        <string>종목추가</string>
+       </property>
+       <widget class="QLabel" name="label_52">
+        <property name="geometry">
+         <rect>
+          <x>10</x>
+          <y>30</y>
+          <width>61</width>
+          <height>16</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>종목코드</string>
+        </property>
+       </widget>
+       <widget class="QLineEdit" name="leSimCodeDay">
+        <property name="geometry">
+         <rect>
+          <x>10</x>
+          <y>50</y>
+          <width>221</width>
+          <height>20</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QPushButton" name="btnSimClearDay">
+        <property name="geometry">
+         <rect>
+          <x>170</x>
+          <y>130</y>
+          <width>61</width>
+          <height>31</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>비우기</string>
+        </property>
+       </widget>
+       <widget class="QLineEdit" name="leSimNameDay">
+        <property name="geometry">
+         <rect>
+          <x>10</x>
+          <y>100</y>
+          <width>221</width>
+          <height>20</height>
+         </rect>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+       <widget class="QLabel" name="label_48">
+        <property name="geometry">
+         <rect>
+          <x>10</x>
+          <y>80</y>
+          <width>61</width>
+          <height>16</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>종목명</string>
+        </property>
+       </widget>
        <widget class="QPushButton" name="btnSimAddDay">
         <property name="geometry">
          <rect>
-          <x>100</x>
-          <y>550</y>
+          <x>10</x>
+          <y>130</y>
           <width>61</width>
           <height>31</height>
          </rect>
@@ -5755,8 +5872,8 @@
        <widget class="QPushButton" name="btnSimDelDay">
         <property name="geometry">
          <rect>
-          <x>170</x>
-          <y>550</y>
+          <x>90</x>
+          <y>130</y>
           <width>61</width>
           <height>31</height>
          </rect>
@@ -5765,259 +5882,110 @@
          <string>삭제</string>
         </property>
        </widget>
-       <widget class="QPushButton" name="btnSimClearDay">
-        <property name="geometry">
-         <rect>
-          <x>240</x>
-          <y>550</y>
-          <width>61</width>
-          <height>31</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>비우기</string>
-        </property>
-       </widget>
-       <widget class="QPushButton" name="btnSimReadDay">
-        <property name="geometry">
-         <rect>
-          <x>10</x>
-          <y>20</y>
-          <width>101</width>
-          <height>31</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>종목가져오기</string>
-        </property>
-       </widget>
-       <widget class="QLineEdit" name="leSimNameDay">
-        <property name="geometry">
-         <rect>
-          <x>130</x>
-          <y>520</y>
-          <width>171</width>
-          <height>20</height>
-         </rect>
-        </property>
-        <property name="readOnly">
-         <bool>true</bool>
-        </property>
-       </widget>
-       <widget class="QLineEdit" name="leSimCodeDay">
-        <property name="geometry">
-         <rect>
-          <x>70</x>
-          <y>520</y>
-          <width>51</width>
-          <height>20</height>
-         </rect>
-        </property>
-       </widget>
-       <widget class="QLabel" name="label_48">
-        <property name="geometry">
-         <rect>
-          <x>10</x>
-          <y>524</y>
-          <width>61</width>
-          <height>16</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>종목코드</string>
-        </property>
-       </widget>
-       <widget class="QPushButton" name="btnSimReadTick">
-        <property name="geometry">
-         <rect>
-          <x>190</x>
-          <y>20</y>
-          <width>101</width>
-          <height>31</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>데이타읽어오기</string>
-        </property>
-       </widget>
-      </widget>
-      <widget class="QGroupBox" name="groupBox_28">
-       <property name="geometry">
-        <rect>
-         <x>310</x>
-         <y>70</y>
-         <width>311</width>
-         <height>591</height>
-        </rect>
-       </property>
-       <property name="title">
-        <string>수동추가종목</string>
-       </property>
-       <widget class="QTableWidget" name="tblSimManual">
-        <property name="geometry">
-         <rect>
-          <x>10</x>
-          <y>60</y>
-          <width>301</width>
-          <height>451</height>
-         </rect>
-        </property>
-        <property name="sizeAdjustPolicy">
-         <enum>QAbstractScrollArea::AdjustToContents</enum>
-        </property>
-        <property name="editTriggers">
-         <set>QAbstractItemView::NoEditTriggers</set>
-        </property>
-        <property name="sortingEnabled">
-         <bool>false</bool>
-        </property>
-       </widget>
-       <widget class="QLabel" name="label_44">
-        <property name="geometry">
-         <rect>
-          <x>10</x>
-          <y>524</y>
-          <width>61</width>
-          <height>16</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>종목코드</string>
-        </property>
-       </widget>
-       <widget class="QLineEdit" name="leSimName">
-        <property name="geometry">
-         <rect>
-          <x>130</x>
-          <y>520</y>
-          <width>171</width>
-          <height>20</height>
-         </rect>
-        </property>
-        <property name="readOnly">
-         <bool>true</bool>
-        </property>
-       </widget>
-       <widget class="QLineEdit" name="leSimCode">
-        <property name="geometry">
-         <rect>
-          <x>70</x>
-          <y>520</y>
-          <width>51</width>
-          <height>20</height>
-         </rect>
-        </property>
-       </widget>
-       <widget class="QPushButton" name="btnSimAddMan">
-        <property name="geometry">
-         <rect>
-          <x>100</x>
-          <y>550</y>
-          <width>61</width>
-          <height>31</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>추가</string>
-        </property>
-       </widget>
-       <widget class="QPushButton" name="btnSimDelMan">
-        <property name="geometry">
-         <rect>
-          <x>170</x>
-          <y>550</y>
-          <width>61</width>
-          <height>31</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>삭제</string>
-        </property>
-       </widget>
-       <widget class="QPushButton" name="btnSimClearMan">
-        <property name="geometry">
-         <rect>
-          <x>240</x>
-          <y>550</y>
-          <width>61</width>
-          <height>31</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>비우기</string>
-        </property>
-       </widget>
-      </widget>
-      <widget class="QDateEdit" name="dtSimDate">
-       <property name="geometry">
-        <rect>
-         <x>70</x>
-         <y>30</y>
-         <width>91</width>
-         <height>21</height>
-        </rect>
-       </property>
-       <property name="alignment">
-        <set>Qt::AlignCenter</set>
-       </property>
-       <property name="calendarPopup">
-        <bool>true</bool>
-       </property>
-      </widget>
-      <widget class="QLabel" name="label_47">
-       <property name="geometry">
-        <rect>
-         <x>10</x>
-         <y>36</y>
-         <width>56</width>
-         <height>12</height>
-        </rect>
-       </property>
-       <property name="text">
-        <string>실행일자</string>
-       </property>
       </widget>
       <widget class="QGroupBox" name="groupBox_29">
        <property name="geometry">
         <rect>
-         <x>440</x>
-         <y>20</y>
-         <width>171</width>
-         <height>51</height>
+         <x>10</x>
+         <y>130</y>
+         <width>241</width>
+         <height>61</height>
         </rect>
        </property>
        <property name="title">
-        <string>모의실행3 에 적용 할 종목</string>
+        <string>배속설정</string>
        </property>
-       <widget class="QCheckBox" name="chkManual">
+       <widget class="QRadioButton" name="rdSpeed02">
+        <property name="geometry">
+         <rect>
+          <x>170</x>
+          <y>20</y>
+          <width>51</width>
+          <height>16</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>x 0.2</string>
+        </property>
+       </widget>
+       <widget class="QRadioButton" name="rdSpeed05">
         <property name="geometry">
          <rect>
           <x>90</x>
           <y>20</y>
-          <width>81</width>
+          <width>51</width>
           <height>16</height>
          </rect>
         </property>
         <property name="text">
-         <string>수동추가</string>
+         <string>x 0.5</string>
         </property>
        </widget>
-       <widget class="QCheckBox" name="chkDaily">
+       <widget class="QRadioButton" name="rdSpeed1">
         <property name="geometry">
          <rect>
           <x>10</x>
           <y>20</y>
-          <width>81</width>
+          <width>51</width>
           <height>16</height>
          </rect>
         </property>
         <property name="text">
-         <string>실행일자</string>
-        </property>
-        <property name="checked">
-         <bool>true</bool>
+         <string>x 1</string>
         </property>
        </widget>
+       <widget class="QRadioButton" name="rdSpeed2">
+        <property name="geometry">
+         <rect>
+          <x>10</x>
+          <y>40</y>
+          <width>51</width>
+          <height>16</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>x 2</string>
+        </property>
+       </widget>
+       <widget class="QRadioButton" name="rdSpeed5">
+        <property name="geometry">
+         <rect>
+          <x>90</x>
+          <y>40</y>
+          <width>51</width>
+          <height>16</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>x 5</string>
+        </property>
+       </widget>
+       <widget class="QRadioButton" name="rdSpeed10">
+        <property name="geometry">
+         <rect>
+          <x>170</x>
+          <y>40</y>
+          <width>51</width>
+          <height>16</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>x 10</string>
+        </property>
+       </widget>
+      </widget>
+      <widget class="QPushButton" name="btnSimStart_2">
+       <property name="geometry">
+        <rect>
+         <x>10</x>
+         <y>90</y>
+         <width>91</width>
+         <height>31</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>매매시작</string>
+       </property>
       </widget>
      </widget>
     </widget>

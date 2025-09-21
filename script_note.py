@@ -381,21 +381,13 @@ ret(True)
 dm = ChartManager(code, 'dy')
 m3 = ChartManager(code, 'mi', 3)
 
-c, ma, base_line = m3.c, m3.ma, m3.base_line
+#c, ma, base_line = m3.c, m3.ma, m3.base_line
 
-reason = ''
-m3._ensure_data_cache()
-with m3.suspend_ensure():
-    if m3.base_line(n=0) > c(0):
-        reason = f'3분봉 일목 기준선 밑에서 매수 하지 않음'
-    elif ma(20, 0) > c(0):
-        reason = f'3분봉 20이평 밑에서 매수 하지 않음'
-#if not reason:
-#    reason = 거래량매도(logoff=True)
+reason = 거래량매도(logoff=True)
 
-if not reason: ret(True)
-echo(f'[False] ({code} {name}) / {reason}')
-ret(False)
+
+echo(f'[{reason==""}] ({code} {name}) 현재가={dm.c()} / {reason}')
+ret(reason=='')
 
 # =============================================================================================
 # 스크립트명 : 거래량매도 v20250920.170415
@@ -412,21 +404,54 @@ dm = ChartManager(code, 'dy')
 m3 = ChartManager(code, 'mi', 3)
 logoff = is_args('logoff', False)
 
-c, ma = m3.c, m3.ma
+o, h, l, c, ma = m3.o, m3.h, m3.l, m3.c, m3.ma
+blue, red, body = m3.blue, m3.red, m3.body
 
 msg = ''
+
 m3._ensure_data_cache()
 with m3.suspend_ensure():
+    # 매수/매도 스크립트 겸용 판단 루틴 *****************************************************
+
+    # 현재봉 기준 판단 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     if hoga(dm.c(1), 99) <= dm.c(0):
         msg = f'상한가'
-    elif m3.base_line(n=0) > c(0) and m3.base_line(n=1) < c(1):
-        msg = f'3분봉 일목 기준선 데드크로스'
-    elif ma(20, 0) > c(0) and ma(20, 1) < c(1):
-        msg = f'3분봉 20이평 데드크로스'
+    
+    # if not msg:
+    #     idx, candle = m3.get_highest_volume(m=10, n=1)
+    #     if (candle['고가'] + candle['저가']) / 2 > c():
+    #         msg = f'10봉중 최고거래량봉 중간 이하로 하락'
 
-if not msg: ret(False)
-if logoff:
-    ret(msg)
-else:
-    echo(f'[{True}] ({code} {name}) 현재가={dm.c()} / {msg}')
-    ret(True)
+    # 전봉 기준 판단 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    if not msg and m3.base_line(n=1) > c(1) and m3.base_line(n=2) < c(2):
+        msg = f'전봉 3분봉 일목 기준선 데드크로스'
+        
+    # elif not msg and ma(20, 1) > c(1) and ma(20, 2) < c(2):
+    #     msg = f'전봉 3분봉 20이평 데드크로스'
+
+    # 매도 스크립트 전용 판단 루틴 *****************************************************
+
+    if not logoff:
+        # 현재봉 기준 판단 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        # 전봉 종가 밑에서 시작은 매도세 우위가 시작 됨
+        if not msg and c(1) > o(0) and c(0) < o(0):
+            msg = f'현재봉 갭 하락 음봉'
+
+        # 3연속 상승 후 체력 소진으로 하락 전환 예고
+        if not msg and blue(0) and all([red(3), red(2), red(1)]) and c(3) < c(2) < c(1):
+            min_body = hoga(o(3), 5) - o(3)
+            if not (body(1) < min_body or body(3) < min_body):
+                if body(3) > body(2) > body(1) and c(1) - (c(1) - o(1)) / 2 > c():
+                    msg = f'상승 체력 소진으로 3연속 몸통이 작아 지면서 전봉 중간 이하로 하락'
+
+                elif body(1) > body(2) > body(3) and c(1) - (c(1) - o(1)) / 3 > c():
+                    msg = f'3연속 몸통이 커졌으나 체력 소진으로 고가 돌파 못한 전봉 1/3 이하로 하락'
+                
+        # 최고 고가봉 윗꼬리 안에서 고가가 2회 형성 후 전봉이 양봉이면 현재봉이 고점갱신을 못 하고 자기 고점에 2호가 이하로 하락중이거나 전봉이 음봉이면 바로 매도
+
+        # 전봉 기준 판단 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+if logoff: ret(msg)
+
+echo(f'[{msg!=""}] ({code} {name}) 현재가={dm.c()} / {msg}')
+ret(msg!="")
