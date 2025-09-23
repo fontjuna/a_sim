@@ -616,10 +616,8 @@ class ChartData:
         return f"{datetime_str[:8]}{tick_start//60:02d}{tick_start%60:02d}00"
 
 class ChartManager:
-    """고성능 차트 매니저 - 속도 최적화 버전"""
-    
     def __init__(self, code, cycle='mi', tick=3):
-        self.cht_dt = ChartData()
+        self.chart_data = ChartData()
         self.cycle = cycle
         self.tick = tick
         self.code = code
@@ -654,7 +652,7 @@ class ChartManager:
         """데이터 캐시 확인 및 업데이트 (최적화)"""
         if getattr(self, '_ensure_suspended', 0) > 0: return
 
-        current_version = self.cht_dt._data_versions.get(self.code, 0)
+        current_version = self.chart_data._data_versions.get(self.code, 0)
         
         # 버전이 같으면 즉시 리턴
         if self._cache_version == current_version and self._raw_data is not None:
@@ -664,10 +662,10 @@ class ChartManager:
         if self.cycle == 'mi':
             cycle_key = f'mi{self.tick}'
             # 모든 분봉은 ChartData에서 실시간 업데이트됨 - 직접 가져오기
-            self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(cycle_key, [])
+            self._raw_data = self.chart_data._chart_data.get(self.code, {}).get(cycle_key, [])
         else:
             # 일/주/월봉: ChartData에서 실시간 업데이트됨 - 직접 가져오기
-            self._raw_data = self.cht_dt._chart_data.get(self.code, {}).get(self.cycle, [])
+            self._raw_data = self.chart_data._chart_data.get(self.code, {}).get(self.cycle, [])
         
         self._cache_version = current_version
         self._data_length = len(self._raw_data) if self._raw_data else 0
@@ -2121,7 +2119,220 @@ class ChartManager:
                     break
         
         return (high_close_indices, today_bars)
+    
+    def get_daily_top_close(self, n: int = 0) -> tuple:
+        """
+        당일 최고 종가봉의 인덱스와 당일 봉수 구하기
+        
+        Args:
+            n: 기준 봉 인덱스 (0=현재봉)
+            
+        Returns:
+            tuple: (당일 최고 종가봉 인덱스, 당일 봉수)
+                   (-1, 0)이면 찾지 못함
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return (-1, 0)
+        
+        # 당일 날짜 구하기
+        today = datetime.now().strftime('%Y%m%d')
+        
+        # 당일 봉들 중에서 최고 종가 찾기
+        highest_close = 0
+        highest_close_index = -1
+        daily_bar_count = 0
+        
+        with self.suspend_ensure():
+            for i in range(n, self._data_length):
+                candle = self._raw_data[i]
+                candle_date = candle.get('체결시간', '')[:8]
+                
+                # 당일이 아니면 중단
+                if candle_date != today:
+                    break
+                
+                daily_bar_count += 1
+                close_price = candle.get('현재가', 0)
+                if close_price > highest_close:
+                    highest_close = close_price
+                    highest_close_index = i
+        
+        return (highest_close_index, daily_bar_count)
 
+    def get_rise_percentage(self, n: int = 0) -> dict:
+        """
+        현재봉 기준 첫 양봉 분석
+        
+        Args:
+            n: 기준 봉 인덱스 (0=현재봉)
+            
+        Returns:
+            dict: {
+                'rise_pct': 상승률(%) - 시작 음봉 종가 대비 이어진 양봉들의 마지막 양봉 종가의 상승률,
+                'red_idx': 마지막 양봉의 인덱스,
+                'red_cnt': 연속된 양봉의 개수,
+                'bottom': 시작 음봉의 종가,
+                'top': 마지막 양봉의 종가,
+                'red_max': 양봉들 중 몸통이 제일 긴 봉의 시가대비 종가 퍼센트
+            }
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return { 'rise_pct': 0.0, 'red_idx': -1, 'red_cnt': 0, 'bottom': 0.0, 'top': 0.0 }
+        
+        # 현재봉부터 과거로 검색하여 첫 양봉 찾기
+        red_idx = -1
+        
+        with self.suspend_ensure():
+            for i in range(n, self._data_length):
+                candle = self._raw_data[i]
+                if candle['현재가'] >= candle['시가']:  # 양봉
+                    red_idx = i
+                    break
+        
+        if red_idx == -1:
+            return { 'rise_pct': 0.0, 'red_idx': -1, 'red_cnt': 0, 'bottom': 0.0, 'top': 0.0 }
+        
+        # 첫 양봉 이후의 첫 음봉 찾기 (양봉 이후 음봉)
+        bottom = 0.0
+        red_cnt = 0
+        red_max = 0
+        with self.suspend_ensure():
+            for i in range(red_idx, self._data_length):
+                candle = self._raw_data[i]
+                if candle['현재가'] < candle['시가']:  # 음봉
+                    bottom = candle['현재가']
+                    break
+                red_cnt += 1
+                pct = (candle['현재가'] - candle['시가']) / candle['시가'] * 100
+                if pct > red_max:
+                    red_max = pct
+        
+            # 첫 양봉의 종가
+            top = self._raw_data[red_idx]['현재가']
+        
+        # 상승률 계산
+        rise_pct = 0.0
+        if bottom > 0:
+            rise_pct = ((top - bottom) / bottom) * 100
+        
+        return { 'rise_pct': rise_pct, 'red_idx': red_idx, 'red_cnt': red_cnt, 'bottom': bottom, 'top': top, 'red_max': red_max }
+
+    def get_rise_analysis(self, k: int = 5, n: int = 0) -> dict:
+        """
+        이평선 기반 상승률 분석
+
+        Args:
+            k: 이평주기 (기본값: 5)
+            n: 기준 봉 인덱스 (0=현재봉)
+            
+        Returns:
+            dict: {
+                'rise_pct': 상승률(%) - B봉 대비 A봉 종가의 상승률,
+                'top_idx': A봉(당일 최고 종가봉) 인덱스,
+                'start_idx': B봉(k이평 이하 첫 종가봉) 인덱스,
+                'top_c': A봉 종가,
+                'start_c': B봉 종가,
+                'in_today': B봉이 당일에 있는지 여부 (False면 전일 종가),
+                'max_pct': A봉과 B봉 사이 양봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
+            }
+        """
+        
+        if self.cycle != 'mi':
+            return {
+                'rise_pct': 0.0, 'top_idx': -1, 'start_idx': -1,
+                'top_c': 0.0, 'start_c': 0.0, 'in_today': False,
+                'max_pct': 0.0
+            }
+
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return {
+                'rise_pct': 0.0, 'top_idx': -1, 'start_idx': -1,
+                'top_c': 0.0, 'start_c': 0.0, 'in_today': False,
+                'max_pct': 0.0
+            }
+        
+        today = datetime.now().strftime('%Y%m%d')
+        top_idx = -1
+        top_c = 0.0
+        start_idx = -1
+        start_c = 0.0
+        in_today = False
+        max_pct = 0.0
+        
+        with self.suspend_ensure():
+            # 1. n봉부터 당일 봉들 중에서 최고 종가(A) 찾기
+            for i in range(n, self._data_length):
+                candle = self._raw_data[i]
+                candle_date = candle.get('체결시간', '')[:8]
+                
+                if candle_date != today:
+                    break
+                
+                close_price = candle.get('현재가', 0)
+                if close_price > top_c:
+                    top_c = close_price
+                    top_idx = i
+            
+            if top_idx == -1:
+                return {
+                    'rise_pct': 0.0, 'top_idx': -1, 'start_idx': -1,
+                    'top_c': 0.0, 'start_c': 0.0, 'in_today': False,
+                    'max_pct': 0.0
+                }
+            
+            # 2. A봉부터 검사하면서 k이평 이하 종가 봉(B) 찾기 + 최대 몸통 길이 계산
+            for i in range(top_idx, self._data_length):
+                candle = self._raw_data[i]
+                candle_date = candle.get('체결시간', '')[:8]
+                
+                close_price = candle.get('현재가', 0)
+                ma_k = self.ma(k, i)
+                
+                # 당일 봉인 경우
+                if candle_date == today:
+                    # k이평 이하에 종가가 형성되면 B봉으로 설정
+                    if close_price <= ma_k:
+                        start_idx = i
+                        start_c = close_price
+                        in_today = True
+                        break
+                    
+                    # 최대 몸통 길이 계산 (양봉인 경우만)
+                    open_price = candle.get('시가', 0)
+                    if close_price >= open_price and open_price > 0:
+                        body_pct = ((close_price - open_price) / open_price) * 100.0
+                        if body_pct > max_pct:
+                            max_pct = body_pct
+                
+                # 전일 봉인 경우 (당일에 B봉을 찾지 못했을 때)
+                elif candle_date < today and start_idx == -1:
+                    start_idx = i
+                    start_c = close_price
+                    in_today = False
+                    break
+            
+            if start_idx == -1 or start_c <= 0:
+                return {
+                    'rise_pct': 0.0, 'top_idx': top_idx, 'start_idx': -1,
+                    'top_c': top_c, 'start_c': 0.0, 'in_today': False,
+                    'max_pct': max_pct
+                }
+        
+        rise_pct = ((top_c - start_c) / start_c) * 100.0 if start_c > 0 else 0.0
+        
+        return {
+            'rise_pct': rise_pct,
+            'top_idx': top_idx,
+            'start_idx': start_idx,
+            'top_c': top_c,
+            'start_c': start_c,
+            'in_today': in_today,
+            'max_pct': max_pct
+        }
+            
     def consecutive_count(self, condition_func, max_check: int = 128, n: int = 0) -> int:
         """
         이전 n봉 기준으로 condition이 몇 번 연속으로 발생했는지 계산
@@ -2320,7 +2531,7 @@ class ChartManager:
             
         Returns:
             dict: {
-                'max_body_pct': 최고 몸통길이 시가대비 퍼센트,
+                'max_pct': 최고 몸통길이 시가대비 퍼센트,
                 'ma5': {'open_count': 시가가 5이평 이하인 횟수, 'close_count': 종가가 5이평 이하인 횟수},
                 'ma10': {'open_count': 시가가 10이평 이하인 횟수, 'close_count': 종가가 10이평 이하인 횟수},
                 'ma20': {'open_count': 시가가 20이평 이하인 횟수, 'close_count': 종가가 20이평 이하인 횟수},
@@ -2334,7 +2545,7 @@ class ChartManager:
         self._ensure_data_cache()
         if not self._raw_data or n >= self._data_length:
             return {
-                'max_body_pct': 0.0,
+                'max_pct': 0.0,
                 'ma5': {'open_count': 0, 'close_count': 0},
                 'ma10': {'open_count': 0, 'close_count': 0},
                 'ma20': {'open_count': 0, 'close_count': 0},
@@ -2351,7 +2562,7 @@ class ChartManager:
             # 시작점에서 모든 이평선 위에 시가가 없으면 분석 불가
             if not (open_price > ma5 and open_price > ma10 and open_price > ma20):
                 return {
-                    'max_body_pct': 0.0,
+                    'max_pct': 0.0,
                     'ma5': {'open_count': 0, 'close_count': 0},
                     'ma10': {'open_count': 0, 'close_count': 0},
                     'ma20': {'open_count': 0, 'close_count': 0},
@@ -2365,7 +2576,7 @@ class ChartManager:
         ma10_close_count = 0
         ma20_open_count = 0
         ma20_close_count = 0
-        max_body_pct = 0.0
+        max_pct = 0.0
         
         # 검사 범위 결정
         end_idx = n + m
@@ -2398,10 +2609,10 @@ class ChartManager:
                 
                 # 최고 몸통 비율 계산
                 body_pct = self.body_pct(i)
-                if body_pct > max_body_pct: max_body_pct = body_pct
+                if body_pct > max_pct: max_pct = body_pct
         
         return {
-            'max_body_pct': max_body_pct,
+            'max_pct': max_pct,
             'ma5': {'open_count': ma5_open_count, 'close_count': ma5_close_count},
             'ma10': {'open_count': ma10_open_count, 'close_count': ma10_close_count},
             'ma20': {'open_count': ma20_open_count, 'close_count': ma20_close_count},
@@ -2500,7 +2711,7 @@ class ScriptManager:
         self.script_file = script_file
         self.scripts = {}  # {script_name: {script: str, desc: str}}
         self._running_scripts = set()  # 실행 중인 스크립트 추적
-        self.cht_dt = ChartData()  # 차트 데이터 관리자
+        self.chart_data = ChartData()  # 차트 데이터 관리자
         
         # 스레드별 컨텍스트 관리
         self._thread_local = threading.local()

@@ -1,5 +1,6 @@
 from chart import ChartManager, echo, is_args, ret, div, percent, ma, hoga, 일반매도, 거래량매도
 import math
+from datetime import datetime, timedelta
 
 code = '005930'
 name = '삼성전자'
@@ -48,8 +49,16 @@ with m3.suspend_ensure():
     최고종가, 당일봉수 = m3.get_close_tops( k=1, w=128, m=128, n=1 )
     첫봉 = 당일봉수 - 1
 
-if len(최고종가) == 0 or 첫봉 == 0: # 현재봉이 첫봉
-    echo(f'[False] ({code} {name}) / 최고종가 0개 또는 당일 첫봉 매수 안함 : ({당일봉수}) {최고종가}')
+ymd = datetime.datetime.now().strftime('%H%M%S')
+if 첫봉 == 0:
+    bar_time_str = m3._raw_data[첫봉]['체결시간'][8:14]
+    bar_time_dt = datetime.datetime.strptime(bar_time_str, "%H%M%S") + datetime.timedelta(minutes=1)
+    bar_time = bar_time_dt.strftime("%H%M%S")
+    if ymd <= bar_time:
+        reason = f'당일 첫봉 1 분간 매수 하지 않음'
+
+if len(최고종가) == 0:
+    echo(f'[False] ({code} {name}) / 최고종가 0개 매수 안함 : ({당일봉수}) {최고종가}')
     ret(False)
 
 pos = 최고종가[0]
@@ -86,7 +95,7 @@ with dt.suspend_ensure():
     max_vol = 0
     max_idx = 1
     if cache_key not in result_cache:
-        for i in range(1, 119):
+        for i in range(1, 59):
             vol = dt.v(i)
             if vol > max_vol:
                 max_vol = vol
@@ -280,7 +289,7 @@ with m3.suspend_ensure():
         if c(1) < o(0):
             if percent(o(0), c(1)) > 1.0 and c(1) > c(0):
                 msg = f'1% 이상 갭 상승 시작 후 전봉 종가 이하로 하락'
-        elif o(0) < c(1):
+        elif pos == 1 and o(0) < c(1) and c(0) < o(0):
             msg = f'현재봉 갭 하락 시작 음봉'
 
         if not msg:
@@ -381,10 +390,19 @@ ret(True)
 dm = ChartManager(code, 'dy')
 m3 = ChartManager(code, 'mi', 3)
 
-#c, ma, base_line = m3.c, m3.ma, m3.base_line
+종가위치, 당일봉수 = m3.get_daily_top_close()
+ymd = datetime.datetime.now().strftime('%H%M%S')
 
-reason = 거래량매도(logoff=True)
+reason = ''
+if 당일봉수 > 0:
+    bar_time_str = m3._raw_data[당일봉수 - 1]['체결시간'][8:14]
+    bar_time_dt = datetime.datetime.strptime(bar_time_str, "%H%M%S") + datetime.timedelta(minutes=1)
+    bar_time = bar_time_dt.strftime("%H%M%S")
+    if 당일봉수 == 1 and ymd <= bar_time:
+        reason = f'당일 첫봉 1 분간 매수 하지 않음'
 
+if not reason:
+    reason = 거래량매도(logoff=True)
 
 echo(f'[{reason==""}] ({code} {name}) 현재가={dm.c()} / {reason}')
 ret(reason=='')
@@ -417,25 +435,38 @@ with m3.suspend_ensure():
     if hoga(dm.c(1), 99) <= dm.c(0):
         msg = f'상한가'
     
-    # if not msg:
-    #     idx, candle = m3.get_highest_volume(m=10, n=1)
-    #     if (candle['고가'] + candle['저가']) / 2 > c():
-    #         msg = f'10봉중 최고거래량봉 중간 이하로 하락'
-
     # 전봉 기준 판단 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    if not msg and m3.base_line(n=1) > c(1) and m3.base_line(n=2) < c(2):
-        msg = f'전봉 3분봉 일목 기준선 데드크로스'
-        
-    # elif not msg and ma(20, 1) > c(1) and ma(20, 2) < c(2):
-    #     msg = f'전봉 3분봉 20이평 데드크로스'
+    if not msg:
+        if m3.base_line(n = 1) > c(1):
+            msg = f'전봉 3분봉 일목 기준선 하향 이탈'
+        elif ma(20, 1) > c(1):
+            msg = f'전봉 3분봉 20이평 하향 이탈'
+        elif dm.o(0) > c(1) and c(1) < o(1):
+            msg = f'전봉 당일 시가 이하 하락'
+
+    if not msg:
+        rise = m3.get_rise_analysis(k=10, n=0)
+        pct = rise['rise_pct']
+        rate = pct / (rise['start_idx'] - rise['top_idx']) * 0.25
+        if ma(10, 1) > c(0):
+            if rate >= 1:
+                msg = f'1배 이상 3분봉 전봉 10이평 하향 이탈'
+        elif ma(5, 1) > c(0):
+            if rate >= 2:
+                msg = f'2배 이상 3분봉 5이평 하향 이탈'
+        elif ma(4, 1) > c(0):
+            if rate >= 3:
+                msg = f'3배 이상 3분봉 4이평 하향 이탈'
+        elif ma(3, 1) > c(0):
+            if rate >= 4:
+                msg = f'4배 이상 3분봉 3이평 하향 이탈'
+        elif ma(2, 1) > c(0):
+            if rate >= 6:
+                msg = f'6배 이상 3분봉 2이평 하향 이탈'
 
     # 매도 스크립트 전용 판단 루틴 *****************************************************
-
     if not logoff:
         # 현재봉 기준 판단 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        # 전봉 종가 밑에서 시작은 매도세 우위가 시작 됨
-        if not msg and c(1) > o(0) and c(0) < o(0):
-            msg = f'현재봉 갭 하락 음봉'
 
         # 3연속 상승 후 체력 소진으로 하락 전환 예고
         if not msg and blue(0) and all([red(3), red(2), red(1)]) and c(3) < c(2) < c(1):
@@ -448,6 +479,7 @@ with m3.suspend_ensure():
                     msg = f'3연속 몸통이 커졌으나 체력 소진으로 고가 돌파 못한 전봉 1/3 이하로 하락'
                 
         # 최고 고가봉 윗꼬리 안에서 고가가 2회 형성 후 전봉이 양봉이면 현재봉이 고점갱신을 못 하고 자기 고점에 2호가 이하로 하락중이거나 전봉이 음봉이면 바로 매도
+        # 상승각도에 따라 전환선 또는 기준선 매도 판단(최고가봉 포함 이전 9봉의 상승각이 완만하다면 기준선으로, 가파르면 전환선으로 매도)
 
         # 전봉 기준 판단 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
