@@ -571,7 +571,7 @@ class EvalStrategy(QThread):
             # not sell_condition or not script_or
             elif self.매도스크립트적용 and gm.sim_no != 1:
                 if self.cht_dt.is_code_registered(code):
-                    result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량})
+                    result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량, 'buy_dt': 체결시간})
                     if not result['error']:
                         if result.get('result', False): # self.매도스크립트AND 조건
                             send_data['msg'] = '전략매도'

@@ -737,6 +737,12 @@ class ChartManager:
                     # }
             return snap   
         
+    # 원본 데이터 직접 접근 함수
+    def get_raw_data(self):
+        """원본 데이터 직접 반환 (최고 성능)"""
+        self._ensure_data_cache()
+        return self._raw_data
+    
     # 캔들 특성 함수들
     def red(self, n: int = 0) -> bool:
         """음봉 여부 반환"""
@@ -997,6 +1003,27 @@ class ChartManager:
 
             return (label, hlc_pct)
 
+    def in_up_tail(self, price: int = 0, n: int = 0) -> bool:
+        """위꼬리 안에 있는지"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return False
+        return self.h(n) > price > self.body_top(n)
+
+    def in_down_tail(self, price: int = 0, n: int = 0) -> bool:
+        """아래꼬리 안에 있는지"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return False
+        return self.l(n) < price < self.body_bottom(n)
+
+    def in_body(self, price: int = 0, n: int = 0) -> bool:
+        """몸통 안에 있는지"""
+        self._ensure_data_cache()
+        if not self._raw_data or n >= self._data_length:
+            return False
+        return self.body_bottom(n) < price < self.body_top(n)
+
     # 캔들 패턴 함수들
     def get_candle_data(self, n: int = 0) -> dict:
         """
@@ -1207,7 +1234,7 @@ class ChartManager:
                 return time_str[:8]
             return ''
         else:
-            return self._raw_data[n].get('일자', '')
+            return self._raw_data[n].get('체결시간', '')[:8]
 
     def ma(self, mp: int = 20, n: int = 0) -> float:
         """이동평균 - 고속 버전"""
@@ -1688,7 +1715,7 @@ class ChartManager:
         for i in range(n, len(self._raw_data)):
             if self._raw_data[i].get('체결시간', '')[:8] != date_str:
                 break
-            diff = self._raw_data[i].get('종가', 0) - self._raw_data[i].get('시가', 0)
+            diff = self._raw_data[i].get('현재가', 0) - self._raw_data[i].get('시가', 0)
             if diff > length:
                 length = diff
                 pos = i
@@ -2219,23 +2246,25 @@ class ChartManager:
         
         return { 'rise_pct': rise_pct, 'red_idx': red_idx, 'red_cnt': red_cnt, 'bottom': bottom, 'top': top, 'red_max': red_max }
 
-    def get_rise_analysis(self, k: int = 5, n: int = 0) -> dict:
+    def get_rise_analysis(self, ma: int = 5, n: int = 0) -> dict:
         """
         이평선 기반 상승률 분석
 
         Args:
-            k: 이평주기 (기본값: 5)
+            ma: 이평주기 (기본값: 5)
             n: 기준 봉 인덱스 (0=현재봉)
             
         Returns:
             dict: {
                 'rise_pct': 상승률(%) - B봉 대비 A봉 종가의 상승률,
                 'top_idx': A봉(당일 최고 종가봉) 인덱스,
-                'start_idx': B봉(k이평 이하 첫 종가봉) 인덱스,
+                'start_idx': B봉(ma이평 이하 첫 종가봉) 인덱스,
                 'top_c': A봉 종가,
                 'start_c': B봉 종가,
                 'in_today': B봉이 당일에 있는지 여부 (False면 전일 종가),
-                'max_pct': A봉과 B봉 사이 양봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
+                'max_pct': A봉과 B봉 사이 양봉 중 최대 몸통 길이의 시가대비 종가 퍼센트,
+                'red_cnt': A봉과 B봉 사이 양봉의 개수,
+                'bar_cnt': A봉과 B봉 사이 봉의 개수
             }
         """
         
@@ -2243,7 +2272,7 @@ class ChartManager:
             return {
                 'rise_pct': 0.0, 'top_idx': -1, 'start_idx': -1,
                 'top_c': 0.0, 'start_c': 0.0, 'in_today': False,
-                'max_pct': 0.0
+                'max_pct': 0.0, 'red_cnt': 0, 'bar_cnt': 0    
             }
 
         self._ensure_data_cache()
@@ -2251,7 +2280,7 @@ class ChartManager:
             return {
                 'rise_pct': 0.0, 'top_idx': -1, 'start_idx': -1,
                 'top_c': 0.0, 'start_c': 0.0, 'in_today': False,
-                'max_pct': 0.0
+                'max_pct': 0.0, 'red_cnt': 0, 'bar_cnt': 0
             }
         
         today = datetime.now().strftime('%Y%m%d')
@@ -2261,6 +2290,7 @@ class ChartManager:
         start_c = 0.0
         in_today = False
         max_pct = 0.0
+        red_cnt = 0
         
         with self.suspend_ensure():
             # 1. n봉부터 당일 봉들 중에서 최고 종가(A) 찾기
@@ -2280,20 +2310,20 @@ class ChartManager:
                 return {
                     'rise_pct': 0.0, 'top_idx': -1, 'start_idx': -1,
                     'top_c': 0.0, 'start_c': 0.0, 'in_today': False,
-                    'max_pct': 0.0
+                    'max_pct': 0.0, 'red_cnt': 0, 'bar_cnt': 0
                 }
             
-            # 2. A봉부터 검사하면서 k이평 이하 종가 봉(B) 찾기 + 최대 몸통 길이 계산
+            # 2. A봉부터 검사하면서 ma이평 이하 종가 봉(B) 찾기 + 최대 몸통 길이 계산
             for i in range(top_idx, self._data_length):
                 candle = self._raw_data[i]
                 candle_date = candle.get('체결시간', '')[:8]
                 
                 close_price = candle.get('현재가', 0)
-                ma_k = self.ma(k, i)
+                ma_k = self.ma(ma, i)
                 
                 # 당일 봉인 경우
                 if candle_date == today:
-                    # k이평 이하에 종가가 형성되면 B봉으로 설정
+                    # ma이평 이하에 종가가 형성되면 B봉으로 설정
                     if close_price <= ma_k:
                         start_idx = i
                         start_c = close_price
@@ -2303,6 +2333,7 @@ class ChartManager:
                     # 최대 몸통 길이 계산 (양봉인 경우만)
                     open_price = candle.get('시가', 0)
                     if close_price >= open_price and open_price > 0:
+                        red_cnt += 1
                         body_pct = ((close_price - open_price) / open_price) * 100.0
                         if body_pct > max_pct:
                             max_pct = body_pct
@@ -2318,7 +2349,7 @@ class ChartManager:
                 return {
                     'rise_pct': 0.0, 'top_idx': top_idx, 'start_idx': -1,
                     'top_c': top_c, 'start_c': 0.0, 'in_today': False,
-                    'max_pct': max_pct
+                    'max_pct': max_pct, 'red_cnt': red_cnt, 'bar_cnt': 0
                 }
         
         rise_pct = ((top_c - start_c) / start_c) * 100.0 if start_c > 0 else 0.0
@@ -2330,7 +2361,7 @@ class ChartManager:
             'top_c': top_c,
             'start_c': start_c,
             'in_today': in_today,
-            'max_pct': max_pct
+            'max_pct': max_pct, 'red_cnt': red_cnt, 'bar_cnt': start_idx - top_idx - 1
         }
             
     def consecutive_count(self, condition_func, max_check: int = 128, n: int = 0) -> int:
@@ -2619,27 +2650,519 @@ class ChartManager:
             'start_idx': n
         }
 
-    # 캐시 관리 함수들
-    def clear_cache(self, code=None):
-        """특정 코드 또는 전체 캐시 초기화"""
-        if code:
-            # 특정 코드만 캐시 초기화
-            if hasattr(self, '_cache_version'):
-                self._cache_version = -1
-            if hasattr(self, '_raw_data'):
-                self._raw_data = None
+    def analyze_rise_pattern(self, ma: int = 15, n: int = 0) -> dict:
+        """기능 완전 복원 + 속도 최적화된 상승 패턴 분석"""
+        
+        # 빠른 실패
+        if self.cycle != 'mi':
+            return {'pattern': 'unknown', 'sell_ma': 20, 'confidence': 0, 'analysis': '분봉이 아님', 'recent_pattern': 'unknown', 'force_sell': False}
+        
+        # 핵심 분석
+        rise = self.get_rise_analysis(ma=ma, n=n)
+        if rise['top_idx'] == -1:
+            return {'pattern': 'unknown', 'sell_ma': 20, 'confidence': 0, 'analysis': '상승 패턴 없음', 'recent_pattern': 'unknown', 'force_sell': False}
+        
+        # 분석 지표들 (캐시 활용)
+        rise_pct = rise['rise_pct']
+        max_pct = rise['max_pct']
+        red_cnt = rise['red_cnt']
+        bar_cnt = rise['bar_cnt']
+        
+        # 1. 시나리오 4 특화 분석 (고점 횡보) - 복원
+        plateau_analysis = self._analyze_plateau_after_peak_fast(rise['top_idx'], n)
+        
+        # 2. 진입봉 특성 분석 - 추가
+        entry_bar_analysis = self._analyze_entry_bar_characteristics(n)
+        
+        # 3. 최근 패턴 분석 - 복원 (4봉)
+        recent_pattern = self._analyze_recent_pattern_fast(n, 4)
+        
+        # 4. 패턴별 점수 계산 - 복원 (최적화)
+        gradual_score, spike_score, plateau_score = self._calculate_pattern_scores_fast(rise, ma, n)
+        
+        # 5. 매도 전략에 맞는 패턴 결정 - 수정 (진입봉 특성 우선)
+        # 진입봉이 급등이면 spike 패턴 우선 적용
+        if entry_bar_analysis['is_spike_entry']:
+            pattern = 'spike'
+            confidence = 9
+            sell_ma = 3  # 급등 진입봉은 즉시 매도
+            analysis = f'급등 진입봉 패턴 (진입상승률:{entry_bar_analysis["entry_rise_pct"]:.1f}%)'
+            
+        elif plateau_analysis['is_plateau'] and plateau_analysis['plateau_score'] > 0.6:
+            pattern = 'plateau'
+            confidence = int(plateau_analysis['plateau_score'] * 10)
+            sell_ma = 8
+            analysis = f'수직상승 후 고점횡보 패턴 (횡보봉수:{plateau_analysis["bar_count"]})'
+            
+        elif recent_pattern == 'spike':
+            pattern = 'spike'
+            confidence = 8
+            sell_ma = 3
+            analysis = f'최근 급등 패턴 - 짧은 매도'
+            
+        elif recent_pattern == 'plateau':
+            pattern = 'plateau'
+            confidence = 7
+            sell_ma = 10
+            analysis = f'최근 횡보 패턴 - 방향 확인 후 매도'
+            
         else:
-            # 전체 캐시 초기화
-            if hasattr(self, '_cache_version'):
-                self._cache_version = -1
-            if hasattr(self, '_raw_data'):
-                self._raw_data = None
+            max_score = max(gradual_score, spike_score)
+            
+            if gradual_score == max_score and gradual_score > 0.6:
+                pattern = 'gradual'
+                confidence = int(gradual_score * 10)
+                sell_ma = 15
+                analysis = f'우상향 꾸준상승 패턴 (지속성:{red_cnt/15.0:.2f})'
+                
+            elif spike_score == max_score and spike_score > 0.6:
+                pattern = 'spike'
+                confidence = int(spike_score * 10)
+                sell_ma = 5
+                analysis = f'급등 패턴 (상승률:{rise_pct:.1f}%)'
+                
+            else:
+                pattern = 'unknown'
+                confidence = int(max_score * 10)
+                sell_ma = 10
+                analysis = f'불확실한 패턴 (최고점수:{max_score:.2f})'
+        
+        # 5. 강제 매도 확인
+        force_sell = self.ma(20, n) > self.c(n)
+        if force_sell:
+            analysis += " (20이평 강제매도)"
+        
+        # 6. 패턴 히스토리 추적 - 복원 (최적화)
+        pattern_history = self._update_pattern_history_fast(pattern)
+        if len(pattern_history) >= 2:
+            spike_count = pattern_history.count('spike')
+            if spike_count >= 2:
+                sell_ma = max(3, sell_ma - 2)
+                analysis += f" (최근급등패턴으로 {sell_ma}이평조정)"
+        
+        return {
+            'pattern': pattern,
+            'sell_ma': sell_ma,
+            'confidence': confidence,
+            'analysis': analysis,
+            'recent_pattern': recent_pattern,
+            'force_sell': force_sell,
+            'gradual_score': gradual_score,
+            'spike_score': spike_score,
+            'plateau_score': plateau_score,
+            'rise_data': rise,
+            'volume_spike_ratio': plateau_analysis.get('volume_spike_ratio', 1.0),
+            'angle_score': plateau_analysis.get('angle_score', 0.0)
+        }
+    
+    def _analyze_plateau_after_peak_fast(self, peak_idx: int, n: int) -> dict:
+        """고점 이후 횡보 구간 분석 - 최적화"""
+        if peak_idx >= n:
+            return {'is_plateau': False, 'plateau_score': 0, 'bar_count': 0, 'volume_spike_ratio': 1.0, 'angle_score': 0.0}
+        
+        # 고점 이후 봉들 분석 (최적화)
+        plateau_bars = []
+        max_volume = 0
+        total_volume = 0
+        
+        for i in range(peak_idx, n + 1):
+            if i < self._data_length:
+                candle = self._raw_data[i]
+                plateau_bars.append({
+                    'close': candle.get('현재가', 0),
+                    'high': candle.get('고가', 0),
+                    'low': candle.get('저가', 0)
+                })
+                vol = candle.get('거래량', 0)
+                max_volume = max(max_volume, vol)
+                total_volume += vol
+        
+        if len(plateau_bars) < 3:
+            return {'is_plateau': False, 'plateau_score': 0, 'bar_count': len(plateau_bars), 'volume_spike_ratio': 1.0, 'angle_score': 0.0}
+        
+        # 횡보 특성 분석 (최적화)
+        highs = [bar['high'] for bar in plateau_bars]
+        lows = [bar['low'] for bar in plateau_bars]
+        
+        price_range = (max(highs) - min(lows)) / min(lows) if min(lows) > 0 else 0
+        plateau_score = max(0, 1.0 - price_range / 0.05)  # 5% 이내면 횡보
+        
+        # 거래량 분석
+        avg_volume = total_volume / len(plateau_bars) if len(plateau_bars) > 0 else 1
+        volume_spike_ratio = max_volume / avg_volume if avg_volume > 0 else 1.0
+        
+        # 각도 분석 (간단화)
+        angle_score = min(1.0, price_range / 0.02)  # 2% 이상이면 높은 각도
+        
+        return {
+            'is_plateau': plateau_score > 0.6,
+            'plateau_score': plateau_score,
+            'bar_count': len(plateau_bars),
+            'price_range': price_range,
+            'volume_spike_ratio': volume_spike_ratio,
+            'angle_score': angle_score
+        }
+    
+    def _analyze_recent_pattern_fast(self, n: int, bar_count: int) -> str:
+        """최근 N봉의 패턴 분석 - 최적화"""
+        if n + bar_count > self._data_length:
+            return 'unknown'
+        
+        # 최근 봉들의 특성 분석 (최적화)
+        price_changes = []
+        for i in range(n, n + bar_count - 1):
+            if i + 1 < self._data_length:
+                c1 = self._raw_data[i]['현재가']
+                c2 = self._raw_data[i + 1]['현재가']
+                if c2 > 0:
+                    change = (c1 - c2) / c2
+                    price_changes.append(change)
+        
+        if len(price_changes) < 2:
+            return 'unknown'
+        
+        avg_change = sum(price_changes) / len(price_changes)
+        max_change = max(price_changes)
+        min_change = min(price_changes)
+        
+        # 패턴 판정 (최적화)
+        if avg_change > 0.02 and max_change > 0.03:
+            return 'spike'
+        elif abs(avg_change) < 0.01 and (max_change - min_change) < 0.02:
+            return 'plateau'
+        elif avg_change > 0.005:
+            return 'gradual'
+        
+        return 'unknown'
+    
+    def _calculate_pattern_scores_fast(self, rise: dict, ma: int, n: int) -> tuple:
+        """패턴별 점수 계산 - 최적화"""
+        rise_pct = rise['rise_pct']
+        red_cnt = rise['red_cnt']
+        bar_cnt = rise['bar_cnt']
+        
+        # 지속성 점수 (간단화)
+        duration_score = min(1.0, red_cnt / 15.0)
+        
+        # 일관성 점수 (간단화)
+        consistency_score = red_cnt / bar_cnt if bar_cnt > 0 else 0
+        
+        # 이평선 거리 점수 (간단화)
+        ma_distance_score = min(1.0, rise_pct / 10.0)
+        
+        # 패턴별 점수 계산 (최적화)
+        gradual_score = (duration_score * 0.5 + consistency_score * 0.3 + ma_distance_score * 0.2)
+        spike_score = ((1.0 - consistency_score) * 0.4 + (1.0 - ma_distance_score) * 0.3 + duration_score * 0.3)
+        plateau_score = (ma_distance_score * 0.4 + (1.0 - consistency_score) * 0.3 + (1.0 - duration_score) * 0.3)
+        
+        return gradual_score, spike_score, plateau_score
+    
+    def _update_pattern_history_fast(self, pattern: str) -> list:
+        """패턴 히스토리 업데이트 - 최적화"""
+        if not hasattr(self, '_pattern_history'):
+            self._pattern_history = []
+        
+        self._pattern_history.append(pattern)
+        if len(self._pattern_history) > 3:
+            self._pattern_history.pop(0)
+        
+        return self._pattern_history
+    
+    def _analyze_entry_bar_characteristics(self, n: int) -> dict:
+        """진입봉 특성 분석"""
+        if n + 1 >= self._data_length:
+            return {'is_spike_entry': False, 'entry_rise_pct': 0}
+        
+        # 진입봉 (현재봉) 분석
+        current_candle = self._raw_data[n]
+        prev_candle = self._raw_data[n + 1]
+        
+        entry_rise_pct = (current_candle['현재가'] - prev_candle['현재가']) / prev_candle['현재가'] * 100
+        
+        # 급등 진입봉 판정 (3% 이상)
+        is_spike_entry = entry_rise_pct > 3.0
+        
+        return {
+            'is_spike_entry': is_spike_entry,
+            'entry_rise_pct': entry_rise_pct
+        }
 
-    # 원본 데이터 직접 접근 함수
-    def get_raw_data(self):
-        """원본 데이터 직접 반환 (최고 성능)"""
+    def get_rising_state(self, n: int = 1) -> tuple:
+        """
+        상태 검사 함수 - 반환값: (rise, fall)
+        
+        Args:
+            n: 검사 시작 봉 (기본값: 1, 1봉전부터 검사)
+            
+        Returns:
+            tuple: (rise_dict, fall_dict)
+        """
         self._ensure_data_cache()
-        return self._raw_data
+        
+        with self.suspend_ensure():
+            if not self._raw_data or len(self._raw_data) < 20: return ({}, {})
+            
+            # 1. 현재봉 이전 당일 최고 종가봉(HC) 찾기
+            hc, today_bars = self._find_highest_close_before(n)
+            
+            if hc is None: return ({}, {})
+            
+            # 2. HC부터 과거봉으로 검사하여 15이평 아래인 봉(SB) 찾기
+            initial_sb = self._find_start_bar(hc)
+            
+            if initial_sb is None: return ({}, {})
+            
+            # 3. SB부터 현재봉으로 오면서 이평들 위에 종가가 최초로 형성된 봉의 전봉을 새로운 SB로 설정
+            sb = self._refine_start_bar(initial_sb, n)
+            
+            if sb is None: return ({}, {})
+            
+            # 4. HC부터 SB까지 분석
+            max_red, max_blue, dc10, dc5, dc3, tails, red_count, blue_count = self._analyze_bars_between(hc, sb)
+            
+            # 5. peak 분석 (SB~HC 구간 전반/후반 상승율 비교)
+            peak = self._analyze_peak(hc, sb)
+            
+            # 6. 현재봉부터 HC전까지 분석
+            oh, uc = self._analyze_bars_after_hc(n, hc)
+            
+            # 7. rise 사전 구성
+            rise = self._build_rise_dict(hc, sb, max_red, max_blue, dc10, dc5, dc3, tails, peak, today_bars, red_count, blue_count)
+            
+            # 8. fall 사전 구성
+            fall = self._build_fall_dict(oh, uc)
+            
+            return (rise, fall)
+    
+    def _find_highest_close_before(self, n: int) -> tuple:
+        """현재봉 이전 당일 최고 종가봉 인덱스 찾기"""
+        if not self._raw_data or len(self._raw_data) <= n: return None
+        
+        current_time = self._raw_data[n]['체결시간']
+        hc_idx = None
+        hc_close = 0
+        today_bars = 0
+        
+        # 현재봉 이전부터 검사
+        for i in range(n, len(self._raw_data)):
+            if self._raw_data[i]['체결시간'][:8] == current_time[:8]:  # 날짜 부분만 비교
+                close = self._raw_data[i]['현재가']
+                if close >= hc_close:
+                    hc_close = close
+                    hc_idx = i
+            else:
+                # 다른 날짜면 종료
+                today_bars = i
+                break
+        
+        return hc_idx, today_bars
+    
+    def _refine_start_bar(self, initial_sb: int, n: int) -> int:
+        """SB부터 현재봉으로 오면서 이평들 위에 종가가 최초로 형성된 봉의 전봉을 새로운 SB로 설정"""
+        if initial_sb is None or initial_sb <= n:
+            return initial_sb
+        
+        # initial_sb부터 현재봉(n)까지 검사
+        for i in range(initial_sb, n, -1):  # 과거에서 현재로
+            if i <= 0:
+                break
+                
+            close = self._raw_data[i]['현재가']
+            
+            # 10, 5, 3 이평들 위에 종가가 형성되었는지 확인
+            ma10 = self.ma(10, i)
+            ma5 = self.ma(5, i)
+            ma3 = self.ma(3, i)
+            
+            # 모든 이평선 위에 종가가 형성된 경우
+            if close > ma10 and close > ma5 and close > ma3:
+                # 이 봉의 전봉을 새로운 SB로 설정
+                return i + 1
+        
+        # 조건에 맞는 봉이 없으면 기존 SB 반환
+        return initial_sb
+    
+    def _find_start_bar(self, hc: int) -> int:
+        """HC부터 과거봉으로 검사하여 10이평 아래인 봉(SB) 찾기"""
+        if hc is None or hc >= len(self._raw_data) - 10:
+            return None
+        
+        # HC부터 과거로 검사하여 처음 만난 10이평 아래 종가 봉 찾기
+        for i in range(hc + 1, len(self._raw_data)):
+            if i >= len(self._raw_data) - 10:
+                break
+                
+            close = self._raw_data[i]['현재가']
+            ma10 = self.ma(10, i)
+            
+            if close < ma10:
+                return i
+        
+        # 당일에 없으면 전 영업일 마지막 봉
+        hc_time = self._raw_data[hc]['체결시간']
+        for i in range(hc + 1, len(self._raw_data)):
+            if self._raw_data[i]['체결시간'][:8] != hc_time[:8]:
+                return i - 1
+        
+        return len(self._raw_data) - 1
+    
+    def _analyze_bars_between(self, hc: int, sb: int) -> tuple:
+        """HC부터 SB까지 봉들 분석"""
+        max_red = (None, 0.0)
+        max_blue = (None, 0.0)
+        dc10 = []
+        dc5 = []
+        dc3 = []
+        tails = []
+        red_count = 0  # 양봉 개수
+        blue_count = 0  # 음봉 개수
+        
+        for i in range(hc, sb):
+            if i >= len(self._raw_data):
+                break
+                
+            candle = self._raw_data[i]
+            open_price = candle['시가']
+            close = candle['현재가']
+            high = candle['고가']
+            
+            # 최대몸통 양봉/음봉 체크
+            body_pct = ((close - open_price) / open_price * 100) if open_price > 0 else 0
+            
+            if body_pct > 0:
+                red_count += 1
+                if body_pct > max_red[1]:
+                    max_red = (i, body_pct)
+            elif body_pct < 0:
+                blue_count += 1
+                if max_blue[0] is None or abs(body_pct) > abs(max_blue[1]):
+                    max_blue = (i, body_pct)
+            
+            # 이평선 이하 종가 체크
+            ma10 = self.ma(10, i - hc)
+            ma5 = self.ma(5, i - hc)
+            ma3 = self.ma(3, i - hc)
+            
+            if close <= ma10:
+                dc10.append(i)
+            if close <= ma5:
+                dc5.append(i)
+            if close <= ma3:
+                dc3.append(i)
+            
+            # 윗꼬리 1%이상 체크
+            if open_price > 0:
+                tail_rate = ((high - max(open_price, close)) / open_price * 100)
+                if tail_rate >= 1.0:
+                    tails.append((i, tail_rate))
+        
+        return max_red, max_blue, dc10, dc5, dc3, tails, red_count, blue_count
+    
+    def _analyze_peak(self, hc: int, sb: int) -> bool:
+        """SB~HC 구간을 전반/후반으로 나누어 상승율 비교"""
+        if hc is None or sb is None or hc >= len(self._raw_data) or sb >= len(self._raw_data):
+            return False
+        
+        if sb <= hc:
+            return False
+        
+        # SB~HC 구간의 중간점 계산
+        cnt = sb - hc
+        if cnt < 2:
+            return False
+        
+        if cnt % 2 == 0:
+            # 짝수면 cnt/2로 나누기
+            mid_point = hc + (cnt // 2)
+        else:
+            # 홀수면 과거를 1개 많게
+            mid_point = hc + (cnt // 2) + 1
+        
+        # 전반 구간 상승율 (SB ~ 중간점)
+        sb_close = self._raw_data[sb]['현재가']
+        mid_close = self._raw_data[mid_point]['현재가']
+        front_rise_rate = ((mid_close - sb_close) / sb_close * 100) if sb_close > 0 else 0
+        
+        # 후반 구간 상승율 (중간점 ~ HC)
+        hc_close = self._raw_data[hc]['현재가']
+        back_rise_rate = ((hc_close - mid_close) / mid_close * 100) if mid_close > 0 else 0
+        
+        # 후반 상승율이 전반 상승율보다 크면 True (최근봉의 상승율이 가파름)
+        return back_rise_rate > front_rise_rate
+    
+    def _analyze_bars_after_hc(self, n: int, hc: int) -> tuple:
+        """현재봉부터 HC전까지 분석"""
+        oh = []
+        uc = []
+        
+        if hc <= 0:
+            return oh, uc
+        
+        hc_high = self._raw_data[hc]['고가']
+        
+        for i in range(n, hc):
+            if i >= len(self._raw_data):
+                break
+                
+            candle = self._raw_data[i]
+            high = candle['고가']
+            close = candle['현재가']
+            ma5 = self.ma(5, i)
+            
+            # 고가가 최고종가의 고가보다 낮은 봉들
+            if high < hc_high:
+                oh.append(i)
+            
+            # 종가가 5이평을 넘은 봉들
+            if close > ma5:
+                uc.append(i)
+        
+        return oh, uc
+    
+    def _build_rise_dict(self, hc: int, sb: int, max_red: tuple, max_blue: tuple, 
+                        dc10: list, dc5: list, dc3: list, tails: list, peak: bool, today_bars: int, red_count: int, blue_count: int) -> dict:
+        """rise 사전 구성"""
+        if hc is None or sb is None or hc >= len(self._raw_data) or sb >= len(self._raw_data):
+            return {}
+        
+        hc_close = self._raw_data[hc]['현재가']
+        sb_close = self._raw_data[sb]['현재가']
+        
+        # rise_rate 계산
+        rise_rate = ((hc_close - sb_close) / sb_close * 100) if sb_close > 0 else 0
+        
+        # near_rate, far_rate 계산
+        bars = sb - hc
+        x = hc + min(3, bars)
+        
+        near_rate = ((hc_close - self._raw_data[x]['현재가']) / sb_close * 100) if sb_close > 0 else 0 # 최근 3개 상승률
+        far_rate = ((self._raw_data[x]['현재가'] - sb_close) / sb_close * 100) if sb_close > 0 else 0  # 시작봉 부터 4봉전 까지 상승률
+        
+        return {
+            'hc': hc,               # 최고종가봉 인덱스
+            'sb': sb,               # 시작봉 인덱스
+            'bars': bars,           # SB - HC 상승 구간 봉 개수
+            'rise_rate': rise_rate, # HC - SB 상승률
+            'near_rate': near_rate, # 최근 3개 상승률 
+            'far_rate': far_rate,   # 시작봉 부터 4봉전 까지 상승률
+            'max_red': max_red,     # 양봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
+            'max_blue': max_blue,   # 음봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
+            '10': dc10,             # 10이평 이하 종가 인덱스 = ( DC10 = [idx_0, idx_1, ...idx_n] ) 리스트
+            '5': dc5,               # 5이평 이하 종가 인덱스 = ( DC5 = [idx_0, idx_1, ...idx_n] ) 리스트
+            '3': dc3,               # 3이평 이하 종가 인덱스 = ( DC3 = [idx_0, idx_1, ...idx_n] ) 리스트
+            'tails': tails,         # 윗 꼬리가 시가대비 1%이상 봉들의 인덱스와 꼬리 % ( TAILS = [(idx_0, rate_0), ..., (idx_n, rate_n)] ) 리스트
+            'peak': peak,           # SB~HC 구간을 전반/후반으로 나누어 상승율 비교 (최근봉의 상승율이 가파르면 True)
+            'today_bars': today_bars,
+            'red_count': red_count, # SB~HC 구간 양봉 개수 (SB 제외, HC 포함)
+            'blue_count': blue_count # SB~HC 구간 음봉 개수 (SB 제외, HC 포함)
+        }
+    
+    def _build_fall_dict(self, oh: list, uc: list) -> dict:
+        """fall 사전 구성"""
+        return {
+            'oh': oh,
+            'uc': uc
+        }
     
 class ScriptManager:
     """
@@ -3336,7 +3859,45 @@ def {script_name}(*args, **kwargs):
             def percent(a, b, c=None, default=0):
                 if c is None: c = b
                 return safe_div((a - b), c, default) * 100
-            
+
+            def bar_idx(target_time: str, current_time: str=None, tick: int=180) -> int:
+                """
+                주어진 시간의 봉 인덱스 반환 (tick 기반 산수 계산)
+                
+                Args:
+                    target_time: 찾을 시간 (예: '20250101103000')
+                    current_time: 현재 시간 (예: '20250101103300'), None이면 시스템시간 사용
+                    tick: 봉 간격 (초) - 60(1분), 180(3분), 600(10분)
+                    
+                Returns:
+                    int: 해당 시간의 봉 인덱스
+                     0: 현재봉, 1: 1봉전, 2: 2봉전, ...
+                    -1: 다음봉, -2: 그 다음봉, ...
+                """
+                # current_time이 None이면 시스템 시간 사용
+                if current_time is None:
+                    from datetime import datetime
+                    current_time = datetime.now().strftime('%Y%m%d%H%M%S')
+                
+                current_date = current_time[:8]
+                target_date = target_time[:8]
+                
+                # 다른 날짜면 None 반환
+                if current_date != target_date: return None
+                
+                # 시간을 초 단위로 변환
+                current_tick = int(current_time[8:])  # 시간 부분 (HHMMSS)
+                target_tick = int(target_time[8:])     # 시간 부분 (HHMMSS)
+                
+                current_seconds = (current_tick // 10000) * 3600 + ((current_tick % 10000) // 100) * 60 + (current_tick % 100)
+                target_seconds = (target_tick // 10000) * 3600 + ((target_tick % 10000) // 100) * 60 + (target_tick % 100)
+                
+                # 간단한 계산: (현재시간 - 타겟시간) / 주기
+                tick_diff = current_seconds - target_seconds
+                bar_index = int(tick_diff / tick)
+                
+                return bar_index
+
             def safe_iif(condition, true_value, false_value):
                 try:
                     return true_value if condition else false_value
@@ -3352,6 +3913,7 @@ def {script_name}(*args, **kwargs):
                 'loop': self._safe_loop,
                 'div': safe_div,
                 'percent': percent,
+                'bar_idx': bar_idx,
                 'iif': safe_iif,
                 'run_script': self._script_caller,
                 'is_args': is_args,
