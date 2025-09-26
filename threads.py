@@ -466,7 +466,7 @@ class EvalStrategy(QThread):
             if gm.sim_no != 1 and self.매수스크립트적용: # 다시 넣기 때문에 hoga()계산 전에 (price가 변경 됨)
                 if self.cht_dt.is_code_registered(code):
                     try:
-                        result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': send_data['quantity']})
+                        result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': send_data['quantity'], 'buy_dt': ''})
                         gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                         if result.get('error') or not result.get('result', False):
                             msg = f"스크립트 : {code} {name} 매수취소 {result['error'] if result.get('error') else ''}"
@@ -531,6 +531,7 @@ class EvalStrategy(QThread):
             현재가 = row.get('현재가', 0)           # 종목번호 = '999999' 일 때 0
             보유수량 = row.get('보유수량', 0)       # gm.잔고목록.get(key=code, column='보유수량')
             수익율 = float(row.get('수익률(%)', 0))
+            매수일시 = row.get('매수일자', '')+row.get('매수시간', '').replace(':', '')
 
             send_data = {
                 'rqname': rqname,
@@ -571,7 +572,7 @@ class EvalStrategy(QThread):
             # not sell_condition or not script_or
             elif self.매도스크립트적용 and gm.sim_no != 1:
                 if self.cht_dt.is_code_registered(code):
-                    result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량, 'buy_dt': 체결시간})
+                    result = gm.scm.run_script(self.매도스크립트, kwargs={'code': code, 'name': 종목명, 'price': 매입가, 'qty': 보유수량, 'buy_dt': 매수일시})
                     if not result['error']:
                         if result.get('result', False): # self.매도스크립트AND 조건
                             send_data['msg'] = '전략매도'

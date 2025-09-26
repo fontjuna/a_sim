@@ -752,7 +752,8 @@ class GUI(QMainWindow, form_class):
                 if reply != QMessageBox.Yes: return
 
             start_time = time.time()
-            result = gm.scm.set_script(script_name, script, desc, kwargs={'code': '005930'}, save=save)
+            kwargs={'code': '005930', 'name': '삼성전자', 'price': 0, 'qty': 0, 'buy_dt': ''}
+            result = gm.scm.set_script(script_name, script, desc, kwargs=kwargs, save=save)
             exec_time = time.time() - start_time
 
             if result['logs']: self.txtScriptText.append('<검사결과>\n' + '\n'.join(result['logs'])+'\n')

@@ -584,10 +584,6 @@ up_tail_pct = m3.up_tail_pct
 body_pct = m3.body_pct
 bottom, top = m3.body_bottom, m3.body_top
 
-if percent(c(0), ma(5, 0)) > 5.0:
-    echo(f'[False] ({code} {name}) / 현재봉이 5이평과 5% 이상 벌어지면 매수 안 함 : ({당일봉수}) {최고종가})')
-    ret(False)
-
 # 최고종가 조건 찾기 ========================================================================
 m3._ensure_data_cache()
 with m3.suspend_ensure():
@@ -715,13 +711,14 @@ o, h, l, c, ma = m3.o, m3.h, m3.l, m3.c, m3.ma
 blue, red, body, top, bottom = m3.blue, m3.red, m3.body, m3.body_top, m3.body_bottom
 up_tail_pct = m3.up_tail_pct
 body_pct = m3.body_pct
+mas = [10, 7, 5, 3]
 
 msg = ''
 
 m3._ensure_data_cache()
 with m3.suspend_ensure():
     
-    rise, fall = m3.get_rising_state(n=1) # 현재봉 이전 부터 검사한 결과 반환
+    rise, fall = m3.get_rising_state(mas)
     pos = rise['hc']
     bars = rise['bars']
     첫봉 = rise['today_bars'] - 1
@@ -804,6 +801,5 @@ with m3.suspend_ensure():
 
 if logoff: ret(msg)
 if msg: echo(f'[True] ({code} {name}) 현재가={dm.c()} / {msg}')
-ret(msg!="")
-
+ret(msg!='')
 

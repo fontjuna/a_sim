@@ -2887,7 +2887,7 @@ class ChartManager:
             'entry_rise_pct': entry_rise_pct
         }
 
-    def get_rising_state(self, n: int = 1) -> tuple:
+    def get_rising_state(self, mas: list, n: int = 0) -> tuple:
         """
         상태 검사 함수 - 반환값: (rise, fall)
         
@@ -2907,13 +2907,13 @@ class ChartManager:
             
             if hc is None: return ({}, {})
             
-            # 2. HC부터 과거봉으로 검사하여 15이평 아래인 봉(SB) 찾기
-            initial_sb = self._find_start_bar(hc)
+            # 2. HC부터 과거봉으로 검사하여 ma이평 아래인 봉(SB) 찾기
+            initial_sb = self._find_start_bar(hc, mas)
             
             if initial_sb is None: return ({}, {})
             
             # 3. SB부터 현재봉으로 오면서 이평들 위에 종가가 최초로 형성된 봉의 전봉을 새로운 SB로 설정
-            sb = self._refine_start_bar(initial_sb, n)
+            sb = self._refine_start_bar(initial_sb, mas, n)
             
             if sb is None: return ({}, {})
             
@@ -2935,16 +2935,17 @@ class ChartManager:
             return (rise, fall)
     
     def _find_highest_close_before(self, n: int) -> tuple:
-        """현재봉 이전 당일 최고 종가봉 인덱스 찾기"""
-        if not self._raw_data or len(self._raw_data) <= n: return None
+        """
+        당일 최고 종가봉 인덱스 찾기
+        """
+        if not self._raw_data or len(self._raw_data) <= n + 1: return None
         
         current_time = self._raw_data[n]['체결시간']
         hc_idx = None
         hc_close = 0
         today_bars = 0
         
-        # 현재봉 이전부터 검사
-        for i in range(n, len(self._raw_data)):
+        for i in range(n + 1, len(self._raw_data)):
             if self._raw_data[i]['체결시간'][:8] == current_time[:8]:  # 날짜 부분만 비교
                 close = self._raw_data[i]['현재가']
                 if close >= hc_close:
@@ -2957,46 +2958,41 @@ class ChartManager:
         
         return hc_idx, today_bars
     
-    def _refine_start_bar(self, initial_sb: int, n: int) -> int:
+    def _refine_start_bar(self, initial_sb: int, mas: list, n: int) -> int:
         """SB부터 현재봉으로 오면서 이평들 위에 종가가 최초로 형성된 봉의 전봉을 새로운 SB로 설정"""
-        if initial_sb is None or initial_sb <= n:
+        if initial_sb is None or initial_sb <= n + 1:
             return initial_sb
         
         # initial_sb부터 현재봉(n)까지 검사
-        for i in range(initial_sb, n, -1):  # 과거에서 현재로
-            if i <= 0:
-                break
+        for i in range(initial_sb, n + 1, -1):  # 과거에서 현재로
+            if i <= 0: break
                 
             close = self._raw_data[i]['현재가']
+            trend = True
+            for ma in mas:
+                if close < self.ma(ma, i):
+                    trend = False
+                    break
             
-            # 10, 5, 3 이평들 위에 종가가 형성되었는지 확인
-            ma10 = self.ma(10, i)
-            ma5 = self.ma(5, i)
-            ma3 = self.ma(3, i)
-            
-            # 모든 이평선 위에 종가가 형성된 경우
-            if close > ma10 and close > ma5 and close > ma3:
-                # 이 봉의 전봉을 새로운 SB로 설정
+            if trend:
                 return i + 1
-        
+            
         # 조건에 맞는 봉이 없으면 기존 SB 반환
         return initial_sb
     
-    def _find_start_bar(self, hc: int) -> int:
-        """HC부터 과거봉으로 검사하여 10이평 아래인 봉(SB) 찾기"""
-        if hc is None or hc >= len(self._raw_data) - 10:
-            return None
+    def _find_start_bar(self, hc: int, mas: list) -> int:
+        """HC부터 과거봉으로 검사하여 mas[0]이평 아래인 봉(SB) 찾기"""
+        if hc is None or hc >= len(self._raw_data) - mas[0]: return None
         
         # HC부터 과거로 검사하여 처음 만난 10이평 아래 종가 봉 찾기
         for i in range(hc + 1, len(self._raw_data)):
-            if i >= len(self._raw_data) - 10:
+            if i >= len(self._raw_data) - mas[0]: 
                 break
                 
             close = self._raw_data[i]['현재가']
-            ma10 = self.ma(10, i)
+            ma = self.ma(mas[0], i)
             
-            if close < ma10:
-                return i
+            if close < ma: return i
         
         # 당일에 없으면 전 영업일 마지막 봉
         hc_time = self._raw_data[hc]['체결시간']
@@ -3043,12 +3039,9 @@ class ChartManager:
             ma5 = self.ma(5, i - hc)
             ma3 = self.ma(3, i - hc)
             
-            if close <= ma10:
-                dc10.append(i)
-            if close <= ma5:
-                dc5.append(i)
-            if close <= ma3:
-                dc3.append(i)
+            if close <= ma10: dc10.append(i)
+            if close <= ma5: dc5.append(i)
+            if close <= ma3: dc3.append(i)
             
             # 윗꼬리 1%이상 체크
             if open_price > 0:
@@ -3665,9 +3658,9 @@ def {script_name}(*args, **kwargs):
                     if match:
                         wrapper_line = int(match.group(1))
                         # _make_wrapped_script의 실제 구조 확인:
-                        # 사용자 스크립트는 약 25번째 라인부터 시작 (들여쓰기 포함)
-                        if wrapper_line >= 25:
-                            error_line_num = wrapper_line - 24  # 25번째 라인이 사용자 스크립트 1번째 라인
+                        # 사용자 스크립트는 9번째 라인부터 시작 (들여쓰기 포함)
+                        if wrapper_line >= 9:
+                            error_line_num = wrapper_line - 8  # 9번째 라인이 사용자 스크립트 1번째 라인
                         break
             
             # 에러 메시지 추출
@@ -3956,28 +3949,7 @@ def {script_name}(*args, **kwargs):
         # 현재 컨텍스트에서 기본값 가져오기
         current_context = self._get_current_context()
         
-        # 프레임 검사로 현재 실행 중인 변수값 가져오기
-        try:
-            import inspect
-            frame = inspect.currentframe().f_back
-            
-            while frame:
-                if frame.f_code.co_name == 'user_script':
-                    frame_locals = frame.f_locals
-                    # 현재 로컬 변수값으로 컨텍스트 업데이트
-                    if 'code' in frame_locals:
-                        self._update_context_variable('code', frame_locals['code'])
-                    if 'name' in frame_locals:
-                        self._update_context_variable('name', frame_locals['name'])
-                    if 'qty' in frame_locals:
-                        self._update_context_variable('qty', frame_locals['qty'])
-                    if 'price' in frame_locals:
-                        self._update_context_variable('price', frame_locals['price'])
-                    break
-                frame = frame.f_back
-                        
-        except:
-            pass
+        # 프레임 검사 제거 - 컨텍스트만 사용
         
         # 업데이트된 컨텍스트 가져오기
         new_kwargs = self._get_current_context().copy()
@@ -4042,22 +4014,9 @@ def execute_script():
         # kwargs는 실행 시점에 globals에서 가져옴
         kwargs = globals().get('kwargs', {{}})
         
-        # 기본 변수들 설정
-        code = kwargs.get('code', '')
-        name = kwargs.get('name', '')
-        qty = kwargs.get('qty', 0)
-        price = kwargs.get('price', 0)
-        
-        # 전역 변수로 설정하여 사용자 스크립트에서 접근 가능하게
-        globals()['code'] = code
-        globals()['name'] = name
-        globals()['qty'] = qty
-        globals()['price'] = price
-        
-        # 사용자 정의 변수들 추출
+        # 모든 kwargs를 globals()에 설정하여 사용자 스크립트에서 접근 가능하게
         for key, value in kwargs.items():
-            if key not in ['code', 'name', 'qty', 'price']:
-                globals()[key] = value
+            globals()[key] = value
         
         # 사용자 스크립트 실행
 {indented_script}
