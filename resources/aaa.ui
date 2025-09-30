@@ -5652,7 +5652,7 @@
       </widget>
       <widget class="QRadioButton" name="rbSim3">
        <property name="enabled">
-        <bool>false</bool>
+        <bool>true</bool>
        </property>
        <property name="geometry">
         <rect>
@@ -5663,7 +5663,7 @@
         </rect>
        </property>
        <property name="text">
-        <string>모의실행3</string>
+        <string>모의실행 3</string>
        </property>
       </widget>
       <widget class="QPushButton" name="btnSimStart">
@@ -5676,7 +5676,7 @@
         </rect>
        </property>
        <property name="text">
-        <string>매매시작</string>
+        <string>실행</string>
        </property>
       </widget>
       <widget class="QLabel" name="label">
@@ -5696,13 +5696,16 @@
        </property>
       </widget>
      </widget>
-     <widget class="QGroupBox" name="groupBox_27">
+     <widget class="QGroupBox" name="gbSim3">
+      <property name="enabled">
+       <bool>true</bool>
+      </property>
       <property name="geometry">
        <rect>
         <x>10</x>
         <y>110</y>
         <width>621</width>
-        <height>661</height>
+        <height>651</height>
        </rect>
       </property>
       <property name="title">
@@ -5711,20 +5714,20 @@
       <widget class="QGroupBox" name="groupBox_25">
        <property name="geometry">
         <rect>
-         <x>260</x>
-         <y>30</y>
+         <x>10</x>
+         <y>60</y>
          <width>351</width>
-         <height>621</height>
+         <height>581</height>
         </rect>
        </property>
        <property name="title">
-        <string>실행일자종목</string>
+        <string>대상종목</string>
        </property>
        <widget class="QTableWidget" name="tblSimDaily">
         <property name="geometry">
          <rect>
           <x>10</x>
-          <y>60</y>
+          <y>20</y>
           <width>331</width>
           <height>551</height>
          </rect>
@@ -5739,54 +5742,215 @@
          <bool>false</bool>
         </property>
        </widget>
-       <widget class="QPushButton" name="btnSimReadDay">
-        <property name="geometry">
-         <rect>
-          <x>120</x>
-          <y>20</y>
-          <width>101</width>
-          <height>31</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>종목가져오기</string>
-        </property>
-       </widget>
-       <widget class="QPushButton" name="btnSimReadTick">
-        <property name="geometry">
-         <rect>
-          <x>230</x>
-          <y>20</y>
-          <width>101</width>
-          <height>31</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>데이타읽어오기</string>
-        </property>
-       </widget>
-       <widget class="QDateEdit" name="dtSimDate">
+      </widget>
+      <widget class="QDateEdit" name="dtSimDate">
+       <property name="geometry">
+        <rect>
+         <x>70</x>
+         <y>30</y>
+         <width>101</width>
+         <height>21</height>
+        </rect>
+       </property>
+       <property name="alignment">
+        <set>Qt::AlignCenter</set>
+       </property>
+       <property name="calendarPopup">
+        <bool>true</bool>
+       </property>
+      </widget>
+      <widget class="QLabel" name="label_55">
+       <property name="geometry">
+        <rect>
+         <x>20</x>
+         <y>30</y>
+         <width>51</width>
+         <height>16</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>실행일자</string>
+       </property>
+      </widget>
+      <widget class="QGroupBox" name="groupBox_27">
+       <property name="geometry">
+        <rect>
+         <x>370</x>
+         <y>60</y>
+         <width>241</width>
+         <height>131</height>
+        </rect>
+       </property>
+       <property name="title">
+        <string>실행</string>
+       </property>
+       <property name="alignment">
+        <set>Qt::AlignCenter</set>
+       </property>
+       <widget class="QGroupBox" name="gbSpeed">
         <property name="geometry">
          <rect>
           <x>10</x>
-          <y>24</y>
-          <width>101</width>
-          <height>21</height>
+          <y>20</y>
+          <width>221</width>
+          <height>61</height>
          </rect>
         </property>
-        <property name="alignment">
-         <set>Qt::AlignCenter</set>
+        <property name="title">
+         <string>배속설정</string>
         </property>
-        <property name="calendarPopup">
-         <bool>true</bool>
+        <widget class="QRadioButton" name="rbSpeed02">
+         <property name="geometry">
+          <rect>
+           <x>170</x>
+           <y>20</y>
+           <width>51</width>
+           <height>16</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>x 0.2</string>
+         </property>
+        </widget>
+        <widget class="QRadioButton" name="rbSpeed05">
+         <property name="geometry">
+          <rect>
+           <x>90</x>
+           <y>20</y>
+           <width>51</width>
+           <height>16</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>x 0.5</string>
+         </property>
+        </widget>
+        <widget class="QRadioButton" name="rbSpeed1">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>20</y>
+           <width>51</width>
+           <height>16</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>x 1</string>
+         </property>
+         <property name="checked">
+          <bool>true</bool>
+         </property>
+        </widget>
+        <widget class="QRadioButton" name="rbSpeed2">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>40</y>
+           <width>51</width>
+           <height>16</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>x 2</string>
+         </property>
+        </widget>
+        <widget class="QRadioButton" name="rbSpeed5">
+         <property name="geometry">
+          <rect>
+           <x>90</x>
+           <y>40</y>
+           <width>51</width>
+           <height>16</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>x 5</string>
+         </property>
+        </widget>
+        <widget class="QRadioButton" name="rbSpeed10">
+         <property name="geometry">
+          <rect>
+           <x>170</x>
+           <y>40</y>
+           <width>51</width>
+           <height>16</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>x 10</string>
+         </property>
+        </widget>
+       </widget>
+       <widget class="QPushButton" name="btnSim3Stop">
+        <property name="geometry">
+         <rect>
+          <x>190</x>
+          <y>90</y>
+          <width>41</width>
+          <height>31</height>
+         </rect>
+        </property>
+        <property name="toolTip">
+         <string extracomment="중지"/>
+        </property>
+        <property name="text">
+         <string>■</string>
+        </property>
+       </widget>
+       <widget class="QPushButton" name="btnSim3First">
+        <property name="geometry">
+         <rect>
+          <x>10</x>
+          <y>90</y>
+          <width>41</width>
+          <height>31</height>
+         </rect>
+        </property>
+        <property name="toolTip">
+         <string extracomment="처음으로"/>
+        </property>
+        <property name="text">
+         <string>I←</string>
+        </property>
+       </widget>
+       <widget class="QPushButton" name="btnSim3Pause">
+        <property name="geometry">
+         <rect>
+          <x>130</x>
+          <y>90</y>
+          <width>41</width>
+          <height>31</height>
+         </rect>
+        </property>
+        <property name="toolTip">
+         <string extracomment="일시중지"/>
+        </property>
+        <property name="text">
+         <string>II</string>
+        </property>
+       </widget>
+       <widget class="QPushButton" name="btnSim3Start">
+        <property name="geometry">
+         <rect>
+          <x>70</x>
+          <y>90</y>
+          <width>41</width>
+          <height>31</height>
+         </rect>
+        </property>
+        <property name="toolTip">
+         <string extracomment="실행"/>
+        </property>
+        <property name="text">
+         <string>▶</string>
         </property>
        </widget>
       </widget>
       <widget class="QGroupBox" name="groupBox_16">
        <property name="geometry">
         <rect>
-         <x>10</x>
-         <y>470</y>
+         <x>370</x>
+         <y>350</y>
          <width>241</width>
          <height>171</height>
         </rect>
@@ -5883,108 +6047,30 @@
         </property>
        </widget>
       </widget>
-      <widget class="QGroupBox" name="groupBox_29">
+      <widget class="QPushButton" name="btnSimReadTick">
        <property name="geometry">
         <rect>
-         <x>10</x>
-         <y>130</y>
-         <width>241</width>
-         <height>61</height>
-        </rect>
-       </property>
-       <property name="title">
-        <string>배속설정</string>
-       </property>
-       <widget class="QRadioButton" name="rdSpeed02">
-        <property name="geometry">
-         <rect>
-          <x>170</x>
-          <y>20</y>
-          <width>51</width>
-          <height>16</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>x 0.2</string>
-        </property>
-       </widget>
-       <widget class="QRadioButton" name="rdSpeed05">
-        <property name="geometry">
-         <rect>
-          <x>90</x>
-          <y>20</y>
-          <width>51</width>
-          <height>16</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>x 0.5</string>
-        </property>
-       </widget>
-       <widget class="QRadioButton" name="rdSpeed1">
-        <property name="geometry">
-         <rect>
-          <x>10</x>
-          <y>20</y>
-          <width>51</width>
-          <height>16</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>x 1</string>
-        </property>
-       </widget>
-       <widget class="QRadioButton" name="rdSpeed2">
-        <property name="geometry">
-         <rect>
-          <x>10</x>
-          <y>40</y>
-          <width>51</width>
-          <height>16</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>x 2</string>
-        </property>
-       </widget>
-       <widget class="QRadioButton" name="rdSpeed5">
-        <property name="geometry">
-         <rect>
-          <x>90</x>
-          <y>40</y>
-          <width>51</width>
-          <height>16</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>x 5</string>
-        </property>
-       </widget>
-       <widget class="QRadioButton" name="rdSpeed10">
-        <property name="geometry">
-         <rect>
-          <x>170</x>
-          <y>40</y>
-          <width>51</width>
-          <height>16</height>
-         </rect>
-        </property>
-        <property name="text">
-         <string>x 10</string>
-        </property>
-       </widget>
-      </widget>
-      <widget class="QPushButton" name="btnSimStart_2">
-       <property name="geometry">
-        <rect>
-         <x>10</x>
-         <y>90</y>
-         <width>91</width>
+         <x>500</x>
+         <y>600</y>
+         <width>101</width>
          <height>31</height>
         </rect>
        </property>
        <property name="text">
-        <string>매매시작</string>
+        <string>차트데이타생성</string>
+       </property>
+      </widget>
+      <widget class="QPushButton" name="btnSimReadDay">
+       <property name="geometry">
+        <rect>
+         <x>380</x>
+         <y>600</y>
+         <width>101</width>
+         <height>31</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>실행일대상종목</string>
        </property>
       </widget>
      </widget>

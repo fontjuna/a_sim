@@ -30,7 +30,9 @@ class GUI(QMainWindow, form_class):
         self.sim_date_text = ''
         self.sim_thread = None
         self.cht_dt = ChartData()
-
+        self.gbSim3_styleSheet = None
+        self.red_styleSheet = "QGroupBox { border: 1px solid rgba(255, 0, 0, 50); color: red; }"
+        
         gm.qwork['gui'] = Queue()
         gm.qwork['msg'] = Queue()
 
@@ -148,12 +150,15 @@ class GUI(QMainWindow, form_class):
             self.gbxBuyCheck.toggled.connect(lambda: self.gui_gbx_check(self.gbxBuyCheck.isChecked(), 'buy'))
             self.gbxSellCheck.toggled.connect(lambda: self.gui_gbx_check(self.gbxSellCheck.isChecked(), 'sell'))
 
+            # 시뮬레이션 3번 선택
+            self.gbSim3_styleSheet = self.gbSim3.styleSheet()
+            self.gbSim3.setEnabled(False)
+            self.rbSim3.toggled.connect(lambda: self.gui_sim3_set(self.rbSim3.isChecked()))
+
             # 시뮬레이션 재시작
             self.btnSimStart.clicked.connect(self.gui_simulation_restart) # 시뮬레이션 재시작
 
             # 시뮬레이션 실행일자 데이타 가져오기
-            #self.dtSimDate.dateChanged.connect(lambda date: setattr(self, 'sim_date_text', date.toString("yyyyMMdd")))
-            #self.dtSimDate.editingFinished.connect(lambda: setattr(self, 'sim_date_text', self.dtSimDate.date().toString("yyyyMMdd")))
             self.btnSimReadDay.clicked.connect(lambda: self.gui_sim_read_day(read_chart=False))
             self.btnSimReadTick.clicked.connect(lambda: self.gui_sim_read_day(read_chart=True))
 
@@ -481,14 +486,19 @@ class GUI(QMainWindow, form_class):
 
     def gui_simulation_restart(self):
         self.gui_simulation_stop()
-        self.gui_simulation_start()
+        gm.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
+        if gm.sim_no == 3: 
+            self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
+            self.gbSim3.setEnabled(True)
+        else:
+            self.gui_simulation_start()
 
     def gui_simulation_start(self):
-        gm.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
         gm.sim_on = gm.sim_no > 0
+        speed, dt = self.gui_get_sim3_sets()
         gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
-        gm.prx.order('api', 'set_tickers')
-        gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
+        gm.prx.order('api', 'set_tickers', speed=speed, dt=dt)
+        gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)    
         time.sleep(1)
         gm.admin.restart()
         gm.admin.stg_start()
@@ -1190,11 +1200,29 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'주문설정 표시 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    # 시뮬레이션 데이타 ---------------------------------------------------------------------------------------------
+    #  시뮬레이션 3번 선택 ---------------------------------------------------------------------------------------------
+    def gui_sim3_set(self, value):
+        if value:
+            self.gbSim3.setStyleSheet(self.red_styleSheet)
+        else:
+            self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
+        self.gbSim3.setEnabled(False)
+
+    def gui_get_sim3_sets(self):
+        speed = 1
+        if self.rbSpeed2.isChecked(): speed = 2
+        elif self.rbSpeed5.isChecked(): speed = 5
+        elif self.rbSpeed10.isChecked(): speed = 10
+        elif self.rbSpeed02.isChecked(): speed = 0.2
+        elif self.rbSpeed05.isChecked(): speed = 0.5
+
+        dt = self.dtSimDate.date().toString("yyyy-MM-dd")
+        return speed, dt
+
     def gui_get_tickers(self, date_text, read_chart=False):
         try:
             sql = db_columns.SIM_SELECT_GUBUN if read_chart else db_columns.SIM_SELECT_DATE
-            dict_list = gm.prx.answer('dbm', 'execute_query', sql=sql, db='db', params=(date_text, gm.sim_no,))
+            dict_list = gm.prx.answer('dbm', 'execute_query', sql=sql, db='db', params=(date_text, 0,))
             if dict_list is not None and len(dict_list) > 0:
                 logging.info(f"당일종목 얻기 완료: date={self.sim_date_text} count={len(dict_list)}")
                 return dict_list

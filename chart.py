@@ -2892,47 +2892,93 @@ class ChartManager:
         상태 검사 함수 - 반환값: (rise, fall)
         
         Args:
-            n: 검사 시작 봉 (기본값: 1, 1봉전부터 검사)
+            mas: 이평선 리스트 [기준이평, 이평1, 이평2, ...]
+                - mas[0]: 기준 이평선 (SB 판단 기준)
+                - mas[1:-1]: 추가 이평선들 (기준 이평선보다 짧은 주기만 사용)
+            n: 검사 시작 봉 (기본값: 0, 현재봉부터 검사)
             
         Returns:
-            tuple: (rise_dict, fall_dict)
+            tuple: (rise_dict, fall_dict, below)
+                - below: 각 이평선별 이하 종가 인덱스 리스트 딕셔너리
         """
         self._ensure_data_cache()
         
         with self.suspend_ensure():
-            if not self._raw_data or len(self._raw_data) < 20: return ({}, {})
+            if not self._raw_data or len(self._raw_data) < 20: return ({}, {}, {})
+            
+            # 기준 이평선과 짧은 주기 이평선들 분리
+            base_ma = mas[0]  # 기준 이평선
+            short_mas = [ma for ma in mas[1:] if ma < base_ma]  # 기준 이평선보다 짧은 주기만
+            sb_mas = [base_ma] + short_mas  # SB 판단에 사용할 모든 이평선 (기준이평 + 짧은주기)
             
             # 1. 현재봉 이전 당일 최고 종가봉(HC) 찾기
             hc, today_bars = self._find_highest_close_before(n)
             
-            if hc is None: return ({}, {})
+            if hc is None: return ({}, {}, {})
             
-            # 2. HC부터 과거봉으로 검사하여 ma이평 아래인 봉(SB) 찾기
-            initial_sb = self._find_start_bar(hc, mas)
+            # 2. HC부터 과거봉으로 검사하여 기준 이평 아래인 봉(SB) 찾기
+            initial_sb = self._find_start_bar(hc, [base_ma])
             
-            if initial_sb is None: return ({}, {})
+            if initial_sb is None: return ({}, {}, {})
             
-            # 3. SB부터 현재봉으로 오면서 이평들 위에 종가가 최초로 형성된 봉의 전봉을 새로운 SB로 설정
-            sb = self._refine_start_bar(initial_sb, mas, n)
+            # 3. SB부터 현재봉으로 오면서 모든 이평들 위에 종가가 최초로 형성된 봉의 전봉을 새로운 SB로 설정
+            sb = self._refine_start_bar(initial_sb, sb_mas, n)
             
-            if sb is None: return ({}, {})
+            if sb is None: return ({}, {}, {})
             
-            # 4. HC부터 SB까지 분석
-            max_red, max_blue, dc10, dc5, dc3, tails, red_count, blue_count = self._analyze_bars_between(hc, sb)
+            # 4. SB~HC 구간에서 모든 이평선 이하 종가 인덱스 리스트 생성
+            below = self._get_ma_below_indices(mas, sb, hc)
             
-            # 5. peak 분석 (SB~HC 구간 전반/후반 상승율 비교)
+            # 5. HC부터 SB까지 분석
+            max_red, max_blue, tails, red_count, blue_count = self._analyze_bars_between(hc, sb)
+            
+            # 6. peak 분석 (SB~HC 구간 전반/후반 상승율 비교)
             peak = self._analyze_peak(hc, sb)
             
-            # 6. 현재봉부터 HC전까지 분석
+            # 7. 현재봉부터 HC전까지 분석
             oh, uc = self._analyze_bars_after_hc(n, hc)
             
-            # 7. rise 사전 구성
-            rise = self._build_rise_dict(hc, sb, max_red, max_blue, dc10, dc5, dc3, tails, peak, today_bars, red_count, blue_count)
+            # 8. rise 사전 구성
+            rise = self._build_rise_dict(hc, sb, max_red, max_blue, tails, peak, today_bars, red_count, blue_count)
             
-            # 8. fall 사전 구성
+            # 9. fall 사전 구성
             fall = self._build_fall_dict(oh, uc)
             
-            return (rise, fall)
+            return (rise, fall, below)
+    
+    def _get_ma_below_indices(self, mas: list, sb: int, hc: int) -> dict:
+        """
+        SB~HC 구간에서 각 이평선별 이하 종가 인덱스 리스트 반환
+        
+        Args:
+            mas: 이평선 리스트
+            sb: 시작 봉 인덱스
+            hc: 최고 종가봉 인덱스
+            
+        Returns:
+            dict: 각 이평선별 이하 종가 인덱스 리스트
+                예: {5: [7, 12], 10: [5, 7, 15], 20: [5, 7, 12, 15, 18]}
+        """
+        below = {}
+        
+        # 각 이평선별로 초기화
+        for ma in mas:
+            below[ma] = []
+        
+        # SB 다음부터 HC까지 검사 (SB는 포함하지 않음, HC는 포함)
+        for i in range(sb + 1, hc + 1):
+            if i >= len(self._raw_data): break
+            
+            close = self._raw_data[i]['현재가']
+            
+            # 각 이평선과 비교
+            for ma in mas:
+                if i >= len(self._raw_data) - ma: continue
+                ma_value = self.ma(ma, i)
+                if close < ma_value:
+                    below[ma].append(i)
+        
+        return below
     
     def _find_highest_close_before(self, n: int) -> tuple:
         """
@@ -3006,9 +3052,6 @@ class ChartManager:
         """HC부터 SB까지 봉들 분석"""
         max_red = (None, 0.0)
         max_blue = (None, 0.0)
-        dc10 = []
-        dc5 = []
-        dc3 = []
         tails = []
         red_count = 0  # 양봉 개수
         blue_count = 0  # 음봉 개수
@@ -3034,22 +3077,13 @@ class ChartManager:
                 if max_blue[0] is None or abs(body_pct) > abs(max_blue[1]):
                     max_blue = (i, body_pct)
             
-            # 이평선 이하 종가 체크
-            ma10 = self.ma(10, i - hc)
-            ma5 = self.ma(5, i - hc)
-            ma3 = self.ma(3, i - hc)
-            
-            if close <= ma10: dc10.append(i)
-            if close <= ma5: dc5.append(i)
-            if close <= ma3: dc3.append(i)
-            
             # 윗꼬리 1%이상 체크
             if open_price > 0:
                 tail_rate = ((high - max(open_price, close)) / open_price * 100)
                 if tail_rate >= 1.0:
                     tails.append((i, tail_rate))
         
-        return max_red, max_blue, dc10, dc5, dc3, tails, red_count, blue_count
+        return max_red, max_blue, tails, red_count, blue_count
     
     def _analyze_peak(self, hc: int, sb: int) -> bool:
         """SB~HC 구간을 전반/후반으로 나누어 상승율 비교"""
@@ -3113,7 +3147,7 @@ class ChartManager:
         return oh, uc
     
     def _build_rise_dict(self, hc: int, sb: int, max_red: tuple, max_blue: tuple, 
-                        dc10: list, dc5: list, dc3: list, tails: list, peak: bool, today_bars: int, red_count: int, blue_count: int) -> dict:
+                        tails: list, peak: bool, today_bars: int, red_count: int, blue_count: int) -> dict:
         """rise 사전 구성"""
         if hc is None or sb is None or hc >= len(self._raw_data) or sb >= len(self._raw_data):
             return {}
@@ -3140,9 +3174,6 @@ class ChartManager:
             'far_rate': far_rate,   # 시작봉 부터 4봉전 까지 상승률
             'max_red': max_red,     # 양봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
             'max_blue': max_blue,   # 음봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
-            '10': dc10,             # 10이평 이하 종가 인덱스 = ( DC10 = [idx_0, idx_1, ...idx_n] ) 리스트
-            '5': dc5,               # 5이평 이하 종가 인덱스 = ( DC5 = [idx_0, idx_1, ...idx_n] ) 리스트
-            '3': dc3,               # 3이평 이하 종가 인덱스 = ( DC3 = [idx_0, idx_1, ...idx_n] ) 리스트
             'tails': tails,         # 윗 꼬리가 시가대비 1%이상 봉들의 인덱스와 꼬리 % ( TAILS = [(idx_0, rate_0), ..., (idx_n, rate_n)] ) 리스트
             'peak': peak,           # SB~HC 구간을 전반/후반으로 나누어 상승율 비교 (최근봉의 상승율이 가파르면 True)
             'today_bars': today_bars,
@@ -3509,6 +3540,7 @@ class ScriptManager:
         
         # 캐시 체크 및 준비
         if script_key not in self._compiled_script_cache:
+            #logging.debug(f"🔄 {script_name} 캐시 없음 - 새로 컴파일")
             # 캐시 없음 - 최초 실행: 검증 후 캐싱
             code = kwargs.get('code')
             if code is None:
@@ -3529,6 +3561,7 @@ class ScriptManager:
             # 캐시 있음 - 바로 실행
             code_obj = self._compiled_script_cache[script_key]
             need_cleanup = False
+            #logging.debug(f"⚡ {script_name} 캐시 사용 - 즉시 실행")
         
         # 공통 실행 로직
         try:
@@ -3573,8 +3606,9 @@ class ScriptManager:
         if kwargs is None:
             kwargs = {}
         
-        # 🚀 스크립트 변경 시 캐시 무효화
+        # 🚀 스크립트 변경 시 캐시 무효화 (강화)
         self._invalidate_script_cache(script_name)
+        logging.debug(f"🔄 {script_name} 스크립트 업데이트 - 캐시 무효화 완료")
         
         # 결과 초기화
         result_dict = {
@@ -3595,8 +3629,7 @@ class ScriptManager:
             return result_dict
         
         # save=False면 검사까지만 하고 반환
-        if not save:
-            return result_dict
+        if not save: return result_dict
         
         # save=True인 경우 저장 진행
         script_data = {
@@ -3659,8 +3692,8 @@ def {script_name}(*args, **kwargs):
                         wrapper_line = int(match.group(1))
                         # _make_wrapped_script의 실제 구조 확인:
                         # 사용자 스크립트는 9번째 라인부터 시작 (들여쓰기 포함)
-                        if wrapper_line >= 9:
-                            error_line_num = wrapper_line - 8  # 9번째 라인이 사용자 스크립트 1번째 라인
+                        if wrapper_line >= 12:
+                            error_line_num = wrapper_line - 11  # 9번째 라인이 사용자 스크립트 1번째 라인
                         break
             
             # 에러 메시지 추출
@@ -3774,12 +3807,19 @@ def {script_name}(*args, **kwargs):
         keys_to_remove = [key for key in self._compiled_script_cache.keys() if key.startswith(f"{script_name}:")]
         for key in keys_to_remove:
             del self._compiled_script_cache[key]
+            #logging.debug(f"🗑️ 캐시 제거: {key}")
         
         # 스크립트 래퍼 캐시에서도 제거
         if script_name in self._script_wrapper_cache:
             del self._script_wrapper_cache[script_name]
+            #logging.debug(f"🗑️ 래퍼 캐시 제거: {script_name}")
         
-        logging.debug(f"🗑️ {script_name} 캐시 무효화 완료")
+        # 스크립트 결과 캐시에서도 제거
+        if script_name in self._script_result_cache:
+            del self._script_result_cache[script_name]
+            #logging.debug(f"🗑️ 결과 캐시 제거: {script_name}")
+        
+        #logging.debug(f"🗑️ {script_name} 캐시 무효화 완료")
     
     def get_cache_status(self):
         """캐시 상태 확인"""
@@ -3855,7 +3895,7 @@ def {script_name}(*args, **kwargs):
 
             def bar_idx(target_time: str, current_time: str=None, tick: int=180) -> int:
                 """
-                주어진 시간의 봉 인덱스 반환 (tick 기반 산수 계산)
+                주어진 시간의 봉 인덱스 반환 (단순 시간 차이 기반)
                 
                 Args:
                     target_time: 찾을 시간 (예: '20250101103000')
@@ -3885,9 +3925,9 @@ def {script_name}(*args, **kwargs):
                 current_seconds = (current_tick // 10000) * 3600 + ((current_tick % 10000) // 100) * 60 + (current_tick % 100)
                 target_seconds = (target_tick // 10000) * 3600 + ((target_tick % 10000) // 100) * 60 + (target_tick % 100)
                 
-                # 간단한 계산: (현재시간 - 타겟시간) / 주기
-                tick_diff = current_seconds - target_seconds
-                bar_index = int(tick_diff / tick)
+                # 단순 시간 차이 기반 계산 (장 시작 시간 무관)
+                time_diff = current_seconds - target_seconds
+                bar_index = int(time_diff / tick)
                 
                 return bar_index
 
