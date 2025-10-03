@@ -466,6 +466,7 @@ class EvalStrategy(QThread):
             if gm.sim_no != 1 and self.매수스크립트적용: # 다시 넣기 때문에 hoga()계산 전에 (price가 변경 됨)
                 if self.cht_dt.is_code_registered(code):
                     try:
+                        매수일시 = datetime.now().strftime('%Y%m%d%H%M%S')
                         result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': send_data['quantity'], 'buy_dt': ''})
                         gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                         if result.get('error') or not result.get('result', False):

@@ -2930,7 +2930,7 @@ class ChartManager:
             below = self._get_ma_below_indices(mas, sb, hc)
             
             # 5. HC부터 SB까지 분석
-            max_red, max_blue, tails, red_count, blue_count = self._analyze_bars_between(hc, sb)
+            max_red, max_blue, tail_count, red_count, blue_count = self._analyze_bars_between(hc, sb, n)
             
             # 6. peak 분석 (SB~HC 구간 전반/후반 상승율 비교)
             peak = self._analyze_peak(hc, sb)
@@ -2939,7 +2939,7 @@ class ChartManager:
             oh, uc = self._analyze_bars_after_hc(n, hc)
             
             # 8. rise 사전 구성
-            rise = self._build_rise_dict(hc, sb, max_red, max_blue, tails, peak, today_bars, red_count, blue_count)
+            rise = self._build_rise_dict(hc, sb, max_red, max_blue, tail_count, peak, today_bars, red_count, blue_count)
             
             # 9. fall 사전 구성
             fall = self._build_fall_dict(oh, uc)
@@ -3048,11 +3048,11 @@ class ChartManager:
         
         return len(self._raw_data) - 1
     
-    def _analyze_bars_between(self, hc: int, sb: int) -> tuple:
-        """HC부터 SB까지 봉들 분석"""
+    def _analyze_bars_between(self, hc: int, sb: int, n: int = 0) -> tuple:
+        """HC부터 SB까지 봉들 분석 (n: 현재봉 인덱스)"""
         max_red = (None, 0.0)
         max_blue = (None, 0.0)
-        tails = []
+        tail_count = 0  # 최고종가봉(hc)과 전후봉(hc-1, hc+1) 중 윗꼬리 1%이상 개수
         red_count = 0  # 양봉 개수
         blue_count = 0  # 음봉 개수
         
@@ -3077,13 +3077,14 @@ class ChartManager:
                 if max_blue[0] is None or abs(body_pct) > abs(max_blue[1]):
                     max_blue = (i, body_pct)
             
-            # 윗꼬리 1%이상 체크
-            if open_price > 0:
-                tail_rate = ((high - max(open_price, close)) / open_price * 100)
-                if tail_rate >= 1.0:
-                    tails.append((i, tail_rate))
+            # 윗꼬리 1%이상 체크 (최고종가봉과 전후봉만: hc-1, hc, hc+1)
+            if hc - 1 <= i <= hc + 1:
+                if open_price > 0:
+                    tail_rate = ((high - max(open_price, close)) / open_price * 100)
+                    if tail_rate >= 1.0:
+                        tail_count += 1
         
-        return max_red, max_blue, tails, red_count, blue_count
+        return max_red, max_blue, tail_count, red_count, blue_count
     
     def _analyze_peak(self, hc: int, sb: int) -> bool:
         """SB~HC 구간을 전반/후반으로 나누어 상승율 비교"""
@@ -3147,7 +3148,7 @@ class ChartManager:
         return oh, uc
     
     def _build_rise_dict(self, hc: int, sb: int, max_red: tuple, max_blue: tuple, 
-                        tails: list, peak: bool, today_bars: int, red_count: int, blue_count: int) -> dict:
+                        tail_count: int, peak: bool, today_bars: int, red_count: int, blue_count: int) -> dict:
         """rise 사전 구성"""
         if hc is None or sb is None or hc >= len(self._raw_data) or sb >= len(self._raw_data):
             return {}
@@ -3158,11 +3159,11 @@ class ChartManager:
         # rise_rate 계산
         rise_rate = ((hc_close - sb_close) / sb_close * 100) if sb_close > 0 else 0
         
-        # near_rate, far_rate 계산
+        # three_rate, far_rate 계산
         bars = sb - hc
         x = hc + min(3, bars)
         
-        near_rate = ((hc_close - self._raw_data[x]['현재가']) / sb_close * 100) if sb_close > 0 else 0 # 최근 3개 상승률
+        three_rate = ((hc_close - self._raw_data[x]['현재가']) / sb_close * 100) if sb_close > 0 else 0 # 최근 3개 상승률
         far_rate = ((self._raw_data[x]['현재가'] - sb_close) / sb_close * 100) if sb_close > 0 else 0  # 시작봉 부터 4봉전 까지 상승률
         
         return {
@@ -3170,11 +3171,11 @@ class ChartManager:
             'sb': sb,               # 시작봉 인덱스
             'bars': bars,           # SB - HC 상승 구간 봉 개수
             'rise_rate': rise_rate, # HC - SB 상승률
-            'near_rate': near_rate, # 최근 3개 상승률 
+            'three_rate': three_rate, # 최근 3개 상승률 
             'far_rate': far_rate,   # 시작봉 부터 4봉전 까지 상승률
             'max_red': max_red,     # 양봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
             'max_blue': max_blue,   # 음봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
-            'tails': tails,         # 윗 꼬리가 시가대비 1%이상 봉들의 인덱스와 꼬리 % ( TAILS = [(idx_0, rate_0), ..., (idx_n, rate_n)] ) 리스트
+            'up_tails': tail_count, # 최고종가봉(hc)과 전후봉(hc-1, hc, hc+1) 중 윗꼬리 1%이상 개수
             'peak': peak,           # SB~HC 구간을 전반/후반으로 나누어 상승율 비교 (최근봉의 상승율이 가파르면 True)
             'today_bars': today_bars,
             'red_count': red_count, # SB~HC 구간 양봉 개수 (SB 제외, HC 포함)

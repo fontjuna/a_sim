@@ -363,9 +363,9 @@ class FilePath:         # 파일 경로
     cache_path = os.path.join(get_path(CACHE_PATH))
 
 class Constants:        # 상수 정의
-    tax_rate = 0.0015
-    fee_real = 0.00015
-    fee_sim = 0.0035
+    tax_rate = 0.0015   # 0.15%
+    fee_real = 0.00015  # 0.03% 매도+매수 함 = 0.18%
+    fee_sim = 0.0035    # 0.7% 매도+매수  합 = 0.85$
 
     NON_STRATEGY = '000 : 선택없음'
     BASIC_STRATEGY = '기본전략'

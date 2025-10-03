@@ -416,7 +416,6 @@ ret(True)
 
 
 
-
 # =============================================================================================
 
 # 스크립트명 : 일반매도 v20250917.002800
@@ -426,26 +425,7 @@ ret(True)
 - 없음.
 
 <이 스크립트에서 적용한 조건들>
-1. 상한가 이거나
-2. 현재봉 고가 대비 -5% 이하 하락 중이거나
-3. 현재 5이평 하락 중이거나
-4. 전봉 5, 10이평 역전 상태이거나
-5. 전봉 종가, 10이평 역전 상태이거나
-6. 10봉중 최고거래량봉 아래로 이탈하거나
-7. 교수형 캔들의 고가 갱신 못함이거나
-8. 전봉 고가 갱신 불발후 위꼬리 내부에서 마감하거나
-9. 전봉 윗꼬리 2%이상 유성형 패턴으로 급락하거나
-10. 전봉 윗꼬리 1%이상 음봉 갭 상승 마감이거나
-11. 전봉 윗꼬리 1%이상 유성형 음봉이거나
-12. 전봉 윗꼬리 1%이상 떨어지는 칼날이거나
-13. 전봉 윗꼬리 1%이상 연속 고가 저항이거나
-14. 전봉 하락 잉태형 패턴이거나
-15. 전봉 하락 장악형 패턴이거나
-16. 하락 전환 석별형 패턴이거나
-17. 전전봉 윗꼬리 1.5% 이상 몸통의 3배 유성형 양봉이거나
-18. 전봉 하락 잉태형 패턴이거나
-19. 전봉 최고종가봉 고가 갱신 불발후 위꼬리 내부에서 마감하거나
-20. 전봉 최고종가 하락 장악형 패턴이거나
+- 작성 중.
 """
 
 dm = ChartManager(code, 'dy')
@@ -609,8 +589,8 @@ with m3.suspend_ensure():
         if ymd <= bar_time:
             msg = f'당일 첫봉 1 분간 매수 하지 않음'
     else:
-        if o(첫봉) > o():
-            msg = f'3분봉 시가가 당일 시가 이하이면 매수 안함'
+        if o(첫봉) > c():
+            msg = f'3분봉 종가가 당일 시가 이하이면 매수 안함'
 
     if msg:
         echo(f'[False] ({code} {name}) / {msg} : ({당일봉수}) {최고종가}')
@@ -631,9 +611,9 @@ if reason:
 # 전 최고종가의 고가 아래이면 다음을 만족 해야 함 #####
 with m3.suspend_ensure():
     if c(0) < h(pos):
-        if pos < 5 and percent(c(pos), o()) > 2.0:
-            echo(f'[False] ({code} {name}) / 최고종가 보다 시가가 2% 아래에서 시작 : ({당일봉수}) {최고종가}')
-            ret(False)
+        # if pos < 5 and percent(c(pos), o()) > 2.0:
+        #     echo(f'[False] ({code} {name}) / 최고종가 보다 시가가 2% 아래에서 시작 : ({당일봉수}) {최고종가}')
+        #     ret(False)
 
         if h(pos) - c(pos) > c(pos) - l(pos) and h(pos) > c(0):
             echo(f'[False] ({code} {name}) / 최고종가봉이 하락 우세임 : ({당일봉수}) {최고종가}')
@@ -646,6 +626,10 @@ with m3.suspend_ensure():
         # 전 최고종가를 넘었어도 윗꼬리가 계속 발생하며 고가 갱신을 못함
         if up_tail_pct(pos) > 1.0 and h(pos) >= h(1) > c(1) and up_tail_pct(1) > body_pct(1) * 1.5:
             echo(f'[False] ({code} {name}) / 전 최고종가의 고가저항에 윗 꼬리 발생 : ({당일봉수}) {최고종가}')
+            ret(False)
+
+        if  up_tail_pct(pos) > 2.5:
+            echo(f'[False] ({code} {name}) / 전 최고종가의 윗꼬리 2.5% 이상 발생 매수 안 함: ({당일봉수}) {최고종가}')
             ret(False)
 
         # 윗 꼬리 단 최고 종가의 고점을 넘지 못하면 매물대 라는 뜻으로 올라가기 쉽지 않다.
@@ -685,7 +669,7 @@ up_tail_pct = m3.up_tail_pct
 body_pct = m3.body_pct
 
 buy_idx = bar_idx(buy_dt)
-echo(f'매수일시={buy_dt}, 봉인덱스={buy_idx}')
+#echo(f'매수일시={buy_dt}, 봉인덱스={buy_idx}')
 
 mas = [10, 15, 7, 5, 3]
 msg = ''
@@ -695,24 +679,29 @@ with m3.suspend_ensure():
     
     if hoga(dm.c(1), 99) <= dm.c(0):
         msg = f'상한가'
-    elif not msg and ma(20, 1) > c(1):
-        msg = f'전봉 3분봉 20이평 하향 이탈'
+    # elif not msg and ma(20, 1) > c(1):
+    #     msg = f'전봉 3분봉 20이평 하향 이탈'
+    elif up_tail_pct() > 3.0:
+        msg = f'현재봉 윗꼬리 3% 이상 발생 매도'
     else:
         rise, fall, below = m3.get_rising_state(mas, 0)
-        echo(f'rise={rise}, fall={fall}')
+        #echo(f'rise={rise}, fall={fall}')
         try:
             pos = rise['hc']
             bars = rise['bars']
             첫봉 = rise['today_bars'] - 1
             start_rate = percent(o(첫봉), dm.c(1)) # 당일 시가 갭 상승 여부 및 시작 % (상승 gap 이면 > 0)
             rise_rate = rise['rise_rate']
+            three_rate = rise['three_rate']
         except:
             msg = f'상승 상태 분석 실패'
 
-        if not msg and bars >= 3:
+        if not msg:
             # 각 이평 타고 상승 했는지 여부 판단 (긴 이평부터 검사)
-            size = max(rise['max_red'], rise['max_blue'])
-            if size < 1.5:
+            size = max(rise['max_red'][1], rise['max_blue'][1])
+            if size < 1.0:
+                if ma(20, 1) > c(1): msg = f'20이평 첫 이탈 매도'
+            elif size < 1.5:
                 if ma(15, 1) > c(1): msg = f'15이평 첫 이탈 매도'
             elif size < 2:
                 if ma(10, 1) > c(1): msg = f'10이평 첫 이탈 매도'
@@ -720,35 +709,26 @@ with m3.suspend_ensure():
                 if ma(7, 1) > c(1): msg = f'7이평 첫 이탈 매도'
             elif size < 3:
                 if ma(5, 1) > c(1): msg = f'5이평 첫 이탈 매도'
-            else:
-                if len(rise['tails']) >= 2:
-                    msg = f'윗꼬리 2개 이상 발생 매도'
-                else:
-                    if ma(3, 1) > c(1): msg = f'3이평 첫 이탈 매도'
 
-            # below_ma = 0
-            # for ma_period in sorted(mas, reverse=True):
-            #     if len(below[ma_period]) == 0 and ma(ma_period, 1) > c(1):
-            #         msg = f'{ma_period}이평 첫 이탈 매도'
-            #         below_ma = ma_period
-            #         break
-            # if msg:
-            #     if below_ma == 3: pass
-        else:
-            near_rate = rise['near_rate']
-            if near_rate > 10:
-                if c(pos) - (c(pos) - o(pos)) / 3 > c():
-                    msg = f'급등시 음봉에서 매도'
-            elif near_rate > 5:
-                if ma(3, 1) > c(1):
-                    msg = f'3이평 이탈 매도'
-            elif near_rate > 3:
-                if ma(5, 1) > c(1):
-                    msg = f'5이평 이탈 매도'
+        if not msg:
+            if three_rate >= 10:
+                if c(pos) - (c(pos) - o(pos)) / 4 > c(): msg = f'급등시 음봉에서 매도'
+            elif three_rate >= 8:
+                if ma(3, 1) > c(1): msg = f'3이평 이탈 매도'
+            elif three_rate >= 6:
+                if ma(5, 1) > c(1): msg = f'5이평 이탈 매도'
+            elif three_rate >= 5:
+                if ma(7, 1) > c(1): msg = f'7이평 이탈 매도'
+            elif three_rate >= 4:
+                if ma(10, 1) > c(1): msg = f'10이평 이탈 매도'
+            elif three_rate >= 3:
+                if ma(15, 1) > c(1): msg = f'15이평 이탈 매도'
             else:
-                if ma(7, 1) > c(1):
-                    msg = f'7이평 이탈 매도'
+                if ma(20, 1) > c(1): msg = f'20이평 이탈 매도'
 
+        if not msg:
+            if c(pos) > c() and rise['up_tails'] >= 2 and pos < 3: # up_tails:현재봉 포함 수량 임
+                msg = f'윗꼬리 2개 이상 발생 매도'
 
     # 매수/매도 스크립트 겸용 판단 루틴 ***********************************************
     # if not msg:
@@ -777,7 +757,7 @@ with m3.suspend_ensure():
     # if not msg:
     #     # 상승 결과 분석으로 매도 결정
     #     point = 1 if rise['peak'] else 0
-    #     point = max(point, rise['near_rate'] / (2 * min(3, bars)))
+    #     point = max(point, rise['three_rate'] / (2 * min(3, bars)))
     #     point = max(point, percent(c(pos), o(pos)) / 2)
     #     point = max(point, rise['max_red'][1] / 3)
     #     point = max(point, rise['max_blue'][1] / 4)
