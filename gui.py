@@ -1301,8 +1301,12 @@ class GUI(QMainWindow, form_class):
             name = gm.prx.answer('api', 'GetMasterCodeName', code)
             if name:
                 self.leSimNameDay.setText(name)
+        else:
+            QMessageBox.warning(self, '알림', '추가할 종목을 확인 하세요.')
+            return
+
         if name:
-            gm.당일종목.set(key='종목코드', data={'종목코드':code, '종목명':name})
+            gm.당일종목.set(key='종목코드', data={'종목코드':code, '종목명':name, '상태': '추가'})
             gm.당일종목.update_table_widget(self.tblSimDaily)
 
     def gui_sim_del_day(self):

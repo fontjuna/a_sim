@@ -27,6 +27,7 @@ class Main:
         self.app = None
         self.cleanup_flag = False
         self.time_over = False
+        
         sys.excepthook = _global_exception_handler
 
     def init(self):
