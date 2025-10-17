@@ -915,7 +915,10 @@ class Admin:
                         logging.warning(f'잔고목록 삭제 실패: {code} {dictFID["종목명"]}')
                     gm.holdings.pop(code, None)
                     save_json(dc.fp.holdings_file, gm.holdings)
-                    if gm.잔고목록.len() == 0: self.pri_fx얻기_잔고합산()
+                    if gm.잔고목록.len() == 0: 
+                        sql = 'DELETE FROM conclusion WHERE 매수수량<>매도수량'
+                        gm.prx.order('dbm', 'execute_query', sql=sql, db='db')
+                        self.pri_fx얻기_잔고합산()
 
                 gm.주문진행목록.delete(key=(code, kind)) # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
 

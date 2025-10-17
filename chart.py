@@ -2984,23 +2984,31 @@ class ChartManager:
         """
         당일 최고 종가봉 인덱스 찾기
         """
-        if not self._raw_data or len(self._raw_data) <= n + 1: return None
+        if not self._raw_data or len(self._raw_data) <= n: 
+            return None, 0
         
         current_time = self._raw_data[n]['체결시간']
+        current_date = current_time[:8]
         hc_idx = None
         hc_close = 0
         today_bars = 0
         
+        # 당일 데이터 검색 (n+1부터 시작)
         for i in range(n + 1, len(self._raw_data)):
-            if self._raw_data[i]['체결시간'][:8] == current_time[:8]:  # 날짜 부분만 비교
+            if self._raw_data[i]['체결시간'][:8] == current_date:  # 날짜 부분만 비교
                 close = self._raw_data[i]['현재가']
                 if close >= hc_close:
                     hc_close = close
                     hc_idx = i
+                today_bars += 1
             else:
                 # 다른 날짜면 종료
-                today_bars = i
                 break
+        
+        # 당일 첫봉인 경우: 현재봉을 HC로 사용
+        if hc_idx is None:
+            hc_idx = n
+            today_bars = 1
         
         return hc_idx, today_bars
     
@@ -3027,26 +3035,25 @@ class ChartManager:
         return initial_sb
     
     def _find_start_bar(self, hc: int, mas: list) -> int:
-        """HC부터 과거봉으로 검사하여 mas[0]이평 아래인 봉(SB) 찾기"""
-        if hc is None or hc >= len(self._raw_data) - mas[0]: return None
+        """HC부터 과거봉으로 검사하여 mas[0]이평 아래인 봉(SB) 찾기 (전일 데이터 포함)"""
+        if hc is None or hc >= len(self._raw_data) - mas[0]: 
+            return None
         
-        # HC부터 과거로 검사하여 처음 만난 10이평 아래 종가 봉 찾기
+        # HC부터 과거로 검사하여 처음 만난 기준이평 아래 종가 봉 찾기 (전일 데이터까지 확장)
         for i in range(hc + 1, len(self._raw_data)):
+            # 이평선 계산에 필요한 데이터가 충분한지 확인
             if i >= len(self._raw_data) - mas[0]: 
                 break
                 
             close = self._raw_data[i]['현재가']
-            ma = self.ma(mas[0], i)
+            ma_value = self.ma(mas[0], i)
             
-            if close < ma: return i
+            # 기준이평 아래 종가 발견 시 즉시 반환 (당일/전일 구분 없이)
+            if close < ma_value: 
+                return i
         
-        # 당일에 없으면 전 영업일 마지막 봉
-        hc_time = self._raw_data[hc]['체결시간']
-        for i in range(hc + 1, len(self._raw_data)):
-            if self._raw_data[i]['체결시간'][:8] != hc_time[:8]:
-                return i - 1
-        
-        return len(self._raw_data) - 1
+        # 조건을 만족하는 봉을 찾지 못한 경우 마지막 사용 가능한 봉 반환
+        return len(self._raw_data) - mas[0] - 1
     
     def _analyze_bars_between(self, hc: int, sb: int, n: int = 0) -> tuple:
         """HC부터 SB까지 봉들 분석 (n: 현재봉 인덱스)"""

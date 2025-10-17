@@ -268,7 +268,7 @@ class OrderCommander(QThread):
         self.daemon = True
         self.prx = prx
         self.order_q = order_q
-        self.ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
+        self.ord = TimeLimiter(name='ord', second=5, minute=100, hour=1000)
         self.running = False
 
     def stop(self):
@@ -560,6 +560,7 @@ class EvalStrategy(QThread):
                     elif self.청산지정가:
                         send_list = [{**send_data, 'code': row['종목번호'], 'price': hoga(row['현재가'], self.청산호가), 'quantity': row['보유수량'], 'hoga': '01', 'msg': '청산지정'} for row in rows]
 
+                    gm.admin.매도취소 = False
                     return True, send_list, f"당일청산: 청산시간={self.청산시간}, {code} {종목명}"
 
             if self.매도지정가:
@@ -597,6 +598,8 @@ class EvalStrategy(QThread):
                 if self.로스컷율 > 0 and 수익율 <= self.로스컷율 or self.로스컷율 < 0 and 수익율 >= self.로스컷율: 
                     return False, {}, f"로스컷: 수익율={수익율} 로스컷율={self.로스컷율}"
                 
+                gm.admin.매도취소 = False
+
                 rows = gm.잔고목록.get()
                 if self.로스컷시장가:
                     send_list = [{**send_data, 'code': row['종목번호'], 'price': 0, 'quantity': row['보유수량'], 'msg': '로스컷장'} for row in rows]

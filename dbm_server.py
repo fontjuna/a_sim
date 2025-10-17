@@ -488,9 +488,6 @@ class DBMServer:
                     })
             
             self.table_upsert('db', table, record, key=db_columns.CONC_KEYS)
-            # if sim_record:
-            #     self.table_upsert('db', db_columns.SIM_TABLE_NAME, sim_record, key=db_columns.SIM_KEYS)
-            #     sim_record = None
 
             return True
             

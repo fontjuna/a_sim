@@ -5825,7 +5825,7 @@
           <string>x 1</string>
          </property>
          <property name="checked">
-          <bool>true</bool>
+          <bool>false</bool>
          </property>
         </widget>
         <widget class="QRadioButton" name="rbSpeed2">
@@ -5865,6 +5865,9 @@
          </property>
          <property name="text">
           <string>x 10</string>
+         </property>
+         <property name="checked">
+          <bool>true</bool>
          </property>
         </widget>
        </widget>
@@ -6048,7 +6051,7 @@
         </property>
        </widget>
       </widget>
-      <widget class="QPushButton" name="btnSimReadTick">
+      <widget class="QPushButton" name="btnSimReadDay">
        <property name="geometry">
         <rect>
          <x>250</x>
@@ -6058,21 +6061,138 @@
         </rect>
        </property>
        <property name="text">
-        <string>차트데이타생성</string>
-       </property>
-      </widget>
-      <widget class="QPushButton" name="btnSimReadDay">
-       <property name="geometry">
-        <rect>
-         <x>130</x>
-         <y>30</y>
-         <width>101</width>
-         <height>31</height>
-        </rect>
-       </property>
-       <property name="text">
         <string>선택일대상종목</string>
        </property>
+      </widget>
+      <widget class="QGroupBox" name="groupBox_28">
+       <property name="geometry">
+        <rect>
+         <x>370</x>
+         <y>380</y>
+         <width>241</width>
+         <height>111</height>
+        </rect>
+       </property>
+       <property name="title">
+        <string>시뮬레이션 데이타 준비</string>
+       </property>
+       <widget class="QPushButton" name="btnSimReadTick">
+        <property name="geometry">
+         <rect>
+          <x>10</x>
+          <y>30</y>
+          <width>101</width>
+          <height>31</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>데이타생성</string>
+        </property>
+       </widget>
+       <widget class="QPushButton" name="btnUpload">
+        <property name="geometry">
+         <rect>
+          <x>10</x>
+          <y>70</y>
+          <width>101</width>
+          <height>31</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>메모리로드</string>
+        </property>
+       </widget>
+       <widget class="QLabel" name="lbAllCount">
+        <property name="geometry">
+         <rect>
+          <x>181</x>
+          <y>36</y>
+          <width>51</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Panel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Sunken</enum>
+        </property>
+        <property name="text">
+         <string>0</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+       <widget class="QLabel" name="label_67">
+        <property name="geometry">
+         <rect>
+          <x>171</x>
+          <y>36</y>
+          <width>16</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::NoFrame</enum>
+        </property>
+        <property name="text">
+         <string>/</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+       <widget class="QLabel" name="lbCurrent">
+        <property name="geometry">
+         <rect>
+          <x>121</x>
+          <y>36</y>
+          <width>51</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Panel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Sunken</enum>
+        </property>
+        <property name="lineWidth">
+         <number>1</number>
+        </property>
+        <property name="text">
+         <string>0</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+       <widget class="QLabel" name="lbLoadStatus">
+        <property name="geometry">
+         <rect>
+          <x>120</x>
+          <y>75</y>
+          <width>111</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Panel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Sunken</enum>
+        </property>
+        <property name="lineWidth">
+         <number>1</number>
+        </property>
+        <property name="text">
+         <string>0</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
       </widget>
      </widget>
     </widget>

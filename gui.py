@@ -154,6 +154,12 @@ class GUI(QMainWindow, form_class):
             self.gbSim3_styleSheet = self.gbSim3.styleSheet()
             self.gbSim3.setEnabled(False)
             self.rbSim3.toggled.connect(lambda: self.gui_sim3_set(self.rbSim3.isChecked()))
+            self.btnUpload.clicked.connect(self.gui_sim3_memory_load)
+            self.btnSim3First.clicked.connect(self.gui_sim3_control_reset)
+            self.btnSim3Start.clicked.connect(self.gui_sim3_control_start)
+            self.btnSim3Pause.clicked.connect(self.gui_sim3_control_pause)
+            self.btnSim3Stop.clicked.connect(self.gui_sim3_control_stop)
+            self.btnSim3Start.clicked.connect(self.gui_simulation_start)
 
             # 시뮬레이션 재시작
             self.btnSimStart.clicked.connect(self.gui_simulation_restart) # 시뮬레이션 재시작
@@ -495,9 +501,8 @@ class GUI(QMainWindow, form_class):
 
     def gui_simulation_start(self):
         gm.sim_on = gm.sim_no > 0
-        speed, dt = self.gui_get_sim3_sets()
         gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
-        gm.prx.order('api', 'set_tickers', speed=speed, dt=dt)
+        gm.prx.order('api', 'set_tickers')
         gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)    
         time.sleep(1)
         gm.admin.restart()
@@ -513,6 +518,26 @@ class GUI(QMainWindow, form_class):
         gm.prx.order('api', 'thread_cleanup')
         self.set_strategy_toggle(run=False)
         gm.toast.toast('전략매매를 중지했습니다.', duration=2000)
+
+    def gui_sim3_memory_load(self):
+        self.lbLoadStatus.setText('초기화 중...')
+        self.gui_simulation_start()
+        self.lbLoadStatus.setText('로드 중...')
+        gm.prx.order('api', 'sim3_memory_load')
+        self.lbLoadStatus.setText('로드 완료')
+
+    def gui_sim3_control_start(self):
+        speed, dt = self.gui_get_sim3_sets()
+        gm.prx.order('api', 'sim3_control_start', speed=speed, dt=dt)
+        
+    def gui_sim3_control_stop(self):
+        gm.prx.order('api', 'sim3_control_stop')
+
+    def gui_sim3_control_pause(self):
+        gm.prx.order('api', 'sim3_control_pause')
+
+    def gui_sim3_control_reset(self):
+        gm.prx.order('api', 'sim3_control_reset')
 
     def gui_strategy_changed(self):
         pass
@@ -1249,6 +1274,7 @@ class GUI(QMainWindow, form_class):
             if sim_tickers:
                 gm.당일종목.set(data=sim_tickers)
             else:
+                gm.toast.toast(f'해당 종목 없거나 읽지 못 함 : date:{date_text} sim_tickers:{sim_tickers}', duration=1000)
                 logging.warning(f'해당 종목 없거나 읽지 못 함 : date:{date_text} sim_tickers:{sim_tickers}')
                 
             gm.당일종목.update_table_widget(self.tblSimDaily)
@@ -1275,6 +1301,8 @@ class GUI(QMainWindow, form_class):
     def gui_sim_read_ticker(self, date_text, sim_tickers):
         try:
             logging.info(f"당일종목 차트 데이타 얻기: date={date_text} {len(sim_tickers)} 개 종목")
+            self.lbAllCount.setText(f"{len(sim_tickers)}")  
+            cnt = 0
             for ticker in sim_tickers:
                 dict_list = gm.prx.answer('api', 'get_chart_data', ticker['종목코드'], cycle='tk', tick=30, times=999, wt=1.67, dt=date_text, wait=60)
                 if dict_list:
@@ -1287,6 +1315,8 @@ class GUI(QMainWindow, form_class):
                             tickers.insert(0, {'체결시간': record['체결시간'], '종목코드': ticker['종목코드'], '현재가': record['현재가'], '거래량': record['거래량'], '누적거래량': add_qty, 'sim_no': gm.sim_no})
                         gm.prx.order('dbm', 'table_upsert', 'db', db_columns.REAL_TABLE_NAME, tickers, key=db_columns.REAL_KEYS)
                         gm.prx.order('dbm', 'table_upsert', 'db', db_columns.SIM_TABLE_NAME, {'일자': date_text, '종목코드': ticker['종목코드'], '구분': '읽음'}, key=db_columns.SIM_KEYS)
+                cnt += 1
+                self.lbCurrent.setText(f"{cnt}")
 
         except Exception as e:
             logging.error(f'당일종목 차트 데이타 얻기 오류: {type(e).__name__} - {e}', exc_info=True)

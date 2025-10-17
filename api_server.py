@@ -71,7 +71,8 @@ class SimData:
       # 시뮬레이션 3번 전용 속성들
       self.sim3_date = None  # 시뮬레이션 날짜
       self.sim3_speed = 1.0  # 배속 (0.2, 0.5, 1, 2, 5, 10)
-      self.sim3_start_time = None  # 시뮬레이션 시작 시간 (09:00:00 기준)
+      self.sim3_start_time = None  # 실제 시작 시간 (datetime.now() 기준)
+      self.sim3_base_data_time = 0  # 기준 데이터 시간 (초) - 현재 인덱스의 데이터 시간
       self.sim3_condition_data = []  # real_condition 테이블 데이터
       self.sim3_real_data = []  # real_data 테이블 데이터
       self.sim3_condition_index = 0  # 현재 조건검색 데이터 인덱스
@@ -82,7 +83,6 @@ class SimData:
       self.sim3_is_paused = False  # 일시정지 상태
       self.sim3_is_running = False  # 실행 상태
       self.sim3_is_stopped = True  # 정지 상태
-      self.sim3_pause_time = None  # 일시정지 시점의 시뮬레이션 시간
       self.sim3_condition_thread = None  # 조건검색 스레드 참조
       self.sim3_real_threads = {}  # 실시간 데이터 스레드들 참조
 
@@ -151,7 +151,7 @@ class SimData:
         self.sim3_real_index = {}
         self.sim3_registered_codes = set()
         self.sim3_start_time = None
-        self.sim3_pause_time = None
+        self.sim3_base_data_time = 0
         self.sim3_is_paused = False
         self.sim3_is_running = False
         self.sim3_is_stopped = True
@@ -162,7 +162,7 @@ class SimData:
             return
         logging.info("시뮬레이션 3번 일시정지")
         self.sim3_is_paused = True
-        self.sim3_pause_time = datetime.now()
+        # 인덱스는 그대로 유지됨
 
    def sim3_start(self):
         """시뮬레이션 3번 시작 (일시정지된 위치부터 재시작)"""
@@ -172,26 +172,32 @@ class SimData:
             self.sim3_is_running = True
             self.sim3_is_stopped = False
             self.sim3_is_paused = False
-            if not self.sim3_start_time:
-                self.sim3_start_time = datetime.now()
         else:
-            # 일시정지된 위치부터 재시작
+            # 일시정지된 위치부터 재시작 - 다음 데이터와 시작 시간 동기화
             logging.info("시뮬레이션 3번 재시작")
             self.sim3_is_paused = False
-            # 일시정지된 시간만큼 시작 시간 조정
-            if self.sim3_pause_time and self.sim3_start_time:
-                paused_duration = datetime.now() - self.sim3_pause_time
-                self.sim3_start_time += paused_duration
-            self.sim3_pause_time = None
+            
+            # 다음 처리할 데이터의 시간으로 기준 시간 재설정
+            if self.sim3_condition_data and self.sim3_condition_index < len(self.sim3_condition_data):
+                next_data = self.sim3_condition_data[self.sim3_condition_index]
+                time_full = next_data.get('처리일시', '090000')
+                time_str = time_full[-6:] if len(time_full) >= 6 else time_full  # HHMMSS 추출
+                hour = int(time_str[:2])
+                minute = int(time_str[2:4])
+                second = int(time_str[4:6]) if len(time_str) >= 6 else 0
+                self.sim3_base_data_time = hour * 3600 + minute * 60 + second
+                logging.debug(f"재시작: 다음 데이터 처리일시={time_full}, 시간={time_str}, 기준시간={self.sim3_base_data_time}초")
+        
+        # 실제 시작 시간 설정
+        self.sim3_start_time = datetime.now()
 
    def sim3_stop(self):
-        """시뮬레이션 3번 정지"""
+        """시뮬레이션 3번 정지 (완전 종료)"""
         logging.info("시뮬레이션 3번 정지")
         self.sim3_is_running = False
         self.sim3_is_stopped = True
         self.sim3_is_paused = False
-        # 정지 시에는 일시정지 정보를 유지하지 않음 (완전 종료)
-        self.sim3_pause_time = None
+        self.sim3_start_time = None
 
    def update_price(self, code):
       """종목별 가격 업데이트 (시뮬레이션 1,2번용)"""
@@ -508,7 +514,18 @@ class OnReceiveRealConditionSim3(QThread):
          logging.warning("시뮬레이션 3번: 조건검색 데이터가 없습니다.")
          return
       
-      # 시뮬레이션 시작 시간 설정 (09:00:00 기준)
+      # 첫 시작 시 기준 시간 설정
+      if sim.sim3_base_data_time == 0:
+         first_data = sim.sim3_condition_data[0]
+         # 처리일시에서 시간 추출 (YYYYMMDDHHMMSS 형식 또는 HHMMSS 형식)
+         time_full = first_data.get('처리일시', '090000')
+         time_str = time_full[-6:] if len(time_full) >= 6 else time_full  # HHMMSS 부분 추출
+         hour = int(time_str[:2])
+         minute = int(time_str[2:4])
+         second = int(time_str[4:6]) if len(time_str) >= 6 else 0
+         sim.sim3_base_data_time = hour * 3600 + minute * 60 + second
+      
+      # 실제 시작 시간 설정
       if not sim.sim3_start_time:
          sim.sim3_start_time = datetime.now()
       
@@ -529,62 +546,41 @@ class OnReceiveRealConditionSim3(QThread):
          # 현재 처리할 데이터
          current_data = sim.sim3_condition_data[sim.sim3_condition_index]
          
-         # 시뮬레이션 시간 계산
-         data_time_str = current_data.get('시간', '090000')  # HHMMSS 형식
+         # 현재 데이터 시간 (초) - 처리일시에서 HHMMSS 추출
+         data_time_full = current_data.get('처리일시', '090000')
+         data_time_str = data_time_full[-6:] if len(data_time_full) >= 6 else data_time_full
          data_hour = int(data_time_str[:2])
          data_minute = int(data_time_str[2:4]) 
          data_second = int(data_time_str[4:6]) if len(data_time_str) >= 6 else 0
+         data_time_seconds = data_hour * 3600 + data_minute * 60 + data_second
          
-         # 09:00:00부터의 경과 초 계산
-         elapsed_seconds = (data_hour - 9) * 3600 + data_minute * 60 + data_second
+         # 실제 경과 시간 (초)
+         elapsed_real = (datetime.now() - sim.sim3_start_time).total_seconds()
+         # 시뮬레이션 현재 시간 = 기준 시간 + (경과 시간 × 배속)
+         sim_current_time = sim.sim3_base_data_time + (elapsed_real * sim.sim3_speed)
          
-         # 배속 적용하여 실제 대기 시간 계산
-         if sim.sim3_condition_index == 0:
-            wait_time = 0  # 첫 번째 데이터는 즉시 전송
+         # 현재 데이터 시간이 되면 전송
+         if data_time_seconds <= sim_current_time:
+            # 조건검색 데이터 전송
+            code = current_data.get('종목코드', '')
+            type = current_data.get('조건구분', 'I')  # I: 편입, D: 이탈
+            
+            if code:
+               self.order('rcv', 'proxy_method', QWork(
+                  method='on_receive_real_condition', 
+                  args=(code, type, self.cond_name, int(self.cond_index))
+               ))
+               
+               # 등록된 종목 코드 추가
+               if type == 'I':
+                  sim.sim3_registered_codes.add(code)
+               elif type == 'D' and code in sim.sim3_registered_codes:
+                  sim.sim3_registered_codes.discard(code)
+            
+            sim.sim3_condition_index += 1
          else:
-            prev_data = sim.sim3_condition_data[sim.sim3_condition_index - 1]
-            prev_time_str = prev_data.get('시간', '090000')
-            prev_hour = int(prev_time_str[:2])
-            prev_minute = int(prev_time_str[2:4])
-            prev_second = int(prev_time_str[4:6]) if len(prev_time_str) >= 6 else 0
-            prev_elapsed = (prev_hour - 9) * 3600 + prev_minute * 60 + prev_second
-            
-            time_diff = elapsed_seconds - prev_elapsed
-            wait_time = max(0, time_diff / sim.sim3_speed)
-         
-         # 대기 (정지/일시정지 상태 확인하면서)
-         if wait_time > 0 and self.is_running:
-            start_wait = time.time()
-            while time.time() - start_wait < wait_time and self.is_running:
-               # 정지 상태 확인 (최우선)
-               if sim.sim3_is_stopped:
-                  break
-               # 일시정지 상태 확인
-               if sim.sim3_is_paused:
-                  time.sleep(0.1)
-                  continue
-               time.sleep(0.01)
-         
-         if not self.is_running or sim.sim3_is_stopped:
-            break
-            
-         # 조건검색 데이터 전송
-         code = current_data.get('종목코드', '')
-         type = current_data.get('조건구분', 'I')  # I: 편입, D: 이탈
-         
-         if code:
-            self.order('rcv', 'proxy_method', QWork(
-               method='on_receive_real_condition', 
-               args=(code, type, self.cond_name, int(self.cond_index))
-            ))
-            
-            # 등록된 종목 코드 추가
-            if type == 'I':
-               sim.sim3_registered_codes.add(code)
-            elif type == 'D' and code in sim.sim3_registered_codes:
-               sim.sim3_registered_codes.discard(code)
-         
-         sim.sim3_condition_index += 1
+            # 아직 시간이 안 됨 - 짧은 대기
+            time.sleep(0.01)
 
    def stop(self):
       self.is_running = False
@@ -624,20 +620,15 @@ class OnReceiveRealDataSim3(QThread):
             time.sleep(0.1)
             continue
             
-         # 현재 시뮬레이션 시간 계산 (09:00:00 기준)
-         if not sim.sim3_start_time:
+         # 기준 시간과 시작 시간 확인
+         if not sim.sim3_start_time or sim.sim3_base_data_time == 0:
             time.sleep(0.01)
             continue
             
-         elapsed_real_seconds = (datetime.now() - sim.sim3_start_time).total_seconds()
-         elapsed_sim_seconds = elapsed_real_seconds * sim.sim3_speed
-         
-         # 현재 시뮬레이션 시간 (09:00:00 + elapsed_sim_seconds)
-         sim_hour = 9 + int(elapsed_sim_seconds // 3600)
-         sim_minute = int((elapsed_sim_seconds % 3600) // 60)
-         sim_second = int(elapsed_sim_seconds % 60)
-         
-         current_sim_time = f"{sim_hour:02d}{sim_minute:02d}{sim_second:02d}"
+         # 실제 경과 시간 (초)
+         elapsed_real = (datetime.now() - sim.sim3_start_time).total_seconds()
+         # 시뮬레이션 현재 시간 = 기준 시간 + (경과 시간 × 배속)
+         sim_current_time_seconds = sim.sim3_base_data_time + (elapsed_real * sim.sim3_speed)
          
          # 등록된 종목들의 실시간 데이터 처리
          for code in list(sim.sim3_registered_codes):
@@ -650,7 +641,7 @@ class OnReceiveRealDataSim3(QThread):
                time.sleep(0.1)
                continue
                
-            # 해당 종목의 현재 시간에 맞는 데이터 찾기
+            # 해당 종목의 데이터 찾기
             code_data = [d for d in sim.sim3_real_data if d.get('종목코드') == code]
             if not code_data:
                continue
@@ -660,10 +651,15 @@ class OnReceiveRealDataSim3(QThread):
                continue
                
             data = code_data[current_index]
-            data_time_str = data.get('체결시간', '090000')[-6:]  # HHMMSS 부분만 추출
+            # 체결시간에서 HHMMSS 추출
+            data_time_str = data.get('체결시간', '090000')[-6:]
+            data_hour = int(data_time_str[:2])
+            data_minute = int(data_time_str[2:4])
+            data_second = int(data_time_str[4:6]) if len(data_time_str) >= 6 else 0
+            data_time_seconds = data_hour * 3600 + data_minute * 60 + data_second
             
             # 현재 시뮬레이션 시간과 비교
-            if data_time_str <= current_sim_time:
+            if data_time_seconds <= sim_current_time_seconds:
                # 실시간 데이터 전송
                dictFID = {
                   '종목코드': code,
@@ -772,14 +768,15 @@ class APIServer:
                 sim.ticker = dc.sim.ticker
         elif self.sim_no == 3:  # 키움서버 사용, 데이터베이스 데이터 이용
             # 기본값 설정 (나중에 start 버튼에서 실제 값으로 변경)
-            sim.sim3_speed = speed if speed else 1.0
-            sim.sim3_date = dt if dt else datetime.now().strftime('%Y-%m-%d')
+            # sim.sim3_speed = speed if speed else 1.0
+            # sim.sim3_date = dt if dt else datetime.now().strftime('%Y-%m-%d')
             
-            # 데이터 로드
-            sim.sim3_condition_data, sim.sim3_real_data = self.get_simulation_data()
-            sim.extract_ticker_info_from_db()
+            # # 데이터 로드
+            # sim.sim3_condition_data, sim.sim3_real_data = self.get_simulation_data()
+            # sim.extract_ticker_info_from_db()
             
-            logging.info(f"시뮬레이션 3번 초기 설정: 배속={sim.sim3_speed}, 날짜={sim.sim3_date}")
+            # logging.info(f"시뮬레이션 3번 초기 설정: 배속={sim.sim3_speed}, 날짜={sim.sim3_date}")
+            return
         
         global ready_tickers
         ready_tickers = True
@@ -797,29 +794,23 @@ class APIServer:
             date_param = sim.sim3_date
             
             # 조건검색 데이터 로드
-            condition_data = self.answer('dbm', 'execute_query', 
-                                         sql=condition_sql, db='db', params=(date_param,))
+            condition_data = self.answer('dbm', 'execute_query', sql=condition_sql, db='db', params=(date_param,))
             logging.info(f"조건검색 데이터 로드 완료: {condition_data}")
             
             # 실시간 데이터 로드  
-            real_data = self.answer('dbm', 'execute_query',
-                                    sql=real_sql, db='db', params=(date_param[:8],))  # YYYYMMDD 형식
+            real_data = self.answer('dbm', 'execute_query', sql=real_sql, db='db', params=(date_param[:8],))  # YYYYMMDD 형식
             logging.info(f"실시간 데이터 로드 완료: {real_data}")
 
             if condition_data is None: condition_data = []
             if real_data is None: real_data = []
                 
             # 시간 순으로 정렬
+            # real_condition: 처리일시 사용 (중복 없음)
+            # real_data: 체결시간 사용 (중복 있음 - 나중 데이터만 사용)
             condition_data.sort(key=lambda x: x.get('처리일시', ''))
             real_data.sort(key=lambda x: x.get('체결시간', ''))
             
-            # 같은 시간, 같은 종목코드의 중복 데이터 제거 (나중 데이터 우선)
-            condition_unique = {}
-            for data in condition_data:
-                key = f"{data.get('시간', '')}_{data.get('종목코드', '')}"
-                condition_unique[key] = data
-            condition_data = list(condition_unique.values())
-            
+            # real_data만 중복 제거 (같은 시간, 같은 종목코드의 나중 데이터 우선)
             real_unique = {}
             for data in real_data:
                 key = f"{data.get('체결시간', '')}_{data.get('종목코드', '')}"
@@ -833,20 +824,24 @@ class APIServer:
             logging.error(f"시뮬레이션 3번 데이터 로드 오류: {type(e).__name__} - {e}")
             return [], []
 
+    def sim3_memory_load(self):
+        """시뮬레이션 3번 메모리 로드"""
+        sim.sim3_condition_data, sim.sim3_real_data = self.get_simulation_data()
+        sim.extract_ticker_info_from_db()
+        logging.info("시뮬레이션 3번 메모리 로드 완료")
+
+        global ready_tickers
+        ready_tickers = True
+        return True
+
     def sim3_control_reset(self):
         """시뮬레이션 3번 처음으로 리셋 (모든 상태 초기화)"""
-        if self.sim_no != 3:
-            logging.warning("시뮬레이션 3번이 아닙니다.")
-            return False
         sim.sim3_reset_to_start()
         logging.info("시뮬레이션 3번 처음으로 리셋 완료")
         return True
 
     def sim3_control_pause(self):
         """시뮬레이션 3번 일시정지 (현재 위치에서 멈춤)"""
-        if self.sim_no != 3:
-            logging.warning("시뮬레이션 3번이 아닙니다.")
-            return False
         if not sim.sim3_is_running:
             logging.warning("시뮬레이션이 실행 중이 아닙니다.")
             return False
@@ -854,17 +849,15 @@ class APIServer:
         logging.info("시뮬레이션 3번 일시정지 완료")
         return True
 
-    def sim3_control_start(self, speed=None, date=None):
+    def sim3_control_start(self, speed=None, dt=None):
         """시뮬레이션 3번 시작 (현재 위치에서 재생, 배속/날짜 설정 가능)"""
-        if self.sim_no != 3:
-            logging.warning("시뮬레이션 3번이 아닙니다.")
+        if not ready_tickers:
+            logging.warning("시뮬레이션 3번 데이터 로드 전 입니다.")
             return False
         
         # 배속/날짜 변경 (GUI에서 전달된 경우)
-        if speed is not None:
-            self.sim3_control_set_speed(speed)
-        if date is not None:
-            self.sim3_control_set_date(date)
+        if speed is not None: self.sim3_control_set_speed(speed)
+        if dt is not None: self.sim3_control_set_date(dt)
         
         # 시작 (일시정지 상태든 아니든 상관없이)
         sim.sim3_start()
@@ -873,16 +866,10 @@ class APIServer:
         return True
 
     def sim3_control_stop(self):
-        """시뮬레이션 3번 정지 (reset 후 pause - 스레드는 유지)"""
-        if self.sim_no != 3:
-            logging.warning("시뮬레이션 3번이 아닙니다.")
-            return False
-        
-        # reset 후 pause 상태로 설정 (스레드는 살려둠)
+        """시뮬레이션 3번 정지 (처음으로 리셋, 스레드는 유지)"""
+        # 처음으로 리셋
         sim.sim3_reset_to_start()
-        sim.sim3_pause()
-        
-        logging.info("시뮬레이션 3번 정지 완료 (스레드 유지)")
+        logging.info("시뮬레이션 3번 정지 완료 (스레드 유지, 처음으로 리셋)")
         return True
 
     def sim3_control_set_speed(self, speed):
@@ -899,7 +886,7 @@ class APIServer:
         logging.info(f"시뮬레이션 3번 배속 변경: {speed}")
         return True
 
-    def sim3_control_set_date(self, date):
+    def sim3_control_set_date(self, dt):
         """시뮬레이션 3번 기준일자 변경"""
         if self.sim_no != 3:
             logging.warning("시뮬레이션 3번이 아닙니다.")
@@ -908,18 +895,18 @@ class APIServer:
         # 날짜 형식 검증 (YYYY-MM-DD)
         try:
             from datetime import datetime
-            datetime.strptime(date, '%Y-%m-%d')
+            datetime.strptime(dt, '%Y-%m-%d')
         except ValueError:
-            logging.warning(f"잘못된 날짜 형식입니다: {date}")
+            logging.warning(f"잘못된 날짜 형식입니다: {dt}")
             return False
         
-        sim.sim3_date = date
+        sim.sim3_date = dt
         
         # 새로운 날짜의 데이터 로드
         try:
             sim.sim3_condition_data, sim.sim3_real_data = self.get_simulation_data()
             sim.extract_ticker_info_from_db()
-            logging.info(f"시뮬레이션 3번 기준일자 변경 및 데이터 로드 완료: {date}")
+            logging.info(f"시뮬레이션 3번 기준일자 변경 및 데이터 로드 완료: {dt}")
             return True
         except Exception as e:
             logging.error(f"데이터 로드 오류: {e}")

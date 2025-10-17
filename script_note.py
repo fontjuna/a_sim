@@ -679,13 +679,10 @@ with m3.suspend_ensure():
     
     if hoga(dm.c(1), 99) <= dm.c(0):
         msg = f'상한가'
-    # elif not msg and ma(20, 1) > c(1):
-    #     msg = f'전봉 3분봉 20이평 하향 이탈'
     elif up_tail_pct() > 3.0:
         msg = f'현재봉 윗꼬리 3% 이상 발생 매도'
     else:
         rise, fall, below = m3.get_rising_state(mas, 0)
-        #echo(f'rise={rise}, fall={fall}')
         try:
             pos = rise['hc']
             bars = rise['bars']
@@ -709,25 +706,37 @@ with m3.suspend_ensure():
                 if ma(7, 1) > c(1): msg = f'7이평 첫 이탈 매도'
             elif size < 3:
                 if ma(5, 1) > c(1): msg = f'5이평 첫 이탈 매도'
-
-        if not msg:
-            if three_rate >= 10:
-                if c(pos) - (c(pos) - o(pos)) / 4 > c(): msg = f'급등시 음봉에서 매도'
-            elif three_rate >= 8:
-                if ma(3, 1) > c(1): msg = f'3이평 이탈 매도'
-            elif three_rate >= 6:
-                if ma(5, 1) > c(1): msg = f'5이평 이탈 매도'
-            elif three_rate >= 5:
-                if ma(7, 1) > c(1): msg = f'7이평 이탈 매도'
-            elif three_rate >= 4:
-                if ma(10, 1) > c(1): msg = f'10이평 이탈 매도'
-            elif three_rate >= 3:
-                if ma(15, 1) > c(1): msg = f'15이평 이탈 매도'
+            elif size < 3.5:
+                if ma(3, 1) > c(1): msg = f'3이평 첫 이탈 매도'
             else:
-                if ma(20, 1) > c(1): msg = f'20이평 이탈 매도'
+                if three_rate >= 10:
+                    if c(pos) - (c(pos) - o(pos)) / 4 > c(): msg = f'급등시 음봉에서 매도'
+                elif three_rate >= 8:
+                    if ma(3, 1) > c(1): msg = f'3봉 상승 8% 이상 3이평 이탈 매도'
+                elif three_rate >= 6:
+                    if ma(5, 1) > c(1): msg = f'3봉 상승 6% 이상 5이평 이탈 매도'
+                elif three_rate >= 5:
+                    if ma(7, 1) > c(1): msg = f'3봉 상승 5% 이상 7이평 이탈 매도'
+                elif three_rate >= 4:
+                    if ma(10, 1) > c(1): msg = f'3봉 상승 4% 이상 10이평 이탈 매도'
+                elif three_rate >= 3:
+                    if ma(15, 1) > c(1): msg = f'3봉 상승 3% 이상 15이평 이탈 매도'
 
         if not msg:
-            if c(pos) > c() and rise['up_tails'] >= 2 and pos < 3: # up_tails:현재봉 포함 수량 임
+            if rise_rate >= 15:
+                if ma(3, 1) > c(1): msg = f'상승 시작 후 15% 이상 3이평 이탈 매도'
+            elif rise_rate >= 10:
+                if ma(5, 1) > c(1): msg = f'상승 시작 후 10% 이상 5이평 이탈 매도'
+            elif rise_rate >= 7:
+                if ma(7, 1) > c(1): msg = f'상승 시작 후 7% 이상 7이평 이탈 매도'
+            elif rise_rate >= 5:
+                if ma(10, 1) > c(1): msg = f'상승 시작 후 5% 이상 10이평 이탈 매도'
+            elif rise_rate >= 4:
+                if ma(15, 1) > c(1): msg = f'상승 시작 후 4% 이상 15이평 이탈 매도'
+
+        if not msg:
+            if ma(20, 1) > c(1): msg = f'20이평 이탈 매도'
+            elif c(pos) > c() and rise['up_tails'] >= 2 and pos < 3: # up_tails:현재봉 포함 수량 임
                 msg = f'윗꼬리 2개 이상 발생 매도'
 
     # 매수/매도 스크립트 겸용 판단 루틴 ***********************************************
