@@ -2082,6 +2082,97 @@ class ChartManager:
         # 평균 계산
         return sum(top_amounts) / len(top_amounts)
 
+    def get_volume_stats(self, k: int = 10, m: int = 128, n: int = 0) -> dict:
+        """
+        n봉 기준 m개 봉의 거래량 통계
+        
+        Args:
+            k: 극단값 제외 개수 (기본값: 0)
+            m: 검사할 봉 개수 (기본값: 128)
+            n: 시작 봉 인덱스 (기본값: 0=현재봉)
+            
+        Returns:
+            dict: {
+                'max': 최고 거래량,
+                'avg': 평균 거래량,
+                'min': 최저 거래량,
+                'total': 총 거래량,
+                'k_max': 최대 k개를 제외한 평균 (k > 0일 때),
+                'k_min': 최소 k개를 제외한 평균 (k > 0일 때),
+                'k_avg': 최대 k개와 최소 k개를 모두 제외한 평균 (k > 0일 때)
+            }
+        """
+        self._ensure_data_cache()
+        if not self._raw_data or m <= 0 or n < 0:
+            return {'max': 0, 'avg': 0.0, 'min': 0, 'total': 0}
+        
+        # 시작 인덱스와 끝 인덱스 설정
+        start_idx = n
+        end_idx = start_idx + m
+        
+        # 데이터 길이 체크
+        if start_idx >= self._data_length:
+            return {'max': 0, 'avg': 0.0, 'min': 0, 'total': 0}
+        
+        if end_idx > self._data_length:
+            end_idx = self._data_length
+        
+        if start_idx >= end_idx:
+            return {'max': 0, 'avg': 0.0, 'min': 0, 'total': 0}
+        
+        # 거래량 수집 (리스트로 저장하여 정렬 가능하게)
+        volumes = []
+        total_volume = 0
+        
+        for i in range(start_idx, end_idx):
+            volume = self._raw_data[i].get('거래량', 0)
+            if volume > 0:
+                volumes.append(volume)
+                total_volume += volume
+        
+        if not volumes:
+            return {'max': 0, 'avg': 0.0, 'min': 0, 'total': 0}
+        
+        # 기본 통계
+        max_volume = max(volumes)
+        min_volume = min(volumes)
+        avg_volume = total_volume / len(volumes)
+        
+        result = {
+            'max': max_volume,
+            'avg': avg_volume,
+            'min': min_volume,
+            'total': total_volume
+        }
+        
+        # k가 0보다 크면 극단값 제외 평균 계산
+        if k > 0 and len(volumes) > k * 2:
+            # 정렬된 리스트 생성
+            sorted_volumes = sorted(volumes)
+            
+            # 최대 k개를 제외한 평균
+            if len(sorted_volumes) > k:
+                volumes_without_max = sorted_volumes[:-k]
+                result['k_max'] = sum(volumes_without_max) / len(volumes_without_max)
+            else:
+                result['k_max'] = 0.0
+            
+            # 최소 k개를 제외한 평균
+            if len(sorted_volumes) > k:
+                volumes_without_min = sorted_volumes[k:]
+                result['k_min'] = sum(volumes_without_min) / len(volumes_without_min)
+            else:
+                result['k_min'] = 0.0
+            
+            # 최대 k개와 최소 k개를 모두 제외한 평균
+            if len(sorted_volumes) > k * 2:
+                volumes_without_extremes = sorted_volumes[k:-k]
+                result['k_avg'] = sum(volumes_without_extremes) / len(volumes_without_extremes)
+            else:
+                result['k_avg'] = 0.0
+        
+        return result
+
     def get_close_tops(self, k: int = 1, w: int = 80, m: int = 128, n: int = 1) -> tuple:
         """
         각 봉이 자신을 포함한 w개 봉 중 최고 종가인지 확인하여 인덱스를 수집 (분봉만 해당)
@@ -2573,319 +2664,320 @@ class ChartManager:
             - m=128: 시작점(n)부터 종가가 하나라도 이평 밑에 있는 봉 직전까지 검사
             - m=10: 시작점부터 10개 봉 검사 (n, n+1, n+2, ..., n+9)
         """
-        self._ensure_data_cache()
-        if not self._raw_data or n >= self._data_length:
-            return {
-                'max_pct': 0.0,
-                'ma5': {'open_count': 0, 'close_count': 0},
-                'ma10': {'open_count': 0, 'close_count': 0},
-                'ma20': {'open_count': 0, 'close_count': 0},
-                'start_idx': -1
-            }
+    #     self._ensure_data_cache()
+    #     if not self._raw_data or n >= self._data_length:
+    #         return {
+    #             'max_pct': 0.0,
+    #             'ma5': {'open_count': 0, 'close_count': 0},
+    #             'ma10': {'open_count': 0, 'close_count': 0},
+    #             'ma20': {'open_count': 0, 'close_count': 0},
+    #             'start_idx': -1
+    #         }
         
-        # 시작점 확인: n봉에서 5, 10, 20 이평선 위에 시가가 있는지 확인
-        with self.suspend_ensure():
-            ma5 = self.ma(5, n)
-            ma10 = self.ma(10, n)
-            ma20 = self.ma(20, n)
-            open_price = self.o(n)
+    #     # 시작점 확인: n봉에서 5, 10, 20 이평선 위에 시가가 있는지 확인
+    #     with self.suspend_ensure():
+    #         ma5 = self.ma(5, n)
+    #         ma10 = self.ma(10, n)
+    #         ma20 = self.ma(20, n)
+    #         open_price = self.o(n)
             
-            # 시작점에서 모든 이평선 위에 시가가 없으면 분석 불가
-            if not (open_price > ma5 and open_price > ma10 and open_price > ma20):
-                return {
-                    'max_pct': 0.0,
-                    'ma5': {'open_count': 0, 'close_count': 0},
-                    'ma10': {'open_count': 0, 'close_count': 0},
-                    'ma20': {'open_count': 0, 'close_count': 0},
-                    'start_idx': -1
-                }
+    #         # 시작점에서 모든 이평선 위에 시가가 없으면 분석 불가
+    #         if not (open_price > ma5 and open_price > ma10 and open_price > ma20):
+    #             return {
+    #                 'max_pct': 0.0,
+    #                 'ma5': {'open_count': 0, 'close_count': 0},
+    #                 'ma10': {'open_count': 0, 'close_count': 0},
+    #                 'ma20': {'open_count': 0, 'close_count': 0},
+    #                 'start_idx': -1
+    #             }
         
-        # 분석 시작
-        ma5_open_count = 0
-        ma5_close_count = 0
-        ma10_open_count = 0
-        ma10_close_count = 0
-        ma20_open_count = 0
-        ma20_close_count = 0
-        max_pct = 0.0
+    #     # 분석 시작
+    #     ma5_open_count = 0
+    #     ma5_close_count = 0
+    #     ma10_open_count = 0
+    #     ma10_close_count = 0
+    #     ma20_open_count = 0
+    #     ma20_close_count = 0
+    #     max_pct = 0.0
         
-        # 검사 범위 결정
-        end_idx = n + m
+    #     # 검사 범위 결정
+    #     end_idx = n + m
         
-        with self.suspend_ensure():
-            # 시작점(n)부터 검사하면서 종료점도 동시에 찾기
-            for i in range(n, end_idx):
-                ma5 = self.ma(5, i)
-                ma10 = self.ma(10, i)
-                ma20 = self.ma(20, i)
-                open_price = self.o(i)
-                close_price = self.c(i)
+    #     with self.suspend_ensure():
+    #         # 시작점(n)부터 검사하면서 종료점도 동시에 찾기
+    #         for i in range(n, end_idx):
+    #             ma5 = self.ma(5, i)
+    #             ma10 = self.ma(10, i)
+    #             ma20 = self.ma(20, i)
+    #             open_price = self.o(i)
+    #             close_price = self.c(i)
                 
-                # m=None인 경우 종료점 확인: 종가가 하나라도 이평 밑에 있는 봉 직전까지
-                if i > n:
-                    # 종가가 하나라도 이평 밑에 있는지 확인
-                    if close_price < ma5 or close_price < ma10 or close_price < ma20:
-                        end_idx = i
-                        break
+    #             # m=None인 경우 종료점 확인: 종가가 하나라도 이평 밑에 있는 봉 직전까지
+    #             if i > n:
+    #                 # 종가가 하나라도 이평 밑에 있는지 확인
+    #                 if close_price < ma5 or close_price < ma10 or close_price < ma20:
+    #                     end_idx = i
+    #                     break
                 
-                # 각 이평선 이하로 떨어진 시가/종가 카운트
-                if open_price <= ma5: ma5_open_count += 1
-                if close_price <= ma5: ma5_close_count += 1
+    #             # 각 이평선 이하로 떨어진 시가/종가 카운트
+    #             if open_price <= ma5: ma5_open_count += 1
+    #             if close_price <= ma5: ma5_close_count += 1
                     
-                if open_price <= ma10: ma10_open_count += 1
-                if close_price <= ma10: ma10_close_count += 1
+    #             if open_price <= ma10: ma10_open_count += 1
+    #             if close_price <= ma10: ma10_close_count += 1
                     
-                if open_price <= ma20: ma20_open_count += 1
-                if close_price <= ma20: ma20_close_count += 1
+    #             if open_price <= ma20: ma20_open_count += 1
+    #             if close_price <= ma20: ma20_close_count += 1
                 
-                # 최고 몸통 비율 계산
-                body_pct = self.body_pct(i)
-                if body_pct > max_pct: max_pct = body_pct
+    #             # 최고 몸통 비율 계산
+    #             body_pct = self.body_pct(i)
+    #             if body_pct > max_pct: max_pct = body_pct
         
-        return {
-            'max_pct': max_pct,
-            'ma5': {'open_count': ma5_open_count, 'close_count': ma5_close_count},
-            'ma10': {'open_count': ma10_open_count, 'close_count': ma10_close_count},
-            'ma20': {'open_count': ma20_open_count, 'close_count': ma20_close_count},
-            'start_idx': n
-        }
+    #     return {
+    #         'max_pct': max_pct,
+    #         'ma5': {'open_count': ma5_open_count, 'close_count': ma5_close_count},
+    #         'ma10': {'open_count': ma10_open_count, 'close_count': ma10_close_count},
+    #         'ma20': {'open_count': ma20_open_count, 'close_count': ma20_close_count},
+    #         'start_idx': n
+    #     }
+        return {}
 
-    def analyze_rise_pattern(self, ma: int = 15, n: int = 0) -> dict:
-        """기능 완전 복원 + 속도 최적화된 상승 패턴 분석"""
+    # def analyze_rise_pattern(self, ma: int = 15, n: int = 0) -> dict:
+    #     """기능 완전 복원 + 속도 최적화된 상승 패턴 분석"""
         
-        # 빠른 실패
-        if self.cycle != 'mi':
-            return {'pattern': 'unknown', 'sell_ma': 20, 'confidence': 0, 'analysis': '분봉이 아님', 'recent_pattern': 'unknown', 'force_sell': False}
+    #     # 빠른 실패
+    #     if self.cycle != 'mi':
+    #         return {'pattern': 'unknown', 'sell_ma': 20, 'confidence': 0, 'analysis': '분봉이 아님', 'recent_pattern': 'unknown', 'force_sell': False}
         
-        # 핵심 분석
-        rise = self.get_rise_analysis(ma=ma, n=n)
-        if rise['top_idx'] == -1:
-            return {'pattern': 'unknown', 'sell_ma': 20, 'confidence': 0, 'analysis': '상승 패턴 없음', 'recent_pattern': 'unknown', 'force_sell': False}
+    #     # 핵심 분석
+    #     rise = self.get_rise_analysis(ma=ma, n=n)
+    #     if rise['top_idx'] == -1:
+    #         return {'pattern': 'unknown', 'sell_ma': 20, 'confidence': 0, 'analysis': '상승 패턴 없음', 'recent_pattern': 'unknown', 'force_sell': False}
         
-        # 분석 지표들 (캐시 활용)
-        rise_pct = rise['rise_pct']
-        max_pct = rise['max_pct']
-        red_cnt = rise['red_cnt']
-        bar_cnt = rise['bar_cnt']
+    #     # 분석 지표들 (캐시 활용)
+    #     rise_pct = rise['rise_pct']
+    #     max_pct = rise['max_pct']
+    #     red_cnt = rise['red_cnt']
+    #     bar_cnt = rise['bar_cnt']
         
-        # 1. 시나리오 4 특화 분석 (고점 횡보) - 복원
-        plateau_analysis = self._analyze_plateau_after_peak_fast(rise['top_idx'], n)
+    #     # 1. 시나리오 4 특화 분석 (고점 횡보) - 복원
+    #     plateau_analysis = self._analyze_plateau_after_peak_fast(rise['top_idx'], n)
         
-        # 2. 진입봉 특성 분석 - 추가
-        entry_bar_analysis = self._analyze_entry_bar_characteristics(n)
+    #     # 2. 진입봉 특성 분석 - 추가
+    #     entry_bar_analysis = self._analyze_entry_bar_characteristics(n)
         
-        # 3. 최근 패턴 분석 - 복원 (4봉)
-        recent_pattern = self._analyze_recent_pattern_fast(n, 4)
+    #     # 3. 최근 패턴 분석 - 복원 (4봉)
+    #     recent_pattern = self._analyze_recent_pattern_fast(n, 4)
         
-        # 4. 패턴별 점수 계산 - 복원 (최적화)
-        gradual_score, spike_score, plateau_score = self._calculate_pattern_scores_fast(rise, ma, n)
+    #     # 4. 패턴별 점수 계산 - 복원 (최적화)
+    #     gradual_score, spike_score, plateau_score = self._calculate_pattern_scores_fast(rise, ma, n)
         
-        # 5. 매도 전략에 맞는 패턴 결정 - 수정 (진입봉 특성 우선)
-        # 진입봉이 급등이면 spike 패턴 우선 적용
-        if entry_bar_analysis['is_spike_entry']:
-            pattern = 'spike'
-            confidence = 9
-            sell_ma = 3  # 급등 진입봉은 즉시 매도
-            analysis = f'급등 진입봉 패턴 (진입상승률:{entry_bar_analysis["entry_rise_pct"]:.1f}%)'
+    #     # 5. 매도 전략에 맞는 패턴 결정 - 수정 (진입봉 특성 우선)
+    #     # 진입봉이 급등이면 spike 패턴 우선 적용
+    #     if entry_bar_analysis['is_spike_entry']:
+    #         pattern = 'spike'
+    #         confidence = 9
+    #         sell_ma = 3  # 급등 진입봉은 즉시 매도
+    #         analysis = f'급등 진입봉 패턴 (진입상승률:{entry_bar_analysis["entry_rise_pct"]:.1f}%)'
             
-        elif plateau_analysis['is_plateau'] and plateau_analysis['plateau_score'] > 0.6:
-            pattern = 'plateau'
-            confidence = int(plateau_analysis['plateau_score'] * 10)
-            sell_ma = 8
-            analysis = f'수직상승 후 고점횡보 패턴 (횡보봉수:{plateau_analysis["bar_count"]})'
+    #     elif plateau_analysis['is_plateau'] and plateau_analysis['plateau_score'] > 0.6:
+    #         pattern = 'plateau'
+    #         confidence = int(plateau_analysis['plateau_score'] * 10)
+    #         sell_ma = 8
+    #         analysis = f'수직상승 후 고점횡보 패턴 (횡보봉수:{plateau_analysis["bar_count"]})'
             
-        elif recent_pattern == 'spike':
-            pattern = 'spike'
-            confidence = 8
-            sell_ma = 3
-            analysis = f'최근 급등 패턴 - 짧은 매도'
+    #     elif recent_pattern == 'spike':
+    #         pattern = 'spike'
+    #         confidence = 8
+    #         sell_ma = 3
+    #         analysis = f'최근 급등 패턴 - 짧은 매도'
             
-        elif recent_pattern == 'plateau':
-            pattern = 'plateau'
-            confidence = 7
-            sell_ma = 10
-            analysis = f'최근 횡보 패턴 - 방향 확인 후 매도'
+    #     elif recent_pattern == 'plateau':
+    #         pattern = 'plateau'
+    #         confidence = 7
+    #         sell_ma = 10
+    #         analysis = f'최근 횡보 패턴 - 방향 확인 후 매도'
             
-        else:
-            max_score = max(gradual_score, spike_score)
+    #     else:
+    #         max_score = max(gradual_score, spike_score)
             
-            if gradual_score == max_score and gradual_score > 0.6:
-                pattern = 'gradual'
-                confidence = int(gradual_score * 10)
-                sell_ma = 15
-                analysis = f'우상향 꾸준상승 패턴 (지속성:{red_cnt/15.0:.2f})'
+    #         if gradual_score == max_score and gradual_score > 0.6:
+    #             pattern = 'gradual'
+    #             confidence = int(gradual_score * 10)
+    #             sell_ma = 15
+    #             analysis = f'우상향 꾸준상승 패턴 (지속성:{red_cnt/15.0:.2f})'
                 
-            elif spike_score == max_score and spike_score > 0.6:
-                pattern = 'spike'
-                confidence = int(spike_score * 10)
-                sell_ma = 5
-                analysis = f'급등 패턴 (상승률:{rise_pct:.1f}%)'
+    #         elif spike_score == max_score and spike_score > 0.6:
+    #             pattern = 'spike'
+    #             confidence = int(spike_score * 10)
+    #             sell_ma = 5
+    #             analysis = f'급등 패턴 (상승률:{rise_pct:.1f}%)'
                 
-            else:
-                pattern = 'unknown'
-                confidence = int(max_score * 10)
-                sell_ma = 10
-                analysis = f'불확실한 패턴 (최고점수:{max_score:.2f})'
+    #         else:
+    #             pattern = 'unknown'
+    #             confidence = int(max_score * 10)
+    #             sell_ma = 10
+    #             analysis = f'불확실한 패턴 (최고점수:{max_score:.2f})'
         
-        # 5. 강제 매도 확인
-        force_sell = self.ma(20, n) > self.c(n)
-        if force_sell:
-            analysis += " (20이평 강제매도)"
+    #     # 5. 강제 매도 확인
+    #     force_sell = self.ma(20, n) > self.c(n)
+    #     if force_sell:
+    #         analysis += " (20이평 강제매도)"
         
-        # 6. 패턴 히스토리 추적 - 복원 (최적화)
-        pattern_history = self._update_pattern_history_fast(pattern)
-        if len(pattern_history) >= 2:
-            spike_count = pattern_history.count('spike')
-            if spike_count >= 2:
-                sell_ma = max(3, sell_ma - 2)
-                analysis += f" (최근급등패턴으로 {sell_ma}이평조정)"
+    #     # 6. 패턴 히스토리 추적 - 복원 (최적화)
+    #     pattern_history = self._update_pattern_history_fast(pattern)
+    #     if len(pattern_history) >= 2:
+    #         spike_count = pattern_history.count('spike')
+    #         if spike_count >= 2:
+    #             sell_ma = max(3, sell_ma - 2)
+    #             analysis += f" (최근급등패턴으로 {sell_ma}이평조정)"
         
-        return {
-            'pattern': pattern,
-            'sell_ma': sell_ma,
-            'confidence': confidence,
-            'analysis': analysis,
-            'recent_pattern': recent_pattern,
-            'force_sell': force_sell,
-            'gradual_score': gradual_score,
-            'spike_score': spike_score,
-            'plateau_score': plateau_score,
-            'rise_data': rise,
-            'volume_spike_ratio': plateau_analysis.get('volume_spike_ratio', 1.0),
-            'angle_score': plateau_analysis.get('angle_score', 0.0)
-        }
+    #     return {
+    #         'pattern': pattern,
+    #         'sell_ma': sell_ma,
+    #         'confidence': confidence,
+    #         'analysis': analysis,
+    #         'recent_pattern': recent_pattern,
+    #         'force_sell': force_sell,
+    #         'gradual_score': gradual_score,
+    #         'spike_score': spike_score,
+    #         'plateau_score': plateau_score,
+    #         'rise_data': rise,
+    #         'volume_spike_ratio': plateau_analysis.get('volume_spike_ratio', 1.0),
+    #         'angle_score': plateau_analysis.get('angle_score', 0.0)
+    #     }
     
-    def _analyze_plateau_after_peak_fast(self, peak_idx: int, n: int) -> dict:
-        """고점 이후 횡보 구간 분석 - 최적화"""
-        if peak_idx >= n:
-            return {'is_plateau': False, 'plateau_score': 0, 'bar_count': 0, 'volume_spike_ratio': 1.0, 'angle_score': 0.0}
+    # def _analyze_plateau_after_peak_fast(self, peak_idx: int, n: int) -> dict:
+    #     """고점 이후 횡보 구간 분석 - 최적화"""
+    #     if peak_idx >= n:
+    #         return {'is_plateau': False, 'plateau_score': 0, 'bar_count': 0, 'volume_spike_ratio': 1.0, 'angle_score': 0.0}
         
-        # 고점 이후 봉들 분석 (최적화)
-        plateau_bars = []
-        max_volume = 0
-        total_volume = 0
+    #     # 고점 이후 봉들 분석 (최적화)
+    #     plateau_bars = []
+    #     max_volume = 0
+    #     total_volume = 0
         
-        for i in range(peak_idx, n + 1):
-            if i < self._data_length:
-                candle = self._raw_data[i]
-                plateau_bars.append({
-                    'close': candle.get('현재가', 0),
-                    'high': candle.get('고가', 0),
-                    'low': candle.get('저가', 0)
-                })
-                vol = candle.get('거래량', 0)
-                max_volume = max(max_volume, vol)
-                total_volume += vol
+    #     for i in range(peak_idx, n + 1):
+    #         if i < self._data_length:
+    #             candle = self._raw_data[i]
+    #             plateau_bars.append({
+    #                 'close': candle.get('현재가', 0),
+    #                 'high': candle.get('고가', 0),
+    #                 'low': candle.get('저가', 0)
+    #             })
+    #             vol = candle.get('거래량', 0)
+    #             max_volume = max(max_volume, vol)
+    #             total_volume += vol
         
-        if len(plateau_bars) < 3:
-            return {'is_plateau': False, 'plateau_score': 0, 'bar_count': len(plateau_bars), 'volume_spike_ratio': 1.0, 'angle_score': 0.0}
+    #     if len(plateau_bars) < 3:
+    #         return {'is_plateau': False, 'plateau_score': 0, 'bar_count': len(plateau_bars), 'volume_spike_ratio': 1.0, 'angle_score': 0.0}
         
-        # 횡보 특성 분석 (최적화)
-        highs = [bar['high'] for bar in plateau_bars]
-        lows = [bar['low'] for bar in plateau_bars]
+    #     # 횡보 특성 분석 (최적화)
+    #     highs = [bar['high'] for bar in plateau_bars]
+    #     lows = [bar['low'] for bar in plateau_bars]
         
-        price_range = (max(highs) - min(lows)) / min(lows) if min(lows) > 0 else 0
-        plateau_score = max(0, 1.0 - price_range / 0.05)  # 5% 이내면 횡보
+    #     price_range = (max(highs) - min(lows)) / min(lows) if min(lows) > 0 else 0
+    #     plateau_score = max(0, 1.0 - price_range / 0.05)  # 5% 이내면 횡보
         
-        # 거래량 분석
-        avg_volume = total_volume / len(plateau_bars) if len(plateau_bars) > 0 else 1
-        volume_spike_ratio = max_volume / avg_volume if avg_volume > 0 else 1.0
+    #     # 거래량 분석
+    #     avg_volume = total_volume / len(plateau_bars) if len(plateau_bars) > 0 else 1
+    #     volume_spike_ratio = max_volume / avg_volume if avg_volume > 0 else 1.0
         
-        # 각도 분석 (간단화)
-        angle_score = min(1.0, price_range / 0.02)  # 2% 이상이면 높은 각도
+    #     # 각도 분석 (간단화)
+    #     angle_score = min(1.0, price_range / 0.02)  # 2% 이상이면 높은 각도
         
-        return {
-            'is_plateau': plateau_score > 0.6,
-            'plateau_score': plateau_score,
-            'bar_count': len(plateau_bars),
-            'price_range': price_range,
-            'volume_spike_ratio': volume_spike_ratio,
-            'angle_score': angle_score
-        }
+    #     return {
+    #         'is_plateau': plateau_score > 0.6,
+    #         'plateau_score': plateau_score,
+    #         'bar_count': len(plateau_bars),
+    #         'price_range': price_range,
+    #         'volume_spike_ratio': volume_spike_ratio,
+    #         'angle_score': angle_score
+    #     }
     
-    def _analyze_recent_pattern_fast(self, n: int, bar_count: int) -> str:
-        """최근 N봉의 패턴 분석 - 최적화"""
-        if n + bar_count > self._data_length:
-            return 'unknown'
+    # def _analyze_recent_pattern_fast(self, n: int, bar_count: int) -> str:
+    #     """최근 N봉의 패턴 분석 - 최적화"""
+    #     if n + bar_count > self._data_length:
+    #         return 'unknown'
         
-        # 최근 봉들의 특성 분석 (최적화)
-        price_changes = []
-        for i in range(n, n + bar_count - 1):
-            if i + 1 < self._data_length:
-                c1 = self._raw_data[i]['현재가']
-                c2 = self._raw_data[i + 1]['현재가']
-                if c2 > 0:
-                    change = (c1 - c2) / c2
-                    price_changes.append(change)
+    #     # 최근 봉들의 특성 분석 (최적화)
+    #     price_changes = []
+    #     for i in range(n, n + bar_count - 1):
+    #         if i + 1 < self._data_length:
+    #             c1 = self._raw_data[i]['현재가']
+    #             c2 = self._raw_data[i + 1]['현재가']
+    #             if c2 > 0:
+    #                 change = (c1 - c2) / c2
+    #                 price_changes.append(change)
         
-        if len(price_changes) < 2:
-            return 'unknown'
+    #     if len(price_changes) < 2:
+    #         return 'unknown'
         
-        avg_change = sum(price_changes) / len(price_changes)
-        max_change = max(price_changes)
-        min_change = min(price_changes)
+    #     avg_change = sum(price_changes) / len(price_changes)
+    #     max_change = max(price_changes)
+    #     min_change = min(price_changes)
         
-        # 패턴 판정 (최적화)
-        if avg_change > 0.02 and max_change > 0.03:
-            return 'spike'
-        elif abs(avg_change) < 0.01 and (max_change - min_change) < 0.02:
-            return 'plateau'
-        elif avg_change > 0.005:
-            return 'gradual'
+    #     # 패턴 판정 (최적화)
+    #     if avg_change > 0.02 and max_change > 0.03:
+    #         return 'spike'
+    #     elif abs(avg_change) < 0.01 and (max_change - min_change) < 0.02:
+    #         return 'plateau'
+    #     elif avg_change > 0.005:
+    #         return 'gradual'
         
-        return 'unknown'
+    #     return 'unknown'
     
-    def _calculate_pattern_scores_fast(self, rise: dict, ma: int, n: int) -> tuple:
-        """패턴별 점수 계산 - 최적화"""
-        rise_pct = rise['rise_pct']
-        red_cnt = rise['red_cnt']
-        bar_cnt = rise['bar_cnt']
+    # def _calculate_pattern_scores_fast(self, rise: dict, ma: int, n: int) -> tuple:
+    #     """패턴별 점수 계산 - 최적화"""
+    #     rise_pct = rise['rise_pct']
+    #     red_cnt = rise['red_cnt']
+    #     bar_cnt = rise['bar_cnt']
         
-        # 지속성 점수 (간단화)
-        duration_score = min(1.0, red_cnt / 15.0)
+    #     # 지속성 점수 (간단화)
+    #     duration_score = min(1.0, red_cnt / 15.0)
         
-        # 일관성 점수 (간단화)
-        consistency_score = red_cnt / bar_cnt if bar_cnt > 0 else 0
+    #     # 일관성 점수 (간단화)
+    #     consistency_score = red_cnt / bar_cnt if bar_cnt > 0 else 0
         
-        # 이평선 거리 점수 (간단화)
-        ma_distance_score = min(1.0, rise_pct / 10.0)
+    #     # 이평선 거리 점수 (간단화)
+    #     ma_distance_score = min(1.0, rise_pct / 10.0)
         
-        # 패턴별 점수 계산 (최적화)
-        gradual_score = (duration_score * 0.5 + consistency_score * 0.3 + ma_distance_score * 0.2)
-        spike_score = ((1.0 - consistency_score) * 0.4 + (1.0 - ma_distance_score) * 0.3 + duration_score * 0.3)
-        plateau_score = (ma_distance_score * 0.4 + (1.0 - consistency_score) * 0.3 + (1.0 - duration_score) * 0.3)
+    #     # 패턴별 점수 계산 (최적화)
+    #     gradual_score = (duration_score * 0.5 + consistency_score * 0.3 + ma_distance_score * 0.2)
+    #     spike_score = ((1.0 - consistency_score) * 0.4 + (1.0 - ma_distance_score) * 0.3 + duration_score * 0.3)
+    #     plateau_score = (ma_distance_score * 0.4 + (1.0 - consistency_score) * 0.3 + (1.0 - duration_score) * 0.3)
         
-        return gradual_score, spike_score, plateau_score
+    #     return gradual_score, spike_score, plateau_score
     
-    def _update_pattern_history_fast(self, pattern: str) -> list:
-        """패턴 히스토리 업데이트 - 최적화"""
-        if not hasattr(self, '_pattern_history'):
-            self._pattern_history = []
+    # def _update_pattern_history_fast(self, pattern: str) -> list:
+    #     """패턴 히스토리 업데이트 - 최적화"""
+    #     if not hasattr(self, '_pattern_history'):
+    #         self._pattern_history = []
         
-        self._pattern_history.append(pattern)
-        if len(self._pattern_history) > 3:
-            self._pattern_history.pop(0)
+    #     self._pattern_history.append(pattern)
+    #     if len(self._pattern_history) > 3:
+    #         self._pattern_history.pop(0)
         
-        return self._pattern_history
+    #     return self._pattern_history
     
-    def _analyze_entry_bar_characteristics(self, n: int) -> dict:
-        """진입봉 특성 분석"""
-        if n + 1 >= self._data_length:
-            return {'is_spike_entry': False, 'entry_rise_pct': 0}
+    # def _analyze_entry_bar_characteristics(self, n: int) -> dict:
+    #     """진입봉 특성 분석"""
+    #     if n + 1 >= self._data_length:
+    #         return {'is_spike_entry': False, 'entry_rise_pct': 0}
         
-        # 진입봉 (현재봉) 분석
-        current_candle = self._raw_data[n]
-        prev_candle = self._raw_data[n + 1]
+    #     # 진입봉 (현재봉) 분석
+    #     current_candle = self._raw_data[n]
+    #     prev_candle = self._raw_data[n + 1]
         
-        entry_rise_pct = (current_candle['현재가'] - prev_candle['현재가']) / prev_candle['현재가'] * 100
+    #     entry_rise_pct = (current_candle['현재가'] - prev_candle['현재가']) / prev_candle['현재가'] * 100
         
-        # 급등 진입봉 판정 (3% 이상)
-        is_spike_entry = entry_rise_pct > 3.0
+    #     # 급등 진입봉 판정 (3% 이상)
+    #     is_spike_entry = entry_rise_pct > 3.0
         
-        return {
-            'is_spike_entry': is_spike_entry,
-            'entry_rise_pct': entry_rise_pct
-        }
+    #     return {
+    #         'is_spike_entry': is_spike_entry,
+    #         'entry_rise_pct': entry_rise_pct
+    #     }
 
     def get_rising_state(self, mas: list, n: int = 0) -> tuple:
         """
@@ -2900,6 +2992,9 @@ class ChartManager:
         Returns:
             tuple: (rise_dict, fall_dict, below)
                 - below: 각 이평선별 이하 종가 인덱스 리스트 딕셔너리
+                rise_dict: 상승 시작 봉 정보 딕셔너리 (hc, sb, bars, today_bars, rise_rate, three_rate, max_red, max_blue, tail_count, red_count, blue_count)
+                fall_dict: 하락 시작 봉 정보 딕셔너리 (oh, uc, oh_pct, uc_pct)
+                below: 각 이평선별 이하 종가 인덱스 리스트 딕셔너리 {5: [7, 12], 10: [5, 7, 15], 20: [5, 7, 12, 15, 18]}
         """
         self._ensure_data_cache()
         

@@ -955,16 +955,17 @@ class Admin:
             gm.prx.order('dbm', 'table_upsert', db='db', table='trades', dict_data=dict_data)
 
             if dictFID['주문상태'] == '체결':
-                kind = dictFID['주문구분']
+                kind = dictFID['주문구분'] # 매수, 매도, 매수정정, 매도정정, 매수취소, 매도취소
                 code = dictFID['종목코드']
                 name = dictFID['종목명']
                 qty = abs(int(dictFID['체결량'] or 0))
                 price = abs(int(dictFID['체결가'] or 0))
                 amount = abs(int(dictFID['체결누계금액'] or 0))
+                tm = dictFID['주문/체결시간']
                 st_name = dictFID['전략명칭']
                 ordno = dictFID['주문번호']
                 st_buy = dictFID['매수전략']
-                gm.prx.order('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, st_name, st_buy, gm.sim_no)
+                gm.prx.order('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, tm, st_name, st_buy, gm.sim_no)
                 
         except Exception as e:
             logging.error(f"dbm_trade_upsert 오류: {type(e).__name__} - {e}", exc_info=True)

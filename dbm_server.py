@@ -418,17 +418,15 @@ class DBMServer:
         except Exception as e:
             logging.error(f"table_upsert error: {e}", exc_info=True)
 
-    def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno, st_name, st_buy, sim_no):
+    def upsert_conclusion(self, kind, code, name, qty, price, amount, ordno, tm, st_name, st_buy, sim_no):
         """체결 정보 저장 및 손익 계산"""
         table = db_columns.CONC_TABLE_NAME
         record = None
         sim_record = None
-        dt = datetime.now().strftime("%Y%m%d")
-        tm = datetime.now().strftime("%H%M%S")
 
         def new_record():
             return { 
-                '종목번호': code, '종목명': name, '매수일자': dt, '매수시간': tm, 
+                '종목번호': code, '종목명': name, '매수일자': dc.ToDay, '매수시간': tm, 
                 '매수수량': qty, '매수가': price, '매수금액': amount, '매수번호': ordno, 
                 '매도수량': 0, '매수전략': st_buy, '전략명칭': st_name, 'sim_no': sim_no
             }
@@ -436,34 +434,39 @@ class DBMServer:
         try:
             if kind == '매수':
                 sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND 매수일자 = ? AND 매수번호 = ? LIMIT 1"
-                result = self.execute_query(sql, db='db', params=(code, dt, ordno))
+                result = self.execute_query(sql, db='db', params=(code, dc.ToDay, ordno))
                 
                 if result:
+                    logging.info(f"체결디비에 매수정보 추가갱신: {kind} {code} {name} {qty} {price} {amount} {ordno}")
                     record = result[0]
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
+                    logging.info(f"체결디비에 매수정보 신규작성: {kind} {code} {name} {qty} {price} {amount} {ordno}")
                     record = new_record()
-                    # sim_record = {'일자': dt, '종목코드': code, '종목명': name, 'sim_no': sim_no}
             
             elif kind == '매도':
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
-                result = self.execute_query(sql, db='db', params=(dt, ordno))
+                result = self.execute_query(sql, db='db', params=(dc.ToDay, ordno))
                 
                 if result:
+                    logging.info(f"체결디비에 매도정보 추가갱신: {kind} {code} {name} {qty} {price} {amount} {ordno}")
                     record = result[0]
                 else:
                     sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND 매수수량 > 매도수량 ORDER BY 매수일자 ASC, 매수시간 ASC LIMIT 1"
                     result = self.execute_query(sql, db='db', params=(code,))
                     
                     if result:
+                        logging.info(f"체결디비에 매도정보 신규작성: {kind} {code} {name} {qty} {price} {amount} {ordno}")
                         record = result[0]
                     else:
+                        # hts 에서 직접 구매와 같이 매수 기록이 없는 경우 신규 레코드 생성
+                        logging.warning(f"체결디비에 매수정보 없음: {kind} {code} {name} {qty} {price} {amount} {ordno}")
                         record = new_record()
 
                 buy_price = record.get('매수가', price)
                 
                 record.update({
-                    '매도번호': ordno, '매도일자': dt, '매도시간': tm,
+                    '매도번호': ordno, '매도일자': dc.ToDay, '매도시간': tm,
                     '매도수량': qty, '매도가': price, '매도금액': amount
                 })
                 
@@ -486,13 +489,16 @@ class DBMServer:
                     record.update({
                         '매수수량': qty, '매수가': price, '매수금액': amount
                     })
-            
+            else:
+                logging.warning(f"체결디비 처리 불가: {kind} {code} {name} {qty} {price} {amount} {ordno}")
+                return False
+
             self.table_upsert('db', table, record, key=db_columns.CONC_KEYS)
 
             return True
             
         except Exception as e:
-            logging.error(f"upsert_conclusion error: {e}", exc_info=True)
+            logging.error(f"체결디비 처리 에러: {e}", exc_info=True)
             return False
 
     def upsert_chart(self, dict_data, cycle, tick=1):
