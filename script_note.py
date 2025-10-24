@@ -573,7 +573,7 @@ dm._ensure_data_cache()
 with dm.suspend_ensure():
     v_dic = dm.get_volume_stats(m=60, n=0)
     if v_dic['max'] < v_dic['avg'] * 5:
-        echo(f"[False] ({code} {name}) 현재가: {c()} / 최고거래량({v_dic['max']/10000:.0f}만)이 평균({v_dic['avg']/10000:.0f}만)에 비해 큰 차이(5배)가 나지 않음")
+        echo(f"△ {code} {name} 현재가={c()} / 최고거래량({v_dic['max']/10000:.0f}만)이 평균({v_dic['avg']/10000:.0f}만)의 5배를 넘지 않음")
         ret(False)
 
 # 최고종가 조건 찾기 ========================================================================
@@ -592,7 +592,7 @@ with m3.suspend_ensure():
         three_rate = rise['three_rate']
         hc_rate = percent(c(hcx), c(hcx + 1))
     except Exception as e:
-        echo(f'[False] ({code} {name}) / 상승 상태 분석 실패: {e}')
+        echo(f'△ {code} {name} 현재가={c()} / 상승 상태 분석 실패: {e}')
         ret(False)
 
 msg = ''
@@ -665,8 +665,9 @@ with m3.suspend_ensure():
 if not msg:
     msg = 거래량매도(logoff=True, rise=rise, fall=fall, below=below)
 
-echo(f'[{msg==""}] ({code} {name}) 현재가: {c()} / {msg} : HC={hcx} ({bars}/{rise["today_bars"]})')
-ret(msg=='')
+b = msg == ''
+echo(f'{"▲" if b else "△"} {code} {name} 현재가= {c()} / {msg} : HC={hcx} ({bars}/{rise["today_bars"]})')
+ret(b)
 
 
 
@@ -686,8 +687,7 @@ length, length_pct = m3.length, m3.length_pct
 bottom, top = m3.body_bottom, m3.body_top
 blue, red = m3.blue, m3.red
 
-buy_idx = bar_idx(buy_dt) if buy_dt else -1
-#echo(f'매수일시={buy_dt}, 봉인덱스={buy_idx}')
+buy_idx = bar_idx(buy_dt)
 
 mas = [10, 15, 7, 5, 3]
 msg = ''
@@ -724,8 +724,8 @@ with m3.suspend_ensure():
         msg = f'상한가'
     elif up_tail_pct() > 3.0:
         msg = f'현재봉 윗꼬리 3% 이상 발생 매도'
-    elif up_tail_pct() > 2.0 and body() < up_tail():
-        msg = f'몸통보다 긴 2% 이상 윗꼬리 현재봉에 발생'
+    elif up_tail_pct() > 2.5 and body() < up_tail():
+        msg = f'몸통보다 긴 2.5% 이상 윗꼬리 현재봉에 발생'
     elif hoga(c(1), -3) >= o() and blue():
         msg = f'3호가 이상 갭하락 음봉 매도'
     elif o() > hoga(c(1), 3) and c() < hoga(h(1), -3):
@@ -736,32 +736,36 @@ with m3.suspend_ensure():
         msg = f'전 최고종가봉 고가 갱신 불발후 윗꼬리 1.5% 이상 발생 하락'
     elif hcx == 1 and blue() and o() < c(1) and m3.in_up_tail(h(), 1):
         msg = f'갭 하락 약세 출발 고가 갱신 불발 음봉 발생'
+    elif hcx == 1 and blue() and o() < c(1) and c() < ma(3):
+        msg = f'갭 하락 약세 출발 3이평 이탈 음봉 발생'
     elif buy_idx == 1 and blue(buy_idx) and l(buy_idx) > c():
         msg = f'음봉 매수후 재차 음봉으로 전봉 저점 이탈'
     elif hcx == 2 and hc_rate > 3 and drop_pct(0) > hc_rate:
         msg = f'3%이상인 기준봉 이하로 하락'
+    elif l(첫봉) > c() and ma(5):
+        msg = f'첫봉 저점 이탈'
 
-    # 여기부터 이평 조건으로 매도 조건 검사
     if not msg:
         thresholds = [(1.0, 1.0), (1.5, 1.5), (2.0, 2.0), (2.5, 2.5)]
         for size_limit, pct_limit in thresholds:
             if size < size_limit:
                 if drop_pct(1) > pct_limit:
                     msg = f'{pct_limit}% 이내 완만한 상승중 2봉 {pct_limit}% 이상 급락 매도'
-                elif up_tail_pct() > pct_limit:
+                elif up_tail_pct(1) > pct_limit:
                     msg = f'{pct_limit}% 이내 완만한 상승중 윗꼬리 {pct_limit}% 이상 발생 매도'
                 break
 
+    # 여기부터 이평 조건으로 매도 조건 검사
     if not msg:
         if ma(20, 1) > c(1):
-            if not rebuy(20):
+            if not rebuy(20) and blue(1):
                 msg = f'20이평 이탈 매도' # size < 1.0 인경우도 매도 함
         elif ma(15, 1) > c(1):
             if size < 1.5 or rebuy(15): pass
-            else: msg = f'15이평 이탈 매도' # size >= 1.5 
+            elif blue(1): msg = f'15이평 이탈 매도' # size >= 1.5 
         elif ma(10, 1) > c(1):
             if size < 2.0 or rebuy(10): pass
-            else: msg = f'10이평 이탈 매도' # size >= 2.0 
+            elif blue(1): msg = f'10이평 이탈 매도' # size >= 2.0 
         elif ma(7, 1) > c(1):
             if size < 2.0 or rebuy(7): pass
             elif hc_rate >= 3: msg = f'최고종가봉 3% 이상 ({hc_rate:.2f}%) 7이평 이탈 매도'
@@ -819,6 +823,8 @@ with m3.suspend_ensure():
                     msg = f'전봉 고가 갱신 불발후 위꼬리 내부에서 마감'
                     
 if logoff: ret(msg)
-if msg: echo(f'[True] ({code} {name}) 현재가={dm.c()} / 손익률: {profit_pct:.2f}% / {msg}')
+if msg: 
+    echo(f'▼ {code} {name}: {msg}')
+    echo(f'▽ {code} {name} 현재가: {dm.c():,} 손익률: {profit_pct:.2f}% ({price:,}원, {buy_idx}봉전 {buy_dt[:8]}_{buy_dt[8:14]} 매수)')
 ret(msg!='')
 

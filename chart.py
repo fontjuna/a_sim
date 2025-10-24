@@ -3660,19 +3660,21 @@ def {script_name}(*args, **kwargs):
                 if c is None: c = b
                 return safe_div((a - b), c, default) * 100
 
-            def bar_idx(target_time: str, current_time: str=None, tick: int=180) -> int:
+            def bar_idx(target_time: str, current_time: str=None, tick: int=180, debug: bool=False) -> int:
                 """
-                주어진 시간의 봉 인덱스 반환 (단순 시간 차이 기반)
+                target_time이 현재 시간 기준으로 몇 봉 전인지 반환
                 
                 Args:
-                    target_time: 찾을 시간 (예: '20250101103000')
+                    target_time: 찾을 시간 (매수시간 등, 예: '20250101103000')
                     current_time: 현재 시간 (예: '20250101103300'), None이면 시스템시간 사용
                     tick: 봉 간격 (초) - 60(1분), 180(3분), 600(10분)
+                    debug: True면 계산 과정 로그 출력
                     
                 Returns:
-                    int: 해당 시간의 봉 인덱스
-                        0: 현재봉, 1: 1봉전, 2: 2봉전, ...
-                        -1: 다음봉, -2: 그 다음봉, ...
+                    int: target_time이 몇 봉 전인지
+                        0: 현재봉과 같은 봉, 1: 1봉전, 2: 2봉전, ...
+                        -1: 1봉 후 (미래), -2: 2봉 후, ...
+                        None: 다른 날짜
                 """
                 # current_time이 None이면 시스템 시간 사용
                 if current_time is None:
@@ -3685,18 +3687,35 @@ def {script_name}(*args, **kwargs):
                 # 다른 날짜면 None 반환
                 if current_date != target_date: return None
                 
-                # 시간을 초 단위로 변환
-                current_tick = int(current_time[8:])  # 시간 부분 (HHMMSS)
-                target_tick = int(target_time[8:])     # 시간 부분 (HHMMSS)
+                # 시간을 초 단위로 변환 (자정 00:00:00 기준)
+                current_tick = int(current_time[8:])  # HHMMSS
+                target_tick = int(target_time[8:])
                 
                 current_seconds = (current_tick // 10000) * 3600 + ((current_tick % 10000) // 100) * 60 + (current_tick % 100)
                 target_seconds = (target_tick // 10000) * 3600 + ((target_tick % 10000) // 100) * 60 + (target_tick % 100)
                 
-                # 단순 시간 차이 기반 계산 (장 시작 시간 무관)
-                time_diff = current_seconds - target_seconds
-                bar_index = int(time_diff / tick)
+                # 각 시간이 속한 봉의 시작 시간으로 정규화 (자정 기준)
+                current_bar_start = (current_seconds // tick) * tick
+                target_bar_start = (target_seconds // tick) * tick
                 
-                return bar_index
+                # 정규화된 시간 차이로 봉 인덱스 계산
+                bar_index = (current_bar_start - target_bar_start) // tick
+                
+                # 디버그 모드
+                if debug:
+                    def sec_to_time(sec):
+                        h = sec // 3600
+                        m = (sec % 3600) // 60
+                        s = sec % 60
+                        return f"{h:02d}:{m:02d}:{s:02d}"
+                    
+                    echo(f"[bar_idx DEBUG]")
+                    echo(f"  target_time={target_time}, current_time={current_time}, tick={tick}")
+                    echo(f"  target: {target_seconds}초 → {sec_to_time(target_bar_start)} 봉")
+                    echo(f"  current: {current_seconds}초 → {sec_to_time(current_bar_start)} 봉")
+                    echo(f"  bar_index = ({current_bar_start} - {target_bar_start}) // {tick} = {bar_index}")
+                
+                return int(bar_index)
 
             def safe_iif(condition, true_value, false_value):
                 try:
