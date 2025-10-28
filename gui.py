@@ -12,7 +12,6 @@ import logging
 import os
 import json
 import time
-import pandas as pd
 import threading
 
 form_class = uic.loadUiType(os.path.join(get_path(dc.fp.RESOURCE_PATH), "aaa.ui"))[0]

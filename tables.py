@@ -93,8 +93,8 @@ class TableColumns:     # 테이블 데이타 컬럼 정의
         '키': '매수번호',
         '정수': ['매수수량', '매수가', '매수금액', '매도수량', '매도가', '매도금액', '손익금액', '제비용'],
         '실수': ['손익율'],
-        '컬럼': ['매수일자', '매수시간', '종목번호', '종목명', '손익금액', '손익율', '매수수량', '매수금액', '매도수량', '매도금액', \
-                        '매수가', '매도가', '제비용', '매도일자', '매도시간', '매수번호', '매도번호', '매수전략', '전략명칭'],
+        '컬럼': ['매수일자', '매수시간', '매도시간', '종목번호', '종목명', '매수수량', '매수가', '매도가', '손익금액', '손익율', '매도수량', \
+                        '매수금액', '매도금액', '제비용', '매도일자', '매수번호', '매도번호', '매수전략', '전략명칭'],
     }
 
     hd전략정의 = {
@@ -435,7 +435,8 @@ class QTableManager:
                     import pandas as pd
                     return pd.DataFrame(data_copy)
                 except ImportError:
-                    raise ImportError("pandas 라이브러리가 필요합니다. 'pip install pandas'로 설치하세요.")
+                    print("경고: pandas 라이브러리가 설치되지 않아 리스트로 반환합니다.")
+                    return data_copy
             
             # 기본적으로 리스트 반환
             return data_copy
@@ -1283,7 +1284,8 @@ class TableManager:
                     import pandas as pd
                     return pd.DataFrame(data_copy)
                 except ImportError:
-                    raise ImportError("pandas 라이브러리가 필요합니다. 'pip install pandas'로 설치하세요.")
+                    print("경고: pandas 라이브러리가 설치되지 않아 리스트로 반환합니다.")
+                    return data_copy
             
             # 기본적으로 리스트 반환
             return data_copy

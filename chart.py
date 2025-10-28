@@ -2656,8 +2656,8 @@ class ChartManager:
         Returns:
             tuple: (rise_dict, fall_dict, below)
                 - below: 각 이평선별 이하 종가 인덱스 리스트 딕셔너리
-                rise_dict: 상승 시작 봉 정보 딕셔너리 (hc, sb, bars, today_bars, rise_rate, three_rate, max_red, max_blue, tail_count, red_count, blue_count)
-                fall_dict: 하락 시작 봉 정보 딕셔너리 (oh, uc, oh_pct, uc_pct)
+                rise_dict: 최고종가 봉 기준 이전 상승 정보 딕셔너리 (hc, sb, bars, today_bars, rise_rate, three_rate, max_red, max_blue, tail_count, red_count, blue_count)
+                fall_dict: 최고종가 봉 기준 이후 하락 정보 딕셔너리 (oh, uc, oh_pct, uc_pct)
                 below: 각 이평선별 이하 종가 인덱스 리스트 딕셔너리 {5: [7, 12], 10: [5, 7, 15], 20: [5, 7, 12, 15, 18]}
         """
         self._ensure_data_cache()
@@ -2695,7 +2695,7 @@ class ChartManager:
             peak = self._analyze_peak(hc, sb)
             
             # 7. 현재봉부터 HC전까지 분석
-            oh, uc = self._analyze_bars_after_hc(n, hc)
+            oh, uc = self._analyze_bars_after_hc(hc, n)
             
             # 8. rise 사전 구성
             rise = self._build_rise_dict(hc, sb, max_red, max_blue, tail_count, peak, today_bars, red_count, blue_count)
@@ -2794,24 +2794,39 @@ class ChartManager:
         return initial_sb
     
     def _find_start_bar(self, hc: int, mas: list) -> int:
-        """HC부터 과거봉으로 검사하여 mas[0]이평 아래인 봉(SB) 찾기 (전일 데이터 포함)"""
+        """HC부터 과거봉으로 검사하여 mas[0]이평 아래인 봉(SB) 찾기 (당일 범위 내에서만)"""
         if hc is None or hc >= len(self._raw_data) - mas[0]: 
             return None
         
-        # HC부터 과거로 검사하여 처음 만난 기준이평 아래 종가 봉 찾기 (전일 데이터까지 확장)
+        # HC의 날짜 확인
+        hc_date = self._raw_data[hc]['체결시간'][:8]
+        first_bar_next_idx = None  # 당일 첫봉의 다음 인덱스 (전일 마지막봉)
+        
+        # HC부터 과거로 검사하여 처음 만난 기준이평 아래 종가 봉 찾기 (당일 범위 내에서만)
         for i in range(hc + 1, len(self._raw_data)):
             # 이평선 계산에 필요한 데이터가 충분한지 확인
             if i >= len(self._raw_data) - mas[0]: 
+                break
+            
+            candle_date = self._raw_data[i]['체결시간'][:8]
+            
+            # 날짜가 바뀌면 당일 첫봉의 다음 인덱스 저장하고 중단
+            if candle_date != hc_date:
+                first_bar_next_idx = i
                 break
                 
             close = self._raw_data[i]['현재가']
             ma_value = self.ma(mas[0], i)
             
-            # 기준이평 아래 종가 발견 시 즉시 반환 (당일/전일 구분 없이)
+            # 기준이평 아래 종가 발견 시 즉시 반환 (당일 범위 내)
             if close < ma_value: 
                 return i
         
-        # 조건을 만족하는 봉을 찾지 못한 경우 마지막 사용 가능한 봉 반환
+        # 당일에서 못 찾으면 전일 마지막봉(당일 첫봉+1) 반환
+        if first_bar_next_idx is not None:
+            return first_bar_next_idx
+        
+        # 데이터가 부족한 경우 마지막 사용 가능한 봉 반환
         return len(self._raw_data) - mas[0] - 1
     
     def _analyze_bars_between(self, hc: int, sb: int, n: int = 0) -> tuple:
@@ -2884,7 +2899,7 @@ class ChartManager:
         # 후반 상승율이 전반 상승율보다 크면 True (최근봉의 상승율이 가파름)
         return back_rise_rate > front_rise_rate
     
-    def _analyze_bars_after_hc(self, n: int, hc: int) -> tuple:
+    def _analyze_bars_after_hc(self, hc: int, n: int) -> tuple:
         """현재봉부터 HC전까지 분석"""
         oh = []
         uc = []

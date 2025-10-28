@@ -9,7 +9,6 @@ import time
 import random
 import threading
 import pythoncom
-import pandas as pd
 import copy
 import sys
 

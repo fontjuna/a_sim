@@ -9,7 +9,6 @@ from datetime import datetime
 from PyQt5.QtCore import QThread, QTimer
 import logging
 import json
-import pandas as pd
 import time
 import threading
 
