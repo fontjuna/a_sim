@@ -388,14 +388,14 @@ class CounterTicker:
             self.ensure_ticker(code)
             limit = float(self.max_rate if max_rate is None else max_rate)
             current = float(self.data[code].get("rate", 0.0) or 0.0)
-            return current <= limit
+            return current < limit
 
     def can_buy_loss_times(self, code: str, max_times=None) -> bool:
         with self.lock:
             self.ensure_ticker(code)
             limit = int(self.max_times if max_times is None else max_times)
             current = int(self.data[code].get("times", 0) or 0)
-            return current <= limit
+            return current < limit
 
     def can_buy_ticker_with_constraints(self, code: str, ticker_limit: int, max_rate=None, max_times=None) -> bool:
         with self.lock:

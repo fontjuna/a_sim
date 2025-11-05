@@ -1,4 +1,4 @@
-from public import dc, get_path, profile_operation, init_logger
+from public import dc, get_path, profile_operation, init_logger, QWork
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 import logging
@@ -422,7 +422,6 @@ class DBMServer:
         """체결 정보 저장 및 손익 계산"""
         table = db_columns.CONC_TABLE_NAME
         record = None
-        sim_record = None
 
         def new_record():
             return { 
@@ -433,35 +432,41 @@ class DBMServer:
 
         try:
             if kind == '매수':
-                sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND 매수일자 = ? AND 매수번호 = ? LIMIT 1"
-                result = self.execute_query(sql, db='db', params=(code, dc.ToDay, ordno))
+                sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND 매수일자 = ? AND 매수번호 = ? AND sim_no = ? LIMIT 1"
+                result = self.execute_query(sql, db='db', params=(code, dc.ToDay, ordno, sim_no))
                 
                 if result:
-                    logging.info(f"체결디비에 매수정보 추가갱신: {kind} {code} {name} {qty} {price} {amount} {ordno}")
+                    logging.info(f"체결디비에 매수정보 추가갱신: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
                     record = result[0]
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
-                    logging.info(f"체결디비에 매수정보 신규작성: {kind} {code} {name} {qty} {price} {amount} {ordno}")
+                    logging.info(f"체결디비에 매수정보 신규작성: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
                     record = new_record()
             
             elif kind == '매도':
-                sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? LIMIT 1"
-                result = self.execute_query(sql, db='db', params=(dc.ToDay, ordno))
+                sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? AND sim_no = ? LIMIT 1"
+                result = self.execute_query(sql, db='db', params=(dc.ToDay, ordno, sim_no))
                 
                 if result:
-                    logging.info(f"체결디비에 매도정보 추가갱신: {kind} {code} {name} {qty} {price} {amount} {ordno}")
+                    logging.info(f"체결디비에 매도정보 추가갱신: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
                     record = result[0]
                 else:
-                    sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND 매수수량 > 매도수량 ORDER BY 매수일자 ASC, 매수시간 ASC LIMIT 1"
-                    result = self.execute_query(sql, db='db', params=(code,))
+                    # 전체 레코드 확인 (디버그)
+                    sql_all = f"SELECT 매수번호, 매수수량, 매도번호, 매도수량 FROM {table} WHERE 종목번호 = ? AND sim_no = ?"
+                    all_records = self.execute_query(sql_all, db='db', params=(code, sim_no))
+                    logging.debug(f"종목 전체 레코드: {code} sim_no={sim_no} count={len(all_records) if all_records else 0} records={all_records}")
+                    
+                    sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND sim_no = ? AND 매수수량 > 매도수량 ORDER BY 매수일자 ASC, 매수시간 ASC LIMIT 1"
+                    result = self.execute_query(sql, db='db', params=(code, sim_no))
                     
                     if result:
-                        logging.info(f"체결디비에 매도정보 신규작성: {kind} {code} {name} {qty} {price} {amount} {ordno}")
+                        logging.info(f"체결디비에 매도정보 신규작성: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
                         record = result[0]
                     else:
-                        # hts 에서 직접 구매와 같이 매수 기록이 없는 경우 신규 레코드 생성
-                        logging.warning(f"체결디비에 매수정보 없음: {kind} {code} {name} {qty} {price} {amount} {ordno}")
-                        record = new_record()
+                        # 매수 레코드가 없거나 모두 매도 완료된 비정상 상황
+                        logging.error(f"체결디비에 매수정보 없음(***) [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
+                        record = {'매수일자': dc.ToDay, '매수번호': ordno}
+                        #return False
 
                 buy_price = record.get('매수가', price)
                 
@@ -484,16 +489,15 @@ class DBMServer:
                     '손익금액': profit,
                     '손익율': round(profit_rate, 2)
                 })
-                
-                if record.get('매수수량', 0) < qty:
-                    record.update({
-                        '매수수량': qty, '매수가': price, '매수금액': amount
-                    })
             else:
-                logging.warning(f"체결디비 처리 불가: {kind} {code} {name} {qty} {price} {amount} {ordno}")
+                logging.warning(f"체결디비 처리 불가: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
                 return False
 
             self.table_upsert('db', table, record, key=db_columns.CONC_KEYS)
+            
+            # 매도 완료 시 손익율 반환 (매수수량 == 매도수량)
+            if kind == '매도' and record.get('매수수량', 0) == record.get('매도수량', 0):
+                return {'code': code, 'name': name, 'profit_rate': round(profit_rate, 2)}
 
             return True
             

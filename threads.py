@@ -430,6 +430,16 @@ class EvalStrategy(QThread):
         if not gm.counter.can_buy_ticker(code, self.종목제한): 
             return False, {}, f"종목별 매수 횟수 제한 {code} {name} 종목제한{self.종목제한} 회 초과"
 
+        if self.금지율적용:
+            if not gm.counter.can_buy_loss_rate(code, self.금지율):
+                ticker_info = gm.counter.data.get(code, {})
+                return False, {}, f"손실율 제한 초과 {code} {name} 최대손실율={ticker_info.get('rate', 0):.2f}% > 제한={self.금지율}%"
+
+        if self.금지횟수적용:
+            if not gm.counter.can_buy_loss_times(code, self.금지횟수):
+                ticker_info = gm.counter.data.get(code, {})
+                return False, {}, f"손실횟수 제한 초과 {code} {name} 손실횟수={ticker_info.get('times', 0)}회 > 제한={self.금지횟수}회"
+
         if self.중복매수금지 and gm.잔고목록.in_key(code): return False, {}, f"보유 종목 재매수 금지 ({code} {name})"
 
         if gm.잔고목록.len() >= self.보유제한:

@@ -381,6 +381,33 @@ class Admin:
                     gm.setter_q.put(item['종목번호'])
                     gm.qwork['gui'].put(Work('gui_chart_combo_add', {'item': f'{item["종목번호"]} {item["종목명"]}'}))
                 gm.counter.register_tickers(data)
+            
+            def create_conclusion_records(dict_list):
+                """잔고목록 기반 conclusion 매수 레코드 생성"""
+                for item in dict_list:
+                    code = item['종목번호']
+                    # conclusion 테이블에 매수 레코드 있는지 확인
+                    sql = f"SELECT * FROM {db_columns.CONC_TABLE_NAME} WHERE 종목번호 = ? AND sim_no = ? AND 매수수량 > 매도수량 LIMIT 1"
+                    result = gm.prx.answer('dbm', 'execute_query', sql=sql, db='db', params=(code, gm.sim_no))
+                    
+                    if not result:
+                        # 매수 레코드 없으면 생성
+                        conc_record = {
+                            '종목번호': code,
+                            '종목명': item['종목명'],
+                            '매수일자': item.get('매수일자', dc.ToDay),
+                            '매수시간': item.get('매수시간', '000000'),
+                            '매수번호': item.get('매수번호', ''),
+                            '매수수량': item.get('매수수량', item.get('보유수량', 0)),
+                            '매수가': item.get('매수가', item.get('매입가', 0)),
+                            '매수금액': item.get('매수금액', item.get('매입금액', 0)),
+                            '매도수량': 0,
+                            '매수전략': item.get('매수전략', ''),
+                            '전략명칭': item.get('전략명칭', dc.const.BASIC_STRATEGY),
+                            'sim_no': gm.sim_no
+                        }
+                        gm.prx.order('dbm', 'table_upsert', 'db', db_columns.CONC_TABLE_NAME, conc_record, db_columns.CONC_KEYS)
+                        logging.info(f"잔고목록 기반 매수 레코드 생성: {code} {item['종목명']} 매수번호={conc_record['매수번호']} 수량={conc_record['매수수량']}")
 
             #logging.debug(f'dict_list ={dict_list}')
             if dict_list:
@@ -388,6 +415,7 @@ class Admin:
                 gm.잔고목록.set(data=dict_list)
                 save_holdings(dict_list)
                 save_counter(dict_list)
+                create_conclusion_records(dict_list)
             전일가 = gm.prx.answer('api', 'GetMasterLastPrice', '005930')
             종목정보 = {'종목명': '삼성전자', '전일가': 전일가, "현재가": 0}
             gm.dict종목정보.set('005930', 종목정보)
@@ -501,7 +529,9 @@ class Admin:
             if self.매수적용: self.stg_run_trade('매수')
             if self.매도적용: self.stg_run_trade('매도')
             self.stg_ready = True
-            gm.counter.set_strategy(self.매수전략, group=self.체결횟수, ticker=self.종목제한) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
+            gm.counter.set_strategy(self.매수전략, group=self.체결횟수, ticker=self.종목제한,
+                                   max_rate=self.금지율 if self.금지율적용 else None,
+                                   max_times=self.금지횟수 if self.금지횟수적용 else None) # 종목별 매수 횟수 제한 전략별로 초기화 해야 함
 
             if gm.gui_on: 
                 gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': any([gm.매수문자열, gm.매도문자열])}))
@@ -704,29 +734,7 @@ class Admin:
         except Exception as e:
             logging.error(f'전략매매 체크 오류: {type(e).__name__} - {e}', exc_info=True)
 
-    def odr_timeout(self, kind, origin_row, dictFID):
-        if gm.주문진행목록.len() == 0: return
-        try:
-            code = origin_row['종목코드']
-            key = (code, kind)
-            if not gm.주문진행목록.in_key(key): return
-
-            rqname = kind + 'xx' # '매수xx' or '매도xx'
-            order_no = origin_row['주문번호']
-            name = origin_row['종목명']
-            주문수량 = dictFID['주문수량']
-            미체결수량 = dictFID['미체결수량']
-
-            data={'구분': rqname, '상태': '취소요청', '종목코드': code, '종목명': name}
-            gm.주문진행목록.set(key=key, data=data)
-
-            gm.eval_q.put((code, 'cancel', {'kind': kind, 'order_no': order_no}))
-
-            logging.info(f'{kind}주문 타임 아웃: {code} {name} 주문번호={order_no} 주문수량={주문수량} 미체결수량={미체결수량}')
-
-        except Exception as e:
-            logging.error(f"주문 타임아웃 오류: code={code} name={name} {type(e).__name__} - {e}", exc_info=True)
-
+    # 주문 처리  -------------------------------------------------------------------------------------------
     def on_receive_chejan_data(self, gubun, dictFID):
         if not gm.ready: return
         try:
@@ -781,6 +789,29 @@ class Admin:
 
         except Exception as e:
             logging.error(f"접수체결 오류: {type(e).__name__} - {e}", exc_info=True)
+
+    def odr_timeout(self, kind, origin_row, dictFID):
+        if gm.주문진행목록.len() == 0: return
+        try:
+            code = origin_row['종목코드']
+            key = (code, kind)
+            if not gm.주문진행목록.in_key(key): return
+
+            rqname = kind + 'xx' # '매수xx' or '매도xx'
+            order_no = origin_row['주문번호']
+            name = origin_row['종목명']
+            주문수량 = dictFID['주문수량']
+            미체결수량 = dictFID['미체결수량']
+
+            data={'구분': rqname, '상태': '취소요청', '종목코드': code, '종목명': name}
+            gm.주문진행목록.set(key=key, data=data)
+
+            gm.eval_q.put((code, 'cancel', {'kind': kind, 'order_no': order_no}))
+
+            logging.info(f'{kind}주문 타임 아웃: {code} {name} 주문번호={order_no} 주문수량={주문수량} 미체결수량={미체결수량}')
+
+        except Exception as e:
+            logging.error(f"주문 타임아웃 오류: code={code} name={name} {type(e).__name__} - {e}", exc_info=True)
 
     def odr_redeipt_data(self, dictFID):
         try:
@@ -912,6 +943,7 @@ class Admin:
                 if kind == '매도':
                     if not gm.잔고목록.delete(key=code):
                         logging.warning(f'잔고목록 삭제 실패: {code} {dictFID["종목명"]}')
+
                     gm.holdings.pop(code, None)
                     save_json(dc.fp.holdings_file, gm.holdings)
                     if gm.잔고목록.len() == 0: 
@@ -960,11 +992,17 @@ class Admin:
                 qty = abs(int(dictFID['체결량'] or 0))
                 price = abs(int(dictFID['체결가'] or 0))
                 amount = abs(int(dictFID['체결누계금액'] or 0))
-                tm = dictFID['주문/체결시간']
+                tm = dictFID['주문/체결시간']                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
                 st_name = dictFID['전략명칭']
                 ordno = dictFID['주문번호']
                 st_buy = dictFID['매수전략']
-                gm.prx.order('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, tm, st_name, st_buy, gm.sim_no)
+                
+                result = gm.prx.answer('dbm', 'upsert_conclusion', kind, code, name, qty, price, amount, ordno, tm, st_name, st_buy, gm.sim_no)
+                
+                # 매도 완료 시 손실 기록
+                if isinstance(result, dict) and result.get('profit_rate', 0) < 0:
+                    gm.counter.record_loss(result['code'], abs(result['profit_rate']), result['name'])
+                    logging.info(f"손실 기록: {result['code']} {result['name']} 손익율={result['profit_rate']:.2f}%")
                 
         except Exception as e:
             logging.error(f"dbm_trade_upsert 오류: {type(e).__name__} - {e}", exc_info=True)

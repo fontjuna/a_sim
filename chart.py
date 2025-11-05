@@ -2645,7 +2645,13 @@ class ChartManager:
 
     def get_rising_state(self, mas: list, n: int = 0) -> tuple:
         """
-        상태 검사 함수 - 반환값: (rise, fall)
+        상태 검사 함수 - 당일 봉 범위에서 마루(SB~HC) 분석
+        
+        ※ 중요: 당일 봉만 대상으로 마루를 찾음 (전일 이전 봉은 제외)
+        ※ HC(최고종가봉)는 당일 봉 중 하나 (현재봉 인덱스 0도 HC가 될 수 있음)
+        ※ SB(시작봉)는 당일 봉이거나, 예외적으로 전일 마지막 봉
+        ※ 당일 첫봉만 있고 모든 이평 위에 있으면, 그 봉이 최고종가봉이 됨
+        ※ 모든 이평 위에 있는 봉이 없으면 마루가 형성되지 않아 빈 딕셔너리 반환
         
         Args:
             mas: 이평선 리스트 [기준이평, 이평1, 이평2, ...]
@@ -2654,56 +2660,161 @@ class ChartManager:
             n: 검사 시작 봉 (기본값: 0, 현재봉부터 검사)
             
         Returns:
-            tuple: (rise_dict, fall_dict, below)
-                - below: 각 이평선별 이하 종가 인덱스 리스트 딕셔너리
-                rise_dict: 최고종가 봉 기준 이전 상승 정보 딕셔너리 (hc, sb, bars, today_bars, rise_rate, three_rate, max_red, max_blue, tail_count, red_count, blue_count)
-                fall_dict: 최고종가 봉 기준 이후 하락 정보 딕셔너리 (oh, uc, oh_pct, uc_pct)
-                below: 각 이평선별 이하 종가 인덱스 리스트 딕셔너리 {5: [7, 12], 10: [5, 7, 15], 20: [5, 7, 12, 15, 18]}
+            tuple: (today_bars, rise_dict, maru_dict)
+            
+            today_bars (int): 당일 봉 개수
+            
+            rise_dict (dict): 전체 최고종가 마루 정보 (가장 높은 HC의 SB~HC 구간)
+                {
+                    'hc': int,                    # 최고종가봉 인덱스 (0일 수 있음)
+                    'sb': int,                    # 시작봉 인덱스 (당일 또는 전일 마지막)
+                    'bars': int,                  # SB - HC 상승 구간 봉 개수
+                    'rise_rate': float,           # HC - SB 상승률(%)
+                    'three_rate': float,          # 최근 3개봉 상승률(%)
+                    'max_red': (int, float),      # (인덱스, 최대 양봉 몸통%)
+                    'max_blue': (int, float),     # (인덱스, 최대 음봉 몸통%)
+                    'red_count': int,             # 양봉 개수
+                    'blue_count': int,            # 음봉 개수
+                    'below': dict                 # {이평: [인덱스 리스트]}
+                }
+            
+            maru_dict (dict): 최근 마루 정보 (가장 마지막 HC의 SB~HC 구간)
+                - rise_dict와 동일 구조
+                - rise == maru인 경우 rise와 동일한 값
         """
         self._ensure_data_cache()
         
         with self.suspend_ensure():
-            if not self._raw_data or len(self._raw_data) < 20: return ({}, {}, {})
+            if not self._raw_data or len(self._raw_data) < 20: return (0, {}, {})
             
             # 기준 이평선과 짧은 주기 이평선들 분리
-            base_ma = mas[0]  # 기준 이평선
-            short_mas = [ma for ma in mas[1:] if ma < base_ma]  # 기준 이평선보다 짧은 주기만
-            sb_mas = [base_ma] + short_mas  # SB 판단에 사용할 모든 이평선 (기준이평 + 짧은주기)
+            base_ma = mas[0]
+            short_mas = [ma for ma in mas[1:] if ma < base_ma]
+            all_mas = [base_ma] + short_mas
             
-            # 1. 현재봉 이전 당일 최고 종가봉(HC) 찾기
-            hc, today_bars = self._find_highest_close_before(n)
+            # 현재봉부터 과거로 가며 모든 마루 찾기 (당일 봉수도 함께 반환)
+            peaks, today_bars = self._find_all_peaks(all_mas, base_ma, n)
             
-            if hc is None: return ({}, {}, {})
+            if not peaks: return (today_bars, {}, {})
             
-            # 2. HC부터 과거봉으로 검사하여 기준 이평 아래인 봉(SB) 찾기
-            initial_sb = self._find_start_bar(hc, [base_ma])
+            # 첫 번째 마루 = maru (최근), 최고 HC 마루 = rise (전마루)
+            maru_peak = peaks[0]
+            rise_peak = max(peaks, key=lambda p: self._raw_data[p['hc']]['현재가'])
             
-            if initial_sb is None: return ({}, {}, {})
+            # rise 분석
+            rise = self._analyze_peak_data(rise_peak, mas, n)
             
-            # 3. SB부터 현재봉으로 오면서 모든 이평들 위에 종가가 최초로 형성된 봉의 전봉을 새로운 SB로 설정
-            sb = self._refine_start_bar(initial_sb, sb_mas, n)
+            # maru 분석 (rise와 같으면 동일한 값)
+            if maru_peak == rise_peak:
+                maru = rise
+            else:
+                maru = self._analyze_peak_data(maru_peak, mas, n)
             
-            if sb is None: return ({}, {}, {})
+            return (today_bars, rise, maru)
+    
+    def _find_all_peaks(self, all_mas: list, base_ma: int, n: int) -> tuple:
+        """
+        현재봉(n)부터 과거(장개시봉)로 가면서 모든 마루 찾기
+        
+        Returns:
+            tuple: (peaks, today_bars)
+                peaks: list[dict] - [{hc: int, sb: int}, ...] (최근 순서)
+                today_bars: int - 당일 봉 개수
+        """
+        if not self._raw_data or n >= len(self._raw_data):
+            return ([], 0)
+        
+        current_date = self._raw_data[n]['체결시간'][:8]
+        peaks = []
+        today_bars = 0
+        
+        # 상태 변수
+        in_peak = False  # 마루 구간 중인지
+        hc_candidate = None  # HC 후보
+        hc_close = 0  # HC 후보 종가
+        sb_candidate = None  # SB 후보 (일시적 이평 이탈 봉)
+        
+        # 현재봉부터 과거로 순회
+        i = n
+        while i < len(self._raw_data):
+            candle_date = self._raw_data[i]['체결시간'][:8]
             
-            # 4. SB~HC 구간에서 모든 이평선 이하 종가 인덱스 리스트 생성
-            below = self._get_ma_below_indices(mas, sb, hc)
+            # 날짜가 바뀌면 중단
+            if candle_date != current_date:
+                # 마지막 마루 처리 (전일 마지막봉을 SB로)
+                if in_peak and hc_candidate is not None:
+                    peaks.append({'hc': hc_candidate, 'sb': i})
+                break
             
-            # 5. HC부터 SB까지 분석
-            max_red, max_blue, tail_count, red_count, blue_count = self._analyze_bars_between(hc, sb, n)
+            today_bars += 1  # 당일 봉 카운트
+            close = self._raw_data[i]['현재가']
             
-            # 6. peak 분석 (SB~HC 구간 전반/후반 상승율 비교)
-            peak = self._analyze_peak(hc, sb)
+            # 기준이평 체크
+            above_base_ma = False
+            if i + base_ma < len(self._raw_data):
+                base_ma_value = self.ma(base_ma, i)
+                above_base_ma = close >= base_ma_value
             
-            # 7. 현재봉부터 HC전까지 분석
-            oh, uc = self._analyze_bars_after_hc(hc, n)
+            # 모든 이평 위에 있는지 확인
+            above_all_ma = True
+            for ma in all_mas:
+                if i + ma >= len(self._raw_data):
+                    above_all_ma = False
+                    break
+                if close < self.ma(ma, i):
+                    above_all_ma = False
+                    break
             
-            # 8. rise 사전 구성
-            rise = self._build_rise_dict(hc, sb, max_red, max_blue, tail_count, peak, today_bars, red_count, blue_count)
+            if not in_peak:
+                # 마루 시작 조건: 모든 이평 위
+                if above_all_ma:
+                    in_peak = True
+                    hc_candidate = i
+                    hc_close = close
+                    sb_candidate = None
+            else:
+                # 마루 진행 중
+                if above_all_ma:
+                    # 모든 이평 위: HC 갱신, SB 후보 취소
+                    if close > hc_close:
+                        hc_candidate = i
+                        hc_close = close
+                    sb_candidate = None  # 후보 취소
+                elif above_base_ma:
+                    # 기준이평은 위, 일부 이평 아래: SB 후보 저장
+                    if sb_candidate is None:
+                        sb_candidate = i
+                else:
+                    # 기준이평 아래: SB 확정, 마루 완성
+                    if hc_candidate is not None:
+                        # SB = 후보가 있으면 후보, 없으면 현재 봉
+                        sb = sb_candidate if sb_candidate is not None else i
+                        peaks.append({'hc': hc_candidate, 'sb': sb})
+                    in_peak = False
+                    hc_candidate = None
+                    hc_close = 0
+                    sb_candidate = None
             
-            # 9. fall 사전 구성
-            fall = self._build_fall_dict(oh, uc)
-            
-            return (rise, fall, below)
+            i += 1
+        
+        return (peaks, today_bars)
+    
+    def _analyze_peak_data(self, peak: dict, mas: list, n: int) -> dict:
+        """마루 데이터 분석하여 rise/maru 형식으로 반환"""
+        hc = peak['hc']
+        sb = peak['sb']
+        
+        # below 계산
+        below = self._get_ma_below_indices(mas, sb, hc)
+        
+        # 봉 분석
+        max_red, max_blue, red_count, blue_count = self._analyze_bars_between(hc, sb, n)
+        
+        # 기본 dict 생성
+        result = self._build_rise_dict(hc, sb, max_red, max_blue, red_count, blue_count)
+        result['below'] = below
+        
+        return result
     
     def _get_ma_below_indices(self, mas: list, sb: int, hc: int) -> dict:
         """
@@ -2739,101 +2850,10 @@ class ChartManager:
         
         return below
     
-    def _find_highest_close_before(self, n: int) -> tuple:
-        """
-        당일 최고 종가봉 인덱스 찾기
-        """
-        if not self._raw_data or len(self._raw_data) <= n: 
-            return None, 0
-        
-        current_time = self._raw_data[n]['체결시간']
-        current_date = current_time[:8]
-        hc_idx = None
-        hc_close = 0
-        today_bars = 0
-        
-        # 당일 데이터 검색 (n+1부터 시작)
-        for i in range(n + 1, len(self._raw_data)):
-            if self._raw_data[i]['체결시간'][:8] == current_date:  # 날짜 부분만 비교
-                close = self._raw_data[i]['현재가']
-                if close >= hc_close:
-                    hc_close = close
-                    hc_idx = i
-                today_bars += 1
-            else:
-                # 다른 날짜면 종료
-                break
-        
-        # 당일 첫봉인 경우: 현재봉을 HC로 사용
-        if hc_idx is None:
-            hc_idx = n
-            today_bars = 1
-        
-        return hc_idx, today_bars
-    
-    def _refine_start_bar(self, initial_sb: int, mas: list, n: int) -> int:
-        """SB부터 현재봉으로 오면서 이평들 위에 종가가 최초로 형성된 봉의 전봉을 새로운 SB로 설정"""
-        if initial_sb is None or initial_sb <= n + 1:
-            return initial_sb
-        
-        # initial_sb부터 현재봉(n)까지 검사
-        for i in range(initial_sb, n + 1, -1):  # 과거에서 현재로
-            if i <= 0: break
-                
-            close = self._raw_data[i]['현재가']
-            trend = True
-            for ma in mas:
-                if close < self.ma(ma, i):
-                    trend = False
-                    break
-            
-            if trend:
-                return i + 1
-            
-        # 조건에 맞는 봉이 없으면 기존 SB 반환
-        return initial_sb
-    
-    def _find_start_bar(self, hc: int, mas: list) -> int:
-        """HC부터 과거봉으로 검사하여 mas[0]이평 아래인 봉(SB) 찾기 (당일 범위 내에서만)"""
-        if hc is None or hc >= len(self._raw_data) - mas[0]: 
-            return None
-        
-        # HC의 날짜 확인
-        hc_date = self._raw_data[hc]['체결시간'][:8]
-        first_bar_next_idx = None  # 당일 첫봉의 다음 인덱스 (전일 마지막봉)
-        
-        # HC부터 과거로 검사하여 처음 만난 기준이평 아래 종가 봉 찾기 (당일 범위 내에서만)
-        for i in range(hc + 1, len(self._raw_data)):
-            # 이평선 계산에 필요한 데이터가 충분한지 확인
-            if i >= len(self._raw_data) - mas[0]: 
-                break
-            
-            candle_date = self._raw_data[i]['체결시간'][:8]
-            
-            # 날짜가 바뀌면 당일 첫봉의 다음 인덱스 저장하고 중단
-            if candle_date != hc_date:
-                first_bar_next_idx = i
-                break
-                
-            close = self._raw_data[i]['현재가']
-            ma_value = self.ma(mas[0], i)
-            
-            # 기준이평 아래 종가 발견 시 즉시 반환 (당일 범위 내)
-            if close < ma_value: 
-                return i
-        
-        # 당일에서 못 찾으면 전일 마지막봉(당일 첫봉+1) 반환
-        if first_bar_next_idx is not None:
-            return first_bar_next_idx
-        
-        # 데이터가 부족한 경우 마지막 사용 가능한 봉 반환
-        return len(self._raw_data) - mas[0] - 1
-    
     def _analyze_bars_between(self, hc: int, sb: int, n: int = 0) -> tuple:
         """HC부터 SB까지 봉들 분석 (n: 현재봉 인덱스)"""
         max_red = (None, 0.0)
         max_blue = (None, 0.0)
-        tail_count = 0  # 최고종가봉(hc)과 전후봉(hc-1, hc+1) 중 윗꼬리 1%이상 개수
         red_count = 0  # 양봉 개수
         blue_count = 0  # 음봉 개수
         
@@ -2844,7 +2864,6 @@ class ChartManager:
             candle = self._raw_data[i]
             open_price = candle['시가']
             close = candle['현재가']
-            high = candle['고가']
             
             # 최대몸통 양봉/음봉 체크
             body_pct = ((close - open_price) / open_price * 100) if open_price > 0 else 0
@@ -2857,79 +2876,10 @@ class ChartManager:
                 blue_count += 1
                 if max_blue[0] is None or abs(body_pct) > abs(max_blue[1]):
                     max_blue = (i, body_pct)
-            
-            # 윗꼬리 1%이상 체크 (최고종가봉과 전후봉만: hc-1, hc, hc+1)
-            if hc - 1 <= i <= hc + 1:
-                if open_price > 0:
-                    tail_rate = ((high - max(open_price, close)) / open_price * 100)
-                    if tail_rate >= 1.0:
-                        tail_count += 1
         
-        return max_red, max_blue, tail_count, red_count, blue_count
+        return max_red, max_blue, red_count, blue_count
     
-    def _analyze_peak(self, hc: int, sb: int) -> bool:
-        """SB~HC 구간을 전반/후반으로 나누어 상승율 비교"""
-        if hc is None or sb is None or hc >= len(self._raw_data) or sb >= len(self._raw_data):
-            return False
-        
-        if sb <= hc:
-            return False
-        
-        # SB~HC 구간의 중간점 계산
-        cnt = sb - hc
-        if cnt < 2:
-            return False
-        
-        if cnt % 2 == 0:
-            # 짝수면 cnt/2로 나누기
-            mid_point = hc + (cnt // 2)
-        else:
-            # 홀수면 과거를 1개 많게
-            mid_point = hc + (cnt // 2) + 1
-        
-        # 전반 구간 상승율 (SB ~ 중간점)
-        sb_close = self._raw_data[sb]['현재가']
-        mid_close = self._raw_data[mid_point]['현재가']
-        front_rise_rate = ((mid_close - sb_close) / sb_close * 100) if sb_close > 0 else 0
-        
-        # 후반 구간 상승율 (중간점 ~ HC)
-        hc_close = self._raw_data[hc]['현재가']
-        back_rise_rate = ((hc_close - mid_close) / mid_close * 100) if mid_close > 0 else 0
-        
-        # 후반 상승율이 전반 상승율보다 크면 True (최근봉의 상승율이 가파름)
-        return back_rise_rate > front_rise_rate
-    
-    def _analyze_bars_after_hc(self, hc: int, n: int) -> tuple:
-        """현재봉부터 HC전까지 분석"""
-        oh = []
-        uc = []
-        
-        if hc <= 0:
-            return oh, uc
-        
-        hc_high = self._raw_data[hc]['고가']
-        
-        for i in range(n, hc):
-            if i >= len(self._raw_data):
-                break
-                
-            candle = self._raw_data[i]
-            high = candle['고가']
-            close = candle['현재가']
-            ma5 = self.ma(5, i)
-            
-            # 고가가 최고종가의 고가보다 낮은 봉들
-            if high < hc_high:
-                oh.append(i)
-            
-            # 종가가 5이평을 넘은 봉들
-            if close > ma5:
-                uc.append(i)
-        
-        return oh, uc
-    
-    def _build_rise_dict(self, hc: int, sb: int, max_red: tuple, max_blue: tuple, 
-                        tail_count: int, peak: bool, today_bars: int, red_count: int, blue_count: int) -> dict:
+    def _build_rise_dict(self, hc: int, sb: int, max_red: tuple, max_blue: tuple, red_count: int, blue_count: int) -> dict:
         """rise 사전 구성"""
         if hc is None or sb is None or hc >= len(self._raw_data) or sb >= len(self._raw_data):
             return {}
@@ -2940,12 +2890,10 @@ class ChartManager:
         # rise_rate 계산
         rise_rate = ((hc_close - sb_close) / sb_close * 100) if sb_close > 0 else 0
         
-        # three_rate, far_rate 계산
+        # three_rate 계산
         bars = sb - hc
         x = hc + min(3, bars)
-        
         three_rate = ((hc_close - self._raw_data[x]['현재가']) / sb_close * 100) if sb_close > 0 else 0 # 최근 3개 상승률
-        far_rate = ((self._raw_data[x]['현재가'] - sb_close) / sb_close * 100) if sb_close > 0 else 0  # 시작봉 부터 4봉전 까지 상승률
         
         return {
             'hc': hc,               # 최고종가봉 인덱스
@@ -2953,23 +2901,12 @@ class ChartManager:
             'bars': bars,           # SB - HC 상승 구간 봉 개수
             'rise_rate': rise_rate, # HC - SB 상승률
             'three_rate': three_rate, # 최근 3개 상승률 
-            'far_rate': far_rate,   # 시작봉 부터 4봉전 까지 상승률
             'max_red': max_red,     # 양봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
             'max_blue': max_blue,   # 음봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
-            'up_tails': tail_count, # 최고종가봉(hc)과 전후봉(hc-1, hc, hc+1) 중 윗꼬리 1%이상 개수
-            'peak': peak,           # SB~HC 구간을 전반/후반으로 나누어 상승율 비교 (최근봉의 상승율이 가파르면 True)
-            'today_bars': today_bars,
             'red_count': red_count, # SB~HC 구간 양봉 개수 (SB 제외, HC 포함)
             'blue_count': blue_count # SB~HC 구간 음봉 개수 (SB 제외, HC 포함)
         }
-    
-    def _build_fall_dict(self, oh: list, uc: list) -> dict:
-        """fall 사전 구성"""
-        return {
-            'oh': oh,
-            'uc': uc
-        }
-    
+  
 class ScriptManager:
     """
     스크립트 호출/인수 전파 원칙 요약 (A→B→C 예시)
@@ -3061,6 +2998,50 @@ class ScriptManager:
         if not hasattr(self._thread_local, 'context'):
             self._thread_local.context = {}
         return self._thread_local.context
+    
+    def set_trade_state(self, code: str, state_type: str, data: dict):
+        """
+        매매 상태 저장
+        
+        Args:
+            code: 종목코드
+            state_type: 상태 타입 ('sell', 'buy' 등)
+            data: 저장할 데이터 (dict)
+        """
+        key = f'{code}_trade_{state_type}'
+        self._script_result_cache[key] = data
+    
+    def get_trade_state(self, code: str, state_type: str) -> dict:
+        """
+        매매 상태 조회
+        
+        Args:
+            code: 종목코드
+            state_type: 상태 타입 ('sell', 'buy' 등)
+            
+        Returns:
+            저장된 데이터 dict, 없으면 None
+        """
+        key = f'{code}_trade_{state_type}'
+        return self._script_result_cache.get(key)
+    
+    def clear_trade_state(self, code: str, state_type: str = None):
+        """
+        매매 상태 삭제
+        
+        Args:
+            code: 종목코드
+            state_type: 상태 타입 (None이면 해당 종목의 모든 상태 삭제)
+        """
+        if state_type:
+            key = f'{code}_trade_{state_type}'
+            if key in self._script_result_cache:
+                del self._script_result_cache[key]
+        else:
+            # 해당 종목의 모든 매매 상태 삭제
+            keys_to_remove = [k for k in self._script_result_cache.keys() if k.startswith(f'{code}_trade_')]
+            for key in keys_to_remove:
+                del self._script_result_cache[key]
 
     def _set_current_context(self, kwargs: Dict[str, Any]):
         """현재 스레드의 실행 컨텍스트 설정"""
@@ -3755,6 +3736,9 @@ def {script_name}(*args, **kwargs):
                 'echo': echo,
                 'ret': script_return,
                 'result_cache': self._script_result_cache,  # 전역 캐시 변수 추가
+                'set_trade_state': self.set_trade_state,  # 매매 상태 저장
+                'get_trade_state': self.get_trade_state,  # 매매 상태 조회
+                'clear_trade_state': self.clear_trade_state,  # 매매 상태 삭제
                 '_script_logs': script_logs,
                 '_current_kwargs': {},
                 '_script_result': None,
@@ -3885,7 +3869,6 @@ def execute_script():
 result = execute_script()
 """
 
-# 예제 실행
 if __name__ == '__main__':
     ct = ChartManager('005930', 'mi', 3)
 

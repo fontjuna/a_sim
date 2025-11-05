@@ -4,6 +4,7 @@ from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread
 from datetime import datetime
+import pandas as pd
 import logging
 import time
 import random

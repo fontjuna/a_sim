@@ -3,7 +3,8 @@ import os
 
 def build():
     """분할 빌드를 위한 스크립트"""
-    spec_path = "spec"
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    spec_path = os.path.join(base_dir, "spec")
     if not os.path.exists(spec_path):
         os.makedirs(spec_path)
 
@@ -15,11 +16,11 @@ def build():
         '--distpath=D:/Exec/dist',                   # 빌드 결과물 저장 경로
         '--workpath=D:/Exec/build',                  # 빌드 작업 경로
         '--specpath=spec',                           # spec 파일 저장 경로
-        '--add-data=resources/aaa.ui;resources',     # --add-data=소스파일경로;대상폴더경로
-        '--add-data=resources/aaa.ico;resources',
-        '--add-data=images/*;images',                # 이미지 폴더
-        '--add-data=script;script',                  # script 폴더 전체 포함
-        '--icon=resources/aaa.ico',                  # 아이콘 파일
+        f'--add-data={os.path.join(base_dir, "resources", "aaa.ui")};resources',     # --add-data=소스파일경로;대상폴더경로
+        f'--add-data={os.path.join(base_dir, "resources", "aaa.ico")};resources',
+        f'--add-data={os.path.join(base_dir, "images")}\\*;images',                # 이미지 폴더
+        f'--add-data={os.path.join(base_dir, "script")};script',                  # script 폴더 전체 포함
+        f'--icon={os.path.join(base_dir, "resources", "aaa.ico")}',                  # 아이콘 파일
         '--hidden-import=PyQt5',
         '--hidden-import=PyQt5.QtCore',
         '--hidden-import=PyQt5.QtGui',

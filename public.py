@@ -399,6 +399,12 @@ class Constants:        # 상수 정의
 
         # 매수/매도 제한
         '중복매수금지': 'chkNoDup',
+
+        '금지율적용': 'chkCancelRate',
+        '금지율': 'dsbCancelRate',
+        '금지횟수적용': 'chkCancelCount',
+        '금지횟수': 'spbCancelCount',
+        
         '매수취소': 'chkBuyCancel',
         '매수지연초': 'spbBuyCancel',
         '매도취소': 'chkSellCancel',
@@ -465,7 +471,13 @@ class Constants:        # 상수 정의
         '청산시장가': True,
         '청산지정가': False,
         '청산호가': 0,
+
         '중복매수금지': True,
+        '금지율적용': False,
+        '금지율': 0.0,
+        '금지횟수적용': False,
+        '금지횟수': 0,
+
         '매수취소': False,
         '매수지연초': 0,
         '매도취소': False,
