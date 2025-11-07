@@ -2665,13 +2665,14 @@ class ChartManager:
             
             today_bars (int): 당일 봉 개수
             
-            rise_dict (dict): 전체 최고종가 마루 정보 (가장 높은 HC의 SB~HC 구간)
+            rise_dict (dict): 최고종가 정보 (가장 마지막 HC의 SB~HC 구간)
                 {
-                    'hc': int,                    # 최고종가봉 인덱스 (0일 수 있음)
+                    'hc': int,                    # 최고종가봉 인덱스 (최소 1 이상)
                     'sb': int,                    # 시작봉 인덱스 (당일 또는 전일 마지막)
                     'bars': int,                  # SB - HC 상승 구간 봉 개수
                     'rise_rate': float,           # HC - SB 상승률(%)
                     'three_rate': float,          # 최근 3개봉 상승률(%)
+                    'sb_gap': float,              # SB 종가 대비 최고 이평값 갭(%)
                     'max_red': (int, float),      # (인덱스, 최대 양봉 몸통%)
                     'max_blue': (int, float),     # (인덱스, 최대 음봉 몸통%)
                     'red_count': int,             # 양봉 개수
@@ -2679,7 +2680,7 @@ class ChartManager:
                     'below': dict                 # {이평: [인덱스 리스트]}
                 }
             
-            maru_dict (dict): 최근 마루 정보 (가장 마지막 HC의 SB~HC 구간)
+            maru_dict (dict): 최고 마루 정보 (가장 높은 종가 HC의 SB~HC 구간)
                 - rise_dict와 동일 구조
                 - rise == maru인 경우 rise와 동일한 값
         """
@@ -2698,14 +2699,14 @@ class ChartManager:
             
             if not peaks: return (today_bars, {}, {})
             
-            # 첫 번째 마루 = maru (최근), 최고 HC 마루 = rise (전마루)
-            maru_peak = peaks[0]
-            rise_peak = max(peaks, key=lambda p: self._raw_data[p['hc']]['현재가'])
+            # 첫 번째 마루 = rise (최고종가), 최고 HC 마루 = maru (최고 마루)
+            rise_peak = peaks[0]
+            maru_peak = max(peaks, key=lambda p: self._raw_data[p['hc']]['현재가'])
             
-            # rise 분석
+            # rise 분석 (최고종가)
             rise = self._analyze_peak_data(rise_peak, mas, n)
             
-            # maru 분석 (rise와 같으면 동일한 값)
+            # maru 분석 (최고 마루, rise와 같으면 동일한 값)
             if maru_peak == rise_peak:
                 maru = rise
             else:
@@ -2820,8 +2821,17 @@ class ChartManager:
         # 봉 분석
         max_red, max_blue, red_count, blue_count = self._analyze_bars_between(hc, sb, n)
         
+        # sb_gap 계산: sb 종가 대비 최고 이평값 갭(%)
+        sb_gap = 0.0
+        if sb < len(self._raw_data):
+            sb_close = self._raw_data[sb]['현재가']
+            ma_values = [self.ma(mp, sb) for mp in mas if sb + mp < len(self._raw_data)]
+            if ma_values and sb_close > 0:
+                max_ma = max(ma_values)
+                sb_gap = ((max_ma - sb_close) / sb_close * 100)
+        
         # 기본 dict 생성
-        result = self._build_rise_dict(hc, sb, max_red, max_blue, red_count, blue_count)
+        result = self._build_rise_dict(hc, sb, max_red, max_blue, red_count, blue_count, sb_gap)
         result['below'] = below
         
         return result
@@ -2889,7 +2899,7 @@ class ChartManager:
         
         return max_red, max_blue, red_count, blue_count
     
-    def _build_rise_dict(self, hc: int, sb: int, max_red: tuple, max_blue: tuple, red_count: int, blue_count: int) -> dict:
+    def _build_rise_dict(self, hc: int, sb: int, max_red: tuple, max_blue: tuple, red_count: int, blue_count: int, sb_gap: float = 0.0) -> dict:
         """rise 사전 구성"""
         if hc is None or sb is None or hc >= len(self._raw_data) or sb >= len(self._raw_data):
             return {}
@@ -2910,7 +2920,8 @@ class ChartManager:
             'sb': sb,               # 시작봉 인덱스
             'bars': bars,           # SB - HC 상승 구간 봉 개수
             'rise_rate': rise_rate, # HC - SB 상승률
-            'three_rate': three_rate, # 최근 3개 상승률 
+            'three_rate': three_rate, # 최근 3개 상승률
+            'sb_gap': sb_gap,       # SB 종가 대비 최고 이평값 갭(%)
             'max_red': max_red,     # 양봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
             'max_blue': max_blue,   # 음봉 중 최대 몸통 길이의 시가대비 종가 퍼센트
             'red_count': red_count, # SB~HC 구간 양봉 개수 (SB 제외, HC 포함)

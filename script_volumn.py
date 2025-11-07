@@ -81,26 +81,29 @@ with m3.suspend_ensure():
     mas = [20, 15, 10, 7, 5, 3]
     today_bars, rise, maru = m3.get_rising_state(mas, 0)
     
-    # 빈 딕셔너리 체크 (확정 봉이 없는 경우)
-    if not rise or not maru:
-        if today_bars == 1:
-            echo(f'△ {code} {name} 현재가={c()} / 당일 첫봉 - 확정 봉 없음')
-        else:
-            echo(f'△ {code} {name} 현재가={c()} / 마루 없음 - 이평 이하')
-        ret(False)
-    
     try:
+        # 빈 딕셔너리 처리 (확정 봉 없음)
+        if not rise or not maru:
+            if today_bars == 1 and all(c() >= ma(mp) for mp in mas):
+                sb_gap = percent(max(ma(mp, 1) for mp in mas), c(1))
+                rise = maru = {'hc': 0, 'sb': 1, 'bars': 1, 'rise_rate': percent(c(), c(1)), 'three_rate': 0.0,
+                              'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0),
+                              'red_count': int(c() >= o()), 'blue_count': int(c() < o()), 'below': {mp: [] for mp in mas}}
+            else:
+                raise ValueError(f'마루 없음 - {"첫봉 이평 이하" if today_bars == 1 else "이평 이하"}')
+        
         첫봉 = today_bars - 1
-        thcx = rise['hc']   # 당일 최고 종가 봉
-        hcx = maru['hc']    # 상승 시작 후 최고 종가 봉
-        sbx = maru['sb']    # 상승 시작 봉 (종가가 모든 이평위로 올라온 봉의 직전 봉)
-        bars = maru['bars'] # sb - hc 상승 구간 봉 개수
+        thcx = maru['hc']   # 최고 마루 봉 (당일 가장 높은 종가)
+        hcx = rise['hc']    # 최고종가봉 (가장 마지막 마루)
+        sbx = rise['sb']    # 상승 시작 봉 (최고종가의 시작점)
+        sb_gap = rise['sb_gap'] # SB 종가 대비 최고 이평값 갭(%)
+        bars = rise['bars'] # sb - hc 상승 구간 봉 개수
         day_open_rate = percent(o(첫봉), dm.c(1)) # 당일 시가 갭 상승 여부 및 시작 % (상승 gap 이면 > 0)
-        rise_rate = maru['rise_rate']
-        three_rate = maru['three_rate']
+        rise_rate = rise['rise_rate']
+        three_rate = rise['three_rate']
         hc_rate = percent(c(hcx), c(hcx + 1))
     except Exception as e:
-        echo(f'△ {code} {name} 현재가={c()} / 상승 상태 분석 실패: {e}')
+        echo(f'△ {code} {name} 현재가={c()} / {e}')
         ret(False)
 
     if not msg:        
@@ -114,7 +117,14 @@ with m3.suspend_ensure():
                 elif m1.o(bar_idx) >= m1.c(bar_idx):  # 첫 1분봉이 음봉
                     msg = f'당일 첫 1분봉 음봉시 매수 안 함'
         else:
-            if bottom(첫봉) > c():
+            if hcx == 1:
+                curr_rise_rate = percent(c(), c(sbx))
+                if curr_rise_rate > 10.0  and bars < 5:
+                    msg = f'상승 시작 후 4봉 이내 10% 이상 상승 중'
+                elif curr_rise_rate > 13.0 and bars <= 10:
+                    msg = f'10봉 이내 13% 이상 상승 중'
+                    
+            elif bottom(첫봉) > c():
                 msg = f'당일 첫봉 몸통 이하면 매수 안함'
             elif blue():
                 half_body = body() / 2
@@ -123,40 +133,34 @@ with m3.suspend_ensure():
             elif o() < hoga(c(1), -3):
                 msg = f'-3호가 이상 갭 하락 시작시 매수 금지'
             elif ma(10) > o() and percent(h(thcx), o()) > 3.0:
-                msg = f'10이평 아래에서 시가가 최고종가의 고가 대비 -3.0% 이하이면 매수 금지'
-            # elif percent(dm.l(), dm.c(1)) < -5.0:
-            #     msg = f'전일 종가 대비 -5.0% 이하로 하락 했던 종목 매수 금지'
-            elif hcx == 1:
-                curr_rise_rate = percent(c(), c(sbx))
-                if curr_rise_rate > 10.0  and bars < 5:
-                    msg = f'상승 시작 후 4봉 이내 10% 이상 상승 중'
-                elif curr_rise_rate > 13.0 and bars <= 10:
-                    msg = f'10봉 이내 13% 이상 상승 중'
+                msg = f'10이평 아래에서 시가가 최고마루의 고가 대비 -3.0% 이하이면 매수 금지'
+            elif sb_gap > 2.0:
+                msg = f'SB 종가 대비 최고 이평값 갭 2.0% 이상이면 매수 금지'
 
     if not msg and thcx > 0:
-        # 전 최고종가의 고가 위
+        # 최고마루의 고가 위
         if c() > h(thcx):
             # 갭 상승 시작 추격매수 금지
             if c() > hoga(c(1), 3) and blue():
                 msg = f'3호가 이상 갭 상승 시작 후 음봉 매수 금지'
 
-        # 전 최고종가의 고가 아래
+        # 최고마루의 고가 아래
         elif h(thcx) > c():
-            # 최고종가봉 전봉의 위꼬리가 1% 이상이고 그 봉의 고가 갱신 못함
+            # 최고마루봉 전봉의 위꼬리가 1% 이상이고 그 봉의 고가 갱신 못함
             if up_tail_pct(thcx + 1) > 1.0 and h(thcx + 1) >= h(thcx):
-                msg = f'최고종가 전봉이 1% 이상 윗꼬리가 있고 그 고점 넘지 못한 최고종가 회피'
+                msg = f'최고마루 전봉이 1% 이상 윗꼬리가 있고 그 고점 넘지 못한 최고마루 회피'
 
-            # 최고종가봉이 종가 기준 고가 폭이 저가 폭보다 크고 현재가가 최고종가봉 고가 아래이면 매수 안함
+            # 최고마루봉이 종가 기준 고가 폭이 저가 폭보다 크고 현재가가 최고마루봉 고가 아래이면 매수 안함
             elif h(thcx) - c(thcx) > c(thcx) - l(thcx) and h(thcx) > c():
                 if v(thcx) * 0.8 > v():
-                    msg = f'하락 우세인 최고종가봉의 고점(거래량)을 넘지 못 함'
+                    msg = f'하락 우세인 최고마루봉의 고점(거래량)을 넘지 못 함'
 
-            # 최고종가봉 윗꼬리가 1% 이상이고 전봉이 그 고점을 못 넘었고 몸통의 1.5배이상인 윗꼬리 발생
+            # 최고마루봉 윗꼬리가 1% 이상이고 전봉이 그 고점을 못 넘었고 몸통의 1.5배이상인 윗꼬리 발생
             elif thcx > 1 and up_tail_pct(thcx) > 1.0 and h(thcx) >= h(1) and h(thcx) > c() and up_tail_pct(1) > body_pct(1) * 1.5:
-                msg = f'전 최고종가의 고가저항에 몸통의 1.5배인 윗 꼬리 발생'
+                msg = f'최고마루의 고가저항에 몸통의 1.5배인 윗 꼬리 발생'
 
             elif up_tail_pct(thcx) > 2.5:
-                msg = f'전 최고종가의 윗꼬리 2.5% 이상 발생'
+                msg = f'최고마루의 윗꼬리 2.5% 이상 발생'
 
             elif up_tail_pct() > 1.0 and blue():
                 msg = f'현재봉 윗꼬리 1.0% 이상 발생하고 음봉'
@@ -214,24 +218,30 @@ with m3.suspend_ensure():
     else:
         today_bars, rise, maru = m3.get_rising_state(mas, 0)
     
-    # 빈 딕셔너리 체크 (확정 봉이 없는 경우)
-    if not rise or not maru:
-        msg = f'마루 없음 - 확정 봉 없거나 이평 이하'
-        ret(msg if logoff else False)
-
     try:
+        # 빈 딕셔너리 처리 (확정 봉 없음)
+        if not rise or not maru:
+            if today_bars == 1:
+                sb_gap = percent(max(ma(mp, 1) for mp in mas), c(1))
+                rise = maru = {'hc': 0, 'sb': 1, 'bars': 1, 'rise_rate': percent(c(), c(1)), 'three_rate': 0.0,
+                              'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0),
+                              'red_count': int(c() >= o()), 'blue_count': int(c() < o()), 'below': {mp: [] for mp in mas}}
+            else:
+                raise ValueError('마루 없음 - 이평 이하')
+        
         첫봉 = today_bars - 1
-        bars = maru['bars'] # sb - hc 상승 구간 봉 개수
-        thcx = rise['hc']   # 당일 최고 종가 봉
-        hcx = maru['hc']    # 상승 시작 후 최고 종가 봉
-        sbx = maru['sb']    # 상승 시작 봉 (종가가 모든 이평위로 올라온 봉의 직전 봉)
+        bars = rise['bars'] # sb - hc 상승 구간 봉 개수
+        thcx = maru['hc']   # 최고 마루 봉 (당일 가장 높은 종가)
+        hcx = rise['hc']    # 최고종가봉 (가장 마지막 마루)
+        sbx = rise['sb']    # 상승 시작 봉 (최고종가의 시작점)
+        sb_gap = rise['sb_gap'] # SB 종가 대비 최고 이평값 갭(%)
         day_open_rate = percent(o(첫봉), dm.c(1)) # 당일 시가 갭 상승 여부 및 시작 % (상승 gap 이면 > 0)
-        rise_rate = maru['rise_rate']
-        three_rate = maru['three_rate']
+        rise_rate = rise['rise_rate']
+        three_rate = rise['three_rate']
         hc_rate = percent(c(hcx), c(hcx + 1)) # 최고종가봉 전봉 대비 상승률
-        size = max(maru['max_red'][1], maru['max_blue'][1])
+        size = max(rise['max_red'][1], rise['max_blue'][1])
     except Exception as e:
-        msg = f'상승 상태 분석 실패: {e}'
+        msg = str(e)
         ret(msg if logoff else False)
 
     drop_pct = lambda x: max(percent(h(x+1) - c(x), c(x)), percent(h(x) - c(x), c(x)))
@@ -243,7 +253,7 @@ with m3.suspend_ensure():
         msg = f'상한가'
     elif l(첫봉) > c() and ma(5) > c():
         msg = f'당일 첫봉의 저점 및 5 이평을 이탈'
-    elif h(sbx) > c(): 
+    elif h(sbx) > c() and price > c(): 
         msg = f'상승 시작 봉 고가 ({h(sbx):,}) 이하 하락 매도'
     elif hcx == 2 and hc_rate > 3 and drop_pct(0) > hc_rate:
         msg = f'3%이상인 기준봉 이하로 하락'
@@ -327,7 +337,7 @@ with m3.suspend_ensure():
                 if o(1) == c(1) or up_tail(1) > body(1) * 3:
                     msg = f'전봉 윗꼬리 2%이상 유성형 패턴으로 급락'
             elif up_tail_pct(hcx) > 1.5 and up_tail_pct(1) > 1.5 and h(hcx) > h(1) and c(hcx) > c(1): 
-                msg = f'전 최고종가봉 고가 갱신 불발후 윗꼬리 1.5% 이상 발생 하락'
+                msg = f'최고종가봉 고가 갱신 불발후 윗꼬리 1.5% 이상 발생 하락'
             elif body_pct(2) > 1:
                 if top(2) > top(1) and bottom(2) < bottom(1) and length_pct(1) < 1.0:
                     msg = f'전봉 하락 잉태형 패턴'

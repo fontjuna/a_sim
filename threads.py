@@ -662,6 +662,19 @@ class EvalStrategy(QThread):
             logging.info(f'매도결정: {reason}')
             logging.debug(f'send_data={send_data}')
         if is_ok:
+            # 매도 상태 저장 (같은 봉에서 재매수 방지)
+            from chart import ChartManager
+            try:
+                m3 = ChartManager(code, 'mi', 3)
+                현재가 = row.get('현재가', 0)
+                gm.scm.set_trade_state(code, 'sell', {
+                    'bar_time': m3.bar_time(),
+                    'sell_price': 현재가,
+                    'reason': reason
+                })
+            except Exception as e:
+                logging.error(f'매도 상태 저장 오류: {type(e).__name__} - {e}')
+            
             if not self.매도적용:
                 gm.admin.send_status_msg('주문내용', {'구분': f'매도편입', '종목코드': code, '종목명': row['종목명'], '메시지': '/ 검사결과'})
             if isinstance(send_data, list):
