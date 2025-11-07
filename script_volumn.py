@@ -124,12 +124,12 @@ with m3.suspend_ensure():
                 elif curr_rise_rate > 13.0 and bars <= 10:
                     msg = f'10봉 이내 13% 이상 상승 중'
                     
-            elif bottom(첫봉) > c():
+            elif blue(첫봉) and body(첫봉) > 2.0 and 첫봉 < 5 and bottom(첫봉) > c():
                 msg = f'당일 첫봉 몸통 이하면 매수 안함'
-            elif blue():
-                half_body = body() / 2
-                if half_body > down_tail() or half_body < up_tail():
-                    msg = f'밑 꼬리 짧거나 윗꼬리 긴 음봉 매수 안함'
+            elif blue() and hcx < 4:
+                half_body = (c(hcx) + o(hcx)) / 2
+                if half_body > c():
+                    msg = f'음봉으로 최고종가봉 중간 이하로 하락 중 매수 안 함'
             elif o() < hoga(c(1), -3):
                 msg = f'-3호가 이상 갭 하락 시작시 매수 금지'
             elif ma(10) > o() and percent(h(thcx), o()) > 3.0:
