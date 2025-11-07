@@ -172,6 +172,7 @@ class ChartUpdater(QThread):
         self.chart_q.put(None)
         self.executor.shutdown(wait=True)
 
+    """
     def run(self):
         self.running = True
         while self.running:
@@ -201,7 +202,7 @@ class ChartUpdater(QThread):
 
             q_len = self.chart_q.length()
             if q_len > 30: logging.warning(f'chart_q 대기 큐 len={q_len}')
-    """
+
     def update_batch(self, batch):
         for code, fid in batch.items():
             self.executor.submit(self.update_chart, code, fid)
@@ -440,7 +441,8 @@ class EvalStrategy(QThread):
                 ticker_info = gm.counter.data.get(code, {})
                 return False, {}, f"손실횟수 제한 초과 {code} {name} 손실횟수={ticker_info.get('times', 0)}회 > 제한={self.금지횟수}회"
 
-        if self.중복매수금지 and gm.잔고목록.in_key(code): return False, {}, f"보유 종목 재매수 금지 ({code} {name})"
+        if self.중복매수금지 and gm.잔고목록.in_key(code):
+            return False, {}, f"보유 종목 재매수 금지 ({code} {name})"
 
         if gm.잔고목록.len() >= self.보유제한:
             return False, {}, f"보유 종목수 제한 {code} {name} \

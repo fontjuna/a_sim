@@ -80,6 +80,15 @@ m3._ensure_data_cache()
 with m3.suspend_ensure():
     mas = [20, 15, 10, 7, 5, 3]
     today_bars, rise, maru = m3.get_rising_state(mas, 0)
+    
+    # 빈 딕셔너리 체크 (확정 봉이 없는 경우)
+    if not rise or not maru:
+        if today_bars == 1:
+            echo(f'△ {code} {name} 현재가={c()} / 당일 첫봉 - 확정 봉 없음')
+        else:
+            echo(f'△ {code} {name} 현재가={c()} / 마루 없음 - 이평 이하')
+        ret(False)
+    
     try:
         첫봉 = today_bars - 1
         thcx = rise['hc']   # 당일 최고 종가 봉
@@ -204,6 +213,11 @@ with m3.suspend_ensure():
         maru = is_args('maru', False)
     else:
         today_bars, rise, maru = m3.get_rising_state(mas, 0)
+    
+    # 빈 딕셔너리 체크 (확정 봉이 없는 경우)
+    if not rise or not maru:
+        msg = f'마루 없음 - 확정 봉 없거나 이평 이하'
+        ret(msg if logoff else False)
 
     try:
         첫봉 = today_bars - 1

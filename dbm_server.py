@@ -238,7 +238,8 @@ class DBMServer:
             else:
                 db_name = 'db.db'
             path = os.path.join(get_path(dc.fp.DB_PATH), db_name)
-            conn = sqlite3.connect(path)
+            conn = sqlite3.connect(path, timeout=30.0, check_same_thread=False)
+            conn.execute('PRAGMA journal_mode=WAL')  # WAL 모드 활성화
             conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
             setattr(self.thread_local, db_type, conn)
         return getattr(self.thread_local, db_type)
@@ -422,6 +423,7 @@ class DBMServer:
         """체결 정보 저장 및 손익 계산"""
         table = db_columns.CONC_TABLE_NAME
         record = None
+        is_update = False
 
         def new_record():
             return { 
@@ -429,6 +431,17 @@ class DBMServer:
                 '매수수량': qty, '매수가': price, '매수금액': amount, '매수번호': ordno, 
                 '매도수량': 0, '매수전략': st_buy, '전략명칭': st_name, 'sim_no': sim_no
             }
+        
+        def calculate_profit(sell_qty, sell_amount, buy_price):
+            """손익 계산"""
+            buy_amount = sell_qty * buy_price
+            buy_fee = int(buy_amount * self.fee_rate / 10) * 10
+            sell_fee = int(sell_amount * self.fee_rate / 10) * 10
+            tax = int(sell_amount * self.tax_rate)
+            total_fee = buy_fee + sell_fee + tax
+            profit = sell_amount - buy_amount - total_fee
+            profit_rate = (profit / buy_amount) * 100 if buy_amount > 0 else 0
+            return total_fee, profit, profit_rate
 
         try:
             if kind == '매수':
@@ -436,68 +449,94 @@ class DBMServer:
                 result = self.execute_query(sql, db='db', params=(code, dc.ToDay, ordno, sim_no))
                 
                 if result:
-                    logging.info(f"체결디비에 매수정보 추가갱신: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
+                    logging.info(f"체결디비에 매수정보 추가갱신: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno} 시간:{tm}")
                     record = result[0]
                     record.update({'매수수량': qty, '매수가': price, '매수금액': amount})
                 else:
-                    logging.info(f"체결디비에 매수정보 신규작성: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
+                    logging.info(f"체결디비에 매수정보 신규작성: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno} 시간:{tm}")
                     record = new_record()
             
             elif kind == '매도':
+                # 같은 매도번호로 이미 처리 중인지 확인
                 sql = f"SELECT * FROM {table} WHERE 매도일자 = ? AND 매도번호 = ? AND sim_no = ? LIMIT 1"
                 result = self.execute_query(sql, db='db', params=(dc.ToDay, ordno, sim_no))
                 
                 if result:
+                    is_update = True
+                    # 분할 매도의 추가 체결
                     logging.info(f"체결디비에 매도정보 추가갱신: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
                     record = result[0]
+                    
+                    buy_price = record.get('매수가', price)
+                    total_fee, profit, profit_rate = calculate_profit(qty, amount, buy_price)
+                    
+                    record.update({
+                        '매도번호': ordno, '매도일자': dc.ToDay, '매도시간': tm,
+                        '매도수량': qty, '매도가': price, '매도금액': amount,
+                        '제비용': total_fee, '손익금액': profit, '손익율': round(profit_rate, 2)
+                    })
                 else:
-                    # 전체 레코드 확인 (디버그)
-                    sql_all = f"SELECT 매수번호, 매수수량, 매도번호, 매도수량 FROM {table} WHERE 종목번호 = ? AND sim_no = ?"
-                    all_records = self.execute_query(sql_all, db='db', params=(code, sim_no))
-                    logging.debug(f"종목 전체 레코드: {code} sim_no={sim_no} count={len(all_records) if all_records else 0} records={all_records}")
+                    # 새로운 매도: FIFO로 미매도 레코드들 처리
+                    remaining_qty = qty
+                    remaining_amount = amount
+                    total_profit_rate = 0
+                    processed_records = []
                     
-                    sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND sim_no = ? AND 매수수량 > 매도수량 ORDER BY 매수일자 ASC, 매수시간 ASC LIMIT 1"
-                    result = self.execute_query(sql, db='db', params=(code, sim_no))
-                    
-                    if result:
-                        logging.info(f"체결디비에 매도정보 신규작성: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
+                    while remaining_qty > 0:
+                        sql = f"SELECT * FROM {table} WHERE 종목번호 = ? AND sim_no = ? AND 매수수량 > 매도수량 ORDER BY 매수일자 ASC, 매수시간 ASC LIMIT 1"
+                        result = self.execute_query(sql, db='db', params=(code, sim_no))
+                        
+                        if not result:
+                            logging.error(f"체결디비 비정상: 미매도 레코드 부족 [{kind}] {code} {name} 남은수량:{remaining_qty} 매도번호:{ordno}")
+                            return False
+                        
                         record = result[0]
-                    else:
-                        # 매수 레코드가 없거나 모두 매도 완료된 비정상 상황
-                        logging.error(f"체결디비에 매수정보 없음(***) [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
-                        record = {'매수일자': dc.ToDay, '매수번호': ordno}
-                        #return False
-
-                buy_price = record.get('매수가', price)
-                
-                record.update({
-                    '매도번호': ordno, '매도일자': dc.ToDay, '매도시간': tm,
-                    '매도수량': qty, '매도가': price, '매도금액': amount
-                })
-                
-                # 손익 계산
-                buy_amount = qty * buy_price
-                buy_fee = int(buy_amount * self.fee_rate / 10) * 10
-                sell_fee = int(amount * self.fee_rate / 10) * 10
-                tax = int(amount * self.tax_rate)
-                total_fee = buy_fee + sell_fee + tax
-                profit = amount - buy_amount - total_fee
-                profit_rate = (profit / buy_amount) * 100 if buy_amount > 0 else 0
-                
-                record.update({
-                    '제비용': total_fee,
-                    '손익금액': profit,
-                    '손익율': round(profit_rate, 2)
-                })
+                        buy_qty = record.get('매수수량', 0)
+                        sold_qty = record.get('매도수량', 0)
+                        available_qty = buy_qty - sold_qty
+                        
+                        # 이번 레코드에서 처리할 수량
+                        process_qty = min(available_qty, remaining_qty)
+                        new_sold_qty = sold_qty + process_qty
+                        
+                        # 매도 금액 비율 계산
+                        process_amount = int(amount * process_qty / qty) if qty > 0 else 0
+                        buy_price = record.get('매수가', price)
+                        total_fee, profit, profit_rate = calculate_profit(process_qty, process_amount, buy_price)
+                        
+                        record.update({
+                            '매도번호': ordno, '매도일자': dc.ToDay, '매도시간': tm,
+                            '매도수량': new_sold_qty, '매도가': price, '매도금액': process_amount,
+                            '제비용': total_fee, '손익금액': profit, '손익율': round(profit_rate, 2)
+                        })
+                        
+                        self.table_upsert('db', table, record, key=db_columns.CONC_KEYS)
+                        processed_records.append({'profit_rate': profit_rate, 'qty': process_qty})
+                        
+                        logging.info(f"매도 레코드 처리: {code} {name} 매수번호:{record.get('매수번호')} 처리수량:{process_qty}/{buy_qty} 손익율:{profit_rate:.2f}%")
+                        
+                        remaining_qty -= process_qty
+                        remaining_amount -= process_amount
+                    
+                    # 전체 평균 손익율 계산
+                    total_buy_amount = sum(rec['qty'] * buy_price for rec in processed_records)
+                    total_profit_rate = (sum(rec['profit_rate'] * rec['qty'] for rec in processed_records) / qty) if qty > 0 else 0
+                    
+                    # 매도 완료 시 손익율 반환
+                    return {'code': code, 'name': name, 'profit_rate': round(total_profit_rate, 2)}
             else:
-                logging.warning(f"체결디비 처리 불가: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno}")
+                logging.warning(f"체결디비 처리 불가: [{kind}] {code} {name} 수량:{qty} 단가:{price} 금액:{amount} 주문번호:{ordno} 시간:{tm}")
                 return False
 
-            self.table_upsert('db', table, record, key=db_columns.CONC_KEYS)
-            
-            # 매도 완료 시 손익율 반환 (매수수량 == 매도수량)
-            if kind == '매도' and record.get('매수수량', 0) == record.get('매도수량', 0):
-                return {'code': code, 'name': name, 'profit_rate': round(profit_rate, 2)}
+            # 분할 매도 추가갱신의 경우만 저장 (새로운 매도는 이미 while문에서 처리됨)
+            if kind == '매도' and is_update:
+                self.table_upsert('db', table, record, key=db_columns.CONC_KEYS)
+                
+                # 매도 완료 시 손익율 반환
+                if record.get('매수수량', 0) == record.get('매도수량', 0):
+                    return {'code': code, 'name': name, 'profit_rate': round(profit_rate, 2)}
+            elif kind == '매수':
+                self.table_upsert('db', table, record, key=db_columns.CONC_KEYS)
 
             return True
             

@@ -383,31 +383,30 @@ class Admin:
                 gm.counter.register_tickers(data)
             
             def create_conclusion_records(dict_list):
-                """잔고목록 기반 conclusion 매수 레코드 생성"""
+                """잔고목록 기반 conclusion 매수 레코드 동기화"""
+                # 미매도 레코드 전체 삭제
+                sql_del = f"DELETE FROM {db_columns.CONC_TABLE_NAME} WHERE sim_no = ? AND 매수수량 > 매도수량"
+                gm.prx.order('dbm', 'execute_query', sql=sql_del, db='db', params=(gm.sim_no,))
+                
+                # 잔고목록 기반으로 레코드 생성
                 for item in dict_list:
-                    code = item['종목번호']
-                    # conclusion 테이블에 매수 레코드 있는지 확인
-                    sql = f"SELECT * FROM {db_columns.CONC_TABLE_NAME} WHERE 종목번호 = ? AND sim_no = ? AND 매수수량 > 매도수량 LIMIT 1"
-                    result = gm.prx.answer('dbm', 'execute_query', sql=sql, db='db', params=(code, gm.sim_no))
-                    
-                    if not result:
-                        # 매수 레코드 없으면 생성
-                        conc_record = {
-                            '종목번호': code,
-                            '종목명': item['종목명'],
-                            '매수일자': item.get('매수일자', dc.ToDay),
-                            '매수시간': item.get('매수시간', '000000'),
-                            '매수번호': item.get('매수번호', ''),
-                            '매수수량': item.get('매수수량', item.get('보유수량', 0)),
-                            '매수가': item.get('매수가', item.get('매입가', 0)),
-                            '매수금액': item.get('매수금액', item.get('매입금액', 0)),
-                            '매도수량': 0,
-                            '매수전략': item.get('매수전략', ''),
-                            '전략명칭': item.get('전략명칭', dc.const.BASIC_STRATEGY),
-                            'sim_no': gm.sim_no
-                        }
-                        gm.prx.order('dbm', 'table_upsert', 'db', db_columns.CONC_TABLE_NAME, conc_record, db_columns.CONC_KEYS)
-                        logging.info(f"잔고목록 기반 매수 레코드 생성: {code} {item['종목명']} 매수번호={conc_record['매수번호']} 수량={conc_record['매수수량']}")
+                    conc_record = {
+                        '종목번호': item['종목번호'],
+                        '종목명': item['종목명'],
+                        '매수일자': item.get('매수일자', dc.ToDay),
+                        '매수시간': item.get('매수시간', '000000'),
+                        '매수번호': item.get('매수번호', ''),
+                        '매수수량': item.get('매수수량', item.get('보유수량', 0)),
+                        '매수가': item.get('매수가', item.get('매입가', 0)),
+                        '매수금액': item.get('매수금액', item.get('매입금액', 0)),
+                        '매도수량': 0,
+                        '매수전략': item.get('매수전략', ''),
+                        '전략명칭': item.get('전략명칭', dc.const.BASIC_STRATEGY),
+                        'sim_no': gm.sim_no
+                    }
+                    gm.prx.order('dbm', 'table_upsert', 'db', db_columns.CONC_TABLE_NAME, conc_record, db_columns.CONC_KEYS)
+                
+                logging.info(f"잔고목록 기반 매수 레코드 동기화 완료: {len(dict_list)}건")
 
             #logging.debug(f'dict_list ={dict_list}')
             if dict_list:
@@ -947,8 +946,8 @@ class Admin:
                     gm.holdings.pop(code, None)
                     save_json(dc.fp.holdings_file, gm.holdings)
                     if gm.잔고목록.len() == 0: 
-                        sql = 'DELETE FROM conclusion WHERE 매수수량<>매도수량'
-                        gm.prx.order('dbm', 'execute_query', sql=sql, db='db')
+                        # sql = 'DELETE FROM conclusion WHERE 매수수량<>매도수량'
+                        # gm.prx.order('dbm', 'execute_query', sql=sql, db='db')
                         self.pri_fx얻기_잔고합산()
 
                 gm.주문진행목록.delete(key=(code, kind)) # 정상 주문 완료 또는 주문취소 원 주문 클리어(일부체결 있음)
@@ -992,7 +991,7 @@ class Admin:
                 qty = abs(int(dictFID['체결량'] or 0))
                 price = abs(int(dictFID['체결가'] or 0))
                 amount = abs(int(dictFID['체결누계금액'] or 0))
-                tm = dictFID['주문/체결시간']                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+                tm = ':'.join(dictFID['주문/체결시간'][i:i+2] for i in range(0, 6, 2))
                 st_name = dictFID['전략명칭']
                 ordno = dictFID['주문번호']
                 st_buy = dictFID['매수전략']
