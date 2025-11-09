@@ -85,9 +85,6 @@ class SimData:
       self.sim3_is_stopped = True  # 정지 상태
       self.sim3_condition_thread = None  # 조건검색 스레드 참조
       self.sim3_real_threads = {}  # 실시간 데이터 스레드들 참조
-      
-      # 차트 데이터 기반 패턴 분석 결과 (시뮬레이션 2번용)
-      self.chart_patterns = {}  # 종목별 차트 패턴 정보
 
    def _initialize_data(self):
       """데이터 초기화 (시뮬레이션 1,2번용)"""
@@ -273,166 +270,6 @@ class SimData:
          self.type_groups[from_type].remove(code)
          self.type_groups[to_type].append(code)
 
-   def analyze_chart_pattern(self, chart_data, code):
-      """차트 데이터에서 가격/거래량 패턴 분석 (시뮬레이션 2번용)"""
-      try:
-         if not chart_data or len(chart_data) < 10:
-            return None
-         
-         prices = []
-         volumes = []
-         price_changes = []
-         
-         for i, bar in enumerate(chart_data[:100]):  # 최근 100봉 분석
-            price = int(bar.get('현재가', 0))
-            volume = int(bar.get('거래량', 0))
-            
-            if price > 0:
-               prices.append(price)
-               if volumes:
-                  volumes.append(volume)
-            
-            if i > 0 and len(prices) >= 2:
-               change = abs(prices[-1] - prices[-2])
-               if prices[-2] > 0:
-                  change_pct = (change / prices[-2]) * 100
-                  price_changes.append(change_pct)
-         
-         if not prices or not volumes:
-            return None
-         
-         import statistics
-         
-         # 가격 변동성 분석
-         avg_price = statistics.mean(prices)
-         price_std = statistics.stdev(prices) if len(prices) > 1 else 0
-         avg_change_pct = statistics.mean(price_changes) if price_changes else 0
-         max_change_pct = max(price_changes) if price_changes else 0
-         
-         # 거래량 분석
-         avg_volume = statistics.mean(volumes)
-         max_volume = max(volumes)
-         volume_std = statistics.stdev(volumes) if len(volumes) > 1 else 0
-         
-         # 급등락 감지 (변동폭이 큰 경우)
-         spike_threshold = avg_change_pct * 2 if avg_change_pct > 0 else 1.0
-         spike_indices = [i for i, change in enumerate(price_changes) if change > spike_threshold]
-         
-         # 급등락시 거래량 배율 계산
-         spike_volume_ratio = 1.0
-         if spike_indices and len(spike_indices) < len(volumes):
-            spike_volumes = [volumes[i] for i in spike_indices if i < len(volumes)]
-            if spike_volumes:
-               spike_volume_ratio = statistics.mean(spike_volumes) / avg_volume if avg_volume > 0 else 2.0
-         
-         pattern = {
-            'avg_price': avg_price,
-            'price_std': price_std,
-            'avg_change_pct': avg_change_pct,
-            'max_change_pct': max_change_pct,
-            'avg_volume': avg_volume,
-            'max_volume': max_volume,
-            'volume_std': volume_std,
-            'spike_volume_ratio': max(spike_volume_ratio, 1.5),  # 최소 1.5배
-            'price_trend': 1 if prices[-1] > prices[0] else -1,  # 추세 방향
-         }
-         
-         return pattern
-         
-      except Exception as e:
-         logging.error(f"차트 패턴 분석 오류 {code}: {e}")
-         return None
-
-   def get_next_price_from_chart(self, code):
-      """차트 패턴 기반 다음 가격 계산 (시뮬레이션 2번용)"""
-      try:
-         if code not in self.chart_patterns or not self.chart_patterns[code]:
-            # 패턴 정보 없으면 기존 방식 사용
-            return self.get_next_price(code)
-         
-         pattern = self.chart_patterns[code]
-         price_info = self.price_data[code]
-         current_price = price_info["current_price"]
-         base_price = price_info["base_price"]
-         
-         # 차트 변동성 기반 변동폭 결정
-         change_pct = random.gauss(pattern['avg_change_pct'], pattern['avg_change_pct'] * 0.5)
-         change_pct = abs(change_pct)
-         
-         # 급등락 확률 (5% 확률로 큰 변동)
-         if random.random() < 0.05:
-            change_pct = random.uniform(pattern['avg_change_pct'] * 2, pattern['max_change_pct'])
-            price_info['is_spike'] = True
-         else:
-            price_info['is_spike'] = False
-         
-         # 추세 반영 (70% 추세 방향, 30% 역방향)
-         current_trend = 1 if current_price > base_price else -1
-         if random.random() < 0.7:
-            direction = pattern['price_trend']
-         else:
-            direction = -pattern['price_trend']
-         
-         # 가격 계산
-         change_amount = int(current_price * (change_pct / 100))
-         new_price = current_price + (change_amount * direction)
-         
-         # 호가 단위로 조정
-         new_price = hoga(new_price, 0)  # 호가 단위로 반올림
-         
-         # 가격 제한 (전일가 대비 ±30%)
-         min_price = int(base_price * 0.7)
-         max_price = int(base_price * 1.3)
-         new_price = max(min_price, min(max_price, new_price))
-         
-         price_info["current_price"] = new_price
-         
-         return new_price
-         
-      except Exception as e:
-         logging.error(f"차트 기반 가격 생성 오류 {code}: {e}")
-         return self.get_next_price(code)
-
-   def get_volume_based_on_price_change(self, code, current_price, last_price):
-      """가격 변동폭에 따른 거래량 생성 (시뮬레이션 2번용)"""
-      try:
-         if code not in self.chart_patterns or not self.chart_patterns[code]:
-            # 패턴 정보 없으면 기본 거래량
-            return random.randint(50, 200)
-         
-         pattern = self.chart_patterns[code]
-         price_info = self.price_data.get(code, {})
-         
-         # 기본 거래량 (평균 거래량 기반)
-         base_volume = max(int(pattern['avg_volume'] * 0.001), 50)  # 스케일 다운
-         
-         # 가격 변동폭 계산
-         if last_price > 0:
-            change_pct = abs((current_price - last_price) / last_price * 100)
-         else:
-            change_pct = 0
-         
-         # 급등락 여부 확인
-         is_spike = price_info.get('is_spike', False)
-         
-         if is_spike or change_pct > pattern['avg_change_pct'] * 1.5:
-            # 급등락시 거래량 증가
-            volume_multiplier = pattern['spike_volume_ratio']
-            volume = int(base_volume * volume_multiplier * random.uniform(1.5, 3.0))
-         else:
-            # 일반 변동
-            volume_ratio = 1.0 + (change_pct / pattern['avg_change_pct']) if pattern['avg_change_pct'] > 0 else 1.0
-            volume = int(base_volume * volume_ratio * random.uniform(0.5, 1.5))
-         
-         # 거래량 제한
-         volume = max(10, min(volume, int(pattern['max_volume'] * 0.01)))
-         
-         return volume
-         
-      except Exception as e:
-         logging.error(f"거래량 생성 오류 {code}: {e}")
-         return random.randint(50, 200)
-
 sim = SimData()
 
 class PortfolioManager:
@@ -579,48 +416,6 @@ class OnReceiveRealConditionSim(QThread):
       self.api = api
       self.order = api.order
 
-   def load_chart_and_analyze(self, code):
-      """종목 발생시 차트 데이터 로드 및 패턴 분석 (sim_no==2용)"""
-      try:
-         if self.api.sim_no != 2:
-            return
-         
-         if code in sim.chart_patterns:
-            return  # 이미 분석된 종목
-         
-         # 종목 정보 추가
-         if code not in sim.ticker:
-            sim.ticker[code] = {
-               '종목명': self.api.GetMasterCodeName(code),
-               '전일가': self.api.GetMasterLastPrice(code),
-            }
-            
-            # 가격 데이터 초기화
-            base_price = sim.ticker[code]["전일가"]
-            sim.price_data[code] = {
-               "base_price": base_price,
-               "current_price": base_price,
-               "type_change_time": None,
-               "last_update_time": time.time()
-            }
-         
-         # 차트 데이터 로드 및 패턴 분석
-         logging.info(f'조건검색 종목 발생 - 차트 데이터 로드: {code} {sim.ticker[code]["종목명"]}')
-         chart_data = self.api.get_chart_data(code, 'mi', tick=3, times=1)
-         
-         if chart_data:
-            pattern = sim.analyze_chart_pattern(chart_data, code)
-            if pattern:
-               sim.chart_patterns[code] = pattern
-               logging.info(f'패턴 분석 완료 {code}: avg_vol={pattern["avg_volume"]:.0f}, avg_change={pattern["avg_change_pct"]:.2f}%')
-            else:
-               logging.warning(f'패턴 분석 실패 {code}')
-         else:
-            logging.warning(f'차트 데이터 로드 실패 {code}')
-            
-      except Exception as e:
-         logging.error(f'차트 데이터 로드 오류 {code}: {e}')
-
    def run(self):
       while self.is_running:
          if not self.api.connected:
@@ -631,10 +426,6 @@ class OnReceiveRealConditionSim(QThread):
 
          current_count = len(self.current_stocks)
          if current_count >= 3 and type == 'I': continue
-
-         # 편입(I) 발생시 차트 데이터 로드 및 패턴 분석
-         if type == 'I':
-            self.load_chart_and_analyze(code)
 
          self.order('rcv', 'proxy_method', QWork(method='on_receive_real_condition', args=(code, type, self.cond_name, int(self.cond_index))))
 
@@ -669,49 +460,15 @@ class OnReceiveRealDataSim1And2(QThread):
          if not self.api.connected or not ready_tickers:
             time.sleep(0.01)
             continue
-         
-         # SetRealReg로 등록된 종목만 처리 (실제 흐름과 동일)
-         global real_tickers
-         if not real_tickers:
-            time.sleep(0.01)
-            continue
-         
-         for code in list(real_tickers):
+         # 모든 종목에 대해 가격 업데이트
+         for code in list(sim.ticker.keys()): 
             if not self.is_running:
                break
-            
-            # 종목 정보가 없으면 스킵
-            if code not in sim.ticker:
-               continue
-            
-            # sim_no==2인 경우 조건검색으로 발생한 종목(price_data에 있는)만 처리
-            if self.api.sim_no == 2 and code not in sim.price_data:
-               continue
-            
-            # sim_no==1인 경우 price_data 초기화 확인
-            if self.api.sim_no == 1 and code not in sim.price_data:
-               continue
-            
-            # 이전 가격 저장
-            last_price = price_dict.get(code, sim.ticker[code]["전일가"])
-            
             # 시뮬레이터에서 현재가 계산
-            if self.api.sim_no == 2 and code in sim.chart_patterns:
-               # 차트 패턴 기반 가격 생성
-               current_price = sim.get_next_price_from_chart(code)
-            else:
-               # 기존 방식 (sim_no==1)
-               current_price = sim.update_price(code)
+            current_price = sim.update_price(code)
             price_dict[code] = current_price
 
-            # 거래량 계산
-            if self.api.sim_no == 2 and code in sim.chart_patterns:
-               # 가격 변동폭 기반 거래량 생성
-               qty = sim.get_volume_based_on_price_change(code, current_price, last_price)
-            else:
-               # 기존 방식
-               qty = random.randint(0, 50)
-            
+            qty = random.randint(0, 50)
             if code not in self.code_tot:
                self.code_tot[code] = {'totoal_qty': 50000, 'total_price': current_price * 50000}
             self.code_tot[code]['totoal_qty'] += qty
@@ -723,7 +480,6 @@ class OnReceiveRealDataSim1And2(QThread):
                '종목명': sim.ticker.get(code, {}).get('종목명', ''),
                '현재가': f'{current_price:15d}',
                '등락율': f'{round((current_price - sim.ticker[code]["전일가"]) / sim.ticker[code]["전일가"] * 100, 2):12.2f}',
-               '거래량': f'{qty:15d}',
                '누적거래량': f'{self.code_tot[code]["totoal_qty"]:15d}',
                '누적거래대금': f'{self.code_tot[code]["total_price"]:15d}',
                '체결시간': time.strftime('%H%M%S', time.localtime()),
@@ -994,29 +750,22 @@ class APIServer:
             sim.ticker = dc.sim.ticker
             sim._initialize_data()
         elif self.sim_no == 2:  # 키움서버 사용, 실시간 데이터 가상 생성
-            # 조건검색으로 종목 발생시 차트 데이터 로드하므로 초기 종목 풀만 준비
             codes = self.GetCodeListByMarket('NXT')
             if codes:
-                # 조건검색에서 랜덤 선택할 종목 풀 준비 (100개)
-                selected_codes = random.sample(codes, min(100, len(codes)))
-                logging.info(f'sim_no=2 종목 풀 준비: {len(selected_codes)}개')
+                selected_codes = random.sample(codes, 30)
+                logging.debug(f'len={len(selected_codes)} codes={selected_codes}')
                 sim.ticker = {}
-                sim.chart_patterns = {}
-                
-                # 종목 풀만 등록 (차트 데이터는 조건검색 발생시 로드)
                 for code in selected_codes:
                     sim.ticker[code] = {
-                        '종목명': self.GetMasterCodeName(code),
-                        '전일가': self.GetMasterLastPrice(code),
+                    '종목명': self.GetMasterCodeName(code),
+                    '전일가': self.GetMasterLastPrice(code),
                     }
-                
-                logging.info(f'sim_no=2 초기화 완료: 종목 풀 {len(sim.ticker)}개 준비됨 (차트는 조건검색 발생시 로드)')
+                sim._initialize_data()
             else:
                 logging.warning('GetCodeListByMarket 결과 없음 *************')
                 logging.warning('시뮬레이션 모드 1로 변경 *************')
                 self.sim_no = 1
                 sim.ticker = dc.sim.ticker
-                sim._initialize_data()
         elif self.sim_no == 3:  # 키움서버 사용, 데이터베이스 데이터 이용
             # 기본값 설정 (나중에 start 버튼에서 실제 값으로 변경)
             # sim.sim3_speed = speed if speed else 1.0
@@ -1356,21 +1105,11 @@ class APIServer:
 
     def SetRealRemove(self, screen, del_code):
         global real_thread, real_tickers
-        logging.debug(f'SetRealRemove: screen={screen}, del_code={del_code}')
+        logging.debug(f'screen={screen}, del_code={del_code}')
         if self.sim_no == 0:  # 실제 API 서버
             ret = self.ocx.dynamicCall("SetRealRemove(QString, QString)", screen, del_code)
             return ret
         else:  # 시뮬레이션 모드
-            # real_tickers에서 종목 제거 (실제 흐름과 동일)
-            if del_code == 'ALL':
-                real_tickers.clear()
-                logging.debug(f'모든 실시간 종목 제거')
-            elif del_code:
-                if del_code in real_tickers:
-                    real_tickers.discard(del_code)
-                    logging.debug(f'실시간 종목 제거: {del_code}')
-            
-            # 스레드 정리
             if not real_thread: return
             if screen == 'ALL':
                 for s in list(real_thread.keys()):
@@ -1393,7 +1132,7 @@ class APIServer:
                     else:
                         logging.debug(f"실시간 데이터 스레드 정리: {screen}")
                     del real_thread[screen]
-            logging.debug(f'실시간 데이터 스레드 삭제후: {real_thread}, real_tickers 수: {len(real_tickers)}')
+            logging.debug(f'실시간 데이터 스레드 삭제후: {real_thread}')
                
     def SetInputValue(self, id, value):
         if self.sim_no != 1:  # 실제 API 서버 또는 키움서버 사용 (sim_no=2, 3)
