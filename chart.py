@@ -1628,6 +1628,23 @@ class ChartManager:
             
             return (upper_band, middle_band, lower_band)
     
+    def envelope(self, period: int = 20, percent: float = 2.5, n: int = 0) -> tuple:
+        """엔벨로프 밴드 계산
+        Args:
+            period: 이동평균 기간 (기본값: 20)
+            percent: 상하한 폭 퍼센트 (기본값: 2.5)
+            n: 검사할 봉 인덱스 (0=현재봉)
+        Returns: (상단 밴드, 중간 밴드(MA), 하단 밴드)
+        """
+        self._ensure_data_cache()
+        with self.suspend_ensure():
+            middle_band = self.ma(period, n)
+            
+            upper_band = middle_band * (1 + percent / 100)
+            lower_band = middle_band * (1 - percent / 100)
+            
+            return (upper_band, middle_band, lower_band)
+    
     def stochastic(self, k_period: int = 14, d_period: int = 3, n: int = 0) -> tuple:
         """스토캐스틱 오실레이터 계산
         Returns: (%K, %D)
@@ -2645,14 +2662,15 @@ class ChartManager:
 
     def get_rising_state(self, mas: list, n: int = 0) -> tuple:
         """
-        상태 검사 함수 - 당일 봉 범위에서 마루(SB~HC) 분석
+        상태 검사 함수 - 마루(SB~HC) 분석
         
-        ※ 중요: 당일 봉만 대상으로 마루를 찾음 (전일 이전 봉은 제외)
+        ※ 분봉(mi): 당일 봉만 대상, 여러 마루 찾기 (rise=최고종가, maru=최고마루)
+        ※ 일/주/월봉(dy/wk/mo): 첫 번째 마루만 찾기 (rise=maru, today_bars=1)
         ※ HC/SB 검사는 n+1봉(확정된 봉)부터 시작 (현재봉은 변동 중이므로 제외)
         ※ HC(최고종가봉)는 최소 인덱스 1 이상 (1봉전 이후 확정된 봉만)
-        ※ SB(시작봉)는 당일 확정 봉이거나, 예외적으로 전일 마지막 봉
-        ※ today_bars는 현재봉 포함한 당일 전체 봉 개수
-        ※ 모든 이평 위에 있는 확정 봉이 없으면 마루가 형성되지 않아 빈 딕셔너리 반환
+        ※ SB(시작봉)는 확정 봉이거나, 분봉의 경우 전일 마지막 봉
+        ※ today_bars는 현재봉 포함 (분봉=당일 봉수, 일/주/월봉=1)
+        ※ 모든 이평 위에 있는 확정 봉이 없으면 빈 딕셔너리 반환
         
         Args:
             mas: 이평선 리스트 [기준이평, 이평1, 이평2, ...]
@@ -2716,29 +2734,34 @@ class ChartManager:
     
     def _find_all_peaks(self, all_mas: list, base_ma: int, n: int) -> tuple:
         """
-        현재봉(n)부터 과거로 가면서 모든 마루 찾기
+        현재봉(n)부터 과거로 가면서 마루 찾기
         
         ※ HC/SB 검사는 n+1봉(확정된 봉)부터 시작
-        ※ today_bars는 현재봉 포함
+        ※ 분봉(mi): 당일 봉만 대상, 여러 마루 반환
+        ※ 일/주/월봉(dy/wk/mo): 첫 번째 마루만 반환 (rise=maru)
         
         Returns:
             tuple: (peaks, today_bars)
                 peaks: list[dict] - [{hc: int, sb: int}, ...] (최근 순서)
-                today_bars: int - 당일 봉 개수 (현재봉 포함)
+                today_bars: int - 당일 봉 개수 (분봉만, 그 외는 1)
         """
         if not self._raw_data or n >= len(self._raw_data):
             return ([], 0)
         
-        current_date = self._raw_data[n]['체결시간'][:8]
+        is_minute = self.cycle == 'mi'
+        current_date = self._raw_data[n]['체결시간'][:8] if is_minute else None
         peaks = []
         today_bars = 0
         
-        # 당일 봉 개수 카운트 (현재봉부터)
-        for i in range(n, len(self._raw_data)):
-            if self._raw_data[i]['체결시간'][:8] == current_date:
-                today_bars += 1
-            else:
-                break
+        # 당일 봉 개수 카운트 (분봉만)
+        if is_minute:
+            for i in range(n, len(self._raw_data)):
+                if self._raw_data[i]['체결시간'][:8] == current_date:
+                    today_bars += 1
+                else:
+                    break
+        else:
+            today_bars = 1  # 일/주/월봉은 항상 1
         
         # 상태 변수
         in_peak = False  # 마루 구간 중인지
@@ -2749,14 +2772,14 @@ class ChartManager:
         # HC/SB 검사는 n+1봉(확정된 봉)부터 시작
         i = n + 1
         while i < len(self._raw_data):
-            candle_date = self._raw_data[i]['체결시간'][:8]
-            
-            # 날짜가 바뀌면 중단
-            if candle_date != current_date:
-                # 마지막 마루 처리 (전일 마지막봉을 SB로)
-                if in_peak and hc_candidate is not None:
-                    peaks.append({'hc': hc_candidate, 'sb': i})
-                break
+            # 분봉: 날짜가 바뀌면 중단
+            if is_minute:
+                candle_date = self._raw_data[i]['체결시간'][:8]
+                if candle_date != current_date:
+                    # 마지막 마루 처리 (전일 마지막봉을 SB로)
+                    if in_peak and hc_candidate is not None:
+                        peaks.append({'hc': hc_candidate, 'sb': i})
+                    break
             
             close = self._raw_data[i]['현재가']
             
@@ -2801,6 +2824,9 @@ class ChartManager:
                         # SB = 후보가 있으면 후보, 없으면 현재 봉
                         sb = sb_candidate if sb_candidate is not None else i
                         peaks.append({'hc': hc_candidate, 'sb': sb})
+                        # 일/주/월봉: 첫 번째 마루만 반환
+                        if not is_minute:
+                            break
                     in_peak = False
                     hc_candidate = None
                     hc_close = 0

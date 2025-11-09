@@ -57,19 +57,42 @@ with dm.suspend_ensure():
     if v_dic['max'] < v_dic['avg'] * 3.5:
         msg = f"최고거래량({v_dic['max']/10000:.0f}만)이 평균({v_dic['avg']/10000:.0f}만)의 3.5배를 넘지 않음"
 
+    # 조건 검색식 대신 처리 한 것
+    if not msg:
+        if percent(dm.c(), dm.c(1)) > 20.0:
+            msg = f'주가가 20% 이상 상승 중이면 매수 안함'
+
+    if not msg:
+        upper, middle, lower = dm.envelope(20, 50)
+        if c() > upper:
+            msg = f'현재가가 엔벨로프 상단 밴드 이상이면 매수 안함'
+
+    if not msg:
+        fall_pct = percent(dm.h(1), dm.c(1))
+        if fall_pct > 8.0:
+            msg = f'전일 고가 대비 종가 하락율 8% 이상'
+        elif fall_pct > 5.0:
+            if c() < dm.h(1):
+                msg = f'전일 고가 대비 종가 하락율 5% 이상이고 그 고가를 넘지 못함'
+
+    if not msg:
+        if dm.ma(3, 1) > dm.ma(3):
+            msg = f'일봉 3이평 하락 중 매수 안함'
+        elif dm.ma(20, 1) > dm.ma(20):
+            msg = f'일봉 20이평 하락 중 매수 안함'
+        elif dm.ma(20) > c() or dm.ma(3) > c():
+            msg = f'일봉 20이평 또는 3이평 이하이면 매수 안함'
+            
     if not msg:
         # 일봉상 긴 윗꼬리가 달린 봉이 많이 나타나는 종목은 털리기 쉽다.
-        윗꼬리긴봉 = 0
-        한계치 = 3
+        cnt = 0
+        limit = 3
         for i in range(1, 11):
-            bar_up_tail = dm.h(i) - max(dm.o(i), dm.c(i))
-            bar_body = abs(dm.o(i) - dm.c(i))
-            bar_body_pct = percent(bar_body, dm.o(i))
-            if bar_body > 0 and bar_body_pct > 1.0 and bar_up_tail > bar_body: 윗꼬리긴봉 += 1
-            if 윗꼬리긴봉 >= 한계치: break
+            if dm.body_pct(i) > 2.0 and dm.up_tail(i) > dm.body(i): cnt += 1
+            if cnt >= limit: break
 
-        if 윗꼬리긴봉 >= 한계치:
-            msg = f'최근 10개봉 중 몸통보다 긴 윗꼬리 봉 {윗꼬리긴봉}개'
+        if cnt >= limit:
+            msg = f'최근 10개봉 중 몸통보다 긴 윗꼬리 봉 {cnt}개'
 
     if msg:
         echo(f"△ {code} {name} 현재가={dm.c()} / {msg}")
@@ -78,6 +101,22 @@ with dm.suspend_ensure():
 # 분봉 조건 찾기 ========================================================================
 m3._ensure_data_cache()
 with m3.suspend_ensure():
+    # 조건 검색식 대신 처리 한 것
+    if not msg:
+        if ma(5) > c(): msg = f'5'
+        if ma(10) > c(): msg = f'10' if not msg else msg+', 10'
+        if ma(20) > c(): msg = f'20' if not msg else msg+', 20'
+        msg = f'{msg} 이평 이하여서 매수 안함' if not msg else ''
+
+    if not msg:
+        if ma(5, 1) > ma(5) or ma(15, 1) > ma(15):
+            msg = f'5 또는 15 이평 하락 중이면 매수 안함'
+
+    if msg:
+        echo(f"△ {code} {name} 현재가={c()} / {msg}")
+        ret(False)
+
+    # 여기 부터 스크립트
     mas = [20, 15, 10, 7, 5, 3]
     today_bars, rise, maru = m3.get_rising_state(mas, 0)
     
@@ -124,31 +163,31 @@ with m3.suspend_ensure():
                 elif curr_rise_rate > 13.0 and bars <= 10:
                     msg = f'10봉 이내 13% 이상 상승 중'
                     
-            elif blue(첫봉) and body(첫봉) > 2.0 and 첫봉 < 5 and bottom(첫봉) > c():
+            elif blue(첫봉) and body_pct(첫봉) > 2.0 and 첫봉 < 5 and bottom(첫봉) > c():
                 msg = f'당일 첫봉 몸통 이하면 매수 안함'
             elif blue() and hcx < 4:
                 half_body = (c(hcx) + o(hcx)) / 2
                 if half_body > c():
-                    msg = f'음봉으로 최고종가봉 중간 이하로 하락 중 매수 안 함'
+                    msg = f'음봉이면 최고종가봉 중간 이하에서 매수 안 함'
             elif o() < hoga(c(1), -3):
                 msg = f'-3호가 이상 갭 하락 시작시 매수 금지'
             elif ma(10) > o() and percent(h(thcx), o()) > 3.0:
-                msg = f'10이평 아래에서 시가가 최고마루의 고가 대비 -3.0% 이하이면 매수 금지'
-            elif sb_gap > 2.0:
-                msg = f'SB 종가 대비 최고 이평값 갭 2.0% 이상이면 매수 금지'
+                msg = f'10이평 아래에서 시가가 최고마루봉의 고가 대비 -3.0% 이하이면 매수 금지'
+            elif sbx < 4 and sb_gap > 2.0:
+                msg = f'SB 종가 대비 최고이평값 갭 2.0% 이상이면 매수 금지'
 
     if not msg and thcx > 0:
-        # 최고마루의 고가 위
+        # 최고마루봉의 고가 위
         if c() > h(thcx):
             # 갭 상승 시작 추격매수 금지
             if c() > hoga(c(1), 3) and blue():
                 msg = f'3호가 이상 갭 상승 시작 후 음봉 매수 금지'
 
-        # 최고마루의 고가 아래
+        # 최고마루봉의 고가 아래
         elif h(thcx) > c():
             # 최고마루봉 전봉의 위꼬리가 1% 이상이고 그 봉의 고가 갱신 못함
             if up_tail_pct(thcx + 1) > 1.0 and h(thcx + 1) >= h(thcx):
-                msg = f'최고마루 전봉이 1% 이상 윗꼬리가 있고 그 고점 넘지 못한 최고마루 회피'
+                msg = f'최고마루봉 전봉이 1% 이상 윗꼬리가 있고 그 고점 넘지 못한 최고마루봉 회피'
 
             # 최고마루봉이 종가 기준 고가 폭이 저가 폭보다 크고 현재가가 최고마루봉 고가 아래이면 매수 안함
             elif h(thcx) - c(thcx) > c(thcx) - l(thcx) and h(thcx) > c():
@@ -157,10 +196,10 @@ with m3.suspend_ensure():
 
             # 최고마루봉 윗꼬리가 1% 이상이고 전봉이 그 고점을 못 넘었고 몸통의 1.5배이상인 윗꼬리 발생
             elif thcx > 1 and up_tail_pct(thcx) > 1.0 and h(thcx) >= h(1) and h(thcx) > c() and up_tail_pct(1) > body_pct(1) * 1.5:
-                msg = f'최고마루의 고가저항에 몸통의 1.5배인 윗 꼬리 발생'
+                msg = f'최고마루봉의 고가저항에 몸통의 1.5배인 윗 꼬리 발생'
 
             elif up_tail_pct(thcx) > 2.5:
-                msg = f'최고마루의 윗꼬리 2.5% 이상 발생'
+                msg = f'최고마루봉의 윗꼬리 2.5% 이상 발생'
 
             elif up_tail_pct() > 1.0 and blue():
                 msg = f'현재봉 윗꼬리 1.0% 이상 발생하고 음봉'

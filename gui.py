@@ -1280,7 +1280,7 @@ class GUI(QMainWindow, form_class):
 
             if read_chart and sim_tickers is not None:
                 현재시간 = datetime.now().strftime("%H%M%S")
-                if not (date_text < dc.ToDay or (date_text == dc.ToDay and '153000' <= 현재시간)):
+                if not (date_text < dc.ToDay or (date_text == dc.ToDay and '090000' <= 현재시간 <= '153000')):
                     logging.warning(f"당일종목 읽기 시간이 아님: date={date_text} 현재시간={현재시간}")
                     return
                 if self.sim_thread and not self.sim_thread.is_alive():
