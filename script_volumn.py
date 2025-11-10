@@ -41,6 +41,7 @@ body, body_pct = m3.body, m3.body_pct
 length, length_pct = m3.length, m3.length_pct
 bottom, top = m3.body_bottom, m3.body_top
 blue, red = m3.blue, m3.red
+mas = [20, 15, 10, 7, 5, 3]
 
 # 같은 봉에서 매도한 경우 매수 안함 ========================================================================
 last_sell = get_trade_state(code, 'sell')
@@ -63,11 +64,6 @@ with dm.suspend_ensure():
             msg = f'주가가 20% 이상 상승 중이면 매수 안함'
 
     if not msg:
-        upper, middle, lower = dm.envelope(20, 50)
-        if c() > upper:
-            msg = f'현재가가 엔벨로프 상단 밴드 이상이면 매수 안함'
-
-    if not msg:
         fall_pct = percent(dm.h(1), dm.c(1))
         if fall_pct > 8.0:
             msg = f'전일 고가 대비 종가 하락율 8% 이상'
@@ -76,12 +72,12 @@ with dm.suspend_ensure():
                 msg = f'전일 고가 대비 종가 하락율 5% 이상이고 그 고가를 넘지 못함'
 
     if not msg:
-        if dm.ma(3, 1) > dm.ma(3):
-            msg = f'일봉 3이평 하락 중 매수 안함'
-        elif dm.ma(20, 1) > dm.ma(20):
-            msg = f'일봉 20이평 하락 중 매수 안함'
-        elif dm.ma(20) > c() or dm.ma(3) > c():
-            msg = f'일봉 20이평 또는 3이평 이하이면 매수 안함'
+        dm_today_bars, dm_rise, dm_maru = dm.get_rising_state(mas, 0)
+        if dm_rise['rise_rate'] > 50.0:
+            if dm.ma(3, 1) > dm.ma(3):
+                msg = f'일봉상 50% 이상 상승중 3이평 하락시 매수 안함'
+            elif dm.ma(3) > c():
+                msg = f'일봉상 50% 이상 상승중 3이평 이하에서서 매수 안함'
             
     if not msg:
         # 일봉상 긴 윗꼬리가 달린 봉이 많이 나타나는 종목은 털리기 쉽다.
@@ -132,7 +128,6 @@ with m3.suspend_ensure():
         ret(False)
 
     # 여기 부터 스크립트
-    mas = [20, 15, 10, 7, 5, 3]
     today_bars, rise, maru = m3.get_rising_state(mas, 0)
     
     try:
@@ -140,6 +135,7 @@ with m3.suspend_ensure():
         if not rise or not maru:
             if today_bars == 1 and all(c() >= ma(mp) for mp in mas):
                 sb_gap = percent(max(ma(mp, 1) for mp in mas), c(1))
+                # 값사용시 반드시 기본 값인지 확인 할 것 기본값적용 해도 되는 조건인지 확인 필수
                 rise = maru = {'hc': 0, 'sb': 1, 'bars': 1, 'rise_rate': percent(c(), c(1)), 'three_rate': 0.0,
                               'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0),
                               'red_count': int(c() >= o()), 'blue_count': int(c() < o()), 'below': {mp: [] for mp in mas}}
@@ -277,6 +273,7 @@ with m3.suspend_ensure():
         if not rise or not maru:
             if today_bars == 1:
                 sb_gap = percent(max(ma(mp, 1) for mp in mas), c(1))
+                # 값사용시 반드시 기본 값인지 확인 할 것 기본값적용 해도 되는 조건인지 확인 필수
                 rise = maru = {'hc': 0, 'sb': 1, 'bars': 1, 'rise_rate': percent(c(), c(1)), 'three_rate': 0.0,
                               'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0),
                               'red_count': int(c() >= o()), 'blue_count': int(c() < o()), 'below': {mp: [] for mp in mas}}
@@ -328,7 +325,7 @@ with m3.suspend_ensure():
 
     # 현재봉으로 판단할지 더 고민 할 사항
     elif hc_rate >= 6: 
-        if c(hcx) < c() and up_tail_pct() > 2.0:
+        if hcx > 0 and c(hcx) < c() and up_tail_pct() > 2.0:
             msg = f'최고종가봉 6% 이상 ({hc_rate:.2f}%) 상승후후 윗꼬리 2% 이상 발생 매도'
         elif hcx < 3 and c(hcx) - body(hcx) / 4 > c():
             msg = f'최고종가봉 6% 이상 ({hc_rate:.2f}%) 상승후 몸통의 1/4 이하로 하락 매도'

@@ -162,12 +162,30 @@ class QData:
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))  # 고유 요청 ID
 
 class SharedQueue:
-    def __init__(self):
+    def __init__(self, maxlen=None):
         import multiprocessing as mp
         self.request = mp.Queue()
         self.result = mp.Queue()
+        self.maxlen = maxlen
         #self.stream = mp.Queue()
         #self.payback = mp.Queue()
+    
+    def put_request(self, item):
+        """request 큐에 넣기 (논블로킹, maxlen 제한)"""
+        if self.maxlen:
+            try:
+                self.request.put_nowait(item)
+            except:  # queue.Full
+                try:
+                    self.request.get_nowait()  # 오래된 것 제거
+                except:  # queue.Empty
+                    pass
+                try:
+                    self.request.put_nowait(item)  # 재시도
+                except:  # queue.Full
+                    pass  # 그래도 실패하면 포기
+        else:
+            self.request.put(item)  # maxlen 없으면 일반 put
 
 class FIDs:             # 실시간 조회 필드 아이디
     거래구분 = {
@@ -670,7 +688,7 @@ class GlobalMemory:      # 글로벌 메모리 정의
             'api': SharedQueue(),
             'dbm': SharedQueue(),
             'prx': SharedQueue(),
-            'rcv': SharedQueue(),
+            'rcv': SharedQueue(maxlen=3),
         }
 
         self.잔고합산 = None # TableManager

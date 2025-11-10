@@ -1366,8 +1366,7 @@ class APIServer:
                 data = self.GetChejanData(value)
                 dictFID[key] = data.strip() if type(data) == str else data
 
-            self.order('rcv', 'proxy_method', QWork(method='on_receive_chejan_data', args=(gubun, dictFID)))
-            #self.order('rcv', 'on_receive_chejan_data', gubun, dictFID)
+            self.order('prx', 'proxy_method', QWork(method='on_receive_chejan_data', args=(gubun, dictFID)))
 
         except Exception as e:
             logging.error(f"OnReceiveChejanData error: {e}", exc_info=True)
@@ -1383,7 +1382,7 @@ class APIServer:
                 dictFID['매입단가'] = 0 if order['ordtype'] == 2 else order['price']
                 dictFID['주문가능수량'] = 0 if order['ordtype'] == 2 else order['quantity']
                 dictFID['매도/매수구분'] = '1' if order['ordtype'] == 2 else '2'
-                self.order('rcv', 'proxy_method', QWork(method='on_receive_chejan_data', args=('1', dictFID)))
+                self.order('prx', 'proxy_method', QWork(method='on_receive_chejan_data', args=('1', dictFID)))
             else:
                 dictFID = {}
                 dictFID['계좌번호'] = order['accno']
@@ -1421,8 +1420,7 @@ class APIServer:
 
                     portfolio.process_order(dictFID)
 
-                self.order('rcv', 'proxy_method', QWork(method='on_receive_chejan_data', args=('0', dictFID)))
-                #self.order('rcv', 'on_receive_chejan_data', '0', dictFID)
+                self.order('prx', 'proxy_method', QWork(method='on_receive_chejan_data', args=('0', dictFID)))
 
             time.sleep(0.1)
             

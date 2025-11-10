@@ -545,7 +545,7 @@ class BaseModel:
                     args=(q_data.request_id, result),
                     request_id=q_data.request_id
                 )
-                self.shared_qes[q_data.sender].request.put(response_data)
+                self.shared_qes[q_data.sender].put_request(response_data)
             else:
                 result = getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
                 if q_data.callback:
@@ -555,7 +555,7 @@ class BaseModel:
                         answer=False, 
                         args=(result,)
                     )
-                    self.shared_qes[q_data.sender].request.put(callback_data)
+                    self.shared_qes[q_data.sender].put_request(callback_data)
 
     def _handle_response(self, request_id, result):
         """응답 처리 전용 메서드"""
@@ -631,7 +631,7 @@ class BaseModel:
     def order(self, target, method, *args, **kwargs):
         """응답이 필요없는 명령 (answer=False)"""
         q_data = QData(sender=self.name, method=method, answer=False, args=args, kwargs=kwargs)
-        self.shared_qes[target].request.put(q_data)
+        self.shared_qes[target].put_request(q_data)
 
     def answer(self, target, method, *args, **kwargs):
         """응답이 필요한 요청 (answer=True) - 프로세스/스레드 통합 안전 보장"""
@@ -644,7 +644,7 @@ class BaseModel:
         
         try:
             # 요청 전송
-            self.shared_qes[target].request.put(q_data)
+            self.shared_qes[target].put_request(q_data)
             
             # 응답 대기
             return self._wait_for_response(q_data.request_id, wait)

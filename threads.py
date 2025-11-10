@@ -63,7 +63,7 @@ class PriceUpdater(QThread):
             if batch: self.update_batch(batch)
 
             q_len = self.price_q.length()
-            if q_len > 30: logging.warning(f'price_q 대기 큐 len={q_len}')
+            if q_len % 10000 == 0: logging.warning(f'price_q 대기 큐 len={q_len}')
             
     """
     # 예전 코드
