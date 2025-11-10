@@ -87,7 +87,7 @@ with dm.suspend_ensure():
         # 일봉상 긴 윗꼬리가 달린 봉이 많이 나타나는 종목은 털리기 쉽다.
         cnt = 0
         limit = 3
-        for i in range(1, 11):
+        for i in range(0, 10):
             if dm.body_pct(i) > 2.0 and dm.up_tail(i) > dm.body(i): cnt += 1
             if cnt >= limit: break
 
@@ -99,6 +99,21 @@ with dm.suspend_ensure():
         ret(False)
 
 # 분봉 조건 찾기 ========================================================================
+m1._ensure_data_cache()
+with m1.suspend_ensure():
+    # 현재봉 판단
+    if not msg:
+        if m1.blue(): msg = f'1분봉이 음봉이면 매수 안함'
+    
+    # 전봉으로 판단
+    if not msg:
+        if m1.body_top(2) > m1.o(1) and m1.body_bottom(2) > m1.c(1):
+            msg = f'1분봉 하락 장악형 패턴 다음 매수 안 함'
+
+    if msg:
+        echo(f"△ {code} {name} 현재가={m1.c()} / {msg}")
+        ret(False)
+
 m3._ensure_data_cache()
 with m3.suspend_ensure():
     # 조건 검색식 대신 처리 한 것
@@ -106,7 +121,7 @@ with m3.suspend_ensure():
         if ma(5) > c(): msg = f'5'
         if ma(10) > c(): msg = f'10' if not msg else msg+', 10'
         if ma(20) > c(): msg = f'20' if not msg else msg+', 20'
-        msg = f'{msg} 이평 이하여서 매수 안함' if not msg else ''
+        msg = f'{msg} 이평 이하여서 매수 안함' if msg else ''
 
     if not msg:
         if ma(5, 1) > ma(5) or ma(15, 1) > ma(15):
@@ -314,7 +329,7 @@ with m3.suspend_ensure():
     # 현재봉으로 판단할지 더 고민 할 사항
     elif hc_rate >= 6: 
         if c(hcx) < c() and up_tail_pct() > 2.0:
-            msg = f'최고종가봉 6% 이상 ({hc_rate:.2f}%) 상승 위 윗꼬리 2% 이상 발생 매도'
+            msg = f'최고종가봉 6% 이상 ({hc_rate:.2f}%) 상승후후 윗꼬리 2% 이상 발생 매도'
         elif hcx < 3 and c(hcx) - body(hcx) / 4 > c():
             msg = f'최고종가봉 6% 이상 ({hc_rate:.2f}%) 상승후 몸통의 1/4 이하로 하락 매도'
 
