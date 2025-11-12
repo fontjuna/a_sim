@@ -2690,11 +2690,12 @@ class ChartManager:
                     'bars': int,                  # SB - HC 상승 구간 봉 개수
                     'rise_rate': float,           # HC - SB 상승률(%)
                     'three_rate': float,          # 최근 3개봉 상승률(%)
-                    'sb_gap': float,              # SB 종가 대비 최고 이평값 갭(%)
+                    'sb_gap': float,              # SB 종가 대비 젤 위 이평값과의 갭(%)
                     'max_red': (int, float),      # (인덱스, 최대 양봉 몸통%)
                     'max_blue': (int, float),     # (인덱스, 최대 음봉 몸통%)
                     'red_count': int,             # 양봉 개수
                     'blue_count': int,            # 음봉 개수
+                    'max_volumn': int,            # 현재봉 제외 당일 최고거래량
                     'below': dict                 # {이평: [인덱스 리스트]}
                 }
             
@@ -2705,7 +2706,8 @@ class ChartManager:
         self._ensure_data_cache()
         
         with self.suspend_ensure():
-            if not self._raw_data or len(self._raw_data) < 20: return (0, {}, {})
+            max_ma = max(mas)
+            if not self._raw_data or len(self._raw_data) < max_ma: return (0, {}, {})
             
             # 기준 이평선과 짧은 주기 이평선들 분리
             base_ma = mas[0]
@@ -2713,7 +2715,7 @@ class ChartManager:
             all_mas = [base_ma] + short_mas
             
             # 현재봉부터 과거로 가며 모든 마루 찾기 (당일 봉수도 함께 반환)
-            peaks, today_bars = self._find_all_peaks(all_mas, base_ma, n)
+            peaks, today_bars, max_volumn = self._find_all_peaks(all_mas, base_ma, n)
             
             if not peaks: return (today_bars, {}, {})
             
@@ -2722,13 +2724,13 @@ class ChartManager:
             maru_peak = max(peaks, key=lambda p: self._raw_data[p['hc']]['현재가'])
             
             # rise 분석 (최고종가)
-            rise = self._analyze_peak_data(rise_peak, mas, n)
+            rise = self._analyze_peak_data(rise_peak, mas, n, max_volumn)
             
             # maru 분석 (최고 마루, rise와 같으면 동일한 값)
             if maru_peak == rise_peak:
                 maru = rise
             else:
-                maru = self._analyze_peak_data(maru_peak, mas, n)
+                maru = self._analyze_peak_data(maru_peak, mas, n, max_volumn)
             
             return (today_bars, rise, maru)
     
@@ -2741,23 +2743,30 @@ class ChartManager:
         ※ 일/주/월봉(dy/wk/mo): 첫 번째 마루만 반환 (rise=maru)
         
         Returns:
-            tuple: (peaks, today_bars)
+            tuple: (peaks, today_bars, max_volumn)
                 peaks: list[dict] - [{hc: int, sb: int}, ...] (최근 순서)
                 today_bars: int - 당일 봉 개수 (분봉만, 그 외는 1)
+                max_volumn: int - 현재봉 제외 당일 최고거래량
         """
         if not self._raw_data or n >= len(self._raw_data):
-            return ([], 0)
+            return ([], 0, 0)
         
         is_minute = self.cycle == 'mi'
         current_date = self._raw_data[n]['체결시간'][:8] if is_minute else None
         peaks = []
         today_bars = 0
+        max_volumn = 0
         
-        # 당일 봉 개수 카운트 (분봉만)
+        # 당일 봉 개수 카운트 및 최고거래량 계산 (분봉만)
         if is_minute:
             for i in range(n, len(self._raw_data)):
                 if self._raw_data[i]['체결시간'][:8] == current_date:
                     today_bars += 1
+                    # 현재봉 제외 당일 최고거래량 계산
+                    if i > n:
+                        volume = self._raw_data[i].get('거래량', 0)
+                        if volume > max_volumn:
+                            max_volumn = volume
                 else:
                     break
         else:
@@ -2767,7 +2776,7 @@ class ChartManager:
         in_peak = False  # 마루 구간 중인지
         hc_candidate = None  # HC 후보
         hc_close = 0  # HC 후보 종가
-        sb_candidate = None  # SB 후보 (일시적 이평 이탈 봉)
+        last_all_above = None  # 마지막으로 모든 이평 위였던 봉
         
         # HC/SB 검사는 n+1봉(확정된 봉)부터 시작
         i = n + 1
@@ -2805,24 +2814,28 @@ class ChartManager:
                     in_peak = True
                     hc_candidate = i
                     hc_close = close
-                    sb_candidate = None
+                    last_all_above = i  # 기록 시작
             else:
                 # 마루 진행 중
                 if above_all_ma:
-                    # 모든 이평 위: HC 갱신, SB 후보 취소
+                    # 모든 이평 위: HC 갱신, last_all_above 갱신
                     if close > hc_close:
                         hc_candidate = i
                         hc_close = close
-                    sb_candidate = None  # 후보 취소
+                    last_all_above = i  # 갱신
                 elif above_base_ma:
-                    # 기준이평은 위, 일부 이평 아래: SB 후보 저장
-                    if sb_candidate is None:
-                        sb_candidate = i
+                    # 기준이평은 위, 일부 이평 아래: 그냥 지나감
+                    pass
                 else:
                     # 기준이평 아래: SB 확정, 마루 완성
                     if hc_candidate is not None:
-                        # SB = 후보가 있으면 후보, 없으면 현재 봉
-                        sb = sb_candidate if sb_candidate is not None else i
+                        # last_all_above가 i-1이면 sb = i
+                        # 아니면 sb = last_all_above + 1
+                        if last_all_above == i - 1:
+                            sb = i
+                        else:
+                            sb = last_all_above + 1 if last_all_above is not None else i
+                        
                         peaks.append({'hc': hc_candidate, 'sb': sb})
                         # 일/주/월봉: 첫 번째 마루만 반환
                         if not is_minute:
@@ -2830,13 +2843,13 @@ class ChartManager:
                     in_peak = False
                     hc_candidate = None
                     hc_close = 0
-                    sb_candidate = None
+                    last_all_above = None
             
             i += 1
         
-        return (peaks, today_bars)
+        return (peaks, today_bars, max_volumn)
     
-    def _analyze_peak_data(self, peak: dict, mas: list, n: int) -> dict:
+    def _analyze_peak_data(self, peak: dict, mas: list, n: int, max_volumn: int) -> dict:
         """마루 데이터 분석하여 rise/maru 형식으로 반환"""
         hc = peak['hc']
         sb = peak['sb']
@@ -2859,6 +2872,7 @@ class ChartManager:
         # 기본 dict 생성
         result = self._build_rise_dict(hc, sb, max_red, max_blue, red_count, blue_count, sb_gap)
         result['below'] = below
+        result['max_volumn'] = max_volumn
         
         return result
     
@@ -2953,7 +2967,7 @@ class ChartManager:
             'red_count': red_count, # SB~HC 구간 양봉 개수 (SB 제외, HC 포함)
             'blue_count': blue_count # SB~HC 구간 음봉 개수 (SB 제외, HC 포함)
         }
-  
+
 class ScriptManager:
     """
     스크립트 호출/인수 전파 원칙 요약 (A→B→C 예시)

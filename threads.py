@@ -63,7 +63,7 @@ class PriceUpdater(QThread):
             if batch: self.update_batch(batch)
 
             q_len = self.price_q.length()
-            if q_len % 10000 == 0: logging.warning(f'price_q 대기 큐 len={q_len}')
+            if q_len % 200 == 199: logging.warning(f'price_q 대기 큐 len={q_len}')
             
     """
     # 예전 코드
@@ -187,7 +187,7 @@ class ChartUpdater(QThread):
             if batch: self.update_batch(batch)
 
             q_len = self.chart_q.length()
-            if q_len > 30: logging.warning(f'chart_q 대기 큐 len={q_len}')
+            if q_len % 200 == 30: logging.warning(f'chart_q 대기 큐 len={q_len}')
 
     """
     def run(self):
@@ -201,7 +201,7 @@ class ChartUpdater(QThread):
                 self.executor.submit(self.update_chart, code, fid)
 
             q_len = self.chart_q.length()
-            if q_len > 30: logging.warning(f'chart_q 대기 큐 len={q_len}')
+            if q_len % 200 == 199: logging.warning(f'chart_q 대기 큐 len={q_len}')
 
     def update_batch(self, batch):
         for code, fid in batch.items():
@@ -247,7 +247,7 @@ class ChartSetter(QThread):
         if self.cht_dt.is_code_registered(code): return
         logging.debug(f"get_first_chart_data 요청: {code}")
         dict_tuple = self.prx.answer('api', 'get_first_chart_data', code)
-        if not all(dict_tuple): return
+        if not dict_tuple or not all(dict_tuple): return
         if dict_tuple[0]:
             self.cht_dt.set_chart_data(code, dict_tuple[0], 'mi', 1)
         if dict_tuple[1]:

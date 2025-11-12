@@ -41,7 +41,8 @@ body, body_pct = m3.body, m3.body_pct
 length, length_pct = m3.length, m3.length_pct
 bottom, top = m3.body_bottom, m3.body_top
 blue, red = m3.blue, m3.red
-mas = [20, 15, 10, 7, 5, 3]
+# mas = [20, 15, 10, 7, 5, 3]
+mas = [21, 15, 12, 6]
 
 # 같은 봉에서 매도한 경우 매수 안함 ========================================================================
 last_sell = get_trade_state(code, 'sell')
@@ -55,8 +56,8 @@ msg = ''
 dm._ensure_data_cache()
 with dm.suspend_ensure():
     v_dic = dm.get_volume_stats(m=60, n=0)
-    if v_dic['max'] < v_dic['avg'] * 3.5:
-        msg = f"최고거래량({v_dic['max']/10000:.0f}만)이 평균({v_dic['avg']/10000:.0f}만)의 3.5배를 넘지 않음"
+    if v_dic['max'] < v_dic['avg'] * 3.0:
+        msg = f"최고거래량({v_dic['max']/10000:.0f}만)이 평균({v_dic['avg']/10000:.0f}만)의 3.0배를 넘지 않음"
 
     # 조건 검색식 대신 처리 한 것
     if not msg:
@@ -72,12 +73,13 @@ with dm.suspend_ensure():
                 msg = f'전일 고가 대비 종가 하락율 5% 이상이고 그 고가를 넘지 못함'
 
     if not msg:
-        dm_today_bars, dm_rise, dm_maru = dm.get_rising_state(mas, 0)
-        if dm_rise['rise_rate'] > 50.0:
+        dm_today_bars, dm_rise, dm_maru = dm.get_rising_state([20, 5], 0)
+        limit_rate = 30.0
+        if dm_maru['rise_rate'] > limit_rate:
             if dm.ma(3, 1) > dm.ma(3):
-                msg = f'일봉상 50% 이상 상승중 3이평 하락시 매수 안함'
+                msg = f'일봉상 {limit_rate}% 이상 상승중 3이평 하락시 매수 안함'
             elif dm.ma(3) > c():
-                msg = f'일봉상 50% 이상 상승중 3이평 이하에서서 매수 안함'
+                msg = f'일봉상 {limit_rate}% 이상 상승중 3이평 이하에서 매수 안함'
             
     if not msg:
         # 일봉상 긴 윗꼬리가 달린 봉이 많이 나타나는 종목은 털리기 쉽다.
@@ -99,12 +101,17 @@ m1._ensure_data_cache()
 with m1.suspend_ensure():
     # 현재봉 판단
     if not msg:
-        if m1.blue(): msg = f'1분봉이 음봉이면 매수 안함'
+        if m1.blue(): 
+            msg = f'1분봉이 음봉이면 매수 안함'
+        elif m1.is_shooting_star(2.0, 4.0, 1.0, n=0):
+            msg = f'1분봉이 유성형 패턴이면 매수 안 함'
     
     # 전봉으로 판단
     if not msg:
-        if m1.body_top(2) > m1.o(1) and m1.body_bottom(2) > m1.c(1):
+        if m1.body_top(2) <= m1.o(1) and m1.body_bottom(2) > m1.c(1):
             msg = f'1분봉 하락 장악형 패턴 다음 매수 안 함'
+        elif m1.is_shooting_star(2.0, 4.0, 1.0, n=1):
+            msg = f'1분봉 유성형 패턴 다음 매수 안 함'
 
     if msg:
         echo(f"△ {code} {name} 현재가={m1.c()} / {msg}")
@@ -114,14 +121,13 @@ m3._ensure_data_cache()
 with m3.suspend_ensure():
     # 조건 검색식 대신 처리 한 것
     if not msg:
-        if ma(5) > c(): msg = f'5'
-        if ma(10) > c(): msg = f'10' if not msg else msg+', 10'
-        if ma(20) > c(): msg = f'20' if not msg else msg+', 20'
-        msg = f'{msg} 이평 이하여서 매수 안함' if msg else ''
+        if ma(6) > c(): msg = f'6'
+        if ma(15) > c(): msg = f'15' if not msg else msg+', 15'
+        msg = f'{msg} 이평 이하에서 매수 안함' if msg else ''
 
     if not msg:
-        if ma(5, 1) > ma(5) or ma(15, 1) > ma(15):
-            msg = f'5 또는 15 이평 하락 중이면 매수 안함'
+        if ma(6, 1) > ma(6) or ma(15, 1) > ma(15):
+            msg = f'6 또는 15 이평 하락 중이면 매수 안함'
 
     if msg:
         echo(f"△ {code} {name} 현재가={c()} / {msg}")
@@ -137,7 +143,7 @@ with m3.suspend_ensure():
                 sb_gap = percent(max(ma(mp, 1) for mp in mas), c(1))
                 # 값사용시 반드시 기본 값인지 확인 할 것 기본값적용 해도 되는 조건인지 확인 필수
                 rise = maru = {'hc': 0, 'sb': 1, 'bars': 1, 'rise_rate': percent(c(), c(1)), 'three_rate': 0.0,
-                              'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0),
+                              'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0), 'max_volumn': 0,
                               'red_count': int(c() >= o()), 'blue_count': int(c() < o()), 'below': {mp: [] for mp in mas}}
             else:
                 raise ValueError(f'마루 없음 - {"첫봉 이평 이하" if today_bars == 1 else "이평 이하"}')
@@ -151,6 +157,7 @@ with m3.suspend_ensure():
         day_open_rate = percent(o(첫봉), dm.c(1)) # 당일 시가 갭 상승 여부 및 시작 % (상승 gap 이면 > 0)
         rise_rate = rise['rise_rate']
         three_rate = rise['three_rate']
+        max_v = rise['max_volumn']
         hc_rate = percent(c(hcx), c(hcx + 1))
     except Exception as e:
         echo(f'△ {code} {name} 현재가={c()} / {e}')
@@ -167,13 +174,12 @@ with m3.suspend_ensure():
                 elif m1.o(bar_idx) >= m1.c(bar_idx):  # 첫 1분봉이 음봉
                     msg = f'당일 첫 1분봉 음봉시 매수 안 함'
         else:
-            if hcx == 1:
-                curr_rise_rate = percent(c(), c(sbx))
-                if curr_rise_rate > 10.0  and bars < 5:
-                    msg = f'상승 시작 후 4봉 이내 10% 이상 상승 중'
-                elif curr_rise_rate > 13.0 and bars <= 10:
-                    msg = f'10봉 이내 13% 이상 상승 중'
-                    
+            if hcx == 1 and bars < 6:
+                rise_limit = lambda x: percent(c(), o(sbx-1)) > 3 * x
+                if rise_limit(bars):
+                    msg = f'상승 시작 후 {bars}봉 이내 {3 * bars}% 이상 상승 중'
+            elif 5 > hcx > 1 and c() > c(hcx) and max_v * 0.8 > v():
+                msg = f'최고종가 위에서 매수시 최고거래량의의 80% 이하이면 안함'
             elif blue(첫봉) and body_pct(첫봉) > 2.0 and 첫봉 < 5 and bottom(첫봉) > c():
                 msg = f'당일 첫봉 몸통 이하면 매수 안함'
             elif blue() and hcx < 4:
@@ -182,8 +188,8 @@ with m3.suspend_ensure():
                     msg = f'음봉이면 최고종가봉 중간 이하에서 매수 안 함'
             elif o() < hoga(c(1), -3):
                 msg = f'-3호가 이상 갭 하락 시작시 매수 금지'
-            elif ma(10) > o() and percent(h(thcx), o()) > 3.0:
-                msg = f'10이평 아래에서 시가가 최고마루봉의 고가 대비 -3.0% 이하이면 매수 금지'
+            elif ma(9) > o() and percent(h(thcx), o()) > 3.0:
+                msg = f'9이평 아래에서 시가가 최고마루봉의 고가 대비 -3.0% 이하이면 매수 금지'
             elif sbx < 4 and sb_gap > 2.0:
                 msg = f'SB 종가 대비 최고이평값 갭 2.0% 이상이면 매수 금지'
 
@@ -253,7 +259,7 @@ blue, red = m3.blue, m3.red
 
 buy_idx = bar_idx(buy_dt)
 
-mas = [20, 15, 10, 7, 5, 3]
+mas = [21, 15, 12, 6]
 msg = ''
 
 m3._ensure_data_cache()
@@ -275,7 +281,7 @@ with m3.suspend_ensure():
                 sb_gap = percent(max(ma(mp, 1) for mp in mas), c(1))
                 # 값사용시 반드시 기본 값인지 확인 할 것 기본값적용 해도 되는 조건인지 확인 필수
                 rise = maru = {'hc': 0, 'sb': 1, 'bars': 1, 'rise_rate': percent(c(), c(1)), 'three_rate': 0.0,
-                              'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0),
+                              'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0), 'max_volumn': 0,
                               'red_count': int(c() >= o()), 'blue_count': int(c() < o()), 'below': {mp: [] for mp in mas}}
             else:
                 raise ValueError('마루 없음 - 이평 이하')
@@ -289,6 +295,7 @@ with m3.suspend_ensure():
         day_open_rate = percent(o(첫봉), dm.c(1)) # 당일 시가 갭 상승 여부 및 시작 % (상승 gap 이면 > 0)
         rise_rate = rise['rise_rate']
         three_rate = rise['three_rate']
+        max_v = rise['max_volumn']
         hc_rate = percent(c(hcx), c(hcx + 1)) # 최고종가봉 전봉 대비 상승률
         size = max(rise['max_red'][1], rise['max_blue'][1])
     except Exception as e:
@@ -302,8 +309,8 @@ with m3.suspend_ensure():
     # 현재봉: 현재봉을 기준으로 판단시 매수와 매도를 같은 봉에서 반복하지 않도록 유념할 것 ***********
     if hoga(dm.c(1), 99) <= dm.c(0):
         msg = f'상한가'
-    elif l(첫봉) > c() and ma(5) > c():
-        msg = f'당일 첫봉의 저점 및 5 이평을 이탈'
+    elif l(첫봉) > c() and ma(6) > c():
+        msg = f'당일 첫봉의 저점 및 6 이평을 이탈'
     elif h(sbx) > c() and price > c(): 
         msg = f'상승 시작 봉 고가 ({h(sbx):,}) 이하 하락 매도'
     elif hcx == 2 and hc_rate > 3 and drop_pct(0) > hc_rate:
@@ -344,32 +351,35 @@ with m3.suspend_ensure():
 
     if not msg: 
         # 이평 이탈 후 조건 검사
-        if not rebuy(20) and ma(20, 1) > c(1):
+        if not rebuy(21) and ma(21, 1) > c(1):
             if blue(1):
                 msg = f'20이평 이탈 매도' # size < 1.0 인경우도 매도 함
+        elif not rebuy(18) and ma(18, 1) > c(1):
+            if size < 1.0 and gijun(18): pass # gijun = 6.0% : 봉수만큼 상승률 이내면 패스스
+            elif blue(1): msg = f'18 이평 이탈 매도'
         elif not rebuy(15) and ma(15, 1) > c(1):
             if size < 1.5 and gijun(15): pass # 5.25%
-            elif blue(1): msg = f'15 이평 이탈 매도' # size >= 1.5 
-        elif not rebuy(10) and ma(10, 1) > c(1):
-            if size < 2.0 and gijun(10): pass # 4.0%
-            elif blue(1): msg = f'10 이평 이탈 매도' # size >= 2.0 
-        elif not rebuy(7) and ma(7, 1) > c(1):
-            if size < 2.0 and gijun(7): pass # 3.25%
-            elif profit_pct >= 3:msg = f'이익 3% 이상 ({profit_pct:.2f}%) 7이평 이탈 매도'
-            elif hc_rate >= 3: msg = f'최고종가봉 3% 이상 ({hc_rate:.2f}%) 7이평 이탈 매도'
-            elif three_rate >= 5: msg = f'3봉 상승 5% 이상 ({three_rate:.2f}%) 7이평 이탈 매도'
-            elif rise_rate >= 7: msg = f'상승 시작 후 7% 이상 ({rise_rate:.2f}%) 7이평 이탈 매도'
-            elif blue(1): msg = f'7 이평 이탈 매도' # size >= 2.0 
+            elif blue(1): msg = f'15 이평 이탈 매도'
+        elif not rebuy(12) and ma(12, 1) > c(1):
+            if size < 1.8 and gijun(12): pass # 4.5%
+            elif blue(1): msg = f'12 이평 이탈 매도'
+        elif not rebuy(9) and ma(9, 1) > c(1):
+            if size < 2.2 and gijun(9): pass # 3.75%
+            elif profit_pct >= 3:msg = f'이익 3% 이상 ({profit_pct:.2f}%) 9이평 이탈 매도'
+            elif hc_rate >= 3: msg = f'최고종가봉 3% 이상 ({hc_rate:.2f}%) 9이평 이탈 매도'
+            elif three_rate >= 5: msg = f'3봉 상승 5% 이상 ({three_rate:.2f}%) 9이평 이탈 매도'
+            elif rise_rate >= 7: msg = f'상승 시작 후 7% 이상 ({rise_rate:.2f}%) 9이평 이탈 매도'
+            elif blue(1): msg = f'9 이평 이탈 매도' # size >= 2.0 
             # 추가 조건 검사 필요 함   
-        elif not rebuy(5) and ma(5, 1) > c(1):
-            if size < 2.0: pass
-            elif profit_pct >= 5: msg = f'이익 5% 이상 ({profit_pct:.2f}%) 5이평 이탈 매도'
-            elif hc_rate >= 4: msg = f'최고종가봉 4% 이상 ({hc_rate:.2f}%) 5이평 이탈 매도'
-            elif three_rate >= 6: msg = f'3봉 상승 6% 이상 ({three_rate:.2f}%) 5이평 이탈 매도'
-            elif rise_rate >= 10: msg = f'상승 시작 후 10% 이상 ({rise_rate:.2f}%) 5이평 이탈 매도'
+        elif not rebuy(6) and ma(6, 1) > c(1):
+            if size < 2.2: pass
+            elif profit_pct >= 5: msg = f'이익 5% 이상 ({profit_pct:.2f}%) 6이평 이탈 매도'
+            elif hc_rate >= 4: msg = f'최고종가봉 4% 이상 ({hc_rate:.2f}%) 6이평 이탈 매도'
+            elif three_rate >= 6: msg = f'3봉 상승 6% 이상 ({three_rate:.2f}%) 6이평 이탈 매도'
+            elif rise_rate >= 10: msg = f'상승 시작 후 10% 이상 ({rise_rate:.2f}%) 6이평 이탈 매도'
             # 추가 조건 검사 필요 함    
         elif not rebuy(3) and ma(3, 1) > c(1):
-            if size < 2.0: pass
+            if size < 2.2: pass
             elif profit_pct >= 8: msg = f'이익 8% 이상 ({profit_pct:.2f}%) 3이평 이탈 매도'
             elif 첫봉 > 0:
                 if hc_rate >= 5: msg = f'최고종가봉 5% 이상 ({hc_rate:.2f}%) 3이평 이탈 매도'

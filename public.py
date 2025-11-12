@@ -172,18 +172,21 @@ class SharedQueue:
     
     def put_request(self, item):
         """request 큐에 넣기 (논블로킹, maxlen 제한)"""
+        import queue
         if self.maxlen:
             try:
                 self.request.put_nowait(item)
-            except:  # queue.Full
+            except (queue.Full, Exception) as e:
+                import logging
+                logging.debug(f"SharedQueue put_nowait 실패: {type(e).__name__}")
                 try:
                     self.request.get_nowait()  # 오래된 것 제거
-                except:  # queue.Empty
+                except (queue.Empty, Exception):
                     pass
                 try:
                     self.request.put_nowait(item)  # 재시도
-                except:  # queue.Full
-                    pass  # 그래도 실패하면 포기
+                except (queue.Full, Exception) as e2:
+                    logging.warning(f"SharedQueue 재시도도 실패, 요청 버림: {type(e2).__name__}")
         else:
             self.request.put(item)  # maxlen 없으면 일반 put
 
@@ -350,7 +353,7 @@ class FilePath:         # 파일 경로
     LOG_JSON = 'logging_config.json'
     LOG_MAX_BYTES = 1024 * 1024 * 5
 
-    DB_PATH = 'db'
+    DB_PATH = 'C:/Liberanimo/db'
     SCRIPT_PATH = 'script'
     CACHE_PATH = 'script/compiled_scripts'
     CONFIG_PATH = 'config'
