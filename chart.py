@@ -21,14 +21,9 @@ class ChartData:
     _creation_lock = threading.Lock()
 
     # 데이터 크기 제한 (메모리 관리)
+    # 분봉 주기는 동적으로 추가됨 (get_chart_data 호출 시)
     MAX_CANDLES = {
-        'mi1': 2700,   # 1분봉: 약 7일치
-        'mi3': 900,    # 3분봉: 약 7일치  
-        'mi5': 540,    # 5분봉: 약 7일치
-        'mi10': 270,   # 10분봉: 약 7일치
-        'mi15': 180,    # 15분봉: 약 7일치
-        'mi30': 90,    # 30분봉: 약 7일치
-        'mi60': 45,    # 60분봉: 약 7일치
+        'mi1': 2700,   # 1분봉: 약 7일치 (필수, 기본 데이터)
         'dy': 600,     # 일봉: 약 2.5년치
         'wk': 140,      # 주봉: 약 2.5년치 
         'mo': 30       # 월봉: 약 2.5년치
@@ -130,8 +125,16 @@ class ChartData:
         if not minute_data:
             return
         
-        # 분봉별 그룹 데이터 (한번 순회로 모든 분봉 생성)
-        ticks = [3, 5, 10, 15, 30, 60]
+        # 분봉별 그룹 데이터 (MAX_CANDLES에 있는 분봉 주기만 생성)
+        ticks = []
+        for cycle_key in self.MAX_CANDLES.keys():
+            if cycle_key.startswith('mi') and cycle_key != 'mi1':
+                tick = int(cycle_key[2:])
+                ticks.append(tick)
+        
+        if not ticks:
+            return
+        
         grouped_data = {tick: {} for tick in ticks}
         
         # 역순으로 처리 (과거 → 최신 순서) - 단일 순회
@@ -211,7 +214,20 @@ class ChartData:
     
     def is_code_registered(self, code: str) -> bool:
         """종목 등록 여부 확인 (메모리 기반으로 단순화)"""
-        return code in self._chart_data and bool(self._chart_data[code].get('mi1') and bool(self._chart_data[code].get('dy')))
+        if code not in self._chart_data:
+            return False
+        # mi1과 dy에 데이터가 있는지 확인 (구조만 있는 경우 False)
+        mi1_data = self._chart_data[code].get('mi1')
+        dy_data = self._chart_data[code].get('dy')
+        if not (mi1_data and len(mi1_data) > 0 and dy_data and len(dy_data) > 0):
+            return False
+        # MAX_CANDLES에 있는 모든 분봉 주기에 데이터가 있는지 확인 (구조만 있는 경우 False)
+        for cycle_key in self.MAX_CANDLES.keys():
+            if cycle_key.startswith('mi') and cycle_key != 'mi1':
+                cycle_data = self._chart_data[code].get(cycle_key)
+                if cycle_data is None or len(cycle_data) == 0:
+                    return False
+        return True
     
     #@profile_operation
     def set_chart_data(self, code: str, data: list, cycle: str, tick: int = None):
@@ -257,6 +273,19 @@ class ChartData:
             
             cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
             
+            # MAX_CANDLES에 없으면 동적으로 추가
+            if cycle_key not in self.MAX_CANDLES:
+                self.MAX_CANDLES[cycle_key] = 1000  # 기본값
+                # 해당 코드의 데이터 구조에 추가
+                if code in self._chart_data and cycle_key not in self._chart_data[code]:
+                    max_size = self.MAX_CANDLES[cycle_key]
+                    self._chart_data[code][cycle_key] = deque(maxlen=max_size)
+                    # 1분봉 데이터가 있으면 해당 주기 데이터 생성
+                    if cycle_key.startswith('mi') and cycle_key != 'mi1':
+                        mi1_data = self._chart_data[code].get('mi1')
+                        if mi1_data and len(mi1_data) > 0:
+                            self._set_all_minute_chart(code)
+            
             if cycle_key in self._chart_data[code]:
                 result = list(self._chart_data[code][cycle_key])
             else:
@@ -300,8 +329,14 @@ class ChartData:
         base_time = latest_minute['체결시간']
         current_date = base_time[:8]
         
-        # 모든 분봉에 새 봉 추가
-        for tick in [3, 5, 10, 15, 30, 60]:
+        # 모든 분봉에 새 봉 추가 (MAX_CANDLES에 있는 주기만)
+        ticks = []
+        for cycle_key in self.MAX_CANDLES.keys():
+            if cycle_key.startswith('mi') and cycle_key != 'mi1':
+                tick = int(cycle_key[2:])
+                ticks.append(tick)
+        
+        for tick in ticks:
             cycle_key = f'mi{tick}'
             if cycle_key not in self._chart_data[code]:
                 continue
@@ -369,8 +404,14 @@ class ChartData:
         latest_minute['_prev_volume'] = actual_minute_volume
         latest_minute['_prev_amount'] = actual_minute_amount
         
-        # 모든 분봉의 최신 봉 업데이트
-        for tick in [3, 5, 10, 15, 30, 60]:
+        # 모든 분봉의 최신 봉 업데이트 (MAX_CANDLES에 있는 주기만)
+        ticks = []
+        for cycle_key in self.MAX_CANDLES.keys():
+            if cycle_key.startswith('mi') and cycle_key != 'mi1':
+                tick = int(cycle_key[2:])
+                ticks.append(tick)
+        
+        for tick in ticks:
             cycle_key = f'mi{tick}'
             if cycle_key not in self._chart_data[code]:
                 continue
@@ -661,6 +702,18 @@ class ChartManager:
         # 버전이 다를 때만 데이터 갱신
         if self.cycle == 'mi':
             cycle_key = f'mi{self.tick}'
+            # MAX_CANDLES에 없으면 동적으로 추가
+            if cycle_key not in self.chart_data.MAX_CANDLES:
+                self.chart_data.MAX_CANDLES[cycle_key] = 1000  # 기본값
+                # 데이터 구조에 추가
+                if self.code in self.chart_data._chart_data and cycle_key not in self.chart_data._chart_data[self.code]:
+                    max_size = self.chart_data.MAX_CANDLES[cycle_key]
+                    self.chart_data._chart_data[self.code][cycle_key] = deque(maxlen=max_size)
+                    # 1분봉 데이터가 있으면 해당 주기 데이터 생성
+                    if cycle_key != 'mi1':
+                        mi1_data = self.chart_data._chart_data[self.code].get('mi1')
+                        if mi1_data and len(mi1_data) > 0:
+                            self.chart_data._set_all_minute_chart(self.code)
             # 모든 분봉은 ChartData에서 실시간 업데이트됨 - 직접 가져오기
             self._raw_data = self.chart_data._chart_data.get(self.code, {}).get(cycle_key, [])
         else:
