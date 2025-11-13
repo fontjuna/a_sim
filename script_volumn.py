@@ -56,24 +56,25 @@ msg = ''
 dm._ensure_data_cache()
 with dm.suspend_ensure():
     v_dic = dm.get_volume_stats(m=60, n=0)
-    if v_dic['max'] < v_dic['avg'] * 3.0:
-        msg = f"최고거래량({v_dic['max']/10000:.0f}만)이 평균({v_dic['avg']/10000:.0f}만)의 3.0배를 넘지 않음"
+    if v_dic['max'] < v_dic['avg'] * 3.5:
+        msg = f"최고거래량({v_dic['max']/10000:.0f}만)이 평균({v_dic['avg']/10000:.0f}만)의 3.5배를 넘지 않음"
 
     # 조건 검색식 대신 처리 한 것
     if not msg:
         if percent(dm.c(), dm.c(1)) > 20.0:
             msg = f'주가가 20% 이상 상승 중이면 매수 안함'
 
+    dm_today_bars, dm_rise, dm_maru = dm.get_rising_state([20, 5], 0)
     if not msg:
-        fall_pct = percent(dm.h(1), dm.c(1))
-        if fall_pct > 8.0:
-            msg = f'전일 고가 대비 종가 하락율 8% 이상'
-        elif fall_pct > 5.0:
-            if c() < dm.h(1):
-                msg = f'전일 고가 대비 종가 하락율 5% 이상이고 그 고가를 넘지 못함'
+        if dm_today_bars < 15:
+            fall_pct = percent(dm.h(1), dm.c(1))
+            if fall_pct > 8.0:
+                msg = f'전일 고가 대비 종가 하락율 8% 이상'
+            elif fall_pct > 5.0:
+                if c() < dm.h(1):
+                    msg = f'전일 고가 대비 종가 하락율 5% 이상이고 그 고가를 넘지 못함'
 
     if not msg:
-        dm_today_bars, dm_rise, dm_maru = dm.get_rising_state([20, 5], 0)
         limit_rate = 30.0
         if dm_maru['rise_rate'] > limit_rate:
             if dm.ma(3, 1) > dm.ma(3):
@@ -108,10 +109,11 @@ with m1.suspend_ensure():
     
     # 전봉으로 판단
     if not msg:
-        if m1.body_top(2) <= m1.o(1) and m1.body_bottom(2) > m1.c(1):
-            msg = f'1분봉 하락 장악형 패턴 다음 매수 안 함'
-        elif m1.is_shooting_star(2.0, 4.0, 1.0, n=1):
-            msg = f'1분봉 유성형 패턴 다음 매수 안 함'
+        if m1.bar_time(1)[:4] == m1.bar_time()[:4]: # 첫봉은 배제
+            if m1.body_top(2) <= m1.o(1) and m1.body_bottom(2) > m1.c(1):
+                msg = f'1분봉 하락 장악형 패턴 다음 매수 안 함'
+            elif m1.is_shooting_star(2.0, 4.0, 1.0, n=1):
+                msg = f'1분봉 유성형 패턴 다음 매수 안 함'
 
     if msg:
         echo(f"△ {code} {name} 현재가={m1.c()} / {msg}")
@@ -143,7 +145,7 @@ with m3.suspend_ensure():
                 sb_gap = percent(max(ma(mp, 1) for mp in mas), c(1))
                 # 값사용시 반드시 기본 값인지 확인 할 것 기본값적용 해도 되는 조건인지 확인 필수
                 rise = maru = {'hc': 0, 'sb': 1, 'bars': 1, 'rise_rate': percent(c(), c(1)), 'three_rate': 0.0,
-                              'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0), 'max_volumn': 0,
+                              'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0), 'max_volume': 0,
                               'red_count': int(c() >= o()), 'blue_count': int(c() < o()), 'below': {mp: [] for mp in mas}}
             else:
                 raise ValueError(f'마루 없음 - {"첫봉 이평 이하" if today_bars == 1 else "이평 이하"}')
@@ -157,7 +159,7 @@ with m3.suspend_ensure():
         day_open_rate = percent(o(첫봉), dm.c(1)) # 당일 시가 갭 상승 여부 및 시작 % (상승 gap 이면 > 0)
         rise_rate = rise['rise_rate']
         three_rate = rise['three_rate']
-        max_v = rise['max_volumn']
+        max_v = rise['max_volume']
         hc_rate = percent(c(hcx), c(hcx + 1))
     except Exception as e:
         echo(f'△ {code} {name} 현재가={c()} / {e}')
@@ -179,7 +181,7 @@ with m3.suspend_ensure():
                 if rise_limit(bars):
                     msg = f'상승 시작 후 {bars}봉 이내 {3 * bars}% 이상 상승 중'
             elif 5 > hcx > 1 and c() > c(hcx) and max_v * 0.8 > v():
-                msg = f'최고종가 위에서 매수시 최고거래량의의 80% 이하이면 안함'
+                msg = f'최고종가 위에서 매수시 최고거래량의 80% 이하이면 안함'
             elif blue(첫봉) and body_pct(첫봉) > 2.0 and 첫봉 < 5 and bottom(첫봉) > c():
                 msg = f'당일 첫봉 몸통 이하면 매수 안함'
             elif blue() and hcx < 4:
@@ -281,7 +283,7 @@ with m3.suspend_ensure():
                 sb_gap = percent(max(ma(mp, 1) for mp in mas), c(1))
                 # 값사용시 반드시 기본 값인지 확인 할 것 기본값적용 해도 되는 조건인지 확인 필수
                 rise = maru = {'hc': 0, 'sb': 1, 'bars': 1, 'rise_rate': percent(c(), c(1)), 'three_rate': 0.0,
-                              'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0), 'max_volumn': 0,
+                              'sb_gap': sb_gap, 'max_red': (0, body_pct()), 'max_blue': (None, 0.0), 'max_volume': 0,
                               'red_count': int(c() >= o()), 'blue_count': int(c() < o()), 'below': {mp: [] for mp in mas}}
             else:
                 raise ValueError('마루 없음 - 이평 이하')
@@ -295,7 +297,7 @@ with m3.suspend_ensure():
         day_open_rate = percent(o(첫봉), dm.c(1)) # 당일 시가 갭 상승 여부 및 시작 % (상승 gap 이면 > 0)
         rise_rate = rise['rise_rate']
         three_rate = rise['three_rate']
-        max_v = rise['max_volumn']
+        max_v = rise['max_volume']
         hc_rate = percent(c(hcx), c(hcx + 1)) # 최고종가봉 전봉 대비 상승률
         size = max(rise['max_red'][1], rise['max_blue'][1])
     except Exception as e:

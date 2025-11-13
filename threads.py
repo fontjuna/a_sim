@@ -381,7 +381,8 @@ class EvalStrategy(QThread):
 
     def eval_order(self, data):
         if 'time' in data[2]:
-            if data[2]['time'] > datetime.now() - timedelta(seconds=0.4):
+            retry_seconds = data[2].get('retry_seconds', 0.4)  # 기본값 0.4초 (차트미비)
+            if data[2]['time'] > datetime.now() - timedelta(seconds=retry_seconds):
                 time.sleep(0.005)
                 self.eval_q.put(data)
                 return
@@ -482,6 +483,16 @@ class EvalStrategy(QThread):
                         result = gm.scm.run_script(self.매수스크립트, kwargs={'code': code, 'name': name, 'price': price, 'qty': send_data['quantity'], 'buy_dt': ''})
                         gm.qwork['msg'].put(Work('스크립트', job={'msg': result['logs']}))
                         if result.get('error') or not result.get('result', False):
+
+                            # 매수검색목록에 있고 이탈하지 않았으면 재시도 (차트미비 로직 활용)
+                            if gm.매수검색목록.in_key(code):
+                                search_row = gm.매수검색목록.get(key=code)
+                                if not search_row.get('이탈'):  # 이탈 표시가 없으면 재시도
+                                    # 10초 후 재시도 (차트미비와 동일한 로직 사용)
+                                    gm.eval_q.put((code, 'buy', {'rqname': rqname, 'price': price, 'time': datetime.now(), 'retry_seconds': 10.0}))
+                                    # 주문진행목록 유지 (삭제하지 않음)
+                                    return False, {}, f"조건유효: {code} {name}"
+
                             msg = f"스크립트 : {code} {name} 매수취소 {result['error'] if result.get('error') else ''}"
                             gm.qwork['msg'].put(Work('주문내용', job={'msg': msg}))
                             return False, {}, msg
@@ -523,9 +534,14 @@ class EvalStrategy(QThread):
             logging.debug(f'send_data={send_data}')
             gm.order_q.put(send_data)
         else:
-            if '차트미비' not in reason: 
-                logging.info(f'매수안함: {reason}')
             key = (code, '매수')
+            
+            # 차트미비 또는 조건유효 경우 주문진행목록 유지 (삭제하지 않음)
+            if '차트미비' in reason or '조건유효' in reason:
+                return is_ok, send_data, reason
+            
+            # 재시도하지 않는 경우 주문진행목록 삭제
+            logging.info(f'매수안함: {reason}')
             if gm.주문진행목록.in_key(key):
                 gm.주문진행목록.delete(key=key)
 
@@ -685,6 +701,12 @@ class EvalStrategy(QThread):
                 gm.order_q.put(send_data)
         else:
             key = (code, '매도')
+            
+            # 차트미비 경우 주문진행목록 유지 (삭제하지 않음)
+            if '차트미비' in reason:
+                return is_ok, send_data, reason
+            
+            # 재시도하지 않는 경우 주문진행목록 삭제
             if gm.주문진행목록.in_key(key):
                 gm.주문진행목록.delete(key=key)
 

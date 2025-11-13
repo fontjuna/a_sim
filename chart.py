@@ -2748,7 +2748,8 @@ class ChartManager:
                     'max_blue': (int, float),     # (인덱스, 최대 음봉 몸통%)
                     'red_count': int,             # 양봉 개수
                     'blue_count': int,            # 음봉 개수
-                    'max_volumn': int,            # 현재봉 제외 당일 최고거래량
+                    'max_volume': int,            # 현재봉 제외 당일 최고거래량
+                    'avg_volume': float,          # 현재봉 제외 당일 평균거래량
                     'below': dict                 # {이평: [인덱스 리스트]}
                 }
             
@@ -2768,7 +2769,7 @@ class ChartManager:
             all_mas = [base_ma] + short_mas
             
             # 현재봉부터 과거로 가며 모든 마루 찾기 (당일 봉수도 함께 반환)
-            peaks, today_bars, max_volumn = self._find_all_peaks(all_mas, base_ma, n)
+            peaks, today_bars, max_volume, avg_volume = self._find_all_peaks(all_mas, base_ma, n)
             
             if not peaks: return (today_bars, {}, {})
             
@@ -2777,13 +2778,13 @@ class ChartManager:
             maru_peak = max(peaks, key=lambda p: self._raw_data[p['hc']]['현재가'])
             
             # rise 분석 (최고종가)
-            rise = self._analyze_peak_data(rise_peak, mas, n, max_volumn)
+            rise = self._analyze_peak_data(rise_peak, mas, n, max_volume, avg_volume)
             
             # maru 분석 (최고 마루, rise와 같으면 동일한 값)
             if maru_peak == rise_peak:
                 maru = rise
             else:
-                maru = self._analyze_peak_data(maru_peak, mas, n, max_volumn)
+                maru = self._analyze_peak_data(maru_peak, mas, n, max_volume, avg_volume)
             
             return (today_bars, rise, maru)
     
@@ -2796,30 +2797,34 @@ class ChartManager:
         ※ 일/주/월봉(dy/wk/mo): 첫 번째 마루만 반환 (rise=maru)
         
         Returns:
-            tuple: (peaks, today_bars, max_volumn)
+            tuple: (peaks, today_bars, max_volume)
                 peaks: list[dict] - [{hc: int, sb: int}, ...] (최근 순서)
                 today_bars: int - 당일 봉 개수 (분봉만, 그 외는 1)
-                max_volumn: int - 현재봉 제외 당일 최고거래량
+                max_volume: int - 현재봉 제외 당일 최고거래량
+                avg_volume: float - 현재봉 제외 당일 평균거래량
         """
         if not self._raw_data or n >= len(self._raw_data):
-            return ([], 0, 0)
+            return ([], 0, 0, 0.0)
         
         is_minute = self.cycle == 'mi'
         current_date = self._raw_data[n]['체결시간'][:8] if is_minute else None
         peaks = []
         today_bars = 0
-        max_volumn = 0
+        max_volume = 0
+        total_volume = 0
+        volume_count = 0
         
         # 당일 봉 개수 카운트 및 최고거래량 계산 (분봉만)
         if is_minute:
             for i in range(n, len(self._raw_data)):
                 if self._raw_data[i]['체결시간'][:8] == current_date:
                     today_bars += 1
-                    # 현재봉 제외 당일 최고거래량 계산
                     if i > n:
                         volume = self._raw_data[i].get('거래량', 0)
-                        if volume > max_volumn:
-                            max_volumn = volume
+                        if volume > max_volume:
+                            max_volume = volume
+                        total_volume += volume
+                        volume_count += 1
                 else:
                     break
         else:
@@ -2900,9 +2905,10 @@ class ChartManager:
             
             i += 1
         
-        return (peaks, today_bars, max_volumn)
+        avg_volume = (total_volume / volume_count) if volume_count else 0.0
+        return (peaks, today_bars, max_volume, avg_volume)
     
-    def _analyze_peak_data(self, peak: dict, mas: list, n: int, max_volumn: int) -> dict:
+    def _analyze_peak_data(self, peak: dict, mas: list, n: int, max_volume: int, avg_volume: float) -> dict:
         """마루 데이터 분석하여 rise/maru 형식으로 반환"""
         hc = peak['hc']
         sb = peak['sb']
@@ -2925,7 +2931,8 @@ class ChartManager:
         # 기본 dict 생성
         result = self._build_rise_dict(hc, sb, max_red, max_blue, red_count, blue_count, sb_gap)
         result['below'] = below
-        result['max_volumn'] = max_volumn
+        result['max_volume'] = max_volume
+        result['avg_volume'] = avg_volume
         
         return result
     
