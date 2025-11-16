@@ -269,28 +269,37 @@ class ChartData:
         code_lock = self._get_code_lock(code)
         with code_lock:
             # 데이터 구조 확인
-            if code not in self._chart_data: return []
-            
+            if code not in self._chart_data:
+                logging.warning(f'[ChartData] get_chart_data: {code} 구조 없음')
+                return []
+
             cycle_key = cycle if cycle != 'mi' else f'mi{tick}'
-            
-            # MAX_CANDLES에 없으면 동적으로 추가
+
+            # MAX_CANDLES에 없으면 추가
             if cycle_key not in self.MAX_CANDLES:
+                logging.info(f'[ChartData] {cycle_key} MAX_CANDLES에 추가')
                 self.MAX_CANDLES[cycle_key] = 1000  # 기본값
-                # 해당 코드의 데이터 구조에 추가
-                if code in self._chart_data and cycle_key not in self._chart_data[code]:
-                    max_size = self.MAX_CANDLES[cycle_key]
-                    self._chart_data[code][cycle_key] = deque(maxlen=max_size)
-                    # 1분봉 데이터가 있으면 해당 주기 데이터 생성
-                    if cycle_key.startswith('mi') and cycle_key != 'mi1':
-                        mi1_data = self._chart_data[code].get('mi1')
-                        if mi1_data and len(mi1_data) > 0:
-                            self._set_all_minute_chart(code)
-            
+
+            # 해당 코드의 _chart_data에 cycle_key가 없으면 생성
+            if code in self._chart_data and cycle_key not in self._chart_data[code]:
+                max_size = self.MAX_CANDLES[cycle_key]
+                self._chart_data[code][cycle_key] = deque(maxlen=max_size)
+                # 1분봉 데이터가 있으면 해당 주기 데이터 생성
+                if cycle_key.startswith('mi') and cycle_key != 'mi1':
+                    mi1_data = self._chart_data[code].get('mi1')
+                    mi1_len = len(mi1_data) if mi1_data else 0
+                    logging.info(f'[ChartData] {code} {cycle_key} 생성 시도: mi1={mi1_len}건')
+                    if mi1_data and mi1_len > 0:
+                        self._set_all_minute_chart(code)
+                        result_len = len(self._chart_data[code][cycle_key])
+                        logging.info(f'[ChartData] {code} {cycle_key} 생성 완료: {result_len}건')
+
             if cycle_key in self._chart_data[code]:
                 result = list(self._chart_data[code][cycle_key])
             else:
+                logging.warning(f'[ChartData] {code}에 {cycle_key} 없음')
                 result = []
-        
+
         return result
 
     def update_chart(self, code: str, price: int, volume: int, amount: int, datetime_str: str):

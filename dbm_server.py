@@ -199,6 +199,9 @@ class DBMServer:
         self.fee_rate = 0.00015
         self.tax_rate = 0.0015
         self.thread_local = None
+        self.real_data_buffer = {}
+        self.last_flush_time = time.time()
+        self.buffer_lock = threading.Lock()
         
     def initialize(self):
         init_logger()
@@ -207,6 +210,13 @@ class DBMServer:
 
     def cleanup(self):
         try:
+            with self.buffer_lock:
+                if self.real_data_buffer:
+                    buffer_data = list(self.real_data_buffer.values())
+                    self.real_data_buffer.clear()
+                    self.table_upsert('db', db_columns.REAL_TABLE_NAME, buffer_data, key=db_columns.REAL_KEYS)
+                    logging.info(f"종료 시 실시간 데이터 버퍼 플러시: {len(buffer_data)}건")
+            
             db_tables = [db_columns.TRD_TABLE_NAME, db_columns.CONC_TABLE_NAME, db_columns.COND_TABLE_NAME, db_columns.REAL_TABLE_NAME, db_columns.SIM_TABLE_NAME]
             chart_tables = [db_columns.TICK_TABLE_NAME, db_columns.MIN_TABLE_NAME, db_columns.DAY_TABLE_NAME]
             for table in db_tables:
@@ -549,6 +559,19 @@ class DBMServer:
         table = db_columns.TICK_TABLE_NAME if cycle=='tk' else db_columns.MIN_TABLE_NAME if cycle=='mi' else db_columns.DAY_TABLE_NAME
         dict_data = [{**item, '주기': cycle, '틱': tick} for item in dict_data]
         self.table_upsert('chart', table, dict_data, key=db_columns.TICK_KEYS if cycle=='tk' else db_columns.MIN_KEYS if cycle=='mi' else db_columns.DAY_KEYS)
+
+    def upsert_real_data(self, code, dictFID, sim_no):
+        with self.buffer_lock:
+            b = self.real_data_buffer
+            b[code] = b[code].update({'체결시간': dc.ToDay+dictFID['체결시간'], '현재가': abs(int(dictFID['현재가'])), '거래량': b[code]['거래량'] + abs(int(dictFID['거래량'])), 
+                                      '누적거래량': abs(int(dictFID['누적거래량'])), '누적거래대금': abs(int(dictFID['누적거래대금']))})\
+                                    or b[code] if code in b else \
+                                     {'체결시간': dc.ToDay+dictFID['체결시간'], '현재가': abs(int(dictFID['현재가'])), '거래량': abs(int(dictFID['거래량'])), '누적거래량': abs(int(dictFID['누적거래량'])),
+                                       '누적거래대금': abs(int(dictFID['누적거래대금'])), '종목코드': code, 'sim_no': sim_no}
+            if time.time() - self.last_flush_time >= 10.0 and b:
+                self.table_upsert('db', db_columns.REAL_TABLE_NAME, list(b.values()), key=db_columns.REAL_KEYS)
+                b.clear()
+                self.last_flush_time = time.time()
 
     def insert_real_condition(self, code, type, cond_name, cond_index, sim_no):
         처리일시 = datetime.now().strftime("%Y%m%d%H%M%S")
