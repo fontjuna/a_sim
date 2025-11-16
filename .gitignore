@@ -9,8 +9,7 @@ __pycache__/
 # 폴더
 db/
 log/
-config/
-script/
+spec/
 
 # Distribution / packaging
 .Python

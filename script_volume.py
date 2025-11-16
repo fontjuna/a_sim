@@ -1,4 +1,4 @@
-from chart import ChartManager, echo, is_args, ret, div, percent, ma, hoga, 일반매도, 거래량매도, bar_idx, set_trade_state, get_trade_state, clear_trade_state
+from chart import ChartManager, echo, is_args, ret, div, percent, ma, hoga, 일반매도, 거래량매도, bar_idx, set_trade_state, get_trade_state, clear_trade_state, set_flag
 import math
 from datetime import datetime, timedelta
 
@@ -55,16 +55,24 @@ msg = ''
 # 일봉 조건 찾기 ========================================================================
 dm._ensure_data_cache()
 with dm.suspend_ensure():
-    v_dic = dm.get_volume_stats(m=60, n=0)
-    if v_dic['max'] < v_dic['avg'] * 3.5:
-        msg = f"최고거래량({v_dic['max']/10000:.0f}만)이 평균({v_dic['avg']/10000:.0f}만)의 3.5배를 넘지 않음"
+    # v_dic = dm.get_volume_stats(m=60, n=0)
+    # if v_dic['max'] < v_dic['avg'] * 3.5:
+    #     msg = f"최고거래량({v_dic['max']/10000:.0f}만)이 평균({v_dic['avg']/10000:.0f}만)의 3.5배를 넘지 않음"
+
+    if dm.envelope(20, 50, 0)[0] < dm.c():
+        msg = f'20일 이동평균의 50% 상단 밴드 위에서 매수 안함'
 
     # 조건 검색식 대신 처리 한 것
     if not msg:
-        if percent(dm.c(), dm.c(1)) > 20.0:
+        dm_today_bars, dm_rise, dm_maru = dm.get_rising_state([20, 5], 0)
+        today_bars, rise, maru = m3.get_rising_state(mas, 0)
+    
+        pct = percent(dm.c(), dm.c(1))
+        if today_bars < 5 and pct > 25.0:
+            msg = f'주가가 25% 이상 상승 중이면 매수 안함'
+        elif pct > 20.0:
             msg = f'주가가 20% 이상 상승 중이면 매수 안함'
 
-    dm_today_bars, dm_rise, dm_maru = dm.get_rising_state([20, 5], 0)
     if not msg:
         if dm_today_bars < 15:
             fall_pct = percent(dm.h(1), dm.c(1))
@@ -87,7 +95,7 @@ with dm.suspend_ensure():
         cnt = 0
         limit = 3
         for i in range(0, 10):
-            if dm.body_pct(i) > 2.0 and dm.up_tail(i) > dm.body(i): cnt += 1
+            if dm.h(i) > dm.c() and dm.body_pct(i) > 2.0 and dm.up_tail(i) > dm.body(i): cnt += 1
             if cnt >= limit: break
 
         if cnt >= limit:
@@ -100,6 +108,7 @@ with dm.suspend_ensure():
 # 분봉 조건 찾기 ========================================================================
 m1._ensure_data_cache()
 with m1.suspend_ensure():
+    set_flag(True)
     # 현재봉 판단
     if not msg:
         if m1.blue(): 
@@ -119,6 +128,7 @@ with m1.suspend_ensure():
         echo(f"△ {code} {name} 현재가={m1.c()} / {msg}")
         ret(False)
 
+set_flag(False)
 m3._ensure_data_cache()
 with m3.suspend_ensure():
     # 조건 검색식 대신 처리 한 것
@@ -136,8 +146,6 @@ with m3.suspend_ensure():
         ret(False)
 
     # 여기 부터 스크립트
-    today_bars, rise, maru = m3.get_rising_state(mas, 0)
-    
     try:
         # 빈 딕셔너리 처리 (확정 봉 없음)
         if not rise or not maru:
@@ -176,10 +184,11 @@ with m3.suspend_ensure():
                 elif m1.o(bar_idx) >= m1.c(bar_idx):  # 첫 1분봉이 음봉
                     msg = f'당일 첫 1분봉 음봉시 매수 안 함'
         else:
-            if hcx == 1 and bars < 6:
-                rise_limit = lambda x: percent(c(), o(sbx-1)) > 3 * x
+            if hcx == 1 and bars < 7:
+                rise_pct = percent(c(), o(sbx-1))
+                rise_limit = lambda x: rise_pct > 3 * x + 1
                 if rise_limit(bars):
-                    msg = f'상승 시작 후 {bars}봉 이내 {3 * bars}% 이상 상승 중'
+                    msg = f'상승 시작 후 {bars}봉 이내 {3 * bars + 1}% 이상 상승 중 ({rise_pct:.2f}%)'
             elif 5 > hcx > 1 and c() > c(hcx) and max_v * 0.8 > v():
                 msg = f'최고종가 위에서 매수시 최고거래량의 80% 이하이면 안함'
             elif blue(첫봉) and body_pct(첫봉) > 2.0 and 첫봉 < 5 and bottom(첫봉) > c():
@@ -313,7 +322,7 @@ with m3.suspend_ensure():
         msg = f'상한가'
     elif l(첫봉) > c() and ma(6) > c():
         msg = f'당일 첫봉의 저점 및 6 이평을 이탈'
-    elif h(sbx) > c() and price > c(): 
+    elif sbx <= 첫봉  and h(sbx) > c() and price > c(): 
         msg = f'상승 시작 봉 고가 ({h(sbx):,}) 이하 하락 매도'
     elif hcx == 2 and hc_rate > 3 and drop_pct(0) > hc_rate:
         msg = f'3%이상인 기준봉 이하로 하락'

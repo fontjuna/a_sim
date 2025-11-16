@@ -310,20 +310,10 @@ class Admin:
 
     def pri_fx얻기_잔고목록(self):
         try:
-            gm.잔고목록.delete()
-            dict_list = []
-            rqname = '잔고목록'
-            trcode = 'opw00018'
-            input = {'계좌번호':gm.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '2'}
-            output = tbl.hd잔고목록['컬럼']
-            next = '0'
-            screen = dc.scr.화면[rqname]
-            while True:
-                data, remain = gm.prx.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
-                #logging.debug(f'잔고목록 얻기: data count={len(data)}, remain={remain}')
-                dict_list.extend(data)
-                if not remain: break
-                next = '2'
+            전일가 = gm.prx.answer('api', 'GetMasterLastPrice', '005930')
+            종목정보 = {'종목명': '삼성전자', '전일가': 전일가, "현재가": 0}
+            gm.dict종목정보.set('005930', 종목정보)
+            gm.setter_q.put('005930')
 
             def get_preview_data(dict_list):
                 # 홀딩스 데이터 로드 (미리 로드)
@@ -408,6 +398,21 @@ class Admin:
                 
                 logging.info(f"잔고목록 기반 매수 레코드 동기화 완료: {len(dict_list)}건")
 
+            gm.잔고목록.delete()
+            dict_list = []
+            rqname = '잔고목록'
+            trcode = 'opw00018'
+            input = {'계좌번호':gm.account, '비밀번호': '', '비밀번호입력매체구분': '00', '조회구분': '2'}
+            output = tbl.hd잔고목록['컬럼']
+            next = '0'
+            screen = dc.scr.화면[rqname]
+            while True:
+                data, remain = gm.prx.answer('api', 'api_request', rqname=rqname, trcode=trcode, input=input, output=output, next=next, screen=screen)
+                #logging.debug(f'잔고목록 얻기: data count={len(data)}, remain={remain}')
+                dict_list.extend(data)
+                if not remain: break
+                next = '2'
+                
             #logging.debug(f'dict_list ={dict_list}')
             if dict_list:
                 dict_list = get_preview_data(dict_list)
@@ -415,10 +420,6 @@ class Admin:
                 save_holdings(dict_list)
                 save_counter(dict_list)
                 create_conclusion_records(dict_list)
-            전일가 = gm.prx.answer('api', 'GetMasterLastPrice', '005930')
-            종목정보 = {'종목명': '삼성전자', '전일가': 전일가, "현재가": 0}
-            gm.dict종목정보.set('005930', 종목정보)
-            gm.setter_q.put('005930')
 
             logging.info(f"잔고목록 얻기 완료: data count={gm.잔고목록.len()}")
             logging.debug(f'잔고목록: \n{tabulate(gm.잔고목록.get(type="df"), headers="keys", numalign="right")}')

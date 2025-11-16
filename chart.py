@@ -3286,6 +3286,7 @@ class ScriptManager:
             'result': None,     # 스크립트 실행 결과값 (ret()로 설정된 값)
             'error': None,      # 에러 메시지 (None이면 정상, 값이 있으면 실패)
             'logs': [],         # 실행 로그 (성공/실패 관계없이 수집)
+            'flag': False,      # 스크립트에서 set_flag()로 설정 가능한 플래그
         }
         
         # 1. 스크립트 이름 유효성 검사
@@ -3379,6 +3380,7 @@ class ScriptManager:
                 script_logs.append(f'WARNING: {warning_msg}')
             
             result_dict['result'] = script_result
+            result_dict['flag'] = globals_dict.get('_script_flag', False)
             result_dict['logs'] = script_logs
             
             return result_dict
@@ -3756,6 +3758,10 @@ def {script_name}(*args, **kwargs):
                 script_return.caller_globals['_script_result'] = result
                 raise SystemExit('script_return')
             
+            def set_flag(value=True):
+                """스크립트에서 플래그 설정"""
+                globals_dict['_script_flag'] = value
+            
             def is_args(key, default_value):
                 # 현재 스크립트 호출시 전달된 kwargs에서 확인
                 if '_call_kwargs' in globals_dict:
@@ -3852,6 +3858,7 @@ def {script_name}(*args, **kwargs):
                 'bar_idx': bar_idx,
                 'iif': safe_iif,
                 'run_script': self._script_caller,
+                'set_flag': set_flag,
                 'is_args': is_args,
                 'hoga': lambda x, y: hoga(x, y),
                 'echo': echo,
