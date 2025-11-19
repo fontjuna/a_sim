@@ -1468,16 +1468,19 @@ class APIServer:
 
             self.tr_remained = False
             self.tr_result = []
-            # sim1, sim2 모두 portfolio에서 잔고 데이터 계산 (서버 조회 X)
-            if self.sim_no in [1, 2]:
-                if rqname == '잔고합산':
+            # 잔고 관련 요청이면 sim1, sim2는 portfolio에서 처리 (서버 조회 X)
+            if rqname == '잔고합산':
+                if self.sim_no in [1, 2]:
                     summary = portfolio.get_summary()
                     self.tr_result = [summary]
-                elif rqname == '잔고목록':
+                    return self.tr_result, self.tr_remained
+            elif rqname == '잔고목록':
+                if self.sim_no in [1, 2]:
                     holdings = portfolio.get_holdings_list()
                     self.tr_result = holdings
-                return self.tr_result, self.tr_remained
+                    return self.tr_result, self.tr_remained
 
+            # 차트 요청 등은 아래로 계속 진행 (키움 서버 호출)
             self.tr_coulmns = output
             self.tr_result_format = form
             self.tr_received = False
