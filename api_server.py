@@ -1092,79 +1092,71 @@ class APIServer:
             logging.info(f'[API] sim2 데이터 로드 스레드 시작')
             return  # 즉시 리턴 (blocking 없음)
 
-        elif self.sim_no == 3:  # 키움서버 사용, 데이터베이스 데이터 이용
-            # 기본값 설정 (나중에 start 버튼에서 실제 값으로 변경)
-            # sim.sim3_speed = speed if speed else 1.0
-            # sim.sim3_date = dt if dt else datetime.now().strftime('%Y-%m-%d')
-
-            # # 데이터 로드
-            # sim.sim3_condition_data, sim.sim3_real_data = self.get_simulation_data()
-            # sim.extract_ticker_info_from_db()
-
-            # logging.info(f"시뮬레이션 3번 초기 설정: 배속={sim.sim3_speed}, 날짜={sim.sim3_date}")
-            logging.info('[API] sim3 set_tickers 완료')
-            # 완료 신호 - proxy_method를 통해 admin.on_tickers_ready() 호출
-            self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 3}))
+        elif self.sim_no == 3:
+            import threading
+            if not dt:
+                dt = datetime.now().strftime('%Y-%m-%d')
+            sim.sim3_date = dt
+            if speed:
+                sim.sim3_speed = speed
+            thread = threading.Thread(target=self._load_sim_data, args=(3, dt), daemon=True)
+            thread.start()
+            logging.info(f'[API] sim3 데이터 로드 스레드 시작')
             return
 
         global ready_tickers
         ready_tickers = True
 
-    def _load_sim2_data(self, dt):
-        """sim2 데이터 로드 (스레드에서 실행)"""
+    def _load_sim_data(self, sim_no, dt):
+        """sim2/sim3 데이터 로드 공통 함수 (스레드에서 실행)"""
         try:
             import time
-
-            # dt 파라미터로 날짜 받기 (YYYY-MM-DD 형식)
             if not dt:
-                logging.error('[API] sim2: 날짜 파라미터 필요')
-                # 에러는 로그만 남기고 stg_start 호출하지 않음
+                logging.error(f'[API] sim{sim_no}: 날짜 파라미터 필요')
                 return
+            logging.info(f'[API] sim{sim_no} 데이터 로드 시작: {dt}')
 
-            logging.info(f'[API] sim2 데이터 로드 시작: {dt}')
+            if sim_no == 2:
+                sim.sim2_date = dt
+                self.order('dbm', 'delete_sim2_results')
+            elif sim_no == 3:
+                sim.sim3_date = dt
 
-            # 임시로 날짜 저장
-            sim.sim2_date = dt
             sim.data_loaded = False
             sim.load_start_time = time.time()
 
-            # 1. 이전 sim2 결과 삭제
-            self.order('dbm', 'delete_sim2_results')
+            self.order('dbm', 'load_real_condition', date=dt, callback='_on_sim_condition_loaded')
 
-            # 2. real_condition 비동기 로드 (콜백 방식)
-            self.order('dbm', 'load_real_condition', date=dt, callback='_on_real_condition_loaded')
-
-            # 3. 데이터 로드 완료 대기 (타임아웃 30초)
             timeout = 120
             while not sim.data_loaded:
                 if time.time() - sim.load_start_time > timeout:
-                    logging.error(f'[API] sim2 데이터 로드 타임아웃 ({timeout}초)')
-                    # 타임아웃 시 stg_start 호출하지 않음
+                    logging.error(f'[API] sim{sim_no} 데이터 로드 타임아웃 ({timeout}초)')
                     return
-                time.sleep(0.01)  # 10ms 대기
+                time.sleep(0.01)
 
             elapsed = time.time() - sim.load_start_time
-            logging.info(f'[API] sim2 데이터 로드 완료: {elapsed:.2f}초')
+            logging.info(f'[API] sim{sim_no} 데이터 로드 완료: {elapsed:.2f}초')
 
             global ready_tickers
             ready_tickers = True
 
-            # 4. admin에게 완료 신호 - proxy_method를 통해 admin.on_tickers_ready() 호출 (ticker 정보 포함)
-            self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 2, 'success': True, 'message': f'로드 완료 ({elapsed:.2f}초)', 'ticker': sim.ticker}))
-
+            if sim_no == 2:
+                self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 2, 'success': True, 'message': f'로드 완료 ({elapsed:.2f}초)', 'ticker': sim.ticker}))
+            elif sim_no == 3:
+                self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 3}))
         except Exception as e:
-            logging.error(f'[API] sim2 데이터 로드 오류: {e}', exc_info=True)
-            # 에러 시 stg_start 호출하지 않음
+            logging.error(f'[API] sim{sim_no} 데이터 로드 오류: {e}', exc_info=True)
 
-    def _on_real_condition_loaded(self, rc_data):
-        """real_condition 로드 완료 콜백"""
+    def _load_sim2_data(self, dt):
+        """sim2 데이터 로드 (하위 호환용)"""
+        self._load_sim_data(2, dt)
+
+    def _on_sim_condition_loaded(self, rc_data):
+        """sim2/sim3 조건검색 로드 완료 콜백"""
         try:
-            dt = sim.sim2_date
-
             logging.debug(f'[API] rc_data 타입: {type(rc_data)}, 값: {rc_data[:2] if rc_data else None}')
-
             if not rc_data:
-                logging.warning(f'[API] sim2: real_condition 데이터 없음 ({dt})')
+                logging.warning(f'[API] sim{self.sim_no}: real_condition 데이터 없음')
                 return
 
             # ticker 설정 (종목코드별 중복 제거)
@@ -1176,104 +1168,78 @@ class APIServer:
                         '종목명': row.get('종목명', self.GetMasterCodeName(code)),
                         '전일가': self.GetMasterLastPrice(code),
                     }
+            logging.info(f'[API] sim{self.sim_no} ticker 설정 완료: {len(sim.ticker)}개 종목')
 
-            logging.info(f'[API] sim2 ticker 설정 완료: {len(sim.ticker)}개 종목')
-
-            # rc_queue 저장
-            sim.rc_queue = rc_data
-
-            # real_data 비동기 로드 (콜백 방식)
-            self.order('dbm', 'load_real_data', date=dt, callback='_on_real_data_loaded')
-
+            if self.sim_no == 2:
+                sim.rc_queue = rc_data
+                self.order('dbm', 'load_real_data', date=sim.sim2_date, callback='_on_real_data_loaded')
+            elif self.sim_no == 3:
+                sim.sim3_condition_data = rc_data
+                self.order('dbm', 'load_real_data', date=sim.sim3_date, callback='_on_sim3_real_loaded')
         except Exception as e:
-            logging.error(f'[API] _on_real_condition_loaded 오류: {e}', exc_info=True)
+            logging.error(f'[API] _on_sim_condition_loaded 오류: {e}', exc_info=True)
+
+    def _on_real_condition_loaded(self, rc_data):
+        """하위 호환용 - _on_sim_condition_loaded 호출"""
+        self._on_sim_condition_loaded(rc_data)
 
     def _on_real_data_loaded(self, rd_data):
-        """real_data 로드 완료 콜백"""
+        """sim2 real_data 로드 완료 콜백"""
         try:
             logging.debug(f'[API] rd_queue 타입: {type(rd_data)}, 개수: {len(rd_data) if rd_data else 0}')
-
-            # DB 쿼리에서 이미 조건검색 종목만 필터링됨
             sim.rd_queue = rd_data
-
-            sim.sim2_speed = 5.0  # 1배속 (실시간 속도) - 키움 API 제한 고려
+            sim.sim2_speed = 5.0
             sim.sim2_base_time = None
             sim.sim2_data_base = None
-
-            logging.info(f'[API] sim2 데이터 준비 완료: rc={len(sim.rc_queue)}건, rd={len(sim.rd_queue) if sim.rd_queue else 0}건 (DB에서 조건검색 종목만 로드)')
-
-            # 데이터 로드 완료 플래그 설정 (대기 루프 해제)
+            logging.info(f'[API] sim2 데이터 준비 완료: rc={len(sim.rc_queue)}건, rd={len(sim.rd_queue) if sim.rd_queue else 0}건')
             sim.data_loaded = True
-
         except Exception as e:
             logging.error(f'[API] _on_real_data_loaded 오류: {e}', exc_info=True)
-            # 에러 발생 시에도 플래그 설정 (무한 대기 방지)
             sim.data_loaded = True
 
-    def get_simulation_data(self):
-        """데이터베이스에서 시뮬레이션 3번 데이터 로드"""
+    def _on_sim3_real_loaded(self, rd_data):
+        """sim3 real_data 로드 완료 콜백"""
         try:
-            from dbm_server import db_columns
-            
-            # DBM 서버에서 데이터 가져오기
-            condition_sql = db_columns.COND_SELECT_DATE
-            real_sql = db_columns.REAL_SELECT_DATE
-            
-            # 날짜 형식 변환 (YYYY-MM-DD -> YYYY-MM-DD)
-            date_param = sim.sim3_date
-            
-            # 조건검색 데이터 로드
-            condition_data = self.answer('dbm', 'execute_query', sql=condition_sql, db='db', params=(date_param,))
-            logging.info(f"조건검색 데이터 로드 완료: {condition_data}")
-            
-            # 실시간 데이터 로드  
-            real_data = self.answer('dbm', 'execute_query', sql=real_sql, db='db', params=(date_param[:8],))  # YYYYMMDD 형식
-            logging.info(f"실시간 데이터 로드 완료: {real_data}")
+            if rd_data is None: rd_data = []
+            rd_data.sort(key=lambda x: x.get('체결시간', ''))
 
-            if condition_data is None: condition_data = []
-            if real_data is None: real_data = []
-                
-            # 시간 순으로 정렬
-            # real_condition: 처리일시 사용 (중복 없음)
-            # real_data: 체결시간 사용 (중복 있음 - 나중 데이터만 사용)
-            condition_data.sort(key=lambda x: x.get('처리일시', ''))
-            real_data.sort(key=lambda x: x.get('체결시간', ''))
-            
-            # real_data만 중복 제거 (같은 시간, 같은 종목코드의 나중 데이터 우선)
             real_unique = {}
-            for data in real_data:
+            for data in rd_data:
                 key = f"{data.get('체결시간', '')}_{data.get('종목코드', '')}"
                 real_unique[key] = data
-            real_data = list(real_unique.values())
+            rd_data = list(real_unique.values())
 
-            # 종목별로 미리 분류 (성능 최적화)
             real_data_by_code = {}
-            for data in real_data:
+            for data in rd_data:
                 code = data.get('종목코드', '')
                 if code:
                     if code not in real_data_by_code:
                         real_data_by_code[code] = []
                     real_data_by_code[code].append(data)
 
-            # 종목별 데이터도 시간 순 정렬 (이미 정렬되어 있어야 하지만 보장)
             for code in real_data_by_code:
                 real_data_by_code[code].sort(key=lambda x: x.get('체결시간', ''))
 
-            logging.info(f"시뮬레이션 3번 데이터 로드 완료: 조건검색={len(condition_data)}, 실시간={len(real_data)}, 종목수={len(real_data_by_code)}")
-            return condition_data, real_data, real_data_by_code
-            
+            sim.sim3_real_data = rd_data
+            sim.sim3_real_data_by_code = real_data_by_code
+            sim.extract_ticker_info_from_db()
+
+            logging.info(f'[API] sim3 데이터 준비 완료: rc={len(sim.sim3_condition_data)}건, rd={len(rd_data)}건, 종목수={len(real_data_by_code)}')
+            sim.data_loaded = True
         except Exception as e:
-            logging.error(f"시뮬레이션 3번 데이터 로드 오류: {type(e).__name__} - {e}")
-            return [], [], {}
+            logging.error(f'[API] _on_sim3_real_loaded 오류: {e}', exc_info=True)
+            sim.data_loaded = True
 
-    def sim3_memory_load(self):
-        """시뮬레이션 3번 메모리 로드"""
-        sim.sim3_condition_data, sim.sim3_real_data, sim.sim3_real_data_by_code = self.get_simulation_data()
-        sim.extract_ticker_info_from_db()
-        logging.info("시뮬레이션 3번 메모리 로드 완료")
-
-        global ready_tickers
-        ready_tickers = True
+    def sim3_memory_load(self, dt=None):
+        """시뮬레이션 3번 메모리 로드 (스레드에서 실행)"""
+        import threading
+        if dt:
+            sim.sim3_date = dt
+        if not sim.sim3_date:
+            logging.error('[API] sim3: 날짜 설정 필요')
+            return False
+        thread = threading.Thread(target=self._load_sim_data, args=(3, sim.sim3_date), daemon=True)
+        thread.start()
         return True
 
     def sim3_control_reset(self):
