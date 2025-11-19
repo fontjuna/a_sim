@@ -1142,10 +1142,14 @@ class APIServer:
             global ready_tickers
             ready_tickers = True
 
+            logging.debug(f'[API] sim{sim_no} on_tickers_ready 호출 준비 중...')
             if sim_no == 2:
+                logging.info(f'[API] sim2 on_tickers_ready 호출: ticker={len(sim.ticker)}개')
                 self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 2, 'success': True, 'message': f'로드 완료 ({elapsed:.2f}초)', 'ticker': sim.ticker}))
             elif sim_no == 3:
+                logging.info(f'[API] sim3 on_tickers_ready 호출')
                 self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 3}))
+            logging.debug(f'[API] sim{sim_no} on_tickers_ready 호출 완료')
         except Exception as e:
             logging.error(f'[API] sim{sim_no} 데이터 로드 오류: {e}', exc_info=True)
 
