@@ -1144,11 +1144,11 @@ class APIServer:
 
             logging.debug(f'[API] sim{sim_no} on_tickers_ready 호출 준비 중...')
             if sim_no == 2:
-                logging.info(f'[API] sim2 on_tickers_ready 호출: ticker={len(sim.ticker)}개')
-                self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 2, 'success': True, 'message': f'로드 완료 ({elapsed:.2f}초)', 'ticker': sim.ticker}))
+                logging.info(f'[API] sim2 on_tickers_ready 직접 호출: ticker={len(sim.ticker)}개')
+                gm.admin.on_tickers_ready(sim_no=2, success=True, message=f'로드 완료 ({elapsed:.2f}초)', ticker=sim.ticker)
             elif sim_no == 3:
-                logging.info(f'[API] sim3 on_tickers_ready 호출')
-                self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 3}))
+                logging.info(f'[API] sim3 on_tickers_ready 직접 호출')
+                gm.admin.on_tickers_ready(sim_no=3)
             logging.debug(f'[API] sim{sim_no} on_tickers_ready 호출 완료')
         except Exception as e:
             logging.error(f'[API] sim{sim_no} 데이터 로드 오류: {e}', exc_info=True)
@@ -1196,10 +1196,7 @@ class APIServer:
             if not daily_sim_data:
                 logging.error(f'[API] sim2: daily_sim 데이터 없음 ({sim.sim2_date}) - 종료')
                 sim.data_loaded = True
-                self.order('prx', 'proxy_method',
-                          QWork(method='on_tickers_ready',
-                                kwargs={'sim_no': 2, 'success': False,
-                                       'message': f'데이터 없음: {sim.sim2_date}'}))
+                gm.admin.on_tickers_ready(sim_no=2, success=False, message=f'데이터 없음: {sim.sim2_date}')
                 return
 
             # ticker 설정 (daily_sim의 전일가 사용)
@@ -1216,10 +1213,9 @@ class APIServer:
             # rc_queue는 빈 리스트 (sim2는 조건검색 이벤트 재생 안 함)
             sim.rc_queue = []
 
-            # tblSimDaily 표시용 GUI에 전달
-            self.order('prx', 'proxy_method',
-                      QWork(method='update_sim_daily_table',
-                            kwargs={'data': daily_sim_data}))
+            # tblSimDaily 표시용 GUI에 직접 전달
+            if gm.gui_on:
+                gm.gui.update_sim_daily_table(daily_sim_data)
 
             # real_data 로드 계속
             self.order('dbm', 'load_real_data', date=sim.sim2_date, callback='_on_real_data_loaded')
