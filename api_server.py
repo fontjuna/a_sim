@@ -1085,12 +1085,14 @@ class APIServer:
             # 완료 신호 - proxy_method를 통해 admin.on_tickers_ready() 호출
             self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 1}))
 
-        elif self.sim_no == 2:  # DB 실매매 데이터 재생 - 스레드로 비동기 실행
+        elif self.sim_no == 2:
             import threading
+            if speed:
+                sim.sim2_speed = speed
             thread = threading.Thread(target=self._load_sim2_data, args=(dt,), daemon=True)
             thread.start()
-            logging.info(f'[API] sim2 데이터 로드 스레드 시작')
-            return  # 즉시 리턴 (blocking 없음)
+            logging.info(f'[API] sim2 데이터 로드 스레드 시작 (배속={sim.sim2_speed})')
+            return
 
         elif self.sim_no == 3:
             import threading
@@ -1154,26 +1156,27 @@ class APIServer:
     def _on_sim_condition_loaded(self, rc_data):
         """sim2/sim3 조건검색 로드 완료 콜백"""
         try:
-            logging.debug(f'[API] rc_data 타입: {type(rc_data)}, 값: {rc_data[:2] if rc_data else None}')
-            if not rc_data:
-                logging.warning(f'[API] sim{self.sim_no}: real_condition 데이터 없음')
-                return
-
-            # ticker 설정 (종목코드별 중복 제거)
-            sim.ticker = {}
-            for row in rc_data:
-                code = row['종목코드']
-                if code not in sim.ticker:
-                    sim.ticker[code] = {
-                        '종목명': row.get('종목명', self.GetMasterCodeName(code)),
-                        '전일가': self.GetMasterLastPrice(code),
-                    }
-            logging.info(f'[API] sim{self.sim_no} ticker 설정 완료: {len(sim.ticker)}개 종목')
-
             if self.sim_no == 2:
-                sim.rc_queue = rc_data
-                self.order('dbm', 'load_real_data', date=sim.sim2_date, callback='_on_real_data_loaded')
+                # sim2: daily_sim 테이블에서 종목 로드
+                self.order('dbm', 'load_daily_sim', date=sim.sim2_date, sim_no=2,
+                          callback='_on_sim2_ticker_loaded')
             elif self.sim_no == 3:
+                # sim3: real_condition에서 ticker 추출
+                logging.debug(f'[API] rc_data 타입: {type(rc_data)}, 값: {rc_data[:2] if rc_data else None}')
+                if not rc_data:
+                    logging.warning(f'[API] sim3: real_condition 데이터 없음')
+                    return
+
+                sim.ticker = {}
+                for row in rc_data:
+                    code = row['종목코드']
+                    if code not in sim.ticker:
+                        sim.ticker[code] = {
+                            '종목명': row.get('종목명', self.GetMasterCodeName(code)),
+                            '전일가': self.GetMasterLastPrice(code),
+                        }
+                logging.info(f'[API] sim3 ticker 설정 완료: {len(sim.ticker)}개 종목')
+
                 sim.sim3_condition_data = rc_data
                 self.order('dbm', 'load_real_data', date=sim.sim3_date, callback='_on_sim3_real_loaded')
         except Exception as e:
@@ -1183,15 +1186,51 @@ class APIServer:
         """하위 호환용 - _on_sim_condition_loaded 호출"""
         self._on_sim_condition_loaded(rc_data)
 
+    def _on_sim2_ticker_loaded(self, daily_sim_data):
+        """sim2 daily_sim 종목 로드 완료 콜백"""
+        try:
+            if not daily_sim_data:
+                logging.error(f'[API] sim2: daily_sim 데이터 없음 ({sim.sim2_date}) - 종료')
+                sim.data_loaded = True
+                self.order('prx', 'proxy_method',
+                          QWork(method='on_tickers_ready',
+                                kwargs={'sim_no': 2, 'success': False,
+                                       'message': f'데이터 없음: {sim.sim2_date}'}))
+                return
+
+            # ticker 설정 (daily_sim의 전일가 사용)
+            sim.ticker = {}
+            for row in daily_sim_data:
+                code = row['종목코드']
+                if code not in sim.ticker:
+                    sim.ticker[code] = {
+                        '종목명': row.get('종목명', ''),
+                        '전일가': row.get('전일가', 0),
+                    }
+            logging.info(f'[API] sim2 ticker 설정 완료: {len(sim.ticker)}개 종목')
+
+            # rc_queue는 빈 리스트 (sim2는 조건검색 이벤트 재생 안 함)
+            sim.rc_queue = []
+
+            # tblSimDaily 표시용 GUI에 전달
+            self.order('prx', 'proxy_method',
+                      QWork(method='update_sim_daily_table',
+                            kwargs={'data': daily_sim_data}))
+
+            # real_data 로드 계속
+            self.order('dbm', 'load_real_data', date=sim.sim2_date, callback='_on_real_data_loaded')
+        except Exception as e:
+            logging.error(f'[API] _on_sim2_ticker_loaded 오류: {e}', exc_info=True)
+            sim.data_loaded = True
+
     def _on_real_data_loaded(self, rd_data):
         """sim2 real_data 로드 완료 콜백"""
         try:
             logging.debug(f'[API] rd_queue 타입: {type(rd_data)}, 개수: {len(rd_data) if rd_data else 0}')
             sim.rd_queue = rd_data
-            sim.sim2_speed = 5.0
             sim.sim2_base_time = None
             sim.sim2_data_base = None
-            logging.info(f'[API] sim2 데이터 준비 완료: rc={len(sim.rc_queue)}건, rd={len(sim.rd_queue) if sim.rd_queue else 0}건')
+            logging.info(f'[API] sim2 데이터 준비 완료: rc={len(sim.rc_queue)}건, rd={len(sim.rd_queue) if sim.rd_queue else 0}건, 배속={sim.sim2_speed}')
             sim.data_loaded = True
         except Exception as e:
             logging.error(f'[API] _on_real_data_loaded 오류: {e}', exc_info=True)

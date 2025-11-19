@@ -1419,6 +1419,17 @@ class GUI(QMainWindow, form_class):
                 self.leSimCodeDay.setText(data['종목코드'])
                 self.leSimNameDay.setText(data['종목명'])
 
+    def update_sim_daily_table(self, data):
+        """sim2 실행 시 tblSimDaily 업데이트"""
+        try:
+            if not data:
+                return
+            gm.당일종목.set(data=data)
+            gm.당일종목.update_table_widget(self.tblSimDaily)
+            logging.info(f'tblSimDaily 업데이트 완료: {len(data)}개 종목')
+        except Exception as e:
+            logging.error(f'tblSimDaily 업데이트 오류: {e}', exc_info=True)
+
     # 상태 표시 -------------------------------------------------------------------------------------
     def gui_display_status(self, data=None):
         try:

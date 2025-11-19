@@ -533,8 +533,8 @@ class Admin:
                 logging.debug('[Mode Start] sim2: gm.set조건감시 초기화 완료')
 
             if gm.sim_no == 2 and gm.gui_on:
-                date = gm.gui.dtSimDate.date().toString("yyyy-MM-dd")
-                gm.prx.order('api', 'set_tickers', dt=date)
+                speed, date = gm.gui.gui_get_sim3_sets()
+                gm.prx.order('api', 'set_tickers', speed=speed, dt=date)
             else:
                 gm.prx.order('api', 'set_tickers')
 
@@ -723,7 +723,8 @@ class Admin:
                 logging.info(f'{kind} 지정가 주문: {self.전략명칭} {code} {종목명}')
 
             if gm.sim_no == 0 and kind == '매수':
-                sim_record = {'일자': dc.ToDay, '종목코드': code, '종목명': 종목명, 'sim_no': 2}
+                전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
+                sim_record = {'일자': dc.ToDay, '종목코드': code, '종목명': 종목명, '전일가': 전일가, 'sim_no': 2}
                 gm.prx.order('dbm', 'table_upsert', 'db', db_columns.SIM_TABLE_NAME, sim_record, key=db_columns.SIM_KEYS)
 
             # 차트 콤보에 추가 하고, 실시간 감시에 추가
