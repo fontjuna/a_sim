@@ -10,6 +10,7 @@ __pycache__/
 db/
 log/
 spec/
+script/
 
 # Distribution / packaging
 .Python
