@@ -2047,23 +2047,26 @@ class APIServer:
 
             dict_list.extend(data)
 
-            # sim_no==2: 마지막 데이터가 기준일 이전인지 체크
+            # sim_no==2: 처음과 마지막 둘 다 기준일보다 작으면 중단
             if self.sim_no == 2 and sim.sim2_date and remain and data:
                 base_date_str = sim.sim2_date.replace('-', '')
+                first_item = data[0]
                 last_item = data[-1]
 
-                # 마지막 데이터의 날짜 추출
+                # 처음과 마지막 날짜 추출
                 if trcode in [dc.scr.차트TR['mi'], dc.scr.차트TR['tk']]:
+                    first_date = str(first_item.get('체결시간', ''))[:8]
                     last_date = str(last_item.get('체결시간', ''))[:8]
                 else:
+                    first_date = str(first_item.get('일자', ''))
                     last_date = str(last_item.get('일자', ''))
 
-                # 마지막 날짜가 기준일 미만이면 중단
-                if last_date and last_date < base_date_str:
-                    logging.debug(f'[sim2] 기준일 이전까지 수신 완료 → 요청 중단: {rqname}, 총 {len(dict_list)}건, 마지막 날짜={last_date}')
+                # 처음과 마지막 둘 다 기준일 미만이면 중단
+                if first_date and last_date and first_date < base_date_str and last_date < base_date_str:
+                    logging.debug(f'[sim2] 기준일 이전까지 수신 완료 → 요청 중단: {rqname}, 총 {len(dict_list)}건, 첫날짜={first_date}, 끝날짜={last_date}')
                     break
                 else:
-                    logging.debug(f'[sim2] 추가 요청: {rqname}, 현재 {len(dict_list)}건, 마지막 날짜={last_date}')
+                    logging.debug(f'[sim2] 추가 요청: {rqname}, 현재 {len(dict_list)}건, 첫날짜={first_date}, 끝날짜={last_date}')
                     next = '2'
                     continue
 
