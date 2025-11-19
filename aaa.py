@@ -94,9 +94,6 @@ class Main:
             # 2. API/DBM 초기화
             gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
             gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
-            gm.prx.order('api', 'CommConnect', False)
-            self.wait_login()
-
             # 3. GUI 초기화 먼저 (Admin 초기화 전에)
             if gm.gui_on:
                 gm.gui.init()
@@ -106,6 +103,10 @@ class Main:
             # 4. Admin 초기화를 백그라운드 스레드로 실행
             def admin_init_background():
                 try:
+                    gm.prx.order('api', 'CommConnect', False)
+                    self.wait_login()
+                    if gm.gui_on: self.splash.close()
+
                     logging.info('[Background] Admin 초기화 시작')
                     gm.admin.init()
                     logging.info('[Background] Admin 초기화 완료')
@@ -126,8 +127,8 @@ class Main:
             exit(1)
 
     def go(self):
-        if gm.gui_on: self.splash.close()
         self.show()
+        #if gm.gui_on: self.splash.close()
         if self.time_over: QTimer.singleShot(15000, self.cleanup)
         else: return self.app.exec_() if gm.gui_on else self.console_run()
 
