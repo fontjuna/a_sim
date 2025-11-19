@@ -97,6 +97,7 @@ class DataBaseFields:   # 데이터베이스 컬럼 속성 정의
     체결번호 = FieldsAttributes(name='체결번호', type='TEXT', not_null=True, default="''")
     체결시간 = FieldsAttributes(name='체결시간', type='TEXT', not_null=True, default="''")
     처리일시 = FieldsAttributes(name='처리일시', type='TEXT', not_null=True, default="(strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime'))")
+    전일가 = FieldsAttributes(name='전일가', type='INTEGER', not_null=True, default=0)
     현재가 = FieldsAttributes(name='현재가', type='INTEGER', not_null=True, default=0)
     호가구분 = FieldsAttributes(name='호가구분', type='TEXT', not_null=True, default="''")
     화면번호 = FieldsAttributes(name='화면번호', type='TEXT', not_null=True, default="''")
@@ -172,7 +173,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     SIM_TABLE_NAME = 'daily_sim' ## 시뮬레이션 종목 : 당일 매수 종목
     SIM_SELECT_DATE = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND sim_no = ?"
     SIM_SELECT_GUBUN = f"SELECT * FROM {SIM_TABLE_NAME} WHERE 일자 = ? AND sim_no = ? AND 구분 <> '읽음'"
-    SIM_FIELDS = [f.id, f.일자, f.종목코드, f.종목명, f.구분, f.상태, f.처리일시, f.sim_no]
+    SIM_FIELDS = [f.id, f.일자, f.종목코드, f.종목명, f.구분, f.상태, f.전일가, f.처리일시, f.sim_no]
     SIM_COLUMNS = [col.name for col in SIM_FIELDS]
     SIM_KEYS = ['일자', '종목코드']
     SIM_INDEXES = {}
@@ -825,6 +826,29 @@ class DBMServer:
         else:
             logging.warning(f'[DBM-MariaDB] real_data 데이터 없음: {date}')
         return result if result else []
+
+    def load_daily_sim(self, date, sim_no, callback=None):
+        """daily_sim 테이블에서 종목 로드"""
+        try:
+            date_param = date.replace('-', '')
+            sql = db_columns.SIM_SELECT_DATE
+            cursor = self.get_cursor('db')
+            cursor.execute(sql, (date_param, sim_no))
+            result = cursor.fetchall()
+
+            if result:
+                logging.info(f'[DBM] daily_sim 로드: {date}, sim_no={sim_no}, {len(result)}건')
+            else:
+                logging.warning(f'[DBM] daily_sim 데이터 없음: {date}, sim_no={sim_no}')
+
+            if callback:
+                callback(result)
+            return result if result else []
+        except Exception as e:
+            logging.error(f'daily_sim 로드 오류: {e}', exc_info=True)
+            if callback:
+                callback([])
+            return []
 
     # ===== MariaDB 저장 메서드 =====
 
