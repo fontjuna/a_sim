@@ -2036,23 +2036,69 @@ class APIServer:
         """차트 데이터 fetch"""
         next = '0'
         dict_list = []
-        
+
         while True:
             if wt is not None: time.sleep(wt)
             result = self.api_request(rqname, trcode, input, output, next=next, screen=screen)
             if result is None: break
-            
+
             data, remain = result
             if data is None or len(data) == 0: break
-                
+
             dict_list.extend(data)
+
+            # sim_no==2: 기준일 체크 (기준일 포함 시 계속 요청)
+            if self.sim_no == 2 and sim.sim2_date and remain:
+                if self._contains_base_date(data, sim.sim2_date, trcode):
+                    logging.debug(f'[sim2] 기준일({sim.sim2_date}) 포함 → 추가 요청: {rqname}, 현재 {len(dict_list)}건')
+                    next = '2'
+                    continue
+                else:
+                    logging.debug(f'[sim2] 기준일({sim.sim2_date}) 없음 → 요청 중단: {rqname}, 총 {len(dict_list)}건')
+                    break
+
             if trcode == dc.scr.차트TR['tk'] and dt is not None and data[-1]['체결시간'] < dt: times = 0
-            
+
             times -= 1
             if not remain or times <= 0: break
             next = '2'
-        
+
         return dict_list
+
+    def _contains_base_date(self, data, base_date, trcode):
+        """데이터에 기준일이 포함되어 있는지 확인
+
+        Args:
+            data: 차트 데이터 리스트
+            base_date: 기준 날짜 (YYYY-MM-DD 형식)
+            trcode: TR 코드 (분봉/틱/일봉 구분용)
+
+        Returns:
+            True: 기준일 포함, False: 기준일 없음
+        """
+        if not data:
+            return False
+
+        try:
+            base_date_str = base_date.replace('-', '')  # YYYYMMDD
+
+            # 분봉/틱: 체결시간의 앞 8자리 확인
+            if trcode in [dc.scr.차트TR['mi'], dc.scr.차트TR['tk']]:
+                for item in data:
+                    체결시간 = str(item.get('체결시간', ''))
+                    if len(체결시간) >= 8 and 체결시간[:8] == base_date_str:
+                        return True
+            # 일봉/주봉/월봉: 일자 필드 확인
+            else:
+                for item in data:
+                    일자 = str(item.get('일자', ''))
+                    if 일자 == base_date_str:
+                        return True
+
+            return False
+        except Exception as e:
+            logging.error(f'기준일 확인 오류: {e}')
+            return False
 
     def _convert_chart_data(self, dict_list, code, cycle):
         """차트 데이터 변환"""
@@ -2107,10 +2153,12 @@ class APIServer:
                 if item_date and item_date < base_date_str:
                     filtered_list.append(item)
 
-            # original_count = len(dict_list)
-            # filtered_count = len(filtered_list)
-            # if original_count != filtered_count:
-            #     logging.debug(f'[sim2 필터링] {original_count}개 → {filtered_count}개 (기준일: {base_date})')
+            original_count = len(dict_list)
+            filtered_count = len(filtered_list)
+            if original_count != filtered_count:
+                logging.info(f'[sim2 필터링] {cycle} 차트: {original_count}개 → {filtered_count}개 (기준일: {base_date})')
+            else:
+                logging.debug(f'[sim2 필터링] {cycle} 차트: 필터링 없음 ({original_count}개)')
 
             return filtered_list
         except Exception as e:
