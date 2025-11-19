@@ -710,7 +710,7 @@ class Admin:
                 gm.주문진행목록.set(key=key, data={'상태': '대기'})
                 logging.info(f'{kind} 지정가 주문: {self.전략명칭} {code} {종목명}')
 
-            if kind == '매수':
+            if gm.sim_no == 0 and kind == '매수':
                 전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
                 sim_record = {'일자': dc.ToDay, '종목코드': code, '종목명': 종목명, '전일가': 전일가, 'sim_no': 2}
                 gm.prx.order('dbm', 'table_upsert', 'db', db_columns.SIM_TABLE_NAME, sim_record, key=db_columns.SIM_KEYS)
@@ -1013,8 +1013,10 @@ class Admin:
                                 '매수전략': 전략정의['매수전략'], '전략명칭': 전략정의['전략명칭'], '감시시작율': 전략정의['감시시작율'], '이익보존율': 전략정의['이익보존율'],\
                                 '감시': 0, '보존': 0, '매수일자': dc.ToDay, '매수시간': 매매시간, '매수번호': order_no, '매수수량': qty, '매수가': price, '매수금액': amount}
                     if not gm.잔고목록.in_key(code):
-                        sim_record = {'일자': dc.ToDay, '종목코드': code, '종목명': name, '상태': '매수', 'sim_no': gm.sim_no}
-                        gm.prx.order('dbm', 'table_upsert', 'db', db_columns.SIM_TABLE_NAME, sim_record, key=db_columns.SIM_KEYS)
+                        if gm.sim_no == 0:
+                            전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
+                            sim_record = {'일자': dc.ToDay, '종목코드': code, '종목명': name, '전일가': 전일가, '상태': '매수', 'sim_no': 2}
+                            gm.prx.order('dbm', 'table_upsert', 'db', db_columns.SIM_TABLE_NAME, sim_record, key=db_columns.SIM_KEYS)
                         gm.holdings[code] = data
                         save_json(dc.fp.holdings_file, gm.holdings)
                         gm.counter.record_buy(code) # 매수 제한 기록
