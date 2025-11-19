@@ -91,25 +91,35 @@ class Main:
             gm.dbm = ProcessModel('dbm', DBMServer, gm.shared_qes)
             gm.dbm.start()
 
-            # 1. API/DBM 초기화
+            # 2. API/DBM 초기화
             gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
             gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
             gm.prx.order('api', 'CommConnect', False)
             self.wait_login()
 
-            # 2. Admin 초기화
-            gm.admin.init()
-            while not gm.admin_init: time.sleep(0.1)
-            logging.debug('admin 초기화 완료')
-
-            # 3. GUI 초기화
+            # 3. GUI 초기화 먼저 (Admin 초기화 전에)
             if gm.gui_on:
                 gm.gui.init()
                 logging.debug('gui 초기화 완료')
                 gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
 
-            # 4. 모드별 전략 시작 (sim_no==0만 즉시 실행)
-            gm.admin.mode_start(is_startup=True)
+            # 4. Admin 초기화를 백그라운드 스레드로 실행
+            def admin_init_background():
+                try:
+                    logging.info('[Background] Admin 초기화 시작')
+                    gm.admin.init()
+                    logging.info('[Background] Admin 초기화 완료')
+
+                    # Admin 초기화 완료 후 mode_start 호출
+                    gm.admin.mode_start(is_startup=True)
+                    logging.info('[Background] mode_start 완료')
+
+                except Exception as e:
+                    logging.error(f'[Background] Admin 초기화 오류: {e}', exc_info=True)
+
+            init_thread = threading.Thread(target=admin_init_background, daemon=True)
+            init_thread.start()
+            logging.info('Admin 초기화 백그라운드 스레드 시작')
 
         except Exception as e:
             logging.error(str(e), exc_info=e)
