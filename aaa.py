@@ -75,9 +75,10 @@ class Main:
         gm.gui.gui_show()
         time.sleep(0.1)
 
-    def set_components(self):
+    def ready(self):
         try:
-            logging.debug('메인 및 쓰레드/프로세스 생성 및 시작 ...')
+            # 1. 프로세스 생성 및 시작
+            logging.debug('메인 및 쓰레드/프로세스 생성 및 시작')
             gm.toast = Toast()
             gm.main = self
             gm.admin = Admin()
@@ -87,36 +88,28 @@ class Main:
             gm.rcv.start()
             gm.api = KiwoomModel('api', APIServer, gm.shared_qes)
             gm.api.start()
-            gm.prx.order('api', 'api_init', gm.sim_no, gm.log_level)
-            gm.prx.order('api', 'CommConnect', False)
             gm.dbm = ProcessModel('dbm', DBMServer, gm.shared_qes)
             gm.dbm.start()
-        except Exception as e:
-            logging.error(str(e), exc_info=e)
-            exit(1)
 
-    def ready(self):
-        try:
-            if gm.sim_no != 1:
-                logging.debug('prepare : 로그인 대기 시작')
-                start_time = time.time()
-                while True:
-                    connected = gm.prx.answer('api', 'GetConnectState') == 1
-                    if connected: break
-                    if time.time() - start_time > 90:
-                        logging.error('prepare : 로그인 대기 시간 초과. 종료 합니다. ')
-                        exit('로그인 대기 시간 초과. 종료 합니다. ')
-                    time.sleep(0.5)
-            gm.prx.order('api', 'set_tickers')
+            # 1. API/DBM 초기화
+            gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
+            gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
+            gm.prx.order('api', 'CommConnect', False)
+            self.wait_login()
+
+            # 2. Admin 초기화
             gm.admin.init()
             while not gm.admin_init: time.sleep(0.1)
-            logging.debug('prepare : admin 초기화 완료')
-            if gm.gui_on: gm.gui.init()
-            logging.debug('prepare : gui 초기화 완료')
-            gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
-            gm.admin.stg_start()
+            logging.debug('admin 초기화 완료')
 
-            gm.ready = True
+            # 3. GUI 초기화
+            if gm.gui_on:
+                gm.gui.init()
+                logging.debug('gui 초기화 완료')
+                gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
+
+            # 4. 모드별 전략 시작 (sim_no==0만 즉시 실행)
+            gm.admin.mode_start(is_startup=True)
 
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -141,11 +134,24 @@ class Main:
             time.sleep(0.01)
         return 0
     
+    def wait_login(self):
+        """로그인 대기 (aaa.py에서 이동)"""
+        if gm.sim_no != 1:
+            logging.debug('로그인 대기 시작')
+            start_time = time.time()
+            while True:
+                connected = gm.prx.answer('api', 'GetConnectState') == 1
+                if connected: break
+                if time.time() - start_time > 90:
+                    logging.error('로그인 대기 시간 초과. 종료 합니다.')
+                    exit('로그인 대기 시간 초과. 종료 합니다.')
+                time.sleep(0.5)
+            logging.info('로그인 완료')
+
     def main(self):
         self.init()
         self.show_splash()
         self.set_tables()
-        self.set_components()
         self.ready()
         self.go()
 

@@ -12,9 +12,8 @@ import json
 import time
 import threading
 
-class Admin(QObject):
+class Admin:
     def __init__(self):
-        super().__init__()
         self.name = 'admin'
         self.stg_ready = False
         self.stg_buy_timeout = False
@@ -27,7 +26,9 @@ class Admin(QObject):
 
     def init(self):
         logging.info(f'{self.name} init')
+        # 3. 로그인 정보 조회 (계좌, 수수료율, 세금율 설정)
         self.get_login_info()
+        # 4. 글로벌 변수 설정 (수수료율/세금율 사용)
         self.set_globals()
         self.set_script()
         self.get_conditions()
@@ -38,11 +39,6 @@ class Admin(QObject):
         # 쓰레드 준비
         self.set_threads()
         self.start_threads()
-        gm.admin_init = True
-    
-    def restart(self):
-        self.set_real_remove_all()
-        self.get_holdings()
         gm.admin_init = True
 
     # 준비 작업 -------------------------------------------------------------------------------------------
@@ -66,8 +62,6 @@ class Admin(QObject):
         gm.dict종목정보 = ThreadSafeDict()
         gm.scm = ScriptManager()
         gm.prx.order('dbm', 'set_rate', gm.수수료율, gm.세금율)
-        gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
-        gm.prx.order('api', 'set_log_level', gm.log_level)
 
     def get_conditions(self):
         try:
@@ -220,7 +214,22 @@ class Admin(QObject):
         elif fid215 == '3': 
             msg = f'장이 시작 되었습니다.'
             if gm.gui_on: gm.qwork['gui'].put(Work('gui_write_replay', {'msg': '*' * 150}))
-        elif fid215 == '4': msg = f'장이 마감 되었습니다.'
+        elif fid215 == '4':
+            msg = f'장이 마감 되었습니다.'
+            # 장 마감 후 MariaDB 자동 저장 (sim_no == 0일 때만)
+            if gm.sim_no == 0:
+                from datetime import datetime
+                today = datetime.now().strftime('%Y-%m-%d')
+                logging.info(f"[Admin] 장 마감 - MariaDB 자동 저장 시작: {today}")
+                try:
+                    result = gm.prx.answer('dbm', 'save_to_mariadb', date=today)
+                    if result:
+                        logging.info(f"[Admin] MariaDB 자동 저장 성공: {today}")
+                    else:
+                        logging.warning(f"[Admin] MariaDB 자동 저장 실패: {today}")
+                except Exception as e:
+                    logging.error(f"[Admin] MariaDB 자동 저장 오류: {e}", exc_info=True)
+
         if msg:
             gm.toast.toast(msg, 3000)
             self.send_status_msg('상태바', msg)
@@ -315,6 +324,7 @@ class Admin(QObject):
             전일가 = gm.prx.answer('api', 'GetMasterLastPrice', '005930')
             종목정보 = {'종목명': '삼성전자', '전일가': 전일가, "현재가": 0}
             gm.dict종목정보.set('005930', 종목정보)
+            logging.info(f'삼성전자(005930) 차트 데이터 요청 큐 추가')
             gm.setter_q.put('005930')
 
             def get_preview_data(dict_list):
@@ -447,6 +457,89 @@ class Admin(QObject):
             logging.error(f'실시간 시세 요청 오류: {type(e).__name__} - {e}', exc_info=True)
 
     # 매매전략 처리  -------------------------------------------------------------------------------------------
+
+    # 모드별 실행 로직 ---------------------------------------------------------------
+    def on_tickers_ready(self, sim_no, success=True, message='', ticker=None):
+        """콜백 완료 신호 받음"""
+        logging.info(f'[Mode] sim_no={sim_no} → 콜백 완료 신호 받음')
+        if success:
+            # sim2 모드일 때 ticker 정보를 gm.dict종목정보에 등록
+            if sim_no == 2 and ticker:
+                logging.info(f'[Mode] sim2 ticker 등록 시작: {len(ticker)}개 종목')
+                for code, info in ticker.items():
+                    종목명 = info.get('종목명', '')
+                    전일가 = info.get('전일가', 0)
+                    value = {'종목명': 종목명, '전일가': 전일가, '현재가': 0}
+                    gm.dict종목정보.set(code, value)
+                logging.info(f'[Mode] sim2 ticker 등록 완료: {len(ticker)}개 종목')
+
+            logging.info(f'[Mode] sim_no={sim_no} → 전략 시작')
+            self.stg_start()
+
+            run_strategy = any([gm.매수문자열, gm.매도문자열])
+            if not run_strategy:
+                gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
+            else:
+                gm.toast.toast('전략매매를 실행했습니다.', duration=2000)
+                gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': run_strategy}))
+        else:
+            logging.error(f'[Mode] sim_no={sim_no} → 콜백 실패 신호 받음: {message}')
+
+    def mode_start(self, new_sim_no=None, is_startup=False):
+        """모드별 진입점 (프로그램 시작 / 버튼 클릭)
+
+        Args:
+            new_sim_no (int, optional): 변경할 sim_no. None이면 현재 sim_no 유지
+            is_startup (bool): True=프로그램 시작, False=버튼 클릭
+        """
+        try:
+            gm.ready = True
+            
+            # 1. 모드 변경이 있으면 재초기화
+            if new_sim_no is not None and new_sim_no != gm.sim_no:
+                logging.info(f'[Mode Start] sim_no 변경: {gm.sim_no} → {new_sim_no}')
+                gm.sim_no = new_sim_no
+                gm.sim_on = gm.sim_no > 0
+                gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
+                gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
+                time.sleep(1)
+                self.set_real_remove_all()
+                self.get_holdings()
+                gm.admin_init = True
+
+            # 2. 실행 여부 판단
+            should_run = (gm.sim_no == 0) if is_startup else (gm.sim_no in [0, 1, 2])
+
+            if not should_run:
+                logging.info(f'[Mode] sim_no={gm.sim_no} → 대기')
+                return
+
+            # 3. set_tickers (모든 sim_no가 콜백으로 완료 신호 받음)
+            # sim2: gm.set조건감시 초기화 (SetRealReg가 호출되도록)
+            if gm.sim_no == 2:
+                gm.set조건감시 = set()
+                logging.debug('[Mode Start] sim2: gm.set조건감시 초기화 완료')
+
+            if gm.sim_no == 2 and gm.gui_on:
+                date = gm.gui.dtSimDate.date().toString("yyyy-MM-dd")
+                gm.prx.order('api', 'set_tickers', dt=date)
+            else:
+                gm.prx.order('api', 'set_tickers')
+
+            # 콜백 대기 (stg_start()는 on_tickers_ready()에서 호출)
+            logging.info(f'[Mode] sim_no={gm.sim_no} → set_tickers 완료 대기... (완료 시 전략 자동 시작)')
+
+        except Exception as e:
+            logging.error(f'모드 시작 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def mode_sim3_load(self):
+        """Sim3 전용: 메모리 로드 후 전략 시작"""
+        try:
+            logging.info('[Mode Sim3 Load] 데이터 로드 + 전략 시작')
+            self.stg_start()
+        except Exception as e:
+            logging.error(f'Sim3 로드 오류: {type(e).__name__} - {e}', exc_info=True)
+
     def stg_start(self):
         try:
             gm.매수문자열 = "" 
@@ -471,7 +564,7 @@ class Admin(QObject):
             gm.매도검색목록.delete()
             gm.주문진행목록.delete()
             self.send_status_msg('검색내용', args='')
-        except Exception as e:  
+        except Exception as e:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
     def stg_run_trade(self, trade_type, recall=False):

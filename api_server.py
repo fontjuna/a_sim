@@ -67,14 +67,20 @@ class SimData:
       self.current_index = 0
       self.base_chart_time = None
       self.sim_no = 1  # 기본값 1
+      self.data_loaded = False
+
+      # 시뮬레이션 2번 전용 속성들
+      self.sim2_date = None  # 시뮬레이션 기준 날짜 (YYYY-MM-DD)
 
       # 시뮬레이션 3번 전용 속성들
       self.sim3_date = None  # 시뮬레이션 날짜
       self.sim3_speed = 1.0  # 배속 (0.2, 0.5, 1, 2, 5, 10)
       self.sim3_start_time = None  # 실제 시작 시간 (datetime.now() 기준)
       self.sim3_base_data_time = 0  # 기준 데이터 시간 (초) - 현재 인덱스의 데이터 시간
+      self.sim3_paused_sim_time = 0  # 일시정지 시점의 시뮬레이션 시간 (초)
       self.sim3_condition_data = []  # real_condition 테이블 데이터
-      self.sim3_real_data = []  # real_data 테이블 데이터
+      self.sim3_real_data = []  # real_data 테이블 데이터 (전체, 하위호환용)
+      self.sim3_real_data_by_code = {}  # 종목별로 미리 분류된 real_data {code: [data1, data2, ...]}
       self.sim3_condition_index = 0  # 현재 조건검색 데이터 인덱스
       self.sim3_real_index = {}  # 종목별 실시간 데이터 인덱스
       self.sim3_registered_codes = set()  # 등록된 종목 코드들
@@ -152,6 +158,7 @@ class SimData:
         self.sim3_registered_codes = set()
         self.sim3_start_time = None
         self.sim3_base_data_time = 0
+        self.sim3_paused_sim_time = 0
         self.sim3_is_paused = False
         self.sim3_is_running = False
         self.sim3_is_stopped = True
@@ -160,7 +167,15 @@ class SimData:
         """시뮬레이션 3번 일시정지"""
         if not self.sim3_is_running or self.sim3_is_paused:
             return
-        logging.info("시뮬레이션 3번 일시정지")
+
+        # 현재 시뮬레이션 시간 저장 (재시작 시 이 시간부터 계속)
+        if self.sim3_start_time:
+            elapsed_real = (datetime.now() - self.sim3_start_time).total_seconds()
+            self.sim3_paused_sim_time = self.sim3_base_data_time + (elapsed_real * self.sim3_speed)
+            logging.info(f"시뮬레이션 3번 일시정지 (시뮬레이션 시간: {self.sim3_paused_sim_time:.1f}초)")
+        else:
+            logging.info("시뮬레이션 3번 일시정지")
+
         self.sim3_is_paused = True
         # 인덱스는 그대로 유지됨
 
@@ -173,20 +188,12 @@ class SimData:
             self.sim3_is_stopped = False
             self.sim3_is_paused = False
         else:
-            # 일시정지된 위치부터 재시작 - 다음 데이터와 시작 시간 동기화
-            logging.info("시뮬레이션 3번 재시작")
+            # 일시정지된 위치부터 재시작 - 일시정지된 시뮬레이션 시간부터 계속
+            logging.info(f"시뮬레이션 3번 재시작 (시뮬레이션 시간: {self.sim3_paused_sim_time:.1f}초부터)")
             self.sim3_is_paused = False
-            
-            # 다음 처리할 데이터의 시간으로 기준 시간 재설정
-            if self.sim3_condition_data and self.sim3_condition_index < len(self.sim3_condition_data):
-                next_data = self.sim3_condition_data[self.sim3_condition_index]
-                time_full = next_data.get('처리일시', '090000')
-                time_str = time_full[-6:] if len(time_full) >= 6 else time_full  # HHMMSS 추출
-                hour = int(time_str[:2])
-                minute = int(time_str[2:4])
-                second = int(time_str[4:6]) if len(time_str) >= 6 else 0
-                self.sim3_base_data_time = hour * 3600 + minute * 60 + second
-                logging.debug(f"재시작: 다음 데이터 처리일시={time_full}, 시간={time_str}, 기준시간={self.sim3_base_data_time}초")
+
+            # 일시정지된 시뮬레이션 시간을 기준 시간으로 설정
+            self.sim3_base_data_time = self.sim3_paused_sim_time
         
         # 실제 시작 시간 설정
         self.sim3_start_time = datetime.now()
@@ -415,8 +422,19 @@ class OnReceiveRealConditionSim(QThread):
       self.current_stocks = set()
       self.api = api
       self.order = api.order
+      self.sim2_base_time = None
+      self.sim2_data_base = None
 
    def run(self):
+      if self.api.sim_no == 2:
+         # sim2: DB 데이터 재생
+         self._run_sim2()
+      else:
+         # sim1: 랜덤 데이터 생성
+         self._run_sim1()
+
+   def _run_sim1(self):
+      """sim1: 랜덤 조건검색 데이터 생성"""
       while self.is_running:
          if not self.api.connected:
             time.sleep(0.01)
@@ -439,6 +457,104 @@ class OnReceiveRealConditionSim(QThread):
          if self.is_running:
             time.sleep(interval)
 
+   def _run_sim2(self):
+      """sim2: DB 실매매 조건검색 데이터 재생"""
+      if not hasattr(sim, 'rc_queue') or not sim.rc_queue:
+         logging.warning('[OnReceiveRealConditionSim] sim2: rc_queue 없음')
+         return
+
+      logging.info(f'[OnReceiveRealConditionSim] sim2 재생 시작: {len(sim.rc_queue)}건')
+
+      # 데이터 시간순 정렬 확인 (이미 DB에서 정렬되어 오지만 보험용)
+      try:
+         sim.rc_queue = sorted(sim.rc_queue, key=lambda x: x.get('처리일시', x.get('시간', '000000')))
+         logging.debug(f'[OnReceiveRealConditionSim] rc_queue 정렬 완료')
+      except Exception as e:
+         logging.warning(f'[OnReceiveRealConditionSim] rc_queue 정렬 실패: {e}')
+
+      for idx, row in enumerate(sim.rc_queue):
+         if not self.is_running:
+            break
+
+         # 시간 동기화 (sim2_speed 배속)
+         # 처리일시(YYYYMMDDHHMMSS) 또는 시간(HHMMSS) 사용
+         time_str = row.get('처리일시', row.get('시간', '000000'))
+         wait_time = self._calculate_wait_time(time_str)
+         if wait_time > 0:
+            time.sleep(wait_time)
+
+         # admin으로 전송
+         code = row['종목코드']
+         type = row.get('조건구분', 'I')  # 기본값 'I' (편입)
+
+         self.order('rcv', 'proxy_method', QWork(
+            method='on_receive_real_condition',
+            args=(code, type, self.cond_name, int(self.cond_index))
+         ))
+
+         if idx % 100 == 0:
+            logging.debug(f'[OnReceiveRealConditionSim] sim2 진행: {idx}/{len(sim.rc_queue)}, 처리일시: {time_str}')
+            if idx == 0:
+               logging.debug(f'[OnReceiveRealConditionSim] 첫 데이터 - code:{code}, type:{type}, 처리일시:{time_str}')
+
+      logging.info('[OnReceiveRealConditionSim] sim2 재생 완료')
+
+   def _calculate_wait_time(self, time_str):
+      """HHMMSS → 2배속 대기시간 계산"""
+      if self.sim2_base_time is None:
+         self.sim2_base_time = datetime.now()
+         self.sim2_data_base = time_str
+         return 0
+
+      # 데이터 시간 차이 계산 (초 단위)
+      data_diff = self._time_diff_seconds(self.sim2_data_base, time_str)
+      self.sim2_data_base = time_str
+
+      # 2배속 적용
+      return data_diff / sim.sim2_speed if data_diff > 0 else 0
+
+   def _time_diff_seconds(self, time1_str, time2_str):
+      """HHMMSS 형식 두 시간의 초 단위 차이"""
+      try:
+         from datetime import datetime
+         fmt = '%H%M%S'
+
+         def extract_time(time_str):
+            """시간 문자열에서 HHMMSS 추출"""
+            time_str = str(time_str).strip()
+
+            # "YYYY-MM-DD HH:MM:SS.mmm" 형식이면 시간 부분만 추출
+            if ' ' in time_str:
+               parts = time_str.split()
+               # 시간 부분 (HH:MM:SS 또는 HH:MM:SS.mmm)
+               time_str = parts[1] if len(parts) > 1 else parts[0]
+
+            # 소수점 이하 제거 (밀리초 제거)
+            if '.' in time_str:
+               time_str = time_str.split('.')[0]
+
+            # 콜론 제거
+            time_str = time_str.replace(':', '')
+
+            # 숫자만 추출
+            time_str = ''.join(filter(str.isdigit, time_str))
+
+            # HHMMSS 형식 보장 (6자리)
+            if len(time_str) >= 6:
+               return time_str[:6]
+            else:
+               return time_str.zfill(6)
+
+         t1_str = extract_time(time1_str)
+         t2_str = extract_time(time2_str)
+
+         t1 = datetime.strptime(t1_str, fmt)
+         t2 = datetime.strptime(t2_str, fmt)
+         return (t2 - t1).total_seconds()
+      except Exception as e:
+         logging.error(f'시간 차이 계산 오류: {e}, time1={time1_str}, time2={time2_str}')
+         return 0
+
    def stop(self):
       self.is_running = False
 
@@ -452,8 +568,19 @@ class OnReceiveRealDataSim1And2(QThread):
       self.order = api.order
       self.code_tot = {}
       self.start_time = time.time()
+      self.sim2_base_time = None
+      self.sim2_data_base = None
 
    def run(self):
+      if self.api.sim_no == 2:
+         # sim2: DB 데이터 재생
+         self._run_sim2()
+      else:
+         # sim1: 랜덤 데이터 생성
+         self._run_sim1()
+
+   def _run_sim1(self):
+      """sim1: 랜덤 실시간 체결 데이터 생성"""
       self.start_time = time.time()
       batch = {}
       while self.is_running:
@@ -461,7 +588,7 @@ class OnReceiveRealDataSim1And2(QThread):
             time.sleep(0.01)
             continue
          # 모든 종목에 대해 가격 업데이트
-         for code in list(sim.ticker.keys()): 
+         for code in list(sim.ticker.keys()):
             if not self.is_running:
                break
             # 시뮬레이터에서 현재가 계산
@@ -494,6 +621,196 @@ class OnReceiveRealDataSim1And2(QThread):
             #self.order('rcv', 'on_receive_real_data', **job)
             time.sleep(0.005)
 
+   def _run_sim2(self):
+      """sim2: DB 실매매 실시간 체결 데이터 재생"""
+      if not hasattr(sim, 'rd_queue') or not sim.rd_queue:
+         logging.warning('[OnReceiveRealDataSim1And2] sim2: rd_queue 없음')
+         return
+
+      logging.info(f'[OnReceiveRealDataSim1And2] sim2 재생 시작: {len(sim.rd_queue)}건')
+
+      # 첫 데이터 샘플 확인 (정렬 전)
+      if sim.rd_queue:
+         first_row = sim.rd_queue[0]
+         last_row = sim.rd_queue[-1]
+         체결시간_샘플 = first_row.get('체결시간', None)
+         logging.debug(f'[OnReceiveRealDataSim1And2] 정렬 전 - 첫:{체결시간_샘플}, 끝:{last_row.get("체결시간", None)} (타입:{type(체결시간_샘플).__name__})')
+
+      # 데이터 시간순 정렬 (체결시간 기준 - 숫자형 변환)
+      try:
+         def get_sort_key(row):
+            체결시간 = row.get('체결시간', 0)
+            # 숫자형으로 변환 (문자열이면 int로)
+            try:
+               return int(체결시간) if 체결시간 else 0
+            except (ValueError, TypeError):
+               return 0
+
+         sim.rd_queue = sorted(sim.rd_queue, key=get_sort_key)
+
+         # 정렬 후 확인
+         if sim.rd_queue:
+            first_row_sorted = sim.rd_queue[0]
+            last_row_sorted = sim.rd_queue[-1]
+            logging.debug(f'[OnReceiveRealDataSim1And2] rd_queue 정렬 완료 (체결시간 기준) - 첫:{first_row_sorted.get("체결시간", None)}, 끝:{last_row_sorted.get("체결시간", None)}')
+      except Exception as e:
+         logging.warning(f'[OnReceiveRealDataSim1And2] rd_queue 정렬 실패: {e}')
+
+      for idx, row in enumerate(sim.rd_queue):
+         if not self.is_running:
+            break
+
+         # 체결시간 추출 및 형식 변환 (숫자 또는 문자열 → 14자리 문자열)
+         체결시간_원본 = row.get('체결시간', '00000000000000')
+         try:
+            # 숫자형(int, float)이면 문자열로 변환
+            if isinstance(체결시간_원본, (int, float)):
+               체결시간 = str(int(체결시간_원본))  # float이면 int로 변환 후 문자열
+            else:
+               체결시간 = str(체결시간_원본).strip()
+
+            # 14자리 맞추기 (부족하면 앞에 0 채우기)
+            체결시간 = 체결시간.zfill(14)
+         except Exception as e:
+            logging.warning(f'[OnReceiveRealDataSim1And2] 체결시간 변환 오류: {e}, 원본={체결시간_원본}')
+            체결시간 = '00000000000000'
+
+         # 시간 동기화 (sim2_speed 배속)
+         wait_time = self._calculate_wait_time(체결시간)
+         if idx < 10:  # 처음 10개만 디버그
+            logging.debug(f'[OnReceiveRealDataSim1And2] idx={idx}, 체결시간={체결시간}, wait_time={wait_time:.3f}초')
+         if wait_time > 0:
+            time.sleep(wait_time)
+
+         # dictFID 구성
+         code = row['종목코드']
+
+         # 현재가 형식 변환 (문자열 또는 숫자 → 정수)
+         현재가_원본 = row.get('현재가', 0)
+         try:
+            if isinstance(현재가_원본, str):
+               현재가_원본 = 현재가_원본.strip()
+               if 현재가_원본.startswith('-') or 현재가_원본.startswith('+'):
+                  현재가_원본 = 현재가_원본[1:]  # 부호 제거
+            현재가 = abs(int(현재가_원본)) if 현재가_원본 else 0
+         except (ValueError, TypeError):
+            현재가 = 0
+            logging.warning(f'[OnReceiveRealDataSim1And2] 현재가 변환 오류: code={code}, 현재가_원본={현재가_원본}')
+
+         # 누적거래량 형식 변환
+         누적거래량 = row.get('누적거래량', row.get('거래량', 0))
+         try:
+            누적거래량 = abs(int(누적거래량)) if 누적거래량 else 0
+         except (ValueError, TypeError):
+            누적거래량 = 0
+
+         # 누적거래대금 형식 변환
+         누적거래대금 = row.get('누적거래대금', row.get('거래대금', 0))
+         try:
+            누적거래대금 = abs(int(누적거래대금)) if 누적거래대금 else 0
+         except (ValueError, TypeError):
+            누적거래대금 = 0
+
+         # 종목명 가져오기 (ticker 또는 API)
+         종목명 = sim.ticker.get(code, {}).get('종목명', '')
+         if not 종목명:
+            종목명 = self.api.GetMasterCodeName(code) if hasattr(self.api, 'GetMasterCodeName') else ''
+
+         # 등락율 계산
+         전일가 = sim.ticker.get(code, {}).get('전일가', 0)
+         if 전일가 and 현재가:
+            등락율 = round((현재가 - 전일가) / 전일가 * 100, 2)
+         else:
+            등락율 = 0.0
+
+         # 체결시간 6자리 추출 (HHMMSS)
+         체결시간_6자리 = 체결시간[-6:] if len(체결시간) >= 6 else 체결시간.zfill(6)
+
+         dictFID = {
+            '종목코드': code,
+            '종목명': 종목명,
+            '현재가': f'{현재가:15d}',
+            '등락율': f'{등락율:12.2f}',
+            '누적거래량': f'{누적거래량:15d}',
+            '누적거래대금': f'{누적거래대금:15d}',
+            '체결시간': 체결시간_6자리,
+         }
+
+         # 포트폴리오 업데이트
+         portfolio.update_stock_price(code, 현재가)
+
+         # price_dict 업데이트
+         price_dict[code] = 현재가
+
+         # admin으로 전송
+         self.order('rcv', 'proxy_method', QWork(
+            method='on_receive_real_data',
+            args=(code, '주식체결', dictFID)
+         ))
+
+         if idx % 1000 == 0:
+            logging.debug(f'[OnReceiveRealDataSim1And2] sim2 진행: {idx}/{len(sim.rd_queue)}, 체결시간: {체결시간_6자리}')
+            if idx == 0:
+               logging.debug(f'[OnReceiveRealDataSim1And2] 첫 데이터 - code:{code}, 현재가:{현재가}, 등락율:{등락율}, 체결시간:{체결시간} → {체결시간_6자리}')
+
+      logging.info('[OnReceiveRealDataSim1And2] sim2 재생 완료')
+
+   def _calculate_wait_time(self, time_str):
+      """HHMMSS → 2배속 대기시간 계산"""
+      if self.sim2_base_time is None:
+         self.sim2_base_time = datetime.now()
+         self.sim2_data_base = time_str
+         return 0
+
+      # 데이터 시간 차이 계산 (초 단위)
+      data_diff = self._time_diff_seconds(self.sim2_data_base, time_str)
+      self.sim2_data_base = time_str
+
+      # 2배속 적용
+      return data_diff / sim.sim2_speed if data_diff > 0 else 0
+
+   def _time_diff_seconds(self, time1_str, time2_str):
+      """HHMMSS 형식 두 시간의 초 단위 차이"""
+      try:
+         from datetime import datetime
+         fmt = '%H%M%S'
+
+         def extract_time(time_str):
+            """시간 문자열에서 HHMMSS 추출"""
+            time_str = str(time_str).strip()
+
+            # "YYYY-MM-DD HH:MM:SS.mmm" 형식이면 시간 부분만 추출
+            if ' ' in time_str:
+               parts = time_str.split()
+               # 시간 부분 (HH:MM:SS 또는 HH:MM:SS.mmm)
+               time_str = parts[1] if len(parts) > 1 else parts[0]
+
+            # 소수점 이하 제거 (밀리초 제거)
+            if '.' in time_str:
+               time_str = time_str.split('.')[0]
+
+            # 콜론 제거
+            time_str = time_str.replace(':', '')
+
+            # 숫자만 추출
+            time_str = ''.join(filter(str.isdigit, time_str))
+
+            # HHMMSS 형식 보장 (6자리)
+            if len(time_str) >= 6:
+               return time_str[:6]
+            else:
+               return time_str.zfill(6)
+
+         t1_str = extract_time(time1_str)
+         t2_str = extract_time(time2_str)
+
+         t1 = datetime.strptime(t1_str, fmt)
+         t2 = datetime.strptime(t2_str, fmt)
+         return (t2 - t1).total_seconds()
+      except Exception as e:
+         logging.error(f'시간 차이 계산 오류: {e}, time1={time1_str}, time2={time2_str}')
+         return 0
+
    def stop(self):
       self.is_running = False
 
@@ -514,8 +831,9 @@ class OnReceiveRealConditionSim3(QThread):
          logging.warning("시뮬레이션 3번: 조건검색 데이터가 없습니다.")
          return
       
-      # 첫 시작 시 기준 시간 설정
-      if sim.sim3_base_data_time == 0:
+      # 첫 시작 시에만 기준 시간 설정 (리셋 후 처음 시작)
+      # 재시작이나 일시정지 후에는 sim3_start()에서 이미 설정됨
+      if sim.sim3_base_data_time == 0 and sim.sim3_condition_index == 0:
          first_data = sim.sim3_condition_data[0]
          # 처리일시에서 시간 추출 (YYYYMMDDHHMMSS 형식 또는 HHMMSS 형식)
          time_full = first_data.get('처리일시', '090000')
@@ -524,10 +842,12 @@ class OnReceiveRealConditionSim3(QThread):
          minute = int(time_str[2:4])
          second = int(time_str[4:6]) if len(time_str) >= 6 else 0
          sim.sim3_base_data_time = hour * 3600 + minute * 60 + second
-      
-      # 실제 시작 시간 설정
+         logging.debug(f"[조건검색 스레드] 기준 시간 초기화: {sim.sim3_base_data_time}초 (처음 시작)")
+
+      # 실제 시작 시간 설정 (sim3_start()에서 이미 설정되었을 수 있음)
       if not sim.sim3_start_time:
          sim.sim3_start_time = datetime.now()
+         logging.debug(f"[조건검색 스레드] 실제 시작 시간 초기화")
       
       while self.is_running and sim.sim3_condition_index < len(sim.sim3_condition_data):
          if not self.api.connected:
@@ -574,6 +894,9 @@ class OnReceiveRealConditionSim3(QThread):
                # 등록된 종목 코드 추가
                if type == 'I':
                   sim.sim3_registered_codes.add(code)
+                  # 실시간 데이터 인덱스 초기화 (명시적)
+                  if code not in sim.sim3_real_index:
+                     sim.sim3_real_index[code] = 0
                elif type == 'D' and code in sim.sim3_registered_codes:
                   sim.sim3_registered_codes.discard(code)
             
@@ -635,54 +958,59 @@ class OnReceiveRealDataSim3(QThread):
             # 정지 상태 확인 (최우선)
             if not self.is_running or sim.sim3_is_stopped:
                break
-               
+
             # 일시정지 상태 확인
             if sim.sim3_is_paused:
                time.sleep(0.1)
                continue
-               
-            # 해당 종목의 데이터 찾기
-            code_data = [d for d in sim.sim3_real_data if d.get('종목코드') == code]
+
+            # 해당 종목의 데이터 가져오기 (미리 분류된 데이터 사용)
+            code_data = sim.sim3_real_data_by_code.get(code, [])
             if not code_data:
                continue
-               
+
             current_index = sim.sim3_real_index.get(code, 0)
-            if current_index >= len(code_data):
-               continue
-               
-            data = code_data[current_index]
-            # 체결시간에서 HHMMSS 추출
-            data_time_str = data.get('체결시간', '090000')[-6:]
-            data_hour = int(data_time_str[:2])
-            data_minute = int(data_time_str[2:4])
-            data_second = int(data_time_str[4:6]) if len(data_time_str) >= 6 else 0
-            data_time_seconds = data_hour * 3600 + data_minute * 60 + data_second
-            
-            # 현재 시뮬레이션 시간과 비교
-            if data_time_seconds <= sim_current_time_seconds:
-               # 실시간 데이터 전송
-               dictFID = {
-                  '종목코드': code,
-                  '종목명': self.api.GetMasterCodeName(code),
-                  '현재가': f"{int(data.get('현재가', 0)):15d}",
-                  '거래량': f"{int(data.get('거래량', 0)):15d}",
-                  '거래대금': f"{int(data.get('거래대금', 0)):15d}",
-                  '누적거래량': f"{int(data.get('누적거래량', 0)):15d}",
-                  '누적거래대금': f"{int(data.get('누적거래대금', 0)):15d}",
-                  '체결시간': data.get('체결시간', ''),
-               }
-               
-               # 포트폴리오 업데이트
-               portfolio.update_stock_price(code, int(data.get('현재가', 0)))
-               
-               # 실시간 데이터 전송
-               self.order('rcv', 'proxy_method', QWork(
-                  method='on_receive_real_data', 
-                  args=(code, '주식체결', dictFID)
-               ))
-               
-               # 인덱스 증가
-               sim.sim3_real_index[code] = current_index + 1
+
+            # 현재 시간보다 작거나 같은 모든 데이터 처리 (한 종목에 여러 데이터가 있을 수 있음)
+            while current_index < len(code_data):
+               data = code_data[current_index]
+
+               # 체결시간에서 HHMMSS 추출
+               data_time_str = data.get('체결시간', '090000')[-6:]
+               data_hour = int(data_time_str[:2])
+               data_minute = int(data_time_str[2:4])
+               data_second = int(data_time_str[4:6]) if len(data_time_str) >= 6 else 0
+               data_time_seconds = data_hour * 3600 + data_minute * 60 + data_second
+
+               # 현재 시뮬레이션 시간과 비교
+               if data_time_seconds <= sim_current_time_seconds:
+                  # 실시간 데이터 전송
+                  dictFID = {
+                     '종목코드': code,
+                     '종목명': self.api.GetMasterCodeName(code),
+                     '현재가': f"{int(data.get('현재가', 0)):15d}",
+                     '거래량': f"{int(data.get('거래량', 0)):15d}",
+                     '거래대금': f"{int(data.get('거래대금', 0)):15d}",
+                     '누적거래량': f"{int(data.get('누적거래량', 0)):15d}",
+                     '누적거래대금': f"{int(data.get('누적거래대금', 0)):15d}",
+                     '체결시간': data.get('체결시간', ''),
+                  }
+
+                  # 포트폴리오 업데이트
+                  portfolio.update_stock_price(code, int(data.get('현재가', 0)))
+
+                  # 실시간 데이터 전송
+                  self.order('rcv', 'proxy_method', QWork(
+                     method='on_receive_real_data',
+                     args=(code, '주식체결', dictFID)
+                  ))
+
+                  # 인덱스 증가
+                  current_index += 1
+                  sim.sim3_real_index[code] = current_index
+               else:
+                  # 현재 시간보다 크면 더 이상 처리 안 함
+                  break
          
          # 짧은 대기 (너무 빠른 처리 방지)
          time.sleep(0.01)
@@ -744,42 +1072,143 @@ class APIServer:
             logging.error(f"API 초기화 오류: {type(e).__name__} - {e}", exc_info=True)
 
     def set_tickers(self, speed=None, dt=None):
-        if self.sim_no == 0:  # 실제 API 서버는 별도 처리 필요 없음
-            pass
+        if self.sim_no == 0:
+            # 실제 API 서버는 별도 처리 필요 없음
+            logging.info('[API] sim0 set_tickers 완료')
+            # 완료 신호 - proxy_method를 통해 admin.on_tickers_ready() 호출
+            self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 0}))
+
         elif self.sim_no == 1:  # 키움서버 없이 가상 데이터 사용
             sim.ticker = dc.sim.ticker
             sim._initialize_data()
-        elif self.sim_no == 2:  # 키움서버 사용, 실시간 데이터 가상 생성
-            codes = self.GetCodeListByMarket('NXT')
-            if codes:
-                selected_codes = random.sample(codes, 30)
-                logging.debug(f'len={len(selected_codes)} codes={selected_codes}')
-                sim.ticker = {}
-                for code in selected_codes:
-                    sim.ticker[code] = {
-                    '종목명': self.GetMasterCodeName(code),
-                    '전일가': self.GetMasterLastPrice(code),
-                    }
-                sim._initialize_data()
-            else:
-                logging.warning('GetCodeListByMarket 결과 없음 *************')
-                logging.warning('시뮬레이션 모드 1로 변경 *************')
-                self.sim_no = 1
-                sim.ticker = dc.sim.ticker
+            logging.info('[API] sim1 set_tickers 완료')
+            # 완료 신호 - proxy_method를 통해 admin.on_tickers_ready() 호출
+            self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 1}))
+
+        elif self.sim_no == 2:  # DB 실매매 데이터 재생 - 스레드로 비동기 실행
+            import threading
+            thread = threading.Thread(target=self._load_sim2_data, args=(dt,), daemon=True)
+            thread.start()
+            logging.info(f'[API] sim2 데이터 로드 스레드 시작')
+            return  # 즉시 리턴 (blocking 없음)
+
         elif self.sim_no == 3:  # 키움서버 사용, 데이터베이스 데이터 이용
             # 기본값 설정 (나중에 start 버튼에서 실제 값으로 변경)
             # sim.sim3_speed = speed if speed else 1.0
             # sim.sim3_date = dt if dt else datetime.now().strftime('%Y-%m-%d')
-            
+
             # # 데이터 로드
             # sim.sim3_condition_data, sim.sim3_real_data = self.get_simulation_data()
             # sim.extract_ticker_info_from_db()
-            
+
             # logging.info(f"시뮬레이션 3번 초기 설정: 배속={sim.sim3_speed}, 날짜={sim.sim3_date}")
+            logging.info('[API] sim3 set_tickers 완료')
+            # 완료 신호 - proxy_method를 통해 admin.on_tickers_ready() 호출
+            self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 3}))
             return
-        
+
         global ready_tickers
         ready_tickers = True
+
+    def _load_sim2_data(self, dt):
+        """sim2 데이터 로드 (스레드에서 실행)"""
+        try:
+            import time
+
+            # dt 파라미터로 날짜 받기 (YYYY-MM-DD 형식)
+            if not dt:
+                logging.error('[API] sim2: 날짜 파라미터 필요')
+                # 에러는 로그만 남기고 stg_start 호출하지 않음
+                return
+
+            logging.info(f'[API] sim2 데이터 로드 시작: {dt}')
+
+            # 임시로 날짜 저장
+            sim.sim2_date = dt
+            sim.data_loaded = False
+            sim.load_start_time = time.time()
+
+            # 1. 이전 sim2 결과 삭제
+            self.order('dbm', 'delete_sim2_results')
+
+            # 2. real_condition 비동기 로드 (콜백 방식)
+            self.order('dbm', 'load_real_condition', date=dt, callback='_on_real_condition_loaded')
+
+            # 3. 데이터 로드 완료 대기 (타임아웃 30초)
+            timeout = 120
+            while not sim.data_loaded:
+                if time.time() - sim.load_start_time > timeout:
+                    logging.error(f'[API] sim2 데이터 로드 타임아웃 ({timeout}초)')
+                    # 타임아웃 시 stg_start 호출하지 않음
+                    return
+                time.sleep(0.01)  # 10ms 대기
+
+            elapsed = time.time() - sim.load_start_time
+            logging.info(f'[API] sim2 데이터 로드 완료: {elapsed:.2f}초')
+
+            global ready_tickers
+            ready_tickers = True
+
+            # 4. admin에게 완료 신호 - proxy_method를 통해 admin.on_tickers_ready() 호출 (ticker 정보 포함)
+            self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 2, 'success': True, 'message': f'로드 완료 ({elapsed:.2f}초)', 'ticker': sim.ticker}))
+
+        except Exception as e:
+            logging.error(f'[API] sim2 데이터 로드 오류: {e}', exc_info=True)
+            # 에러 시 stg_start 호출하지 않음
+
+    def _on_real_condition_loaded(self, rc_data):
+        """real_condition 로드 완료 콜백"""
+        try:
+            dt = sim.sim2_date
+
+            logging.debug(f'[API] rc_data 타입: {type(rc_data)}, 값: {rc_data[:2] if rc_data else None}')
+
+            if not rc_data:
+                logging.warning(f'[API] sim2: real_condition 데이터 없음 ({dt})')
+                return
+
+            # ticker 설정 (종목코드별 중복 제거)
+            sim.ticker = {}
+            for row in rc_data:
+                code = row['종목코드']
+                if code not in sim.ticker:
+                    sim.ticker[code] = {
+                        '종목명': row.get('종목명', self.GetMasterCodeName(code)),
+                        '전일가': self.GetMasterLastPrice(code),
+                    }
+
+            logging.info(f'[API] sim2 ticker 설정 완료: {len(sim.ticker)}개 종목')
+
+            # rc_queue 저장
+            sim.rc_queue = rc_data
+
+            # real_data 비동기 로드 (콜백 방식)
+            self.order('dbm', 'load_real_data', date=dt, callback='_on_real_data_loaded')
+
+        except Exception as e:
+            logging.error(f'[API] _on_real_condition_loaded 오류: {e}', exc_info=True)
+
+    def _on_real_data_loaded(self, rd_data):
+        """real_data 로드 완료 콜백"""
+        try:
+            logging.debug(f'[API] rd_queue 타입: {type(rd_data)}, 개수: {len(rd_data) if rd_data else 0}')
+
+            # DB 쿼리에서 이미 조건검색 종목만 필터링됨
+            sim.rd_queue = rd_data
+
+            sim.sim2_speed = 5.0  # 1배속 (실시간 속도) - 키움 API 제한 고려
+            sim.sim2_base_time = None
+            sim.sim2_data_base = None
+
+            logging.info(f'[API] sim2 데이터 준비 완료: rc={len(sim.rc_queue)}건, rd={len(sim.rd_queue) if sim.rd_queue else 0}건 (DB에서 조건검색 종목만 로드)')
+
+            # 데이터 로드 완료 플래그 설정 (대기 루프 해제)
+            sim.data_loaded = True
+
+        except Exception as e:
+            logging.error(f'[API] _on_real_data_loaded 오류: {e}', exc_info=True)
+            # 에러 발생 시에도 플래그 설정 (무한 대기 방지)
+            sim.data_loaded = True
 
     def get_simulation_data(self):
         """데이터베이스에서 시뮬레이션 3번 데이터 로드"""
@@ -816,17 +1245,30 @@ class APIServer:
                 key = f"{data.get('체결시간', '')}_{data.get('종목코드', '')}"
                 real_unique[key] = data
             real_data = list(real_unique.values())
-            
-            logging.info(f"시뮬레이션 3번 데이터 로드 완료: 조건검색={len(condition_data)}, 실시간={len(real_data)}")
-            return condition_data, real_data
+
+            # 종목별로 미리 분류 (성능 최적화)
+            real_data_by_code = {}
+            for data in real_data:
+                code = data.get('종목코드', '')
+                if code:
+                    if code not in real_data_by_code:
+                        real_data_by_code[code] = []
+                    real_data_by_code[code].append(data)
+
+            # 종목별 데이터도 시간 순 정렬 (이미 정렬되어 있어야 하지만 보장)
+            for code in real_data_by_code:
+                real_data_by_code[code].sort(key=lambda x: x.get('체결시간', ''))
+
+            logging.info(f"시뮬레이션 3번 데이터 로드 완료: 조건검색={len(condition_data)}, 실시간={len(real_data)}, 종목수={len(real_data_by_code)}")
+            return condition_data, real_data, real_data_by_code
             
         except Exception as e:
             logging.error(f"시뮬레이션 3번 데이터 로드 오류: {type(e).__name__} - {e}")
-            return [], []
+            return [], [], {}
 
     def sim3_memory_load(self):
         """시뮬레이션 3번 메모리 로드"""
-        sim.sim3_condition_data, sim.sim3_real_data = self.get_simulation_data()
+        sim.sim3_condition_data, sim.sim3_real_data, sim.sim3_real_data_by_code = self.get_simulation_data()
         sim.extract_ticker_info_from_db()
         logging.info("시뮬레이션 3번 메모리 로드 완료")
 
@@ -877,13 +1319,25 @@ class APIServer:
         if self.sim_no != 3:
             logging.warning("시뮬레이션 3번이 아닙니다.")
             return False
-        
+
         if speed not in [0.2, 0.5, 1, 2, 5, 10]:
             logging.warning(f"지원하지 않는 배속입니다: {speed}")
             return False
-            
+
+        # 실행 중이면 현재 시뮬레이션 시간 계산 후 재동기화
+        if sim.sim3_is_running and sim.sim3_start_time:
+            elapsed_real = (datetime.now() - sim.sim3_start_time).total_seconds()
+            current_sim_time = sim.sim3_base_data_time + (elapsed_real * sim.sim3_speed)
+
+            # 새 배속으로 재설정 (현재 시뮬레이션 시간을 기준으로)
+            sim.sim3_base_data_time = current_sim_time
+            sim.sim3_start_time = datetime.now()
+
+            logging.info(f"시뮬레이션 3번 배속 변경: {sim.sim3_speed}x → {speed}x (시뮬레이션 시간: {current_sim_time:.1f}초)")
+        else:
+            logging.info(f"시뮬레이션 3번 배속 설정: {speed}x")
+
         sim.sim3_speed = speed
-        logging.info(f"시뮬레이션 3번 배속 변경: {speed}")
         return True
 
     def sim3_control_set_date(self, dt):
@@ -904,7 +1358,7 @@ class APIServer:
         
         # 새로운 날짜의 데이터 로드
         try:
-            sim.sim3_condition_data, sim.sim3_real_data = self.get_simulation_data()
+            sim.sim3_condition_data, sim.sim3_real_data, sim.sim3_real_data_by_code = self.get_simulation_data()
             sim.extract_ticker_info_from_db()
             logging.info(f"시뮬레이션 3번 기준일자 변경 및 데이터 로드 완료: {dt}")
             return True
@@ -1014,7 +1468,8 @@ class APIServer:
 
             self.tr_remained = False
             self.tr_result = []
-            if self.sim_no == 1:
+            # sim1, sim2 모두 portfolio에서 잔고 데이터 계산 (서버 조회 X)
+            if self.sim_no in [1, 2]:
                 if rqname == '잔고합산':
                     summary = portfolio.get_summary()
                     self.tr_result = [summary]
@@ -1560,10 +2015,14 @@ class APIServer:
                 return dict_list
             
             logging.debug(f'{rqname}: code:{code}, cycle:{cycle}, tick:{tick}, count:{len(dict_list)} {dict_list[:1]}')
-            
+
             # 데이터 변환
             dict_list = self._convert_chart_data(dict_list, code, cycle)
-            
+
+            # sim_no==2일 때 기준 날짜로 필터링
+            if self.sim_no == 2 and sim.sim2_date:
+                dict_list = self._filter_chart_data_by_date(dict_list, sim.sim2_date, cycle)
+
             return dict_list
         
         except Exception as e:
@@ -1616,5 +2075,43 @@ class APIServer:
                 '거래량': abs(int(item['거래량'])) if item['거래량'] else 0,
                 '거래대금': abs(int(item['거래대금'])) if item['거래대금'] else 0,
             } for item in dict_list]
+
+    def _filter_chart_data_by_date(self, dict_list, base_date, cycle):
+        """sim2: 기준 날짜보다 작은 데이터만 필터링
+
+        Args:
+            dict_list: 차트 데이터 리스트
+            base_date: 기준 날짜 (YYYY-MM-DD 형식)
+            cycle: 차트 주기 ('mi', 'tk', 'dy', 'wk', 'mo')
+
+        Returns:
+            필터링된 차트 데이터 리스트
+        """
+        try:
+            # 기준 날짜를 YYYYMMDD 형식으로 변환
+            base_date_str = base_date.replace('-', '')
+
+            filtered_list = []
+            for item in dict_list:
+                if cycle in ['mi', 'tk']:
+                    # 분봉/틱: 체결시간의 앞 8자리(날짜 부분)와 비교
+                    item_date = str(item.get('체결시간', ''))[:8]
+                else:
+                    # 일봉/주봉/월봉: 일자 필드와 비교
+                    item_date = str(item.get('일자', ''))
+
+                # 기준 날짜보다 작은(이전) 데이터만 포함
+                if item_date and item_date < base_date_str:
+                    filtered_list.append(item)
+
+            # original_count = len(dict_list)
+            # filtered_count = len(filtered_list)
+            # if original_count != filtered_count:
+            #     logging.debug(f'[sim2 필터링] {original_count}개 → {filtered_count}개 (기준일: {base_date})')
+
+            return filtered_list
+        except Exception as e:
+            logging.error(f'차트 데이터 필터링 오류: {type(e).__name__} - {e}', exc_info=True)
+            return dict_list  # 오류 시 원본 반환
 
 

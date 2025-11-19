@@ -232,22 +232,27 @@ class ChartSetter(QThread):
 
     def run(self):
         self.running = True
+        logging.info('[ChartSetter] 스레드 시작')
         while self.running:
             code = self.setter_q.get()
-            if code is None: 
+            if code is None:
                 self.running = False
                 break
             if isinstance(code, str):
+                logging.debug(f'[ChartSetter] 큐에서 받음: {code}')
                 self.request_chart_data(code)
             elif isinstance(code, set):
                 self.request_tick_chart(code)
 
     #@profile_operation
     def request_chart_data(self, code):
-        if self.cht_dt.is_code_registered(code): return
+        if self.cht_dt.is_code_registered(code):
+            return
         logging.debug(f"get_first_chart_data 요청: {code}")
         dict_tuple = self.prx.answer('api', 'get_first_chart_data', code)
-        if not dict_tuple or not all(dict_tuple): return
+        if not dict_tuple or not all(dict_tuple):
+            logging.warning(f"차트 데이터 없음: {code}")
+            return
         if dict_tuple[0]:
             self.cht_dt.set_chart_data(code, dict_tuple[0], 'mi', 1)
         if dict_tuple[1]:

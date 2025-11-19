@@ -2,7 +2,7 @@ from public import get_path, gm, dc, save_json, load_json, hoga, com_market_stat
 from dbm_server import db_columns
 from tables import tbl
 from chart import ChartData
-from PyQt5.QtWidgets import QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox, QTableWidget, QTableWidgetItem
+from PyQt5.QtWidgets import QMainWindow, QMessageBox, QStatusBar, QLabel, QWidget, QTabWidget, QPushButton, QLineEdit, QCheckBox, QTableWidget, QTableWidgetItem, QVBoxLayout
 from PyQt5.QtGui import QIcon, QTextCursor
 from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, QTime, QDate, Qt
 from PyQt5 import uic
@@ -13,6 +13,33 @@ import os
 import json
 import time
 import threading
+
+# matplotlib 차트 표시용
+try:
+    import matplotlib
+    matplotlib.use('Qt5Agg')
+    from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.figure import Figure
+    import matplotlib.pyplot as plt
+
+    # 한글 폰트 설정 (Windows: 맑은 고딕)
+    import platform
+    if platform.system() == 'Windows':
+        matplotlib.rcParams['font.family'] = 'Malgun Gothic'
+    else:
+        # Linux/Mac의 경우 다른 한글 폰트 시도
+        try:
+            matplotlib.rcParams['font.family'] = 'NanumGothic'
+        except:
+            pass
+
+    # 마이너스 기호 깨짐 방지
+    matplotlib.rcParams['axes.unicode_minus'] = False
+
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    logging.warning("matplotlib 미설치 - 차트 표시 기능 비활성화")
 
 form_class = uic.loadUiType(os.path.join(get_path(dc.fp.RESOURCE_PATH), "aaa.ui"))[0]
 
@@ -31,7 +58,12 @@ class GUI(QMainWindow, form_class):
         self.cht_dt = ChartData()
         self.gbSim3_styleSheet = None
         self.red_styleSheet = "QGroupBox { border: 1px solid rgba(255, 0, 0, 50); color: red; }"
-        
+
+        # 차트 캔버스 초기화
+        self.chart_canvas = None
+        self.chart_figure = None
+        self.chart_ax = None
+
         gm.qwork['gui'] = Queue()
         gm.qwork['msg'] = Queue()
 
@@ -100,6 +132,9 @@ class GUI(QMainWindow, form_class):
             statusBar.addWidget(self.lbl3)
             statusBar.addPermanentWidget(self.lbl4)
 
+            # 차트 위젯 초기화
+            self.setup_chart_widget()
+
         except Exception as e:
             logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)
 
@@ -158,7 +193,6 @@ class GUI(QMainWindow, form_class):
             self.btnSim3Start.clicked.connect(self.gui_sim3_control_start)
             self.btnSim3Pause.clicked.connect(self.gui_sim3_control_pause)
             self.btnSim3Stop.clicked.connect(self.gui_sim3_control_stop)
-            self.btnSim3Start.clicked.connect(self.gui_simulation_start)
 
             # 시뮬레이션 재시작
             self.btnSimStart.clicked.connect(self.gui_simulation_restart) # 시뮬레이션 재시작
@@ -438,6 +472,8 @@ class GUI(QMainWindow, form_class):
             gm.차트자료.delete()
             min_check = cycle in ('mi', 'tk')
             dict_list = self.cht_dt.get_chart_data(code, cycle, tick)
+            logging.info(f'ChartData.get_chart_data 결과: code={code}, cycle={cycle}, tick={tick}, count={len(dict_list) if dict_list else 0}')
+
             if dict_list:
                 if isinstance(dict_list, list) and len(dict_list) > 0:
                     if min_check:
@@ -448,13 +484,17 @@ class GUI(QMainWindow, form_class):
                 gm.차트자료.set(data=dict_list)
                 logging.info(f"차트자료 얻기 완료: data count={gm.차트자료.len()}")
             else:
-                logging.warning(f'차트자료 얻기 실패: date:{date_text}, dict_list:{dict_list}')
+                logging.warning(f'차트자료 없음: code={code}, cycle={cycle}, tick={tick}')
             self.lblSelected.setText(f'{tick} {item} / {code} {name}')
         except Exception as e:
             logging.error(f'차트자료 얻기 오류: {type(e).__name__} - {e}', exc_info=True)
 
         gm.차트자료.update_table_widget(self.tblChart, header=2)
         #gm.toast.toast(f'차트자료를 갱신했습니다.', duration=1000)
+
+        # 차트 업데이트 (cycle 정보 전달)
+        self.update_chart(gm.차트자료.get(), cycle=cycle)
+
         self.btnChartLoad.setEnabled(True)
 
     def gui_strategy_restart(self):
@@ -490,27 +530,29 @@ class GUI(QMainWindow, form_class):
             logging.debug('전략매매 중지 취소')
 
     def gui_simulation_restart(self):
+        """btnSimStart 버튼 클릭 시: 시뮬레이션 모드 시작"""
         self.gui_simulation_stop()
-        gm.sim_no = 0 if self.rbReal.isChecked() else 1 if self.rbSim1.isChecked() else 2 if self.rbSim2.isChecked() else 3
-        if gm.sim_no == 3: 
+
+        # 라디오 버튼에서 새 모드 확인
+        new_sim_no = 0 if self.rbReal.isChecked() else \
+                     1 if self.rbSim1.isChecked() else \
+                     2 if self.rbSim2.isChecked() else 3
+
+        # 모든 모드 통합 처리
+        gm.admin.mode_start(new_sim_no=new_sim_no, is_startup=False)
+
+        if new_sim_no == 3:
+            # Sim3 UI 활성화
             self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
             self.gbSim3.setEnabled(True)
-        else:
-            self.gui_simulation_start()
-
-    def gui_simulation_start(self):
-        gm.sim_on = gm.sim_no > 0
-        gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
-        gm.prx.order('api', 'set_tickers')
-        gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)    
-        time.sleep(1)
-        gm.admin.restart()
-        gm.admin.stg_start()
-        if not any([gm.매수문자열, gm.매도문자열]):
-            gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
-            return
-        gm.toast.toast('전략매매를 실행했습니다.', duration=2000)
-        self.set_strategy_toggle(run=True)
+            logging.info('[GUI] Sim3 모드 활성화 → Memory Load 대기')
+            gm.toast.toast('Sim3 모드 활성화. Memory Load 버튼을 클릭하세요.', duration=2000)
+        # else:
+        #     if not any([gm.매수문자열, gm.매도문자열]):
+        #         gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
+        #     else:
+        #         gm.toast.toast('전략매매를 실행했습니다.', duration=2000)
+        #         self.set_strategy_toggle(run=True)
             
     def gui_simulation_stop(self):
         gm.admin.stg_stop()
@@ -519,11 +561,11 @@ class GUI(QMainWindow, form_class):
         gm.toast.toast('전략매매를 중지했습니다.', duration=2000)
 
     def gui_sim3_memory_load(self):
-        self.lbLoadStatus.setText('초기화 중...')
-        self.gui_simulation_start()
         self.lbLoadStatus.setText('로드 중...')
         gm.prx.order('api', 'sim3_memory_load')
+        gm.admin.mode_sim3_load()  # NEW: 새 아키텍처 사용 - Admin.mode_sim3_load() 호출
         self.lbLoadStatus.setText('로드 완료')
+        gm.toast.toast('데이터 로드 및 전략 준비 완료', duration=2000)
 
     def gui_sim3_control_start(self):
         speed, dt = self.gui_get_sim3_sets()
@@ -1438,3 +1480,117 @@ class GUI(QMainWindow, form_class):
             logging.getLogger('replay').info(msg)
         except Exception as e:
             logging.error(f'전략복기 로그 기록 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    # 차트 관련 메서드 -----------------------------------------------------------------------------------------
+    def setup_chart_widget(self):
+        """차트 위젯 초기화"""
+        if not MATPLOTLIB_AVAILABLE:
+            logging.warning("matplotlib 미설치 - 차트 표시 불가")
+            return
+
+        try:
+            # matplotlib figure 생성
+            self.chart_figure = Figure(figsize=(6, 3), dpi=100)
+            self.chart_ax = self.chart_figure.add_subplot(111)
+            self.chart_canvas = FigureCanvas(self.chart_figure)
+
+            # chartWidget에 레이아웃 설정
+            layout = QVBoxLayout()
+            layout.addWidget(self.chart_canvas)
+            layout.setContentsMargins(0, 0, 0, 0)
+            self.chartWidget.setLayout(layout)
+
+            # 초기 차트 표시
+            self.chart_ax.text(0.5, 0.5, '차트 데이터를 로드하세요',
+                             ha='center', va='center', fontsize=12)
+            self.chart_ax.set_xticks([])
+            self.chart_ax.set_yticks([])
+            self.chart_canvas.draw()
+
+            logging.info("차트 위젯 초기화 완료")
+        except Exception as e:
+            logging.error(f'차트 위젯 초기화 오류: {type(e).__name__} - {e}', exc_info=True)
+
+    def update_chart(self, data, cycle=None):
+        """차트 업데이트"""
+        if not MATPLOTLIB_AVAILABLE or self.chart_ax is None:
+            return
+
+        try:
+            # 데이터가 없으면 메시지 표시
+            if not data or len(data) == 0:
+                self.chart_ax.clear()
+                self.chart_ax.text(0.5, 0.5, '데이터 없음',
+                                 ha='center', va='center', fontsize=12)
+                self.chart_ax.set_xticks([])
+                self.chart_ax.set_yticks([])
+                self.chart_canvas.draw()
+                return
+
+            # 차트 그리기
+            self.chart_ax.clear()
+
+            # 데이터 추출 (딕셔너리 리스트 형식으로 가정)
+            if isinstance(data, list) and len(data) > 0:
+                # 데이터를 역순으로 정렬 (과거가 왼쪽, 최근이 오른쪽)
+                # 일반적으로 DB에서 최신순으로 오므로 reverse 필요
+                data_reversed = list(reversed(data))
+
+                # X축 레이블 생성
+                x_labels = []
+                for row in data_reversed:
+                    if cycle in ('mi', 'tk'):  # 분봉, 틱봉
+                        # 체결시간 또는 시간 컬럼 사용
+                        time_str = row.get('체결시간', row.get('시간', ''))
+                        if len(time_str) >= 12:  # YYYYMMDDHHMMSS
+                            x_labels.append(f"{time_str[8:10]}:{time_str[10:12]}")  # HH:MM
+                        elif len(time_str) >= 6:  # HHMMSS
+                            x_labels.append(f"{time_str[0:2]}:{time_str[2:4]}")  # HH:MM
+                        else:
+                            x_labels.append(time_str)
+                    else:  # 일봉, 주봉, 월봉
+                        # 일자 컬럼 사용
+                        date_str = row.get('일자', row.get('체결시간', ''))
+                        if len(date_str) >= 8:  # YYYYMMDD
+                            x_labels.append(f"{date_str[4:6]}/{date_str[6:8]}")  # MM/DD
+                        else:
+                            x_labels.append(date_str)
+
+                indices = list(range(len(data_reversed)))
+
+                # 종가 기준 라인 차트
+                if '현재가' in data_reversed[0]:
+                    closes = [int(row.get('현재가', 0)) for row in data_reversed]
+                    self.chart_ax.plot(indices, closes, 'b-', linewidth=1.5, label='종가')
+                elif '종가' in data_reversed[0]:
+                    closes = [int(row.get('종가', 0)) for row in data_reversed]
+                    self.chart_ax.plot(indices, closes, 'b-', linewidth=1.5, label='종가')
+                else:
+                    # 첫 번째 숫자 컬럼 사용
+                    for key in data_reversed[0].keys():
+                        try:
+                            values = [int(row.get(key, 0)) for row in data_reversed]
+                            self.chart_ax.plot(indices, values, linewidth=1.5, label=key)
+                            break
+                        except:
+                            continue
+
+                # X축 레이블 설정 (너무 많으면 간격을 띄워서 표시)
+                step = max(1, len(indices) // 10)  # 최대 10개 정도만 표시
+                tick_indices = indices[::step]
+                tick_labels = [x_labels[i] for i in tick_indices]
+
+                self.chart_ax.set_xticks(tick_indices)
+                self.chart_ax.set_xticklabels(tick_labels, rotation=45, ha='right')
+
+                self.chart_ax.set_xlabel('시간' if cycle in ('mi', 'tk') else '일자')
+                self.chart_ax.set_ylabel('가격')
+                self.chart_ax.legend()
+                self.chart_ax.grid(True, alpha=0.3)
+
+            self.chart_figure.tight_layout()
+            self.chart_canvas.draw()
+
+            logging.debug(f"차트 업데이트 완료: {len(data)}개 데이터")
+        except Exception as e:
+            logging.error(f'차트 업데이트 오류: {type(e).__name__} - {e}', exc_info=True)

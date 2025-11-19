@@ -530,22 +530,26 @@ class BaseModel:
             self.is_process = False
 
     def process_q_data(self, q_data):
-        if not isinstance(q_data, QData): 
+        if not isinstance(q_data, QData):
             return None
-        if q_data.method == 'stop': 
+        if q_data.method == 'stop':
             self.stop()
         if hasattr(self.instance, q_data.method):
             if q_data.answer:
                 result = getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
+                # 디버깅: 결과 크기 확인
+                # result_size = len(result) if isinstance(result, (list, dict)) else 'N/A'
+                # logging.debug(f'[{self.name}] 응답 준비: {q_data.method} -> {q_data.sender}, result 크기={result_size}, request_id={q_data.request_id}')
                 # 응답에 request_id 포함하여 전송
                 response_data = QData(
-                    sender=self.name, 
-                    method='_handle_response', 
-                    answer=False, 
+                    sender=self.name,
+                    method='_handle_response',
+                    answer=False,
                     args=(q_data.request_id, result),
                     request_id=q_data.request_id
                 )
                 self.shared_qes[q_data.sender].put_request(response_data)
+                # logging.debug(f'[{self.name}] 응답 전송 완료: {q_data.method} -> {q_data.sender}')
             else:
                 result = getattr(self.instance, q_data.method)(*q_data.args, **q_data.kwargs)
                 if q_data.callback:
@@ -559,9 +563,14 @@ class BaseModel:
 
     def _handle_response(self, request_id, result):
         """응답 처리 전용 메서드"""
+        # result_size = len(result) if isinstance(result, (list, dict)) else 'N/A'
+        # logging.debug(f'[{self.name}] 응답 수신: request_id={request_id}, result 크기={result_size}')
         with self.pending_lock:
             if request_id in self.pending_requests:
                 self.pending_requests[request_id] = result
+            #     logging.debug(f'[{self.name}] 응답 저장 완료: request_id={request_id}')
+            # else:
+            #     logging.warning(f'[{self.name}] 응답 버림 (request_id 없음): request_id={request_id}')
 
     def _wait_for_response(self, request_id, wait):
         """응답 대기 (폴링 최소화)"""
@@ -588,7 +597,7 @@ class BaseModel:
         """큐 처리 공통 로직 - _handle_response 처리 추가"""
         if not self.my_qes.request.empty():
             q_data = self.my_qes.request.get()
-            
+
             # 응답 처리 전용 메서드인 경우 직접 처리
             if q_data.method == '_handle_response':
                 self._handle_response(*q_data.args)
@@ -596,7 +605,7 @@ class BaseModel:
                 self.process_q_data(q_data)
         else:
             time.sleep(self.queue_timeout)
-            
+
         if hasattr(self.instance, 'run_main_work'):
             self.instance.run_main_work()
 
@@ -630,24 +639,31 @@ class BaseModel:
 
     def order(self, target, method, *args, **kwargs):
         """응답이 필요없는 명령 (answer=False)"""
-        q_data = QData(sender=self.name, method=method, answer=False, args=args, kwargs=kwargs)
+        callback = kwargs.pop('callback', None)
+        q_data = QData(sender=self.name, method=method, answer=False, args=args, kwargs=kwargs, callback=callback)
         self.shared_qes[target].put_request(q_data)
 
     def answer(self, target, method, *args, **kwargs):
         """응답이 필요한 요청 (answer=True) - 프로세스/스레드 통합 안전 보장"""
         wait = kwargs.pop('wait', self.answer_timeout)
         q_data = QData(sender=self.name, method=method, answer=True, args=args, kwargs=kwargs) # request_id 는 디폴트에의해 자동 생성
-        
+
+        # 디버깅
+        #logging.debug(f'[{self.name}] 요청 전송: {self.name} -> {target}.{method}, request_id={q_data.request_id}, wait={wait}초')
+
         # 요청 ID로 응답 매칭
         with self.pending_lock:
             self.pending_requests[q_data.request_id] = None
-        
+
         try:
             # 요청 전송
             self.shared_qes[target].put_request(q_data)
-            
+
             # 응답 대기
-            return self._wait_for_response(q_data.request_id, wait)
+            result = self._wait_for_response(q_data.request_id, wait)
+            if result is None:
+                logging.warning(f'[{self.name}] 응답 타임아웃: {self.name} -> {target}.{method}, wait={wait}초')
+            return result
             
         except Exception as e:
             logging.error(f"answer() 오류:{self.name}의 요청 : {target}.{method} - {e}", exc_info=True)
@@ -722,7 +738,7 @@ class KiwoomModel(BaseModel, Process):
 
     def _run_loop_iteration(self):
         """Kiwoom 전용 ActiveX 이벤트 처리"""
-        if self.running:    
+        if self.running:
             pythoncom.PumpWaitingMessages()
 
     def run(self):
@@ -736,5 +752,6 @@ class KiwoomModel(BaseModel, Process):
 
     def stop(self):
         self.running = False
+
 
 

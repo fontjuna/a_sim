@@ -1,5 +1,5 @@
 from public import dc, get_path, profile_operation, init_logger, QWork
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date as dt_date
 from dataclasses import dataclass
 import logging
 import sqlite3
@@ -10,6 +10,16 @@ import time
 import multiprocessing as mp
 from collections import defaultdict
 from typing import Union
+import json
+
+# MariaDB 연동 (선택적)
+try:
+    import pymysql
+    from pymysql.cursors import DictCursor
+    MARIADB_AVAILABLE = True
+except ImportError:
+    MARIADB_AVAILABLE = False
+    logging.warning("pymysql 미설치 - MariaDB 기능 비활성화")
 
 @dataclass
 class FieldsAttributes: # 데이터베이스 필드 속성
@@ -140,9 +150,18 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     COND_INDEXES = {
         'idx_date': f"CREATE INDEX IF NOT EXISTS idx_date ON {COND_TABLE_NAME}(일자, 시간)"
     }
-    
+
     REAL_TABLE_NAME = 'real_data' ## 실시간 현재가 데이타 : 당일 매수종목들의 틱 데이타
-    REAL_SELECT_DATE = f"SELECT * FROM {REAL_TABLE_NAME} WHERE substr(체결시간, 1, 8) = ? AND sim_no = 0"
+    REAL_SELECT_DATE = f"""SELECT * FROM {REAL_TABLE_NAME}
+                           WHERE substr(체결시간, 1, 8) = ?
+                           AND sim_no = 0
+                           AND 종목코드 IN (
+                               SELECT DISTINCT 종목코드
+                               FROM {COND_TABLE_NAME}
+                               WHERE substr(처리일시, 1, 10) = ?
+                               AND sim_no = 0
+                           )
+                           ORDER BY 체결시간"""
     REAL_FIELDS = [f.id, f.체결시간, f.종목코드, f.현재가, f.거래량, f.거래대금, f.누적거래량, f.누적거래대금, f.처리일시, f.sim_no]
     REAL_COLUMNS = [col.name for col in REAL_FIELDS]
     REAL_KEYS = ['체결시간', '종목코드']
@@ -202,21 +221,20 @@ class DBMServer:
         self.real_data_buffer = {}
         self.last_flush_time = time.time()
         self.buffer_lock = threading.Lock()
+
+        # MariaDB 관련 속성
+        self.use_mariadb = False
+        self.mariadb_config = None
+        self.mariadb_conn = None
         
     def initialize(self):
         init_logger()
         self.thread_local = threading.local()
         self.db_initialize()
+        self.mariadb_initialize()  # MariaDB 초기화 추가
 
     def cleanup(self):
         try:
-            with self.buffer_lock:
-                if self.real_data_buffer:
-                    buffer_data = list(self.real_data_buffer.values())
-                    self.real_data_buffer.clear()
-                    self.table_upsert('db', db_columns.REAL_TABLE_NAME, buffer_data, key=db_columns.REAL_KEYS)
-                    logging.info(f"종료 시 실시간 데이터 버퍼 플러시: {len(buffer_data)}건")
-            
             db_tables = [db_columns.TRD_TABLE_NAME, db_columns.CONC_TABLE_NAME, db_columns.COND_TABLE_NAME, db_columns.REAL_TABLE_NAME, db_columns.SIM_TABLE_NAME]
             chart_tables = [db_columns.TICK_TABLE_NAME, db_columns.MIN_TABLE_NAME, db_columns.DAY_TABLE_NAME]
             for table in db_tables:
@@ -229,6 +247,14 @@ class DBMServer:
                     conn = getattr(self.thread_local, db_type)
                     conn.close()
 
+            # MariaDB 연결 종료
+            if self.mariadb_conn:
+                try:
+                    self.mariadb_conn.close()
+                    logging.info("MariaDB 연결 종료")
+                except:
+                    pass
+
             self.thread_local = None
             logging.info(f"DBMServer 종료")
 
@@ -238,7 +264,80 @@ class DBMServer:
     def set_rate(self, fee_rate, tax_rate):
         """요율 설정 (락 프리)"""
         self.fee_rate = fee_rate
-        self.tax_rate = tax_rate    
+        self.tax_rate = tax_rate
+
+    # ===== MariaDB 관련 메서드 =====
+
+    def mariadb_initialize(self):
+        """MariaDB 연결 초기화 (선택적)"""
+        if not MARIADB_AVAILABLE:
+            logging.info("[DBM] pymysql 미설치 - MariaDB 기능 비활성화")
+            return
+
+        try:
+            config_path = os.path.join(get_path('config'), 'mariadb_config.json')
+
+            if not os.path.exists(config_path):
+                logging.info("[DBM] MariaDB 설정 파일 없음 - SQLite만 사용")
+                return
+
+            with open(config_path, 'r', encoding='utf-8') as f:
+                self.mariadb_config = json.load(f)
+
+            # 활성화 여부 확인
+            if not self.mariadb_config.get('enabled', False):
+                logging.info("[DBM] MariaDB 비활성화 - SQLite만 사용")
+                return
+
+            # 연결 테스트
+            self.mariadb_conn = pymysql.connect(
+                host=self.mariadb_config['host'],
+                port=self.mariadb_config.get('port', 3306),
+                user=self.mariadb_config['user'],
+                password=self.mariadb_config['password'],
+                database=self.mariadb_config['database'],
+                charset='utf8mb4',
+                cursorclass=DictCursor,
+                autocommit=True,
+                connect_timeout=5
+            )
+
+            self.use_mariadb = True
+            logging.info(f"[DBM] MariaDB 연결 성공: {self.mariadb_config['host']}")
+
+        except FileNotFoundError:
+            logging.info("[DBM] MariaDB 설정 파일 없음 - SQLite만 사용")
+        except Exception as e:
+            logging.warning(f"[DBM] MariaDB 연결 실패, SQLite 사용: {e}")
+            self.use_mariadb = False
+
+    def get_mariadb_cursor(self):
+        """MariaDB 커서 반환"""
+        if not self.use_mariadb or not self.mariadb_conn:
+            raise Exception("MariaDB 연결 없음")
+
+        # 연결 확인 및 재연결
+        try:
+            self.mariadb_conn.ping(reconnect=True)
+        except:
+            self.mariadb_initialize()
+
+        return self.mariadb_conn.cursor()
+
+    def is_today(self, date_str):
+        """날짜가 오늘인지 확인"""
+        # date_str 형식: 'YYYY-MM-DD' 또는 'YYYYMMDD'
+        try:
+            if len(date_str) == 8:  # YYYYMMDD
+                check_date = datetime.strptime(date_str, '%Y%m%d').date()
+            else:  # YYYY-MM-DD
+                check_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+
+            return check_date == dt_date.today()
+        except:
+            return False
+
+    # ===== MariaDB 관련 메서드 끝 =====
 
     def get_connection(self, db_type='chart'):
         """스레드별 데이터베이스 연결 반환"""
@@ -577,3 +676,234 @@ class DBMServer:
         처리일시 = datetime.now().strftime("%Y%m%d%H%M%S")
         record = {'일자': 처리일시[:8], '시간': 처리일시[8:], '종목코드': code, '조건구분': type, '조건번호': cond_index, '조건식명': cond_name, 'sim_no': sim_no}
         self.table_upsert('db', db_columns.COND_TABLE_NAME, record, key=db_columns.COND_KEYS)
+
+    def delete_sim2_results(self):
+        """sim2 시뮬레이션 결과 삭제"""
+        try:
+            # conclusion 테이블에서 sim_no==2 삭제
+            sql_conc = f"DELETE FROM {db_columns.CONC_TABLE_NAME} WHERE sim_no = 2"
+            result_conc = self.execute_query(sql_conc, db='db')
+            logging.info(f'[DBM] conclusion 테이블 sim_no=2 삭제: {result_conc}건')
+
+            # trades 테이블에서 sim_no==2 삭제
+            sql_trd = f"DELETE FROM {db_columns.TRD_TABLE_NAME} WHERE sim_no = 2"
+            result_trd = self.execute_query(sql_trd, db='db')
+            logging.info(f'[DBM] trades 테이블 sim_no=2 삭제: {result_trd}건')
+
+            return {'conclusion': result_conc, 'trades': result_trd}
+        except Exception as e:
+            logging.error(f'sim2 결과 삭제 오류: {e}', exc_info=True)
+            return None
+
+    def load_real_condition(self, date, callback=None):
+        """조건검색 데이터 로드 (SQLite 또는 MariaDB)"""
+        try:
+            # 오늘 데이터는 무조건 SQLite
+            if self.is_today(date):
+                result = self._load_real_condition_sqlite(date)
+            # 과거 데이터는 MariaDB 우선, 없으면 SQLite
+            elif self.use_mariadb:
+                try:
+                    result = self._load_real_condition_mariadb(date)
+                except Exception as e:
+                    logging.warning(f"[DBM] MariaDB 조회 실패, SQLite 사용: {e}")
+                    result = self._load_real_condition_sqlite(date)
+            else:
+                result = self._load_real_condition_sqlite(date)
+
+            if callback:
+                callback(result)
+            return result
+
+        except Exception as e:
+            logging.error(f'real_condition 로드 오류: {e}', exc_info=True)
+            if callback:
+                callback([])
+            return []
+
+    def _load_real_condition_sqlite(self, date):
+        """SQLite에서 조건검색 데이터 로드"""
+        sql = db_columns.COND_SELECT_DATE
+        cursor = self.get_cursor('db')
+        cursor.execute(sql, (date,))
+        result = cursor.fetchall()
+
+        if result:
+            logging.info(f'[DBM-SQLite] real_condition 로드: {date}, {len(result)}건')
+        else:
+            logging.warning(f'[DBM-SQLite] real_condition 데이터 없음: {date}')
+        return result if result else []
+
+    def _load_real_condition_mariadb(self, date):
+        """MariaDB에서 조건검색 데이터 로드"""
+        date_param = date.replace('-', '')  # YYYYMMDD
+
+        sql = """
+        SELECT 일자, 시간, 종목코드, 조건구분, 조건번호, 조건식명,
+               CONCAT(일자, ' ', 시간) as 처리일시, sim_no
+        FROM real_condition
+        WHERE 일자 = %s AND sim_no = 0
+        ORDER BY 처리일시
+        """
+
+        cursor = self.get_mariadb_cursor()
+        cursor.execute(sql, (date_param,))
+        result = cursor.fetchall()
+        cursor.close()
+
+        if result:
+            logging.info(f'[DBM-MariaDB] real_condition 로드: {date}, {len(result)}건')
+        else:
+            logging.warning(f'[DBM-MariaDB] real_condition 데이터 없음: {date}')
+        return result if result else []
+
+    def load_real_data(self, date, callback=None):
+        """실시간 데이터 로드 (SQLite 또는 MariaDB)"""
+        try:
+            # 오늘 데이터는 무조건 SQLite
+            if self.is_today(date):
+                result = self._load_real_data_sqlite(date)
+            # 과거 데이터는 MariaDB 우선
+            elif self.use_mariadb:
+                try:
+                    result = self._load_real_data_mariadb(date)
+                except Exception as e:
+                    logging.warning(f"[DBM] MariaDB 조회 실패, SQLite 사용: {e}")
+                    result = self._load_real_data_sqlite(date)
+            else:
+                result = self._load_real_data_sqlite(date)
+
+            if callback:
+                callback(result)
+            return result
+
+        except Exception as e:
+            logging.error(f'real_data 로드 오류: {e}', exc_info=True)
+            if callback:
+                callback([])
+            return []
+
+    def _load_real_data_sqlite(self, date):
+        """SQLite에서 실시간 데이터 로드"""
+        date_param = date.replace('-', '')
+        sql = db_columns.REAL_SELECT_DATE
+        cursor = self.get_cursor('db')
+        cursor.execute(sql, (date_param, date))
+        result = cursor.fetchall()
+
+        if result:
+            logging.info(f'[DBM-SQLite] real_data 로드: {date}, {len(result)}건')
+        else:
+            logging.warning(f'[DBM-SQLite] real_data 데이터 없음: {date}')
+        return result if result else []
+
+    def _load_real_data_mariadb(self, date):
+        """MariaDB에서 실시간 데이터 로드"""
+        date_param = date.replace('-', '')  # YYYYMMDD
+
+        sql = """
+        SELECT 체결시간, 종목코드, 현재가, 거래량, 거래대금,
+               누적거래량, 누적거래대금, 처리일시, sim_no
+        FROM real_data
+        WHERE substr(체결시간, 1, 8) = %s
+          AND sim_no = 0
+          AND 종목코드 IN (
+              SELECT DISTINCT 종목코드
+              FROM real_condition
+              WHERE 일자 = %s AND sim_no = 0
+          )
+        ORDER BY 체결시간
+        """
+
+        cursor = self.get_mariadb_cursor()
+        cursor.execute(sql, (date_param, date_param))
+        result = cursor.fetchall()
+        cursor.close()
+
+        if result:
+            logging.info(f'[DBM-MariaDB] real_data 로드: {date}, {len(result)}건')
+        else:
+            logging.warning(f'[DBM-MariaDB] real_data 데이터 없음: {date}')
+        return result if result else []
+
+    # ===== MariaDB 저장 메서드 =====
+
+    def save_to_mariadb(self, date):
+        """당일 데이터를 MariaDB에 저장 (장 마감 후 실행)"""
+        if not self.use_mariadb:
+            logging.warning("[DBM] MariaDB 비활성화 - 저장 불가")
+            return False
+
+        try:
+            logging.info(f"[DBM] {date} 데이터 MariaDB 저장 시작")
+
+            # 1. real_condition 저장
+            count_cond = self._save_real_condition_to_mariadb(date)
+
+            # 2. real_data 저장
+            count_real = self._save_real_data_to_mariadb(date)
+
+            logging.info(f"[DBM] MariaDB 저장 완료: 조건검색={count_cond}, 실시간={count_real}")
+            return True
+
+        except Exception as e:
+            logging.error(f"[DBM] MariaDB 저장 오류: {e}", exc_info=True)
+            return False
+
+    def _save_real_condition_to_mariadb(self, date):
+        """real_condition 데이터 저장"""
+        # SQLite에서 조회
+        sqlite_data = self._load_real_condition_sqlite(date)
+
+        if not sqlite_data:
+            return 0
+
+        # MariaDB에 INSERT IGNORE
+        sql = """
+        INSERT IGNORE INTO real_condition
+        (일자, 시간, 종목코드, 조건구분, 조건번호, 조건식명, sim_no)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+
+        cursor = self.get_mariadb_cursor()
+        params_list = [
+            (row['일자'], row['시간'], row['종목코드'], row['조건구분'],
+             row['조건번호'], row.get('조건식명', ''), row.get('sim_no', 0))
+            for row in sqlite_data
+        ]
+
+        cursor.executemany(sql, params_list)
+        count = cursor.rowcount
+        cursor.close()
+
+        logging.info(f"[DBM] real_condition MariaDB 저장: {count}건")
+        return count
+
+    def _save_real_data_to_mariadb(self, date):
+        """real_data 저장"""
+        # SQLite에서 조회
+        sqlite_data = self._load_real_data_sqlite(date)
+
+        if not sqlite_data:
+            return 0
+
+        # MariaDB에 INSERT IGNORE
+        sql = """
+        INSERT IGNORE INTO real_data
+        (체결시간, 종목코드, 현재가, 거래량, 거래대금, 누적거래량, 누적거래대금, sim_no)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+
+        cursor = self.get_mariadb_cursor()
+        params_list = [
+            (row['체결시간'], row['종목코드'], row['현재가'], row['거래량'],
+             row['거래대금'], row['누적거래량'], row['누적거래대금'], row.get('sim_no', 0))
+            for row in sqlite_data
+        ]
+
+        cursor.executemany(sql, params_list)
+        count = cursor.rowcount
+        cursor.close()
+
+        logging.info(f"[DBM] real_data MariaDB 저장: {count}건")
+        return count
