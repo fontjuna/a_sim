@@ -1,0 +1,13 @@
+{
+    "enabled": false,
+    "host": "192.168.1.100",
+    "port": 3306,
+    "user": "stock_user",
+    "password": "your_password_here",
+    "database": "stock_trading",
+    "connection_pool": {
+        "max_connections": 5,
+        "timeout": 30
+    },
+    "comment": "enabled를 true로 변경하여 MariaDB 활성화. 연결 실패 시 자동으로 SQLite 사용"
+}
