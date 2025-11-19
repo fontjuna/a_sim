@@ -273,6 +273,7 @@ class GUI(QMainWindow, form_class):
     # 화면 갱신 ---------------------------------------------------------------------------------------------
     def gui_refresh_data(self):
         try:
+            if not gm.admin_init: return
             if not gm.qwork['gui'].empty():
                 data = gm.qwork['gui'].get()
                 getattr(self, data.order)(**data.job)

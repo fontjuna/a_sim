@@ -285,7 +285,7 @@ class Admin:
                         gm.eval_q.put((code, 'sell', {'row': row, 'sell_condition': True}))
 
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
-                gm.prx.order('dbm', 'upsert_real_data', code, dictFID, gm.sim_no)
+                if gm.sim_no == 0: gm.prx.order('dbm', 'upsert_real_data', code, dictFID, gm.sim_no)
             
             if gm.잔고목록.in_key(code) and self.stg_ready:
                 gm.잔고목록.set(key=code, data={'현재가': 현재가, '등락율': float(dictFID.get('등락율', 0)), '누적거래량': int(dictFID.get('누적거래량', 0))})
