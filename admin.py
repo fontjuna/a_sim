@@ -1026,7 +1026,8 @@ class Admin:
                                 '감시': 0, '보존': 0, '매수일자': dc.ToDay, '매수시간': 매매시간, '매수번호': order_no, '매수수량': qty, '매수가': price, '매수금액': amount}
                     if not gm.잔고목록.in_key(code):
                         if gm.sim_no == 0:
-                            sim_record = {'일자': dc.ToDay, '종목코드': code, '종목명': name, '상태': '매수', 'sim_no': 2}
+                            전일가 = gm.prx.answer('api', 'GetMasterLastPrice', code)
+                            sim_record = {'일자': dc.ToDay, '종목코드': code, '종목명': name, '전일가': 전일가, '상태': '매수', 'sim_no': 2}
                             gm.prx.order('dbm', 'table_upsert', 'db', db_columns.SIM_TABLE_NAME, sim_record, key=db_columns.SIM_KEYS)
                         gm.holdings[code] = data
                         save_json(dc.fp.holdings_file, gm.holdings)
