@@ -1157,9 +1157,24 @@ class APIServer:
         """sim2/sim3 조건검색 로드 완료 콜백"""
         try:
             if self.sim_no == 2:
-                # sim2: daily_sim 테이블에서 종목 로드
+                # sim2: rc_data로 rc_queue 설정 (이벤트 재생용)
+                if not rc_data:
+                    logging.error(f'[API] sim2: real_condition 데이터 없음 ({sim.sim2_date}) - 종료')
+                    sim.data_loaded = True
+                    self.order('prx', 'proxy_method',
+                              QWork(method='on_tickers_ready',
+                                    kwargs={'sim_no': 2, 'success': False,
+                                           'message': f'real_condition 데이터 없음: {sim.sim2_date}'}))
+                    return
+
+                # rc_queue 설정 (조건검색 이벤트 재생용)
+                sim.rc_queue = rc_data
+                logging.info(f'[API] sim2 rc_queue 설정: {len(sim.rc_queue)}건')
+
+                # daily_sim에서 ticker 로드 (중복 제거된 종목 목록)
                 self.order('dbm', 'load_daily_sim', date=sim.sim2_date, sim_no=2,
                           callback='_on_sim2_ticker_loaded')
+
             elif self.sim_no == 3:
                 # sim3: real_condition에서 ticker 추출
                 logging.debug(f'[API] rc_data 타입: {type(rc_data)}, 값: {rc_data[:2] if rc_data else None}')
@@ -1198,7 +1213,7 @@ class APIServer:
                                        'message': f'데이터 없음: {sim.sim2_date}'}))
                 return
 
-            # ticker 설정 (daily_sim의 전일가 사용)
+            # ticker 설정 (daily_sim의 전일가 사용, 중복 제거된 종목 목록)
             sim.ticker = {}
             for row in daily_sim_data:
                 code = row['종목코드']
@@ -1209,12 +1224,9 @@ class APIServer:
                     }
             logging.info(f'[API] sim2 ticker 설정 완료: {len(sim.ticker)}개 종목')
 
-            # rc_queue는 빈 리스트 (sim2는 조건검색 이벤트 재생 안 함)
-            sim.rc_queue = []
-
-            # tblSimDaily 표시용 GUI에 전달
+            # tblSimDaily 표시용 admin을 통해 GUI에 전달
             self.order('prx', 'proxy_method',
-                      QWork(method='update_sim_daily_table',
+                      QWork(method='gui_update_sim_daily_table',
                             kwargs={'data': daily_sim_data}))
 
             # real_data 로드 계속

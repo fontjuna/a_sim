@@ -467,6 +467,11 @@ class Admin:
     # 매매전략 처리  -------------------------------------------------------------------------------------------
 
     # 모드별 실행 로직 ---------------------------------------------------------------
+    def gui_update_sim_daily_table(self, data):
+        """sim2 daily_sim 테이블 데이터를 GUI에 전달"""
+        if gm.gui_on:
+            gm.qwork['gui'].put(Work(order='update_sim_daily_table', job={'data': data}))
+
     def on_tickers_ready(self, sim_no, success=True, message='', ticker=None):
         """콜백 완료 신호 받음"""
         logging.info(f'[Mode] sim_no={sim_no} → 콜백 완료 신호 받음')
