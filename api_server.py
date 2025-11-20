@@ -748,10 +748,8 @@ class OnReceiveRealDataSim1And2(QThread):
             args=(code, '주식체결', dictFID)
          ))
 
-         if idx % 1000 == 0:
-            logging.debug(f'[OnReceiveRealDataSim1And2] sim2 진행: {idx}/{len(sim.rd_queue)}, 체결시간: {체결시간_6자리}')
-            if idx == 0:
-               logging.debug(f'[OnReceiveRealDataSim1And2] 첫 데이터 - code:{code}, 현재가:{현재가}, 등락율:{등락율}, 체결시간:{체결시간} → {체결시간_6자리}')
+         if idx < 10 or idx % 1000 == 0:
+            logging.debug(f'[실시간재생] sim2 진행: {idx}/{len(sim.rd_queue)}, code={code}, 현재가={현재가}, 체결시간={체결시간_6자리}')
 
       logging.info('[OnReceiveRealDataSim1And2] sim2 재생 완료')
 
@@ -1543,8 +1541,8 @@ class APIServer:
         global real_thread, real_tickers
         if isinstance(code_list, str):
             code_list = [code_list]
-        
-        logging.debug(f'SetRealReg: screen={screen}, codes={code_list}, fids={fid_list}, opt={opt_type}')
+
+        logging.debug(f'[SetRealReg] sim_no={self.sim_no}, screen={screen}, codes={len(code_list)}개, fids={fid_list}, opt={opt_type}')
         
         if self.sim_no == 0:  # 실제 API 서버
             codes_str = ';'.join(code_list) if isinstance(code_list, list) else code_list
@@ -1571,11 +1569,13 @@ class APIServer:
         else:  # 시뮬레이션 1, 2번
             for code in code_list:
                 real_tickers.add(code)
-            
+
             if screen not in real_thread:
                 real_thread[screen] = OnReceiveRealDataSim1And2(self)
                 real_thread[screen].start()
-                logging.debug(f'시뮬레이션 1,2번 실시간 데이터 쓰레드 시작: {screen}')
+                logging.info(f'[실시간스레드] sim{self.sim_no} OnReceiveRealDataSim1And2 시작: screen={screen}, codes={len(code_list)}개')
+            else:
+                logging.debug(f'[실시간스레드] sim{self.sim_no} 이미 실행 중: screen={screen}')
             return 1
 
     def SetRealRemove(self, screen, del_code):
@@ -2040,6 +2040,7 @@ class APIServer:
             dict_list = self._convert_chart_data(dict_list, code, cycle)
 
             # sim_no==2일 때 기준 날짜로 필터링
+            logging.debug(f'[차트필터] sim_no={self.sim_no}, sim2_date={getattr(sim, "sim2_date", None)}, cycle={cycle}, 데이터={len(dict_list)}개')
             if self.sim_no == 2 and sim.sim2_date:
                 dict_list = self._filter_chart_data_by_date(dict_list, sim.sim2_date, cycle)
 
