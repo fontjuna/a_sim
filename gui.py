@@ -1430,6 +1430,10 @@ class GUI(QMainWindow, form_class):
         except Exception as e:
             logging.error(f'tblSimDaily 업데이트 오류: {e}', exc_info=True)
 
+    def update_sim2_progress(self, text):
+        """sim2 진행 시간 표시"""
+        self.leProgressDT.setText(text)
+
     # 상태 표시 -------------------------------------------------------------------------------------
     def gui_display_status(self, data=None):
         try:
