@@ -751,12 +751,7 @@ class OnReceiveRealDataSim1And2(QThread):
          if idx < 10 or idx % 1000 == 0:
             logging.debug(f'[실시간재생] sim2 진행: {idx}/{len(sim.rd_queue)}, code={code}, 현재가={현재가}, 체결시간={체결시간_6자리}')
 
-         if idx % 100 == 0:
-            progress_time = f"{sim.sim2_date} {체결시간_6자리[:2]}:{체결시간_6자리[2:4]}:{체결시간_6자리[4:6]}"
-            self.order('prx', 'proxy_method', QWork(method='send_status_msg', kwargs={'order': 'sim진행', 'args': progress_time}))
-
       logging.info('[OnReceiveRealDataSim1And2] sim2 재생 완료')
-      self.order('prx', 'proxy_method', QWork(method='send_status_msg', kwargs={'order': 'sim진행', 'args': '종료'}))
 
    def _calculate_wait_time(self, time_str):
       """HHMMSS → 2배속 대기시간 계산"""

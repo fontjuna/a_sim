@@ -278,6 +278,13 @@ class Admin:
     def on_receive_real_data(self, code, rtype, dictFID):
         if not gm.ready: return
         try:
+            # sim2 진행 시간 표시
+            if gm.sim_no == 2:
+                체결시간 = dictFID.get('체결시간', '')
+                if 체결시간 and len(체결시간) >= 6:
+                    from public import sim
+                    시간표시 = f"{sim.sim2_date} {체결시간[:2]}:{체결시간[2:4]}:{체결시간[4:6]}"
+                    self.send_status_msg('sim진행', 시간표시)
 
             현재가 = abs(int(dictFID.get('현재가')))
             updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
