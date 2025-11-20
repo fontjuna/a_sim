@@ -95,32 +95,21 @@ class Main:
             gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
             gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
             
+            # 4. Admin 초기화를 비동기로 실행
+            gm.prx.order('api', 'CommConnect', False)
+
+            # 로그인 체크 타이머 시작
+            self.login_timer = QTimer()
+            self.login_start_time = time.time()
+            self.login_timer.timeout.connect(self.check_login)
+            self.login_timer.start(500)  # 0.5초마다 체크
+            logging.info('로그인 대기 시작 (비동기)')
+
             # 3. GUI 초기화 먼저 (Admin 초기화 전에)
             if gm.gui_on:
                 gm.gui.init()
                 logging.debug('gui 초기화 완료')
                 gm.qwork['gui'].put(Work(order='gui_script_show', job={}))
-
-            # 4. Admin 초기화를 메인 스레드에서 지연 실행
-            def admin_init_delayed():
-                try:
-                    gm.prx.order('api', 'CommConnect', False)
-                    self.wait_login()
-                    if gm.gui_on: self.splash.close()
-
-                    logging.info('[Delayed] Admin 초기화 시작')
-                    gm.admin.init()
-                    logging.info('[Delayed] Admin 초기화 완료')
-
-                    # Admin 초기화 완료 후 mode_start 호출
-                    gm.admin.mode_start(is_startup=True)
-                    logging.info('[Delayed] mode_start 완료')
-
-                except Exception as e:
-                    logging.error(f'[Delayed] Admin 초기화 오류: {e}', exc_info=True)
-
-            QTimer.singleShot(100, admin_init_delayed)
-            logging.info('Admin 초기화 메인 스레드 지연 실행 등록')
 
         except Exception as e:
             logging.error(str(e), exc_info=e)
@@ -145,19 +134,41 @@ class Main:
             time.sleep(0.01)
         return 0
     
-    def wait_login(self):
-        """로그인 대기 (aaa.py에서 이동)"""
-        if gm.sim_no != 1:
-            logging.debug('로그인 대기 시작')
-            start_time = time.time()
-            while True:
-                connected = gm.prx.answer('api', 'GetConnectState') == 1
-                if connected: break
-                if time.time() - start_time > 90:
-                    logging.error('로그인 대기 시간 초과. 종료 합니다.')
-                    exit('로그인 대기 시간 초과. 종료 합니다.')
-                time.sleep(0.5)
+    def check_login(self):
+        """로그인 상태를 비동기로 체크"""
+        if gm.sim_no == 1:
+            # sim_no=1은 로그인 불필요
+            self.login_timer.stop()
+            self.on_login_complete()
+            return
+
+        connected = gm.prx.answer('api', 'GetConnectState') == 1
+        if connected:
+            self.login_timer.stop()
             logging.info('로그인 완료')
+            self.on_login_complete()
+        elif time.time() - self.login_start_time > 90:
+            self.login_timer.stop()
+            logging.error('로그인 대기 시간 초과. 종료 합니다.')
+            self.cleanup()
+            sys.exit(1)
+
+    def on_login_complete(self):
+        """로그인 완료 후 Admin 초기화"""
+        try:
+            if gm.gui_on:
+                self.splash.close()
+
+            logging.info('Admin 초기화 시작')
+            gm.admin.init()
+            logging.info('Admin 초기화 완료')
+
+            # Admin 초기화 완료 후 mode_start 호출
+            gm.admin.mode_start(is_startup=True)
+            logging.info('mode_start 완료')
+
+        except Exception as e:
+            logging.error(f'Admin 초기화 오류: {e}', exc_info=True)
 
     def main(self):
         self.init()
