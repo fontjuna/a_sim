@@ -164,6 +164,8 @@ class Admin:
             job = {'msg': args}
         elif order=='상태바':
             job = {'msg': args}
+        elif order=='sim진행':
+            job = {'msg': args}
 
         if gm.gui_on:
             gm.qwork['msg'].put(Work(order=order, job=job))

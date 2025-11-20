@@ -751,7 +751,12 @@ class OnReceiveRealDataSim1And2(QThread):
          if idx < 10 or idx % 1000 == 0:
             logging.debug(f'[실시간재생] sim2 진행: {idx}/{len(sim.rd_queue)}, code={code}, 현재가={현재가}, 체결시간={체결시간_6자리}')
 
+         if idx % 100 == 0:
+            progress_time = f"{sim.sim2_date} {체결시간_6자리[:2]}:{체결시간_6자리[2:4]}:{체결시간_6자리[4:6]}"
+            self.order('prx', 'proxy_method', QWork(method='send_status_msg', kwargs={'order': 'sim진행', 'args': progress_time}))
+
       logging.info('[OnReceiveRealDataSim1And2] sim2 재생 완료')
+      self.order('prx', 'proxy_method', QWork(method='send_status_msg', kwargs={'order': 'sim진행', 'args': '종료'}))
 
    def _calculate_wait_time(self, time_str):
       """HHMMSS → 2배속 대기시간 계산"""
@@ -1119,6 +1124,7 @@ class APIServer:
             if sim_no == 2:
                 sim.sim2_date = dt
                 self.order('dbm', 'delete_sim2_results')
+                self.order('prx', 'proxy_method', QWork(method='send_status_msg', kwargs={'order': 'sim진행', 'args': '데이터 작성 중...'}))
             elif sim_no == 3:
                 sim.sim3_date = dt
 
@@ -1241,6 +1247,7 @@ class APIServer:
             sim.sim2_base_time = None
             sim.sim2_data_base = None
             logging.info(f'[API] sim2 데이터 준비 완료: rc={len(sim.rc_queue)}건, rd={len(sim.rd_queue) if sim.rd_queue else 0}건, 배속={sim.sim2_speed}')
+            self.order('prx', 'proxy_method', QWork(method='send_status_msg', kwargs={'order': 'sim진행', 'args': '준비 완료'}))
             sim.data_loaded = True
         except Exception as e:
             logging.error(f'[API] _on_real_data_loaded 오류: {e}', exc_info=True)
