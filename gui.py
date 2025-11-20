@@ -1453,8 +1453,6 @@ class GUI(QMainWindow, form_class):
                 elif data.order == '상태바':
                     self.lbl3.setText(data.job['msg'])
                     self.lbl3_update_time = now
-                elif data.order == 'sim진행':
-                    self.leProgressDT.setText(data.job['msg'])
 
         except Exception as e:
             logging.error(f'{self.name} error: {type(e).__name__} - {e}', exc_info=True)

@@ -164,8 +164,6 @@ class Admin:
             job = {'msg': args}
         elif order=='상태바':
             job = {'msg': args}
-        elif order=='sim진행':
-            job = {'msg': args}
 
         if gm.gui_on:
             gm.qwork['msg'].put(Work(order=order, job=job))
@@ -283,7 +281,7 @@ class Admin:
                 체결시간 = str(dictFID.get('체결시간', '')).strip()
                 if len(체결시간) >= 6:
                     시간표시 = f"{체결시간[:2]}:{체결시간[2:4]}:{체결시간[4:6]}"
-                    self.send_status_msg('sim진행', 시간표시)
+                    gm.gui.leProgressDT.setText(시간표시)
 
             현재가 = abs(int(dictFID.get('현재가')))
             updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
@@ -479,6 +477,11 @@ class Admin:
         """sim2 daily_sim 테이블 데이터를 GUI에 전달"""
         if gm.gui_on:
             gm.qwork['gui'].put(Work(order='update_sim_daily_table', job={'data': data}))
+
+    def update_sim2_progress_text(self, text):
+        """sim2 진행 메시지 표시"""
+        if gm.gui_on:
+            gm.gui.leProgressDT.setText(text)
 
     def on_tickers_ready(self, sim_no, success=True, message='', ticker=None):
         """콜백 완료 신호 받음"""
