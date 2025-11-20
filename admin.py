@@ -280,10 +280,13 @@ class Admin:
         try:
             # sim2 진행 시간 표시
             if gm.sim_no == 2:
-                체결시간 = dictFID.get('체결시간', '')
-                if 체결시간 and len(체결시간) >= 6:
-                    from public import sim
-                    시간표시 = f"{sim.sim2_date} {체결시간[:2]}:{체결시간[2:4]}:{체결시간[4:6]}"
+                체결시간 = str(dictFID.get('체결시간', '')).strip()
+                if len(체결시간) >= 6:
+                    # 체결시간이 6자리(HHMMSS)면 시간만, 14자리(YYYYMMDDHHMMSS)면 날짜 포함
+                    if len(체결시간) >= 14:
+                        시간표시 = f"{체결시간[:4]}-{체결시간[4:6]}-{체결시간[6:8]} {체결시간[8:10]}:{체결시간[10:12]}:{체결시간[12:14]}"
+                    else:
+                        시간표시 = f"{체결시간[:2]}:{체결시간[2:4]}:{체결시간[4:6]}"
                     self.send_status_msg('sim진행', 시간표시)
 
             현재가 = abs(int(dictFID.get('현재가')))
