@@ -41,6 +41,14 @@ class Admin:
         self.start_threads()
         gm.admin_init = True
 
+        # GUI 업데이트 (admin.init 후 데이터 로드 완료되었으므로)
+        if gm.gui_on:
+            gm.qwork['gui'].put(Work(order='gui_fx채움_조건콤보', job={}))
+            gm.qwork['gui'].put(Work(order='gui_fx채움_스크립트콤보', job={}))
+            gm.qwork['gui'].put(Work(order='gui_fx채움_전략정의', job={}))
+            gm.qwork['gui'].put(Work(order='gui_fx전시_전략정의', job={}))
+            logging.debug('GUI 업데이트 요청 완료')
+
     # 준비 작업 -------------------------------------------------------------------------------------------
     def get_login_info(self):
         accounts = gm.prx.answer('api', 'GetLoginInfo', 'ACCNO')
@@ -507,6 +515,10 @@ class Admin:
                 self.get_holdings()
                 gm.admin_init = True
 
+            # if gm.sim_no == 0: 
+            #     self.on_tickers_ready(0)
+            #     return
+            
             # 2. 실행 여부 판단
             should_run = (gm.sim_no == 0) if is_startup else (gm.sim_no in [0, 1, 2])
 
