@@ -507,6 +507,10 @@ class Admin:
                 self.get_holdings()
                 gm.admin_init = True
 
+            # if gm.sim_no == 0: 
+            #     self.on_tickers_ready(0)
+            #     return
+            
             # 2. 실행 여부 판단
             should_run = (gm.sim_no == 0) if is_startup else (gm.sim_no in [0, 1, 2])
 
