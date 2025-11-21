@@ -1,4 +1,4 @@
-from public import hoga, dc, init_logger, profile_operation, QWork
+from public import hoga, dc, gm, init_logger, profile_operation, QWork, Work
 from classes import TimeLimiter, Toast
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtWidgets import QApplication
@@ -1141,10 +1141,23 @@ class APIServer:
             global ready_tickers
             ready_tickers = True
 
+            # admin.init() 완료 대기 (receive_signal 연결 완료 대기)
+            wait_start = time.time()
+            while not gm.admin_init:
+                if time.time() - wait_start > 30:
+                    logging.error(f'[API] sim{sim_no} admin.init() 대기 타임아웃')
+                    return
+                time.sleep(0.1)
+            logging.debug(f'[API] sim{sim_no} admin.init() 완료 확인')
+
+            logging.debug(f'[API] sim{sim_no} on_tickers_ready 호출 준비 중...')
             if sim_no == 2:
+                logging.info(f'[API] sim2 on_tickers_ready 호출: ticker={len(sim.ticker)}개')
                 self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 2, 'success': True, 'message': f'로드 완료 ({elapsed:.2f}초)', 'ticker': sim.ticker}))
             elif sim_no == 3:
+                logging.info(f'[API] sim3 on_tickers_ready 호출')
                 self.order('prx', 'proxy_method', QWork(method='on_tickers_ready', kwargs={'sim_no': 3}))
+            logging.debug(f'[API] sim{sim_no} on_tickers_ready 호출 완료')
         except Exception as e:
             logging.error(f'[API] sim{sim_no} 데이터 로드 오류: {e}', exc_info=True)
 
@@ -1174,6 +1187,7 @@ class APIServer:
                 self.order('dbm', 'load_daily_sim', date=sim.sim2_date, sim_no=2,
                           callback='_on_sim2_ticker_loaded')
 
+>>>>>>> claude/fix-simulation-chart-loading-016L2dDpzd9tabdN3k6zNg6D
             elif self.sim_no == 3:
                 # sim3: real_condition에서 ticker 추출
                 logging.debug(f'[API] rc_data 타입: {type(rc_data)}, 값: {rc_data[:2] if rc_data else None}')
