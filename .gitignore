@@ -11,6 +11,7 @@ db/
 log/
 spec/
 script/
+script*
 
 # Distribution / packaging
 .Python
