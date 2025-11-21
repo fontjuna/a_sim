@@ -56,8 +56,8 @@ class GUI(QMainWindow, form_class):
         self.sim_date_text = ''
         self.sim_thread = None
         self.cht_dt = ChartData()
-        self.gbSim3_styleSheet = None
-        self.red_styleSheet = "QGroupBox { border: 1px solid rgba(255, 0, 0, 50); color: red; }"
+        # self.gbSim3_styleSheet = None
+        # self.red_styleSheet = "QGroupBox { border: 1px solid rgba(255, 0, 0, 50); color: red; }"
 
         # 차트 캔버스 초기화
         self.chart_canvas = None
@@ -185,9 +185,9 @@ class GUI(QMainWindow, form_class):
             self.gbxSellCheck.toggled.connect(lambda: self.gui_gbx_check(self.gbxSellCheck.isChecked(), 'sell'))
 
             # 시뮬레이션 3번 선택
-            self.gbSim3_styleSheet = self.gbSim3.styleSheet()
-            self.gbSim3.setEnabled(False)
-            self.rbSim3.toggled.connect(lambda: self.gui_sim3_set(self.rbSim3.isChecked()))
+            # self.gbSim3_styleSheet = self.gbSim3.styleSheet()
+            # self.gbSim3.setEnabled(False)
+            # self.rbSim3.toggled.connect(lambda: self.gui_sim3_set(self.rbSim3.isChecked()))
             self.btnUpload.clicked.connect(self.gui_sim3_memory_load)
             self.btnSim3First.clicked.connect(self.gui_sim3_control_reset)
             self.btnSim3Start.clicked.connect(self.gui_sim3_control_start)
@@ -544,8 +544,8 @@ class GUI(QMainWindow, form_class):
 
         if new_sim_no == 3:
             # Sim3 UI 활성화
-            self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
-            self.gbSim3.setEnabled(True)
+            # self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
+            # self.gbSim3.setEnabled(True)
             logging.info('[GUI] Sim3 모드 활성화 → Memory Load 대기')
             gm.toast.toast('Sim3 모드 활성화. Memory Load 버튼을 클릭하세요.', duration=2000)
         # else:
@@ -1268,12 +1268,12 @@ class GUI(QMainWindow, form_class):
             logging.error(f'주문설정 표시 오류: {type(e).__name__} - {e}', exc_info=True)
 
     #  시뮬레이션 3번 선택 ---------------------------------------------------------------------------------------------
-    def gui_sim3_set(self, value):
-        if value:
-            self.gbSim3.setStyleSheet(self.red_styleSheet)
-        else:
-            self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
-        self.gbSim3.setEnabled(False)
+    # def gui_sim3_set(self, value):
+    #     if value:
+    #         self.gbSim3.setStyleSheet(self.red_styleSheet)
+    #     else:
+    #         self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
+    #     self.gbSim3.setEnabled(False)
 
     def gui_get_sim3_sets(self):
         speed = 1
