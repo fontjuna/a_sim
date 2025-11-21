@@ -198,8 +198,9 @@ class GUI(QMainWindow, form_class):
             self.btnSimStart.clicked.connect(self.gui_simulation_restart) # 시뮬레이션 재시작
 
             # 시뮬레이션 실행일자 데이타 가져오기
-            self.btnSimReadDay.clicked.connect(lambda: self.gui_sim_read_day(read_chart=False))
-            self.btnSimReadTick.clicked.connect(lambda: self.gui_sim_read_day(read_chart=True))
+            # self.btnSimReadDay.clicked.connect(lambda: self.gui_sim_read_day(read_chart=False))
+            # self.btnSimReadTick.clicked.connect(lambda: self.gui_sim_read_day(read_chart=True))
+            self.btnSimReadTick.clicked.connect(lambda: self.gui_get_chart_data(read_tick=False))
 
             # 시뮬레이션 차트데이타
             self.btnSimAddDay.clicked.connect(self.gui_sim_add_day)
@@ -1274,6 +1275,9 @@ class GUI(QMainWindow, form_class):
     #     else:
     #         self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
     #     self.gbSim3.setEnabled(False)
+
+    def gui_get_chart_data(self, read_tick=False):
+        pass
 
     def gui_get_sim3_sets(self):
         speed = 1
