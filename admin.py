@@ -254,7 +254,7 @@ class Admin:
         if not gm.ready or not self.stg_ready: return
         if gm.sim_no == 0 and time.time() < 90000: return
         try:
-            gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, gm.sim_no)
+            if gm.sim_no == 0: gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, gm.sim_no)
 
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
             if condition == gm.매수문자열:
@@ -276,6 +276,12 @@ class Admin:
     def on_receive_real_data(self, code, rtype, dictFID):
         if not gm.ready: return
         try:
+            # sim2 진행 시간 표시
+            if gm.sim_no == 2 and gm.gui_on:
+                체결시간 = str(dictFID.get('체결시간', '')).strip()
+                if len(체결시간) >= 6:
+                    시간표시 = f"{체결시간[:2]}:{체결시간[2:4]}:{체결시간[4:6]}"
+                    gm.qwork['gui'].put(Work(order='update_sim2_progress', job={'text': 시간표시}))
 
             현재가 = abs(int(dictFID.get('현재가')))
             updated = gm.dict종목정보.update_if_exists(code, '현재가', 현재가)
@@ -467,6 +473,16 @@ class Admin:
     # 매매전략 처리  -------------------------------------------------------------------------------------------
 
     # 모드별 실행 로직 ---------------------------------------------------------------
+    def gui_update_sim_daily_table(self, data):
+        """sim2 daily_sim 테이블 데이터를 GUI에 전달"""
+        if gm.gui_on:
+            gm.qwork['gui'].put(Work(order='update_sim_daily_table', job={'data': data}))
+
+    def update_sim2_progress_text(self, text):
+        """sim2 진행 메시지 표시"""
+        if gm.gui_on:
+            gm.qwork['gui'].put(Work(order='update_sim2_progress', job={'text': text}))
+
     def on_tickers_ready(self, sim_no, success=True, message='', ticker=None):
         """콜백 완료 신호 받음"""
         logging.info(f'[Mode] sim_no={sim_no} → 콜백 완료 신호 받음')
