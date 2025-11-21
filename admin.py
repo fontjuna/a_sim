@@ -254,7 +254,7 @@ class Admin:
         if not gm.ready or not self.stg_ready: return
         if gm.sim_no == 0 and time.time() < 90000: return
         try:
-            gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, gm.sim_no)
+            if gm.sim_no == 0: gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, gm.sim_no)
 
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
             if condition == gm.매수문자열:
