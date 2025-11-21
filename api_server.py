@@ -1187,7 +1187,6 @@ class APIServer:
                 self.order('dbm', 'load_daily_sim', date=sim.sim2_date, sim_no=2,
                           callback='_on_sim2_ticker_loaded')
 
->>>>>>> claude/fix-simulation-chart-loading-016L2dDpzd9tabdN3k6zNg6D
             elif self.sim_no == 3:
                 # sim3: real_condition에서 ticker 추출
                 logging.debug(f'[API] rc_data 타입: {type(rc_data)}, 값: {rc_data[:2] if rc_data else None}')
