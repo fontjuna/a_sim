@@ -6115,8 +6115,6 @@
          <bool>true</bool>
         </property>
        </widget>
-<<<<<<< HEAD
-=======
       </widget>
       <widget class="QPushButton" name="btnSimReadDay">
        <property name="geometry">
@@ -6130,7 +6128,6 @@
        <property name="text">
         <string>선택일대상종목</string>
        </property>
->>>>>>> 65aa4c982b71236ca1fe42b4dd88fc5e8f2bb6f1
       </widget>
       <widget class="QGroupBox" name="groupBox_28">
        <property name="geometry">
