@@ -144,7 +144,7 @@ class DataBaseColumns:  # 데이터베이스 테이블 정의
     }
     
     COND_TABLE_NAME = 'real_condition' ## 실시간 조건 검색 종목
-    COND_SELECT_DATE = f"SELECT * FROM {COND_TABLE_NAME} WHERE substr(처리일시, 1, 10) = ? AND sim_no = 0 ORDER BY 처리일시"
+    COND_SELECT_DATE = f"SELECT * FROM {COND_TABLE_NAME} WHERE substr(처리일시, 1, 10) = ? AND sim_no = ? ORDER BY 처리일시"
     COND_FIELDS = [f.id, f.일자, f.시간, f.종목코드, f.조건구분, f.조건번호, f.조건식명, f.처리일시, f.sim_no]
     COND_COLUMNS = [col.name for col in COND_FIELDS]
     COND_KEYS = ['처리일시']
@@ -696,21 +696,21 @@ class DBMServer:
             logging.error(f'sim2 결과 삭제 오류: {e}', exc_info=True)
             return None
 
-    def load_real_condition(self, date, callback=None):
+    def load_real_condition(self, date, sim_no=2, callback=None):
         """조건검색 데이터 로드 (SQLite 또는 MariaDB)"""
         try:
             # 오늘 데이터는 무조건 SQLite
             if self.is_today(date):
-                result = self._load_real_condition_sqlite(date)
+                result = self._load_real_condition_sqlite(date, sim_no)
             # 과거 데이터는 MariaDB 우선, 없으면 SQLite
             elif self.use_mariadb:
                 try:
-                    result = self._load_real_condition_mariadb(date)
+                    result = self._load_real_condition_mariadb(date, sim_no)
                 except Exception as e:
                     logging.warning(f"[DBM] MariaDB 조회 실패, SQLite 사용: {e}")
-                    result = self._load_real_condition_sqlite(date)
+                    result = self._load_real_condition_sqlite(date, sim_no)
             else:
-                result = self._load_real_condition_sqlite(date)
+                result = self._load_real_condition_sqlite(date, sim_no)
 
             if callback:
                 callback(result)
@@ -722,20 +722,20 @@ class DBMServer:
                 callback([])
             return []
 
-    def _load_real_condition_sqlite(self, date):
+    def _load_real_condition_sqlite(self, date, sim_no=2):
         """SQLite에서 조건검색 데이터 로드"""
         sql = db_columns.COND_SELECT_DATE
         cursor = self.get_cursor('db')
-        cursor.execute(sql, (date,))
+        cursor.execute(sql, (date, sim_no))
         result = cursor.fetchall()
 
         if result:
-            logging.info(f'[DBM-SQLite] real_condition 로드: {date}, {len(result)}건')
+            logging.info(f'[DBM-SQLite] real_condition 로드: {date}, sim_no={sim_no}, {len(result)}건')
         else:
-            logging.warning(f'[DBM-SQLite] real_condition 데이터 없음: {date}')
+            logging.warning(f'[DBM-SQLite] real_condition 데이터 없음: {date}, sim_no={sim_no}')
         return result if result else []
 
-    def _load_real_condition_mariadb(self, date):
+    def _load_real_condition_mariadb(self, date, sim_no=2):
         """MariaDB에서 조건검색 데이터 로드"""
         date_param = date.replace('-', '')  # YYYYMMDD
 
@@ -743,36 +743,36 @@ class DBMServer:
         SELECT 일자, 시간, 종목코드, 조건구분, 조건번호, 조건식명,
                CONCAT(일자, ' ', 시간) as 처리일시, sim_no
         FROM real_condition
-        WHERE 일자 = %s AND sim_no = 0
+        WHERE 일자 = %s AND sim_no = %s
         ORDER BY 처리일시
         """
 
         cursor = self.get_mariadb_cursor()
-        cursor.execute(sql, (date_param,))
+        cursor.execute(sql, (date_param, sim_no))
         result = cursor.fetchall()
         cursor.close()
 
         if result:
-            logging.info(f'[DBM-MariaDB] real_condition 로드: {date}, {len(result)}건')
+            logging.info(f'[DBM-MariaDB] real_condition 로드: {date}, sim_no={sim_no}, {len(result)}건')
         else:
-            logging.warning(f'[DBM-MariaDB] real_condition 데이터 없음: {date}')
+            logging.warning(f'[DBM-MariaDB] real_condition 데이터 없음: {date}, sim_no={sim_no}')
         return result if result else []
 
-    def load_real_data(self, date, callback=None):
+    def load_real_data(self, date, sim_no=2, callback=None):
         """실시간 데이터 로드 (SQLite 또는 MariaDB)"""
         try:
             # 오늘 데이터는 무조건 SQLite
             if self.is_today(date):
-                result = self._load_real_data_sqlite(date)
+                result = self._load_real_data_sqlite(date, sim_no)
             # 과거 데이터는 MariaDB 우선
             elif self.use_mariadb:
                 try:
-                    result = self._load_real_data_mariadb(date)
+                    result = self._load_real_data_mariadb(date, sim_no)
                 except Exception as e:
                     logging.warning(f"[DBM] MariaDB 조회 실패, SQLite 사용: {e}")
-                    result = self._load_real_data_sqlite(date)
+                    result = self._load_real_data_sqlite(date, sim_no)
             else:
-                result = self._load_real_data_sqlite(date)
+                result = self._load_real_data_sqlite(date, sim_no)
 
             if callback:
                 callback(result)
@@ -784,21 +784,30 @@ class DBMServer:
                 callback([])
             return []
 
-    def _load_real_data_sqlite(self, date):
+    def _load_real_data_sqlite(self, date, sim_no=2):
         """SQLite에서 실시간 데이터 로드"""
         date_param = date.replace('-', '')
-        sql = db_columns.REAL_SELECT_DATE
+        sql = f"""SELECT * FROM {db_columns.REAL_TABLE_NAME}
+                  WHERE substr(체결시간, 1, 8) = ?
+                  AND sim_no = ?
+                  AND 종목코드 IN (
+                      SELECT DISTINCT 종목코드
+                      FROM {db_columns.SIM_TABLE_NAME}
+                      WHERE 일자 = ?
+                      AND sim_no = ?
+                  )
+                  ORDER BY 체결시간"""
         cursor = self.get_cursor('db')
-        cursor.execute(sql, (date_param, date))
+        cursor.execute(sql, (date_param, sim_no, date_param, sim_no))
         result = cursor.fetchall()
 
         if result:
-            logging.info(f'[DBM-SQLite] real_data 로드: {date}, {len(result)}건')
+            logging.info(f'[DBM-SQLite] real_data 로드: {date}, sim_no={sim_no}, {len(result)}건')
         else:
-            logging.warning(f'[DBM-SQLite] real_data 데이터 없음: {date}')
+            logging.warning(f'[DBM-SQLite] real_data 데이터 없음: {date}, sim_no={sim_no}')
         return result if result else []
 
-    def _load_real_data_mariadb(self, date):
+    def _load_real_data_mariadb(self, date, sim_no=2):
         """MariaDB에서 실시간 데이터 로드"""
         date_param = date.replace('-', '')  # YYYYMMDD
 
@@ -807,24 +816,24 @@ class DBMServer:
                누적거래량, 누적거래대금, 처리일시, sim_no
         FROM real_data
         WHERE substr(체결시간, 1, 8) = %s
-          AND sim_no = 0
+          AND sim_no = %s
           AND 종목코드 IN (
               SELECT DISTINCT 종목코드
-              FROM real_condition
-              WHERE 일자 = %s AND sim_no = 0
+              FROM daily_sim
+              WHERE 일자 = %s AND sim_no = %s
           )
         ORDER BY 체결시간
         """
 
         cursor = self.get_mariadb_cursor()
-        cursor.execute(sql, (date_param, date_param))
+        cursor.execute(sql, (date_param, sim_no, date_param, sim_no))
         result = cursor.fetchall()
         cursor.close()
 
         if result:
-            logging.info(f'[DBM-MariaDB] real_data 로드: {date}, {len(result)}건')
+            logging.info(f'[DBM-MariaDB] real_data 로드: {date}, sim_no={sim_no}, {len(result)}건')
         else:
-            logging.warning(f'[DBM-MariaDB] real_data 데이터 없음: {date}')
+            logging.warning(f'[DBM-MariaDB] real_data 데이터 없음: {date}, sim_no={sim_no}')
         return result if result else []
 
     def load_daily_sim(self, date, sim_no, callback=None):

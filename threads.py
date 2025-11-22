@@ -287,35 +287,21 @@ class OrderCommander(QThread):
             self.send_order()
 
     def send_order(self):
-        if not self.com_order_time_check(): return -308 # 5회 제한 초과
+        wait_time = self.ord.check_interval()
+        if wait_time > 999: 
+            msg = f'빈번한 요청으로 인하여 {wait_time/1000}초 대기 합니다.'
+            logging.warning(msg)
+            gm.toast.toast(msg, duration=wait_time)
+
         order = self.order_q.get()
         if order is None: 
             self.running = False
             return
-        self.com_SendOrder(**order)
 
-    def com_order_time_check(self):
-        wait_time = self.ord.check_interval()
-        if wait_time > 1666: # 1.666초 이내 주문 제한
-            msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초'
-            gm.toast.toast(msg, duration=dc.TOAST_TIME)
-            logging.warning(msg)
-            return False
-       
-        elif wait_time > 1000:
-            msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-            gm.toast.toast(msg, duration=wait_time)
-            time.sleep((wait_time-10)/1000) 
-            wait_time = 0
-            logging.info(msg)
-        elif wait_time > 0:
-            msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-            gm.toast.toast(msg, duration=wait_time)
-            logging.info(msg)
-
-        time.sleep((wait_time+100)/1000) 
+        time.sleep((wait_time + 50) / 1000) 
         self.ord.update_request_times()
-        return True
+
+        self.com_SendOrder(**order)
 
     def com_SendOrder(self, rqname, screen, accno, ordtype, code, quantity, price, hoga, ordno, msg=None):
 

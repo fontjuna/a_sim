@@ -407,6 +407,89 @@ class TimeLimiter:
         self.SEC = second
         self.MIN = minute
         self.HOUR = hour
+        self.request_times = []  # 요청 시간 기록 (밀리초)
+        self.condition_times = {}  # 조건별 마지막 실행 시간
+        self.lock = threading.RLock()
+
+    def _cleanup_old_requests(self, current_time):
+        """1시간 이상 된 기록 정리 (락 내부에서 호출)"""
+        cutoff = current_time - 3600000
+        self.request_times = [t for t in self.request_times if t > cutoff]
+
+    def _count_requests_in_period(self, current_time, period_ms):
+        """특정 기간 내 요청 수 계산 (락 내부에서 호출)"""
+        cutoff = current_time - period_ms
+        return sum(1 for t in self.request_times if t > cutoff)
+
+    def _get_oldest_time_in_period(self, current_time, period_ms):
+        """특정 기간 내 가장 오래된 요청 시간 반환"""
+        cutoff = current_time - period_ms
+        times_in_period = [t for t in self.request_times if t > cutoff]
+        return min(times_in_period) if times_in_period else current_time
+        
+    def check_interval(self) -> int:
+        current_time = time.time() * 1000
+        
+        with self.lock:
+            self._cleanup_old_requests(current_time)
+            
+            recent_1s = self._count_requests_in_period(current_time, 1000)
+            recent_1m = self._count_requests_in_period(current_time, 60000)
+            recent_60m = self._count_requests_in_period(current_time, 3600000)
+            
+            # 1초 구간: 4회까지 대기 0, 5회째는 남은 시간 대기
+            if recent_1s < self.SEC - 1:
+                return 0
+            elif recent_1s == self.SEC - 1:
+                oldest_1s = self._get_oldest_time_in_period(current_time, 1000)
+                return max(0, int(oldest_1s + 1000 - current_time))
+            
+            # 1분 구간: 0.2초 ~ 1초 누진 (5~99회)
+            if recent_1m < self.MIN:
+                ratio = (recent_1m - self.SEC) / (self.MIN - self.SEC - 1)
+                return int(200 + ratio * 800)
+            
+            # 1시간 구간: 1초 ~ 6초 누진 (100~999회)
+            if recent_60m < self.HOUR:
+                ratio = (recent_60m - self.MIN) / (self.HOUR - self.MIN - 1)
+                return int(1000 + ratio * 5000)
+            
+            # 제한 도달: 가장 오래된 요청 빠질 때까지 대기
+            oldest_60m = self._get_oldest_time_in_period(current_time, 3600000)
+            return min(6000, max(0, int(oldest_60m + 3600000 - current_time)))
+                    
+    def check_condition_interval(self, condition) -> int:
+        current_time = time.time() * 1000
+        
+        with self.lock:
+            last_time = self.condition_times.get(condition, 0)
+        
+        if current_time - last_time >= 60000:
+            with self.lock:
+                if condition in self.condition_times:
+                    del self.condition_times[condition]
+            return 0
+        
+        return max(0, int(60000 - (current_time - last_time)))
+
+    def update_request_times(self):
+        current_time = time.time() * 1000
+        with self.lock:
+            self.request_times.append(current_time)
+
+    def update_condition_time(self, condition):
+        current_time = time.time() * 1000
+        with self.lock:
+            self.condition_times[condition] = current_time
+            self.request_times.append(current_time)
+
+'''
+class TimeLimiter:
+    def __init__(self, name, second=5, minute=100, hour=1000):
+        self.name = name
+        self.SEC = second
+        self.MIN = minute
+        self.HOUR = hour
         self.request_count = { 'second': 0, 'minute': 0, 'hour': 0 }
         self.first_request_time = { 'second': 0, 'minute': 0, 'hour': 0 }
         self.condition_times = {}  # 조건별 마지막 실행 시간
@@ -491,6 +574,7 @@ class TimeLimiter:
         with self.lock:
             self.condition_times[condition] = current_time
             self._update_request_times_unsafe(current_time)
+'''
 
 import shutil
 import os

@@ -198,8 +198,9 @@ class GUI(QMainWindow, form_class):
             self.btnSimStart.clicked.connect(self.gui_simulation_restart) # 시뮬레이션 재시작
 
             # 시뮬레이션 실행일자 데이타 가져오기
-            self.btnSimReadDay.clicked.connect(lambda: self.gui_sim_read_day(read_chart=False))
-            self.btnSimReadTick.clicked.connect(lambda: self.gui_sim_read_day(read_chart=True))
+            # self.btnSimReadDay.clicked.connect(lambda: self.gui_sim_read_day(read_chart=False))
+            # self.btnSimReadTick.clicked.connect(lambda: self.gui_sim_read_day(read_chart=True))
+            self.btnSimReadTick.clicked.connect(lambda: self.gui_get_chart_data(read_tick=False))
 
             # 시뮬레이션 차트데이타
             self.btnSimAddDay.clicked.connect(self.gui_sim_add_day)
@@ -531,29 +532,34 @@ class GUI(QMainWindow, form_class):
             logging.debug('전략매매 중지 취소')
 
     def gui_simulation_restart(self):
-        """btnSimStart 버튼 클릭 시: 시뮬레이션 모드 시작"""
-        self.gui_simulation_stop()
-
-        # 라디오 버튼에서 새 모드 확인
+        """btnSimStart 버튼 클릭 시: 정리 → 재초기화 → 실행"""
         new_sim_no = 0 if self.rbReal.isChecked() else \
                      1 if self.rbSim1.isChecked() else \
                      2 if self.rbSim2.isChecked() else 3
 
-        # 모든 모드 통합 처리
-        gm.admin.mode_start(new_sim_no=new_sim_no, is_startup=False)
+        # 1. 전략 중지 및 데이터 클리어
+        gm.admin.stg_stop()
+
+        # 2. 스레드 정리
+        gm.prx.order('api', 'thread_cleanup')
+        self.set_strategy_toggle(run=False)
+
+        # 3. 모드 변경 시 재초기화
+        if new_sim_no != gm.sim_no:
+            logging.info(f'[GUI] sim_no 변경: {gm.sim_no} → {new_sim_no}')
+            gm.sim_no = new_sim_no
+            gm.sim_on = gm.sim_no > 0
+            gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
+            gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
+            time.sleep(1)
+            gm.admin.set_real_remove_all()
+            gm.admin.get_holdings()
+
+        # 4. 모드 실행
+        gm.admin.mode_start()
 
         if new_sim_no == 3:
-            # Sim3 UI 활성화
-            # self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
-            # self.gbSim3.setEnabled(True)
-            logging.info('[GUI] Sim3 모드 활성화 → Memory Load 대기')
             gm.toast.toast('Sim3 모드 활성화. Memory Load 버튼을 클릭하세요.', duration=2000)
-        # else:
-        #     if not any([gm.매수문자열, gm.매도문자열]):
-        #         gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
-        #     else:
-        #         gm.toast.toast('전략매매를 실행했습니다.', duration=2000)
-        #         self.set_strategy_toggle(run=True)
             
     def gui_simulation_stop(self):
         gm.admin.stg_stop()
@@ -1275,6 +1281,9 @@ class GUI(QMainWindow, form_class):
     #         self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
     #     self.gbSim3.setEnabled(False)
 
+    def gui_get_chart_data(self, read_tick=False):
+        pass
+
     def gui_get_sim3_sets(self):
         speed = 1
         if self.rbSpeed2.isChecked(): speed = 2
@@ -1554,17 +1563,56 @@ class GUI(QMainWindow, form_class):
 
                 # X축 레이블 생성
                 x_labels = []
+                prev_date = None
+                prev_month = None
+                prev_year = None
+
                 for row in data_reversed:
                     if cycle in ('mi', 'tk'):  # 분봉, 틱봉
                         # 체결시간 또는 시간 컬럼 사용
                         time_str = row.get('체결시간', row.get('시간', ''))
                         if len(time_str) >= 12:  # YYYYMMDDHHMMSS
-                            x_labels.append(f"{time_str[8:10]}:{time_str[10:12]}")  # HH:MM
+                            curr_date = time_str[:8]
+                            if prev_date and curr_date != prev_date:
+                                # 날짜 변경 시 날짜 표시 (MM/DD)
+                                x_labels.append(f"{time_str[4:6]}/{time_str[6:8]}")
+                            else:
+                                # 시간만 표시 (HH:MM)
+                                x_labels.append(f"{time_str[8:10]}:{time_str[10:12]}")
+                            prev_date = curr_date
                         elif len(time_str) >= 6:  # HHMMSS
-                            x_labels.append(f"{time_str[0:2]}:{time_str[2:4]}")  # HH:MM
+                            x_labels.append(f"{time_str[0:2]}:{time_str[2:4]}")
                         else:
                             x_labels.append(time_str)
-                    else:  # 일봉, 주봉, 월봉
+                    elif cycle == 'da':  # 일봉
+                        # 일자 컬럼 사용
+                        date_str = row.get('일자', row.get('체결시간', ''))
+                        if len(date_str) >= 8:  # YYYYMMDD
+                            curr_month = date_str[:6]
+                            if prev_month and curr_month != prev_month:
+                                # 월 변경 시 년/월 표시 (YYYY/MM)
+                                x_labels.append(f"{date_str[0:4]}/{date_str[4:6]}")
+                            else:
+                                # 일만 표시 (DD)
+                                x_labels.append(f"{date_str[6:8]}")
+                            prev_month = curr_month
+                        else:
+                            x_labels.append(date_str)
+                    elif cycle == 'mo':  # 월봉
+                        # 일자 컬럼 사용
+                        date_str = row.get('일자', row.get('체결시간', ''))
+                        if len(date_str) >= 8:  # YYYYMMDD
+                            curr_year = date_str[:4]
+                            if prev_year and curr_year != prev_year:
+                                # 년 변경 시 년도 표시 (YYYY)
+                                x_labels.append(f"{date_str[0:4]}")
+                            else:
+                                # 월만 표시 (MM)
+                                x_labels.append(f"{date_str[4:6]}")
+                            prev_year = curr_year
+                        else:
+                            x_labels.append(date_str)
+                    else:  # 주봉 등 기타
                         # 일자 컬럼 사용
                         date_str = row.get('일자', row.get('체결시간', ''))
                         if len(date_str) >= 8:  # YYYYMMDD

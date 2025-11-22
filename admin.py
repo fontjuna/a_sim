@@ -168,6 +168,9 @@ class Admin:
         if gm.gui_on:
             gm.qwork['msg'].put(Work(order=order, job=job))
 
+    def toast(self, msg, duration=dc.TOAST_TIME):
+        if gm.gui_on: gm.toast.toast(msg, duration)
+
     # json 파일 사용 메소드 -----------------------------------------------------------------------------------------
     def json_load_define_sets(self):
         try:
@@ -239,7 +242,7 @@ class Admin:
                     logging.error(f"[Admin] MariaDB 자동 저장 오류: {e}", exc_info=True)
 
         if msg:
-            gm.toast.toast(msg, 3000)
+            self.toast(msg, 3000)
             self.send_status_msg('상태바', msg)
             logging.debug(f'{rtype} {code} : {fid215}, {fid20}, {fid214} {msg}')
 
@@ -251,10 +254,12 @@ class Admin:
                 gm.주문진행목록.delete(filter={'요청명': rqname})
 
     def on_receive_real_condition(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
-        if not gm.ready or not self.stg_ready: return
+        if not gm.ready or not self.stg_ready:
+            logging.debug(f"조건검색 수신 무시: ready={gm.ready}, stg_ready={self.stg_ready}")
+            return
         if gm.sim_no == 0 and time.time() < 90000: return
         try:
-            if gm.sim_no == 0: gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, gm.sim_no)
+            if gm.sim_no == 0: gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, 2)
 
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
             if condition == gm.매수문자열:
@@ -262,7 +267,7 @@ class Admin:
             elif condition == gm.매도문자열:
                 kind = '매도'
             else:
-                logging.warning(f"조건식 서버 해제 안 됨 : type={type}, condition={condition}")
+                logging.warning(f"조건식 불일치: type={type}, condition='{condition}', 매수='{gm.매수문자열}', 매도='{gm.매도문자열}'")
                 return
 
             job = (kind, code, type, cond_name, cond_index,)
@@ -299,7 +304,7 @@ class Admin:
                         gm.eval_q.put((code, 'sell', {'row': row, 'sell_condition': True}))
 
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
-                if gm.sim_no == 0: gm.prx.order('dbm', 'upsert_real_data', code, dictFID, gm.sim_no)
+                if gm.sim_no == 0: gm.prx.order('dbm', 'upsert_real_data', code, dictFID, 2)
             
             if gm.잔고목록.in_key(code) and self.stg_ready:
                 gm.잔고목록.set(key=code, data={'현재가': 현재가, '등락율': float(dictFID.get('등락율', 0)), '누적거래량': int(dictFID.get('누적거래량', 0))})
@@ -502,63 +507,37 @@ class Admin:
 
             run_strategy = any([gm.매수문자열, gm.매도문자열])
             if not run_strategy:
-                gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
+                self.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
             else:
-                gm.toast.toast('전략매매를 실행했습니다.', duration=2000)
+                self.toast('전략매매를 실행했습니다.', duration=2000)
                 gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': run_strategy}))
         else:
             logging.error(f'[Mode] sim_no={sim_no} → 콜백 실패 신호 받음: {message}')
 
-    def mode_start(self, new_sim_no=None, is_startup=False):
-        """모드별 진입점 (프로그램 시작 / 버튼 클릭)
-
-        Args:
-            new_sim_no (int, optional): 변경할 sim_no. None이면 현재 sim_no 유지
-            is_startup (bool): True=프로그램 시작, False=버튼 클릭
-        """
+    def mode_start(self):
+        """현재 sim_no로 실행"""
         try:
             gm.ready = True
-            
-            # 1. 모드 변경이 있으면 재초기화
-            if new_sim_no is not None and new_sim_no != gm.sim_no:
-                logging.info(f'[Mode Start] sim_no 변경: {gm.sim_no} → {new_sim_no}')
-                gm.sim_no = new_sim_no
-                gm.sim_on = gm.sim_no > 0
-                gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
-                gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
-                time.sleep(1)
-                self.set_real_remove_all()
-                self.get_holdings()
-                gm.admin_init = True
 
-            # if gm.sim_no == 0: 
-            #     self.on_tickers_ready(0)
-            #     return
-            
-            # 2. 실행 여부 판단
-            should_run = (gm.sim_no == 0) if is_startup else (gm.sim_no in [0, 1, 2])
-
-            if not should_run:
-                logging.info(f'[Mode] sim_no={gm.sim_no} → 대기')
-                return
-
-            # 3. set_tickers (모든 sim_no가 콜백으로 완료 신호 받음)
-            # sim2: gm.set조건감시 초기화 (SetRealReg가 호출되도록)
+            # sim2 전용 초기화
             if gm.sim_no == 2:
                 gm.set조건감시 = set()
-                logging.debug('[Mode Start] sim2: gm.set조건감시 초기화 완료')
+                logging.debug('[Mode Start] sim2: gm.set조건감시 초기화')
 
+            # set_tickers 호출
             if gm.sim_no == 2 and gm.gui_on:
                 speed, date = gm.gui.gui_get_sim3_sets()
                 gm.prx.order('api', 'set_tickers', speed=speed, dt=date)
+            elif gm.sim_no == 3:
+                logging.info(f'[Mode] sim3 → Memory Load 대기')
+                return
             else:
                 gm.prx.order('api', 'set_tickers')
 
-            # 콜백 대기 (stg_start()는 on_tickers_ready()에서 호출)
-            logging.info(f'[Mode] sim_no={gm.sim_no} → set_tickers 완료 대기... (완료 시 전략 자동 시작)')
+            logging.info(f'[Mode] sim_no={gm.sim_no} → set_tickers 호출')
 
         except Exception as e:
-            logging.error(f'모드 시작 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.error(f'모드 시작 오류: {e}', exc_info=True)
 
     def mode_sim3_load(self):
         """Sim3 전용: 메모리 로드 후 전략 시작"""
@@ -585,13 +564,53 @@ class Admin:
     def stg_stop(self, timeout=None):
         try:
             if not (gm.매수문자열 or  gm.매도문자열): return
+
+            # 플래그 초기화
+            gm.ready = False
             gm.매수문자열 = ""
             gm.매도문자열 = ""
+            self.wait_running = False
+            self.stg_buy_timeout = False
+
+            # 전략 중지
             self.stg_fx중지_전략매매()
+
+            # 타이머 정리
+            if self.cancel_timer is not None:
+                self.cancel_timer.stop()
+                self.cancel_timer.deleteLater()
+                self.cancel_timer = None
+            if self.start_timer is not None:
+                self.start_timer.stop()
+                self.start_timer.deleteLater()
+                self.start_timer = None
+            if self.end_timer is not None:
+                self.end_timer.stop()
+                self.end_timer.deleteLater()
+                self.end_timer = None
+
+            # 데이터 클리어
             gm.매수검색목록.delete()
             gm.매도검색목록.delete()
             gm.주문진행목록.delete()
+            gm.dict종목정보.delete()
+
+            # 큐 클리어
+            gm.order_q.clear()
+
+            # 조건/감시 set 초기화
+            gm.set종목감시 = set()
+
+            # sim 모드 추가 초기화
+            if gm.sim_no in [1, 2, 3]:
+                gm.잔고목록.delete()
+                gm.잔고합산.delete()
+                gm.l2잔고합산_copy = None
+                gm.l2손익합산 = 0
+                gm.holdings = {}
+
             self.send_status_msg('검색내용', args='')
+            logging.info(f'전략매매 중지 및 초기화 완료')
         except Exception as e:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
