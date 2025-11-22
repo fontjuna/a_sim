@@ -13,37 +13,7 @@ import pythoncom
 import copy
 import sys
 
-toast = None #Toast()
-ord = TimeLimiter(name='ord', second=5, minute=300, hour=18000)
 req = TimeLimiter(name='req', second=5, minute=100, hour=1000)
-def com_request_time_check(kind='order', cond_text = None):
-    if kind == 'order':
-        wait_time = ord.check_interval()
-    elif kind == 'request':
-        wait_time = max(req.check_interval(), req.check_condition_interval(cond_text) if cond_text else 0)
-    if wait_time > 1666: # 1.666초 이내 주문 제한
-        msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
-            if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
-        logging.warning(msg)
-        return False
-    elif wait_time > 1000:
-        msg = f'빈번한 요청은 시간 제한을 받습니다. 잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-        #toast.toast(msg, duration=wait_time)
-        time.sleep((wait_time-10)/1000) 
-        wait_time = 0
-        logging.info(msg)
-    elif wait_time > 0:
-        msg = f'잠시 대기 후 실행 합니다. 대기시간: {float(wait_time/1000)} 초'
-        #toast.toast(msg, duration=wait_time)
-        logging.info(msg)
-    time.sleep((wait_time+100)/1000) 
-    if kind == 'order':
-        ord.update_request_times()
-    elif kind == 'request':
-        if cond_text: req.update_condition_time(cond_text)
-        else: req.update_request_times()
-    return True
-
 real_thread = {}
 cond_thread = {}
 cond_data_list =  [('100', '돌파매수'), ('200', '조건매도')]
@@ -1493,7 +1463,14 @@ class APIServer:
     def api_request(self, rqname, trcode, input, output, next=0, screen=None, form='dict_list', wait=5):
         #logging.debug(f'api_request: rqname={rqname}, trcode={trcode}, input={input}, next={next}, screen={screen}, form={form}, wait={wait}')
         try:
-            if not com_request_time_check(kind='request'): return [], False
+            wait_time = req.check_interval()
+            if wait_time > 999:
+                msg = f'빈번한 요청으로 인하여 {float(wait_time/1000)} 초 대기 합니다.'
+                logging.warning(msg)
+                self.order('prx', 'proxy_method', QWork(method='toast', kwargs={'msg': msg, 'duration': wait_time}))
+
+            time.sleep((wait_time + 50) / 1000)
+            req.update_request_times()
 
             self.tr_remained = False
             self.tr_result = []
@@ -1630,7 +1607,15 @@ class APIServer:
     def SendCondition(self, screen, cond_name, cond_index, search, block=True, wait=15):
         global cond_thread, real_tickers
         cond_text = f'{cond_index:03d} : {cond_name.strip()}'
-        if not com_request_time_check(kind='request', cond_text=cond_text): return False
+        wait_time = req.check_condition_interval(cond_text)
+        if wait_time > 1200:
+            msg = f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
+            logging.warning(msg)
+            self.order('prx', 'proxy_method', QWork(method='toast', kwargs={'msg': msg, 'duration': wait_time}))
+            return False
+        
+        time.sleep((wait_time + 50) / 1000)
+        req.update_condition_time(cond_text)
 
         if self.sim_no == 0:  # 실제 API 서버
             try:
