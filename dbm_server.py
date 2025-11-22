@@ -792,13 +792,13 @@ class DBMServer:
                   AND sim_no = ?
                   AND 종목코드 IN (
                       SELECT DISTINCT 종목코드
-                      FROM {db_columns.COND_TABLE_NAME}
-                      WHERE substr(처리일시, 1, 10) = ?
+                      FROM {db_columns.SIM_TABLE_NAME}
+                      WHERE 일자 = ?
                       AND sim_no = ?
                   )
                   ORDER BY 체결시간"""
         cursor = self.get_cursor('db')
-        cursor.execute(sql, (date_param, sim_no, date, sim_no))
+        cursor.execute(sql, (date_param, sim_no, date_param, sim_no))
         result = cursor.fetchall()
 
         if result:
@@ -819,7 +819,7 @@ class DBMServer:
           AND sim_no = %s
           AND 종목코드 IN (
               SELECT DISTINCT 종목코드
-              FROM real_condition
+              FROM daily_sim
               WHERE 일자 = %s AND sim_no = %s
           )
         ORDER BY 체결시간
