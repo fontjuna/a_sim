@@ -1140,15 +1140,26 @@ class GUI(QMainWindow, form_class):
                 self.gui_set_color(self.lblProfitLoss, gm.l2손익합산)
             else:
                 self.lblProfitLoss.setText('0')
+
+            # 잔고합산 데이터 조회
             if gm.잔고합산:
                 row = gm.잔고합산.get(key=0)
             else:
-                row = {}
-            self.lblBuy.setText(f"{int(row.get('총매입금액', 0)):,}")
-            self.lblAmount.setText(f"{int(row.get('총평가금액', 0)):,}")
-            self.lblAssets.setText(f"{int(row.get('추정예탁자산', 0)):,}")
-            self.gui_set_color(self.lblProfit, int(row.get('총평가손익금액', 0)))
-            self.gui_set_color(self.lblFrofitRate, float(row.get('총수익률(%)', 0.0)))
+                row = None
+
+            # row가 None이 아닐 때만 처리
+            if row:
+                self.lblBuy.setText(f"{int(row.get('총매입금액', 0)):,}")
+                self.lblAmount.setText(f"{int(row.get('총평가금액', 0)):,}")
+                self.lblAssets.setText(f"{int(row.get('추정예탁자산', 0)):,}")
+                self.gui_set_color(self.lblProfit, int(row.get('총평가손익금액', 0)))
+                self.gui_set_color(self.lblFrofitRate, float(row.get('총수익률(%)', 0.0)))
+            else:
+                self.lblBuy.setText("0")
+                self.lblAmount.setText("0")
+                self.lblAssets.setText("0")
+                self.lblProfit.setText("0")
+                self.lblFrofitRate.setText("0.0")
             if gm.잔고목록:
                 gm.잔고목록.update_table_widget(self.tblBalanceHeld, stretch=False)
             else:

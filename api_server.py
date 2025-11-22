@@ -667,8 +667,8 @@ class OnReceiveRealDataSim1And2(QThread):
 
          # 시간 동기화 (sim2_speed 배속)
          wait_time = self._calculate_wait_time(체결시간)
-         if idx < 10:  # 처음 10개만 디버그
-            logging.debug(f'[OnReceiveRealDataSim1And2] idx={idx}, 체결시간={체결시간}, wait_time={wait_time:.3f}초')
+         if idx < 10 or idx % 5000 == 0:  # 처음 10개 + 5000개마다
+            logging.info(f'[RD동기화] idx={idx}/{len(sim.rd_queue)}, 체결시간={체결시간[-6:]}, wait={wait_time:.3f}초, 배속={getattr(sim, "sim2_speed", 1.0)}')
          if wait_time > 0:
             time.sleep(wait_time)
 
