@@ -1110,15 +1110,6 @@ class APIServer:
             global ready_tickers
             ready_tickers = True
 
-            # admin.init() 완료 대기 (receive_signal 연결 완료 대기)
-            wait_start = time.time()
-            while not gm.admin_init:
-                if time.time() - wait_start > 30:
-                    logging.error(f'[API] sim{sim_no} admin.init() 대기 타임아웃')
-                    return
-                time.sleep(0.1)
-            logging.debug(f'[API] sim{sim_no} admin.init() 완료 확인')
-
             logging.debug(f'[API] sim{sim_no} on_tickers_ready 호출 준비 중...')
             if sim_no == 2:
                 logging.info(f'[API] sim2 on_tickers_ready 호출: ticker={len(sim.ticker)}개')
