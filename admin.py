@@ -254,7 +254,9 @@ class Admin:
                 gm.주문진행목록.delete(filter={'요청명': rqname})
 
     def on_receive_real_condition(self, code, type, cond_name, cond_index): # 조건검색 결과 수신
-        if not gm.ready or not self.stg_ready: return
+        if not gm.ready or not self.stg_ready:
+            logging.debug(f"조건검색 수신 무시: ready={gm.ready}, stg_ready={self.stg_ready}")
+            return
         if gm.sim_no == 0 and time.time() < 90000: return
         try:
             if gm.sim_no == 0: gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, 2)
@@ -265,7 +267,7 @@ class Admin:
             elif condition == gm.매도문자열:
                 kind = '매도'
             else:
-                logging.warning(f"조건식 서버 해제 안 됨 : type={type}, condition={condition}")
+                logging.warning(f"조건식 불일치: type={type}, condition='{condition}', 매수='{gm.매수문자열}', 매도='{gm.매도문자열}'")
                 return
 
             job = (kind, code, type, cond_name, cond_index,)
@@ -594,6 +596,9 @@ class Admin:
             gm.매수검색목록.delete()
             gm.매도검색목록.delete()
             gm.주문진행목록.delete()
+            gm.dict종목정보.delete()
+            if gm.sim_no in [1, 2, 3]:
+                gm.잔고목록.delete()
             self.send_status_msg('검색내용', args='')
         except Exception as e:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
