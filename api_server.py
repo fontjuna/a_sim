@@ -40,6 +40,7 @@ class SimData:
 
       # 시뮬레이션 2번 전용 속성들
       self.sim2_date = None  # 시뮬레이션 기준 날짜 (YYYY-MM-DD)
+      self.sim2_speed = 1.0  # 배속 (기본 1배속)
 
       # 시뮬레이션 3번 전용 속성들
       self.sim3_date = None  # 시뮬레이션 날짜
@@ -123,8 +124,11 @@ class SimData:
         """시뮬레이션 2번 초기화"""
         logging.info("시뮬레이션 2번 초기화")
         self.sim2_date = None
+        self.sim2_speed = 1.0
         self.ticker = {}
         self.data_loaded = False
+        self.rc_queue = []
+        self.rd_queue = []
 
    def sim3_reset_to_start(self):
         """시뮬레이션 3번을 처음으로 리셋"""
@@ -476,18 +480,28 @@ class OnReceiveRealConditionSim(QThread):
       logging.info('[OnReceiveRealConditionSim] sim2 재생 완료')
 
    def _calculate_wait_time(self, time_str):
-      """HHMMSS → 2배속 대기시간 계산"""
+      """실시간 동기화된 대기시간 계산"""
+      # 첫 데이터: 현재시간과 데이터 시간 동기화
       if self.sim2_base_time is None:
-         self.sim2_base_time = datetime.now()
-         self.sim2_data_base = time_str
+         self.sim2_base_time = time.time()  # 실제 시작 시간
+         self.sim2_data_base = time_str     # 데이터 시작 시간
+         logging.info(f'[Sim2 동기화] 시작 - 현재={datetime.now().strftime("%H:%M:%S")}, 데이터={time_str[-6:]}')
          return 0
 
-      # 데이터 시간 차이 계산 (초 단위)
-      data_diff = self._time_diff_seconds(self.sim2_data_base, time_str)
-      self.sim2_data_base = time_str
+      # 데이터 경과 시간 (첫 데이터 대비)
+      data_elapsed = self._time_diff_seconds(self.sim2_data_base, time_str)
 
-      # 2배속 적용
-      return data_diff / sim.sim2_speed if data_diff > 0 else 0
+      # 실제 경과 시간
+      real_elapsed = time.time() - self.sim2_base_time
+
+      # 배속 적용된 데이터 시간
+      speed = getattr(sim, 'sim2_speed', 1.0)
+      data_time_scaled = data_elapsed / speed if speed > 0 else data_elapsed
+
+      # 대기 시간 = 데이터 시간 - 실제 경과 시간
+      wait = data_time_scaled - real_elapsed
+
+      return max(0, wait)
 
    def _time_diff_seconds(self, time1_str, time2_str):
       """HHMMSS 형식 두 시간의 초 단위 차이"""
@@ -730,18 +744,28 @@ class OnReceiveRealDataSim1And2(QThread):
       logging.info('[OnReceiveRealDataSim1And2] sim2 재생 완료')
 
    def _calculate_wait_time(self, time_str):
-      """HHMMSS → 2배속 대기시간 계산"""
+      """실시간 동기화된 대기시간 계산"""
+      # 첫 데이터: 현재시간과 데이터 시간 동기화
       if self.sim2_base_time is None:
-         self.sim2_base_time = datetime.now()
-         self.sim2_data_base = time_str
+         self.sim2_base_time = time.time()  # 실제 시작 시간
+         self.sim2_data_base = time_str     # 데이터 시작 시간
+         logging.info(f'[Sim2 동기화] 시작 - 현재={datetime.now().strftime("%H:%M:%S")}, 데이터={time_str[-6:]}')
          return 0
 
-      # 데이터 시간 차이 계산 (초 단위)
-      data_diff = self._time_diff_seconds(self.sim2_data_base, time_str)
-      self.sim2_data_base = time_str
+      # 데이터 경과 시간 (첫 데이터 대비)
+      data_elapsed = self._time_diff_seconds(self.sim2_data_base, time_str)
 
-      # 2배속 적용
-      return data_diff / sim.sim2_speed if data_diff > 0 else 0
+      # 실제 경과 시간
+      real_elapsed = time.time() - self.sim2_base_time
+
+      # 배속 적용된 데이터 시간
+      speed = getattr(sim, 'sim2_speed', 1.0)
+      data_time_scaled = data_elapsed / speed if speed > 0 else data_elapsed
+
+      # 대기 시간 = 데이터 시간 - 실제 경과 시간
+      wait = data_time_scaled - real_elapsed
+
+      return max(0, wait)
 
    def _time_diff_seconds(self, time1_str, time2_str):
       """HHMMSS 형식 두 시간의 초 단위 차이"""
