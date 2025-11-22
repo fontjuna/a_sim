@@ -593,7 +593,7 @@ class Admin:
             gm.매수검색목록.delete()
             gm.매도검색목록.delete()
             gm.주문진행목록.delete()
-            gm.dict종목정보.delete()
+            gm.dict종목정보.clear()  # ThreadSafeDict는 clear() 사용
 
             # 큐 클리어
             gm.order_q.clear()
