@@ -168,6 +168,9 @@ class Admin:
         if gm.gui_on:
             gm.qwork['msg'].put(Work(order=order, job=job))
 
+    def toast(self, msg, duration=dc.TOAST_TIME):
+        if gm.gui_on: gm.toast.toast(msg, duration)
+
     # json 파일 사용 메소드 -----------------------------------------------------------------------------------------
     def json_load_define_sets(self):
         try:
@@ -239,7 +242,7 @@ class Admin:
                     logging.error(f"[Admin] MariaDB 자동 저장 오류: {e}", exc_info=True)
 
         if msg:
-            gm.toast.toast(msg, 3000)
+            self.toast(msg, 3000)
             self.send_status_msg('상태바', msg)
             logging.debug(f'{rtype} {code} : {fid215}, {fid20}, {fid214} {msg}')
 
@@ -254,7 +257,7 @@ class Admin:
         if not gm.ready or not self.stg_ready: return
         if gm.sim_no == 0 and time.time() < 90000: return
         try:
-            if gm.sim_no == 0: gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, gm.sim_no)
+            if gm.sim_no == 0: gm.prx.order('dbm', 'insert_real_condition', code, type, cond_name, cond_index, 2)
 
             condition = f'{int(cond_index):03d} : {cond_name.strip()}'
             if condition == gm.매수문자열:
@@ -299,7 +302,7 @@ class Admin:
                         gm.eval_q.put((code, 'sell', {'row': row, 'sell_condition': True}))
 
                 gm.chart_q.put({code: dictFID}) # ChartUpdater
-                if gm.sim_no == 0: gm.prx.order('dbm', 'upsert_real_data', code, dictFID, gm.sim_no)
+                if gm.sim_no == 0: gm.prx.order('dbm', 'upsert_real_data', code, dictFID, 2)
             
             if gm.잔고목록.in_key(code) and self.stg_ready:
                 gm.잔고목록.set(key=code, data={'현재가': 현재가, '등락율': float(dictFID.get('등락율', 0)), '누적거래량': int(dictFID.get('누적거래량', 0))})
@@ -502,9 +505,9 @@ class Admin:
 
             run_strategy = any([gm.매수문자열, gm.매도문자열])
             if not run_strategy:
-                gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
+                self.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
             else:
-                gm.toast.toast('전략매매를 실행했습니다.', duration=2000)
+                self.toast('전략매매를 실행했습니다.', duration=2000)
                 gm.qwork['gui'].put(Work('set_strategy_toggle', {'run': run_strategy}))
         else:
             logging.error(f'[Mode] sim_no={sim_no} → 콜백 실패 신호 받음: {message}')

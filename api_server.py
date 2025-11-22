@@ -24,7 +24,6 @@ def com_request_time_check(kind='order', cond_text = None):
     if wait_time > 1666: # 1.666초 이내 주문 제한
         msg = f'빈번한 요청으로 인하여 긴 대기 시간이 필요 하므로 요청을 취소합니다. 대기시간: {float(wait_time/1000)} 초' \
             if cond_text is None else f'{cond_text} 1분 이내에 같은 조건 호출 불가 합니다. 대기시간: {float(wait_time/1000)} 초'
-        #toast.toast(msg, duration=dc.TOAST_TIME)
         logging.warning(msg)
         return False
     elif wait_time > 1000:
