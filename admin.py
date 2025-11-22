@@ -527,6 +527,8 @@ class Admin:
             # 1. 모드 변경이 있으면 재초기화
             if new_sim_no is not None and new_sim_no != gm.sim_no:
                 logging.info(f'[Mode Start] sim_no 변경: {gm.sim_no} → {new_sim_no}')
+                # 기존 스레드 정리
+                gm.prx.order('api', 'thread_cleanup')
                 gm.sim_no = new_sim_no
                 gm.sim_on = gm.sim_no > 0
                 gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)

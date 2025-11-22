@@ -1558,17 +1558,56 @@ class GUI(QMainWindow, form_class):
 
                 # X축 레이블 생성
                 x_labels = []
+                prev_date = None
+                prev_month = None
+                prev_year = None
+
                 for row in data_reversed:
                     if cycle in ('mi', 'tk'):  # 분봉, 틱봉
                         # 체결시간 또는 시간 컬럼 사용
                         time_str = row.get('체결시간', row.get('시간', ''))
                         if len(time_str) >= 12:  # YYYYMMDDHHMMSS
-                            x_labels.append(f"{time_str[8:10]}:{time_str[10:12]}")  # HH:MM
+                            curr_date = time_str[:8]
+                            if prev_date and curr_date != prev_date:
+                                # 날짜 변경 시 날짜 표시 (MM/DD)
+                                x_labels.append(f"{time_str[4:6]}/{time_str[6:8]}")
+                            else:
+                                # 시간만 표시 (HH:MM)
+                                x_labels.append(f"{time_str[8:10]}:{time_str[10:12]}")
+                            prev_date = curr_date
                         elif len(time_str) >= 6:  # HHMMSS
-                            x_labels.append(f"{time_str[0:2]}:{time_str[2:4]}")  # HH:MM
+                            x_labels.append(f"{time_str[0:2]}:{time_str[2:4]}")
                         else:
                             x_labels.append(time_str)
-                    else:  # 일봉, 주봉, 월봉
+                    elif cycle == 'da':  # 일봉
+                        # 일자 컬럼 사용
+                        date_str = row.get('일자', row.get('체결시간', ''))
+                        if len(date_str) >= 8:  # YYYYMMDD
+                            curr_month = date_str[:6]
+                            if prev_month and curr_month != prev_month:
+                                # 월 변경 시 년/월 표시 (YYYY/MM)
+                                x_labels.append(f"{date_str[0:4]}/{date_str[4:6]}")
+                            else:
+                                # 일만 표시 (DD)
+                                x_labels.append(f"{date_str[6:8]}")
+                            prev_month = curr_month
+                        else:
+                            x_labels.append(date_str)
+                    elif cycle == 'mo':  # 월봉
+                        # 일자 컬럼 사용
+                        date_str = row.get('일자', row.get('체결시간', ''))
+                        if len(date_str) >= 8:  # YYYYMMDD
+                            curr_year = date_str[:4]
+                            if prev_year and curr_year != prev_year:
+                                # 년 변경 시 년도 표시 (YYYY)
+                                x_labels.append(f"{date_str[0:4]}")
+                            else:
+                                # 월만 표시 (MM)
+                                x_labels.append(f"{date_str[4:6]}")
+                            prev_year = curr_year
+                        else:
+                            x_labels.append(date_str)
+                    else:  # 주봉 등 기타
                         # 일자 컬럼 사용
                         date_str = row.get('일자', row.get('체결시간', ''))
                         if len(date_str) >= 8:  # YYYYMMDD
