@@ -564,16 +564,53 @@ class Admin:
     def stg_stop(self, timeout=None):
         try:
             if not (gm.매수문자열 or  gm.매도문자열): return
+
+            # 플래그 초기화
+            gm.ready = False
             gm.매수문자열 = ""
             gm.매도문자열 = ""
+            self.wait_running = False
+            self.stg_buy_timeout = False
+
+            # 전략 중지
             self.stg_fx중지_전략매매()
+
+            # 타이머 정리
+            if self.cancel_timer is not None:
+                self.cancel_timer.stop()
+                self.cancel_timer.deleteLater()
+                self.cancel_timer = None
+            if self.start_timer is not None:
+                self.start_timer.stop()
+                self.start_timer.deleteLater()
+                self.start_timer = None
+            if self.end_timer is not None:
+                self.end_timer.stop()
+                self.end_timer.deleteLater()
+                self.end_timer = None
+
+            # 데이터 클리어
             gm.매수검색목록.delete()
             gm.매도검색목록.delete()
             gm.주문진행목록.delete()
             gm.dict종목정보.delete()
+
+            # 큐 클리어
+            gm.order_q.clear()
+
+            # 조건/감시 set 초기화
+            gm.set종목감시 = set()
+
+            # sim 모드 추가 초기화
             if gm.sim_no in [1, 2, 3]:
                 gm.잔고목록.delete()
+                gm.잔고합산.delete()
+                gm.l2잔고합산_copy = None
+                gm.l2손익합산 = 0
+                gm.holdings = {}
+
             self.send_status_msg('검색내용', args='')
+            logging.info(f'전략매매 중지 및 초기화 완료')
         except Exception as e:
             logging.error(f'전략 매매 설정 오류: {type(e).__name__} - {e}', exc_info=True)
 
