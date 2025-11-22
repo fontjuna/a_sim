@@ -514,58 +514,30 @@ class Admin:
         else:
             logging.error(f'[Mode] sim_no={sim_no} → 콜백 실패 신호 받음: {message}')
 
-    def mode_start(self, new_sim_no=None, is_startup=False):
-        """모드별 진입점 (프로그램 시작 / 버튼 클릭)
-
-        Args:
-            new_sim_no (int, optional): 변경할 sim_no. None이면 현재 sim_no 유지
-            is_startup (bool): True=프로그램 시작, False=버튼 클릭
-        """
+    def mode_start(self):
+        """현재 sim_no로 실행"""
         try:
             gm.ready = True
-            
-            # 1. 모드 변경이 있으면 재초기화
-            if new_sim_no is not None and new_sim_no != gm.sim_no:
-                logging.info(f'[Mode Start] sim_no 변경: {gm.sim_no} → {new_sim_no}')
-                # 기존 스레드 정리
-                gm.prx.order('api', 'thread_cleanup')
-                gm.sim_no = new_sim_no
-                gm.sim_on = gm.sim_no > 0
-                gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
-                gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
-                time.sleep(1)
-                self.set_real_remove_all()
-                self.get_holdings()
-                gm.admin_init = True
 
-            # if gm.sim_no == 0: 
-            #     self.on_tickers_ready(0)
-            #     return
-            
-            # 2. 실행 여부 판단
-            should_run = (gm.sim_no == 0) if is_startup else (gm.sim_no in [0, 1, 2])
-
-            if not should_run:
-                logging.info(f'[Mode] sim_no={gm.sim_no} → 대기')
-                return
-
-            # 3. set_tickers (모든 sim_no가 콜백으로 완료 신호 받음)
-            # sim2: gm.set조건감시 초기화 (SetRealReg가 호출되도록)
+            # sim2 전용 초기화
             if gm.sim_no == 2:
                 gm.set조건감시 = set()
-                logging.debug('[Mode Start] sim2: gm.set조건감시 초기화 완료')
+                logging.debug('[Mode Start] sim2: gm.set조건감시 초기화')
 
+            # set_tickers 호출
             if gm.sim_no == 2 and gm.gui_on:
                 speed, date = gm.gui.gui_get_sim3_sets()
                 gm.prx.order('api', 'set_tickers', speed=speed, dt=date)
+            elif gm.sim_no == 3:
+                logging.info(f'[Mode] sim3 → Memory Load 대기')
+                return
             else:
                 gm.prx.order('api', 'set_tickers')
 
-            # 콜백 대기 (stg_start()는 on_tickers_ready()에서 호출)
-            logging.info(f'[Mode] sim_no={gm.sim_no} → set_tickers 완료 대기... (완료 시 전략 자동 시작)')
+            logging.info(f'[Mode] sim_no={gm.sim_no} → set_tickers 호출')
 
         except Exception as e:
-            logging.error(f'모드 시작 오류: {type(e).__name__} - {e}', exc_info=True)
+            logging.error(f'모드 시작 오류: {e}', exc_info=True)
 
     def mode_sim3_load(self):
         """Sim3 전용: 메모리 로드 후 전략 시작"""

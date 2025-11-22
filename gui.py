@@ -532,29 +532,34 @@ class GUI(QMainWindow, form_class):
             logging.debug('전략매매 중지 취소')
 
     def gui_simulation_restart(self):
-        """btnSimStart 버튼 클릭 시: 시뮬레이션 모드 시작"""
-        self.gui_simulation_stop()
-
-        # 라디오 버튼에서 새 모드 확인
+        """btnSimStart 버튼 클릭 시: 정리 → 재초기화 → 실행"""
         new_sim_no = 0 if self.rbReal.isChecked() else \
                      1 if self.rbSim1.isChecked() else \
                      2 if self.rbSim2.isChecked() else 3
 
-        # 모든 모드 통합 처리
-        gm.admin.mode_start(new_sim_no=new_sim_no, is_startup=False)
+        # 1. 전략 중지 및 데이터 클리어
+        gm.admin.stg_stop()
+
+        # 2. 스레드 정리
+        gm.prx.order('api', 'thread_cleanup')
+        self.set_strategy_toggle(run=False)
+
+        # 3. 모드 변경 시 재초기화
+        if new_sim_no != gm.sim_no:
+            logging.info(f'[GUI] sim_no 변경: {gm.sim_no} → {new_sim_no}')
+            gm.sim_no = new_sim_no
+            gm.sim_on = gm.sim_no > 0
+            gm.prx.order('api', 'api_init', sim_no=gm.sim_no, log_level=gm.log_level)
+            gm.prx.order('dbm', 'dbm_init', gm.sim_no, gm.log_level)
+            time.sleep(1)
+            gm.admin.set_real_remove_all()
+            gm.admin.get_holdings()
+
+        # 4. 모드 실행
+        gm.admin.mode_start()
 
         if new_sim_no == 3:
-            # Sim3 UI 활성화
-            # self.gbSim3.setStyleSheet(self.gbSim3_styleSheet)
-            # self.gbSim3.setEnabled(True)
-            logging.info('[GUI] Sim3 모드 활성화 → Memory Load 대기')
             gm.toast.toast('Sim3 모드 활성화. Memory Load 버튼을 클릭하세요.', duration=2000)
-        # else:
-        #     if not any([gm.매수문자열, gm.매도문자열]):
-        #         gm.toast.toast('실행된 전략매매가 없습니다. 1분 이내에 재실행 됐거나, 실행될 전략이 없습니다.', duration=2000)
-        #     else:
-        #         gm.toast.toast('전략매매를 실행했습니다.', duration=2000)
-        #         self.set_strategy_toggle(run=True)
             
     def gui_simulation_stop(self):
         gm.admin.stg_stop()

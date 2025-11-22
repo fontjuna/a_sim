@@ -163,9 +163,10 @@ class Main:
             gm.admin.init()
             logging.info('Admin 초기화 완료')
 
-            # Admin 초기화 완료 후 mode_start 호출
-            gm.admin.mode_start(is_startup=True)
-            logging.info('mode_start 완료')
+            # sim_no=0만 자동 실행 (1,2,3은 btnSimStart 클릭 대기)
+            if gm.sim_no == 0:
+                gm.admin.mode_start()
+                logging.info('mode_start 완료')
 
         except Exception as e:
             logging.error(f'Admin 초기화 오류: {e}', exc_info=True)
