@@ -119,6 +119,13 @@ class SimData:
                 '전일가': 0
                 }
 
+   def sim2_reset(self):
+        """시뮬레이션 2번 초기화"""
+        logging.info("시뮬레이션 2번 초기화")
+        self.sim2_date = None
+        self.ticker = {}
+        self.data_loaded = False
+
    def sim3_reset_to_start(self):
         """시뮬레이션 3번을 처음으로 리셋"""
         logging.info("시뮬레이션 3번 처음으로 리셋")
@@ -1378,8 +1385,16 @@ class APIServer:
 
     def thread_cleanup(self):
         # 실시간 데이터 스레드 정리
-        global real_tickers, real_thread, cond_thread   
-        real_tickers.clear()    
+        global real_tickers, real_thread, cond_thread, ready_tickers
+        real_tickers.clear()
+        ready_tickers = False
+
+        # sim 상태 초기화
+        if self.sim_no == 2:
+            sim.sim2_reset()
+        elif self.sim_no == 3:
+            sim.sim3_reset_to_start()
+
         logging.debug(f'실시간 데이터 스레드 삭제전: {real_thread}')
         for screen in list(real_thread.keys()):
             if real_thread[screen]:
